@@ -80,11 +80,20 @@ the one above:
    sh scripts/changelog-section.sh 1.0.0
    ```
 
+   On Windows, `sh` is not on `PATH` but Git ships one, and running the real extractor
+   beats reimplementing it — a second copy is a second thing to keep in step:
+
+   ```powershell
+   & "$env:ProgramFiles\Git\bin\sh.exe" scripts/changelog-section.sh 1.0.0
+   ```
+
 8. **Tag and push.**
 
    ```bash
    git tag -a v1.0.0 -m "v1.0.0" && git push origin v1.0.0
    ```
+
+   PowerShell has no `&&`; use `;` and check in between, or just run the two separately.
 
 9. **Verify each channel** once the workflow finishes. These are the four commands users
    will actually run, and running them is the only proof the packages resolve:
@@ -94,6 +103,14 @@ the one above:
    uvx dev-prune@1.0.0 -V
    cargo install dev-prune --version 1.0.0
    curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
+   ```
+
+   The last one is the shell installer. Its Windows counterpart is a different script and
+   a different one-liner — `curl` in PowerShell is an alias for `Invoke-WebRequest` and
+   will not behave like the binary, so verify the PowerShell path on PowerShell:
+
+   ```powershell
+   iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
    ```
 
 Names are unclaimed on all three registries as of the check in
