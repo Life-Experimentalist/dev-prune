@@ -30,7 +30,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,7 +60,7 @@ jobs:
     name: MSRV (1.85)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
       # Cargo.toml advertises rust-version = "1.85"; nothing enforced it, so a stable-only
@@ -82,7 +82,7 @@ jobs:
     name: Cross-compile (aarch64-pc-windows-msvc)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-pc-windows-msvc
@@ -96,7 +96,7 @@ jobs:
     name: Publishable crate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # `cargo package` applies the `include` allowlist in Cargo.toml and then *compiles*
@@ -117,7 +117,7 @@ jobs:
     name: Changelog entry
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The release workflow builds the GitHub release body out of this section and
       # fails without it. Checking on every push means the answer to "can we tag?" is
       # already known, instead of being discovered after the tag exists — and a tag
@@ -133,13 +133,13 @@ jobs:
     name: npm and PyPI packaging
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
-      - uses: actions/setup-python@v5
+          node-version: 24
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       # The packaging scripts only ever run during a release, so without this their
       # first execution is also the first time anyone finds out they are broken — after
@@ -192,20 +192,33 @@ jobs:
           test -x fake/venv/bin/devp
           echo "dev-prune and devp both installed and executable."
 
+  # `cargo audit` is invoked directly rather than through rustsec/audit-check. That
+  # action's newest release still declares `runs.using: node20`, and GitHub removes the
+  # Node 20 runtime from the runners on 2026-09-16; the fix exists on the action's main
+  # branch but has never been tagged. Calling the tool takes two lines, puts no
+  # third-party action in the path of a job that holds a token, and cannot rot this way
+  # again — `cargo audit` is the thing the action was wrapping.
   audit:
     name: Dependency advisory audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # Caches $CARGO_HOME/bin as well as the build, so cargo-audit is compiled once
+      # rather than on every push.
+      - uses: Swatinem/rust-cache@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          key: audit
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Check the dependency tree against the RustSec advisory database
+        run: cargo audit
 
   scripts:
     name: Installer scripts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # The install scripts are the first thing anyone runs; a syntax error in them is
       # a broken product regardless of how green the Rust build is.
       - name: shellcheck install.sh
@@ -226,10 +239,10 @@ jobs:
     name: Diagram syntax
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
       # A malformed diagram renders as a red error box on GitHub and nothing else
       # notices. Parsing them here is the only thing that catches it.
       - name: Parse every mermaid block
@@ -242,10 +255,10 @@ jobs:
     name: Site build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: site/package-lock.json
       - run: npm ci

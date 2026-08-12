@@ -65,7 +65,7 @@ jobs:
       # Explicitly the tag. On a `workflow_dispatch` run the default checkout is the
       # branch the workflow was launched from, so without this the job would build
       # `main` and ship it under the tag's name.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -148,7 +148,7 @@ jobs:
           # Two spaces: the sha256sum format the install scripts parse.
           "$hash  $asset" | Out-File -FilePath "$asset.sha256" -Encoding ascii -NoNewline
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dev-prune-${{ matrix.os_name }}-${{ matrix.arch }}
           path: |
@@ -164,7 +164,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -174,7 +174,7 @@ jobs:
           ref="${{ github.event.inputs.tag || github.ref_name }}"
           echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -188,7 +188,7 @@ jobs:
       - name: Build the release body from CHANGELOG.md
         run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > release-body.md
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: dist/*
@@ -215,16 +215,16 @@ jobs:
       # attestation tying the tarball to this workflow, this commit and this tag.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -295,15 +295,15 @@ jobs:
       # PyPI side names this workflow file and this environment, so both are fixed.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -319,7 +319,11 @@ jobs:
       - name: Check the wheel metadata before uploading it
         run: pipx run twine check wheels/*.whl
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # Pinned to a tag, not the `release/v1` branch the examples use. That branch is a
+      # moving pointer into a workflow that holds an OIDC identity able to publish to
+      # PyPI, and the action's own README says to pin rather than track it. Dependabot
+      # bumps this line; a branch pointer is a change nobody reviews.
+      - uses: pypa/gh-action-pypi-publish@v1.14.2
         with:
           packages-dir: wheels
 
@@ -336,7 +340,7 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Check out the tag being released, not the default branch. A dispatch run
           # would otherwise publish whatever is on `main` under the tag's name.

@@ -20,7 +20,7 @@
     "dev-prune-win32-x64": "1.0.0"
   },
   "engines": {
-    "node": ">=14"
+    "node": ">=20"
   },
   "keywords": [
     "dev-prune",

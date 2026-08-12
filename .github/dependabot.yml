@@ -27,9 +27,25 @@ updates:
   # /npm is deliberately absent: the wrapper package has no dependencies to update.
 
   # Pinned action versions in the workflows.
+  #
+  # Weekly, not monthly. Actions rot in a way crate dependencies do not: GitHub retires
+  # the Node runtime an action declares, and every action still on the old one stops
+  # working on a date announced months earlier. Monthly checks are how a workflow ends
+  # up three majors behind without anyone deciding that.
+  #
+  # Dependabot only sees the `uses:` lines. It does NOT see `node-version:`,
+  # `python-version:`, the `dtolnay/rust-toolchain@<version>` MSRV pin, or the
+  # `runs-on:` labels — those are strings to it. They need a human on a calendar.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: monthly
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Patch and minor bumps of actions are noise individually and meaningful in bulk.
+      # Majors stay ungrouped: for an action, a major is usually a runtime change, and
+      # that is exactly the PR that deserves to be read on its own.
+      actions-minor-and-patch:
+        update-types: ["minor", "patch"]
     commit-message:
       prefix: "ci"
