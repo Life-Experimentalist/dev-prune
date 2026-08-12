@@ -108,8 +108,10 @@ delete anything it cannot prove is recoverable.
   `--last-run` restores exactly what the most recent prune pass deleted, wherever those
   projects were, so an over-eager pass is one command to undo.
 - `doctor [PATH]` — a read-only diagnosis. Without a path it checks the installation:
-  the binary and its PATH entry, the registry and every setting in it, the integrations,
-  which package managers are actually reachable, and the release-check state. With a path
+  the binary and its PATH entry, the registry and every setting in it, the integrations —
+  including the binary the scheduler and the hooks will actually run, so one left pointing
+  at a deleted directory is reported rather than silently doing nothing forever — which
+  package managers are actually reachable, and the release-check state. With a path
   it checks one repository and names the reason a prune pass would skip it. It runs no
   package manager and repairs nothing, so it can be run twice to see whether a fix
   worked. Warnings exit `0`; only genuine breakage exits `1`.
@@ -143,6 +145,11 @@ absent and reports what it declined to touch.
 - **OS scheduler** — `schtasks` on Windows, a LaunchAgent on macOS, a systemd user timer
   on Linux, each running at the configured `check_interval_days` interval. Scheduled
   passes are non-interactive and skip repositories that set `disable_daemon`.
+- **Durable paths.** The scheduler entry and the hook scripts both outlive the process
+  that wrote them, so both record the binary in `<config>/bin` rather than wherever the
+  command happened to be run from. Installing through `npx dev-prune` or `uvx dev-prune`
+  would otherwise register a path inside a cache the package manager deletes, and neither
+  a scheduled task nor a Git hook has anywhere to report that it has stopped working.
 - **Git hooks** — `post-commit`, `post-checkout` and `post-merge` auto-register the
   repository you are working in. Git allows one global `core.hooksPath` and no chaining,
   so when husky, pre-commit or lefthook already hold it, `devp hook install --chain`

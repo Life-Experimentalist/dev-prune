@@ -110,6 +110,65 @@ impl SetupReport {
     }
 }
 
+/// Where the installers put the binary, and the one directory nothing else owns.
+fn managed_exe_path() -> Result<PathBuf> {
+    let name = if cfg!(windows) {
+        "dev-prune.exe"
+    } else {
+        "dev-prune"
+    };
+    Ok(Registry::config_dir()?.join("bin").join(name))
+}
+
+/// Absolute path to a copy of this binary that will still be there next week.
+///
+/// Anything that writes a path down for later — the OS scheduler, the git hooks — has to
+/// use this instead of [`std::env::current_exe`]. dev-prune ships through npm and PyPI as
+/// well as the installers, so the running executable is often somewhere a package manager
+/// owns and will delete: npm's `_npx` cache, uv's ephemeral tool environment, or
+/// `target/debug` during development. An entry recorded there breaks the moment that
+/// directory goes, and neither of these has anywhere to complain — the scheduled task
+/// fails silently every interval, and the hook discards its own output by design. The
+/// only symptom is that nothing ever happens again.
+///
+/// `<config>/bin` is where `install.sh` and `install.ps1` put the binary and nothing else
+/// deletes, so prefer the copy there. When there is none, put one there: the binary that
+/// is running right now is precisely the one that is going to be missing later.
+pub fn stable_exe_path() -> PathBuf {
+    let current = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("dev-prune"));
+    let Ok(managed) = managed_exe_path() else {
+        return current;
+    };
+    if managed == current || managed.is_file() {
+        return managed;
+    }
+
+    // Only ever clone something that is actually this CLI. `current_exe()` under `cargo
+    // test` is the test harness, and copying that into the config directory would be both
+    // wrong and slow.
+    let is_cli = current
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| stem == "dev-prune" || stem == "devp");
+    if !is_cli {
+        return current;
+    }
+
+    let Some(parent) = managed.parent() else {
+        return current;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return current;
+    }
+    // Hard link where the filesystem allows it — that also keeps the bytes alive when the
+    // package manager deletes the directory the original came from.
+    if fs::hard_link(&current, &managed).is_ok() || fs::copy(&current, &managed).is_ok() {
+        managed
+    } else {
+        current
+    }
+}
+
 /// Create the `devp` alias next to the real binary, and keep it current.
 ///
 /// A stale alias is worse than a missing one: it silently runs the previous version

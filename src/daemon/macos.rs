@@ -59,7 +59,7 @@ pub fn generate_plist_content(exe_path: &str, interval_days: u64) -> String {
 
 /// Installs the macOS LaunchAgent.
 pub fn install(interval_days: u64) -> Result<()> {
-    let exe_path = get_exe_path()?;
+    let exe_path = get_exe_path();
     let plist_content = generate_plist_content(&exe_path.to_string_lossy(), interval_days);
     let plist_path = get_plist_path()?;
 
@@ -130,6 +130,34 @@ pub fn status() -> Result<DaemonStatus> {
     }
 }
 
+/// Reverse [`xml_escape`]. `&amp;` last, or it would re-expand the ampersands the
+/// earlier replacements just produced.
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+/// Pull the program out of the `ProgramArguments` array — the first `<string>` after the
+/// key, which is the executable; the rest are `run --yes --daemon`.
+fn parse_program_path(plist: &str) -> Option<PathBuf> {
+    let rest = &plist[plist.find("<key>ProgramArguments</key>")?..];
+    let start = rest.find("<string>")? + "<string>".len();
+    let end = start + rest[start..].find("</string>")?;
+    let program = rest[start..end].trim();
+    if program.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(xml_unescape(program)))
+}
+
+/// The binary the installed LaunchAgent will run, if there is a plist to read.
+pub fn registered_exe_path() -> Option<PathBuf> {
+    parse_program_path(&fs::read_to_string(get_plist_path().ok()?).ok()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +183,36 @@ mod tests {
     fn test_generate_plist_escapes_xml() {
         let content = generate_plist_content("/home/a&b/dev-prune", 2);
         assert!(content.contains("<string>/home/a&amp;b/dev-prune</string>"));
+    }
+
+    #[test]
+    fn the_registered_binary_is_read_back_out_of_what_we_wrote() {
+        let plist = generate_plist_content("/usr/local/bin/dev-prune", 2);
+        assert_eq!(
+            parse_program_path(&plist),
+            Some(PathBuf::from("/usr/local/bin/dev-prune"))
+        );
+    }
+
+    #[test]
+    fn the_label_is_not_mistaken_for_the_program() {
+        // `Label` is the first `<string>` in the document; the program is the first one
+        // after the `ProgramArguments` key, which is why the search starts there.
+        let path = parse_program_path(&generate_plist_content("/x/dev-prune", 2)).unwrap();
+        assert_eq!(path, PathBuf::from("/x/dev-prune"));
+    }
+
+    #[test]
+    fn an_escaped_path_round_trips() {
+        let plist = generate_plist_content("/home/a&b/dev-prune", 2);
+        assert_eq!(
+            parse_program_path(&plist),
+            Some(PathBuf::from("/home/a&b/dev-prune"))
+        );
+    }
+
+    #[test]
+    fn a_plist_that_is_not_ours_answers_nothing() {
+        assert!(parse_program_path("<plist><dict /></plist>").is_none());
     }
 }

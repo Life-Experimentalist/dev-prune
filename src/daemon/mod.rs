@@ -96,9 +96,39 @@ pub fn daemon_status() -> Result<DaemonStatus> {
     }
 }
 
-/// Get the absolute path to the current binary.
-pub fn get_exe_path() -> Result<std::path::PathBuf> {
-    std::env::current_exe().map_err(Into::into)
+/// The binary path to register with the scheduler.
+///
+/// Not `current_exe()`: a scheduled task outlives the process that created it, so the
+/// path it records has to outlive it too. See [`crate::setup::stable_exe_path`] for what
+/// goes wrong when it does not.
+pub fn get_exe_path() -> std::path::PathBuf {
+    crate::setup::stable_exe_path()
+}
+
+/// The binary the installed scheduler entry will actually run, when that can be read.
+///
+/// `None` means "could not determine", never "nothing is registered" — use
+/// [`daemon_status`] for that question. This exists so `devp doctor` can tell a working
+/// scheduler apart from one still pointing at a directory that has since been deleted,
+/// which is otherwise completely silent: the task keeps reporting itself as `Ready` and
+/// fails the instant it fires, every interval, forever.
+pub fn registered_exe_path() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::registered_exe_path()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::registered_exe_path()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::registered_exe_path()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        None
+    }
 }
 
 #[cfg(test)]

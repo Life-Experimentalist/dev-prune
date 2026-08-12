@@ -27,7 +27,7 @@ pub fn build_install_command(exe_path: &str, interval_days: u64) -> Vec<String> 
 
 /// Installs the Windows Task Scheduler task.
 pub fn install(interval_days: u64) -> Result<()> {
-    let exe_path = get_exe_path()?;
+    let exe_path = get_exe_path();
     let exe_str = exe_path.to_string_lossy();
     let args = build_install_command(&exe_str, interval_days);
 
@@ -113,6 +113,60 @@ pub fn status() -> Result<DaemonStatus> {
         &String::from_utf8_lossy(&output.stdout),
         &String::from_utf8_lossy(&output.stderr),
     ))
+}
+
+/// Decode the bytes `schtasks /XML` writes.
+///
+/// It emits UTF-16LE with a byte-order mark, not the console codepage every other
+/// `schtasks` query uses. Read as UTF-8 the whole document comes back as text separated
+/// by NUL bytes, which no `find` on an element name will ever match — a silent empty
+/// answer rather than a visible failure.
+fn decode_schtasks_xml(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let units: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+/// Pull the executable out of a task definition.
+///
+/// `<Actions><Exec><Command>` holds the program on its own — `schtasks` splits the `/TR`
+/// string into `Command` and `Arguments` when it registers the task — and element names
+/// are not localised, unlike the field labels `/V /FO LIST` prints.
+fn parse_registered_command(xml: &str) -> Option<std::path::PathBuf> {
+    let start = xml.find("<Command>")? + "<Command>".len();
+    let end = start + xml[start..].find("</Command>")?;
+    let command = xml[start..end].trim().trim_matches('"').trim();
+    if command.is_empty() {
+        return None;
+    }
+    // `&` is the only one of the five predefined entities that can appear in a Windows
+    // path, but decoding all of them costs nothing and `&amp;` must come last or it would
+    // re-expand the ampersands the others just produced.
+    let unescaped = command
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
+    Some(std::path::PathBuf::from(unescaped))
+}
+
+/// The binary the registered task will run, if the task exists and can be read.
+pub fn registered_exe_path() -> Option<std::path::PathBuf> {
+    let output = Command::new("schtasks")
+        .args(["/Query", "/TN", TASK_NAME, "/XML", "ONE"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_registered_command(&decode_schtasks_xml(&output.stdout))
 }
 
 #[cfg(test)]
@@ -205,5 +259,69 @@ mod tests {
             DaemonStatus::Unknown(why) => assert!(!why.is_empty()),
             other => panic!("expected Unknown, got {other}"),
         }
+    }
+
+    /// The shape `schtasks /XML ONE` actually returns, trimmed to the part that matters.
+    const TASK_XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Actions Context="Author">
+    <Exec>
+      <Command>"C:\Users\a\AppData\Roaming\dev-prune\bin\dev-prune.exe"</Command>
+      <Arguments>run --yes --daemon</Arguments>
+    </Exec>
+  </Actions>
+</Task>"#;
+
+    #[test]
+    fn the_registered_binary_is_read_out_of_the_task_definition() {
+        assert_eq!(
+            parse_registered_command(TASK_XML),
+            Some(std::path::PathBuf::from(
+                "C:\\Users\\a\\AppData\\Roaming\\dev-prune\\bin\\dev-prune.exe"
+            ))
+        );
+    }
+
+    #[test]
+    fn the_arguments_are_not_mistaken_for_part_of_the_path() {
+        let path = parse_registered_command(TASK_XML).unwrap();
+        assert!(!path.to_string_lossy().contains("--daemon"));
+    }
+
+    #[test]
+    fn an_escaped_ampersand_in_the_path_survives() {
+        let xml = "<Command>\"C:\\a &amp; b\\dev-prune.exe\"</Command>";
+        assert_eq!(
+            parse_registered_command(xml),
+            Some(std::path::PathBuf::from("C:\\a & b\\dev-prune.exe"))
+        );
+    }
+
+    #[test]
+    fn a_document_without_an_exec_action_answers_nothing() {
+        assert!(parse_registered_command("<Task><Actions /></Task>").is_none());
+        assert!(parse_registered_command("<Command></Command>").is_none());
+    }
+
+    #[test]
+    fn utf16_output_is_decoded_rather_than_read_as_nul_separated_bytes() {
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in "<Command>\"C:\\x.exe\"</Command>".encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        let decoded = decode_schtasks_xml(&bytes);
+        assert!(!decoded.contains('\0'));
+        assert_eq!(
+            parse_registered_command(&decoded),
+            Some(std::path::PathBuf::from("C:\\x.exe"))
+        );
+    }
+
+    #[test]
+    fn output_without_a_bom_is_still_readable() {
+        assert_eq!(
+            decode_schtasks_xml(b"<Command>x</Command>"),
+            "<Command>x</Command>"
+        );
     }
 }

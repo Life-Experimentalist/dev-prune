@@ -222,6 +222,30 @@ fn sq(value: &str) -> String {
     value.replace('\'', r"'\''")
 }
 
+/// Recover the binary path out of a hook script this module wrote.
+///
+/// Both templates start the registration line with `('<exe>' link . --quiet`, and the
+/// path is single-quoted, so the closing quote is the one immediately before ` link`.
+/// Searching for that rather than the first `'` is what keeps a path containing an
+/// escaped quote intact.
+fn parse_hook_exe(script: &str) -> Option<PathBuf> {
+    let start = script.find("('")? + 2;
+    let end = start + script[start..].find("' link . --quiet")?;
+    let exe = script[start..end].replace(r"'\''", "'");
+    (!exe.is_empty()).then(|| PathBuf::from(exe))
+}
+
+/// The binary the installed hooks will actually run, if there are hooks to read.
+///
+/// `None` means "could not determine", not "not installed" — [`state`] answers that.
+/// A hook is deliberately silent (it backgrounds itself and discards its output), so a
+/// script left pointing at a deleted directory never reports anything; this is what lets
+/// `devp doctor` say so.
+pub fn registered_exe_path() -> Option<PathBuf> {
+    let script = fs::read_to_string(hooks_dir().ok()?.join(HOOKS[0])).ok()?;
+    parse_hook_exe(&script)
+}
+
 /// Install the hooks, printing the result and the caveats.
 pub fn run_install(chain: bool) -> Result<()> {
     let dir = hooks_dir()?;
@@ -338,9 +362,13 @@ pub fn install_with(chain: bool) -> Result<()> {
     // Resolve the binary by absolute path. Git runs hooks with a minimal environment,
     // and a bare `devp` is frequently not on the PATH it sees — which turns the hook
     // into a silent no-op, since it discards its own output by design.
-    let exe = std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "devp".to_string());
+    //
+    // A *durable* absolute path, not `current_exe()`: these scripts stay on disk long
+    // after the process that wrote them, so `npx dev-prune link .` must not bake in a
+    // path inside npm's cache. See `setup::stable_exe_path`.
+    let exe = crate::setup::stable_exe_path()
+        .to_string_lossy()
+        .into_owned();
 
     match &previous {
         None => {
@@ -625,6 +653,47 @@ mod tests {
         assert!(script.contains("post-commit'"));
         // A missing target is not a failure — the other tool simply has no such hook.
         assert!(script.trim_end().ends_with("exit 0"));
+    }
+
+    #[test]
+    fn the_binary_is_recoverable_from_a_plain_hook() {
+        let script = build_hook_script("/usr/local/bin/dev-prune");
+        assert_eq!(
+            parse_hook_exe(&script),
+            Some(PathBuf::from("/usr/local/bin/dev-prune"))
+        );
+    }
+
+    #[test]
+    fn the_binary_is_recoverable_from_a_chained_hook() {
+        let script = build_chained_hook_script(
+            "C:\\Users\\a\\AppData\\Roaming\\dev-prune\\bin\\dev-prune.exe",
+            Path::new("/home/dev/.husky"),
+            "post-commit",
+            true,
+        );
+        assert_eq!(
+            parse_hook_exe(&script),
+            Some(PathBuf::from(
+                "C:\\Users\\a\\AppData\\Roaming\\dev-prune\\bin\\dev-prune.exe"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_quote_in_the_path_survives_the_round_trip() {
+        // `sq` escapes it as `'\''`; splitting on the first quote instead of the one
+        // before ` link` would cut the path in half here.
+        let script = build_hook_script("/home/o'brien/dev-prune");
+        assert_eq!(
+            parse_hook_exe(&script),
+            Some(PathBuf::from("/home/o'brien/dev-prune"))
+        );
+    }
+
+    #[test]
+    fn a_script_that_is_not_ours_answers_nothing() {
+        assert!(parse_hook_exe("#!/bin/sh\nnpm test\n").is_none());
     }
 
     #[test]

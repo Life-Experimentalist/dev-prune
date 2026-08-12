@@ -290,10 +290,10 @@ fn check_integrations(f: &mut Findings, registry: Option<&Registry>) {
         );
     } else {
         match hook::state() {
-            Ok(HookState::Active) => f.ok("Git hooks", "active"),
+            Ok(HookState::Active) => check_hook_target(f, "active"),
             Ok(HookState::Absent) => f.warn("Git hooks", "not installed — run `devp hook install`"),
             Ok(HookState::Chained { previous, drifted }) if drifted.is_empty() => {
-                f.ok("Git hooks", &format!("active, chained to `{previous}`"))
+                check_hook_target(f, &format!("active, chained to `{previous}`"))
             }
             Ok(HookState::Chained { previous, drifted }) => f.warn(
                 "Git hooks",
@@ -316,7 +316,7 @@ fn check_integrations(f: &mut Findings, registry: Option<&Registry>) {
     }
 
     match daemon::daemon_status() {
-        Ok(daemon::DaemonStatus::Installed) => f.ok("Scheduler", "installed"),
+        Ok(daemon::DaemonStatus::Installed) => check_scheduler_target(f),
         Ok(daemon::DaemonStatus::NotInstalled) => f.warn(
             "Scheduler",
             "not installed — nothing prunes on its own. `devp daemon install` adds it.",
@@ -349,6 +349,64 @@ fn check_integrations(f: &mut Findings, registry: Option<&Registry>) {
             ),
         );
     }
+}
+
+/// Report an installed integration, and whether the binary it will run is still there.
+///
+/// An installed scheduler and an installed hook are both silent by construction — the
+/// scheduled task has no console and the hook throws its own output away — so a recorded
+/// path that has since been deleted produces no symptom whatsoever. Every interval, the
+/// task fails instantly; every commit, the hook does nothing. This is the only place that
+/// says so.
+///
+/// The path goes stale when the integration is installed from somewhere temporary:
+/// `npx dev-prune`, `uvx dev-prune`, or a `target/debug` build during development. Those
+/// no longer record the temporary path (see `setup::stable_exe_path`), but entries
+/// registered before that are still out there, and a user can always delete the binary
+/// out from under a perfectly ordinary install.
+fn report_integration_target(
+    f: &mut Findings,
+    label: &str,
+    installed: &str,
+    recorded: Option<std::path::PathBuf>,
+    repair: &str,
+) {
+    match recorded {
+        // Nothing to report: the entry is unreadable on this machine, which is not
+        // evidence of a problem. Saying so would be a warning nobody can act on.
+        None => f.ok(label, installed),
+        Some(path) if path.is_file() => f.ok(
+            label,
+            &format!("{installed} — {}", output::clean_path(&path)),
+        ),
+        Some(path) => f.problem(
+            label,
+            &format!(
+                "registered, but `{}` no longer exists — it never runs. {repair}",
+                output::clean_path(&path)
+            ),
+        ),
+    }
+}
+
+fn check_scheduler_target(f: &mut Findings) {
+    report_integration_target(
+        f,
+        "Scheduler",
+        "installed",
+        daemon::registered_exe_path(),
+        "Re-register it with `devp daemon install`.",
+    );
+}
+
+fn check_hook_target(f: &mut Findings, installed: &str) {
+    report_integration_target(
+        f,
+        "Git hooks",
+        installed,
+        hook::registered_exe_path(),
+        "Rewrite them with `devp hook install`.",
+    );
 }
 
 /// Check the package-manager binaries the registered repositories actually need.

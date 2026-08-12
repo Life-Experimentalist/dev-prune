@@ -82,7 +82,7 @@ pub fn install(interval_days: u64) -> Result<()> {
         anyhow::bail!("{NO_SYSTEMD_HELP}");
     }
 
-    let exe_path = get_exe_path()?;
+    let exe_path = get_exe_path();
     let service_content = generate_service_unit(&exe_path.to_string_lossy());
     let timer_content = generate_timer_unit(interval_days);
 
@@ -201,6 +201,33 @@ pub fn status() -> Result<DaemonStatus> {
     ))
 }
 
+/// Pull the executable out of a service unit's `ExecStart=`.
+///
+/// [`generate_service_unit`] quotes the path so a directory containing a space stays one
+/// argument, so the quoted form is the one that matters — but a unit edited by hand may
+/// well not be quoted, and reading that as a path ending at the first space would report
+/// a perfectly good scheduler as broken.
+fn parse_exec_start(unit: &str) -> Option<PathBuf> {
+    let value = unit
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("ExecStart="))?
+        .trim();
+    let program = match value.strip_prefix('"') {
+        Some(quoted) => quoted.split('"').next()?,
+        None => value.split_whitespace().next()?,
+    };
+    if program.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(program))
+}
+
+/// The binary the installed timer will run, if there is a unit file to read.
+pub fn registered_exe_path() -> Option<PathBuf> {
+    let unit = get_systemd_dir().ok()?.join("dev-prune.service");
+    parse_exec_start(&fs::read_to_string(unit).ok()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +293,39 @@ mod tests {
             DaemonStatus::Unknown(why) => assert_eq!(why, NO_SYSTEMD_HELP),
             other => panic!("expected Unknown, got {other}"),
         }
+    }
+
+    #[test]
+    fn the_registered_binary_is_read_back_out_of_what_we_wrote() {
+        let unit = generate_service_unit("/usr/bin/dev-prune");
+        assert_eq!(
+            parse_exec_start(&unit),
+            Some(PathBuf::from("/usr/bin/dev-prune"))
+        );
+    }
+
+    #[test]
+    fn a_quoted_path_with_spaces_is_not_truncated() {
+        let unit = generate_service_unit("/home/a b/dev-prune");
+        assert_eq!(
+            parse_exec_start(&unit),
+            Some(PathBuf::from("/home/a b/dev-prune"))
+        );
+    }
+
+    #[test]
+    fn an_unquoted_hand_edited_unit_is_still_readable() {
+        let unit = "[Service]\nExecStart=/usr/bin/dev-prune run --yes\n";
+        assert_eq!(
+            parse_exec_start(unit),
+            Some(PathBuf::from("/usr/bin/dev-prune"))
+        );
+    }
+
+    #[test]
+    fn a_unit_without_an_exec_start_answers_nothing() {
+        assert!(parse_exec_start("[Unit]\nDescription=x\n").is_none());
+        assert!(parse_exec_start("ExecStart=\n").is_none());
     }
 
     #[test]
