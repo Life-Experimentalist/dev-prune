@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json",
+  "title": "dev-prune Project Configuration Schema",
+  "description": "Per-repository configuration schema for dev-prune workspace cleaner.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference URL for IDE autocomplete and validation."
+    },
+    "_note": {
+      "type": "string",
+      "description": "Informational note for developers. Run `devp config . --update` to validate and sync configuration settings."
+    },
+    "project_name": {
+      "type": ["string", "null"],
+      "description": "Custom display name for this project in TUI tables and CLI status views."
+    },
+    "ignore": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set to true to ignore/exclude this repository from all dev-prune cleanup passes."
+    },
+    "disable_hooks": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set to true to disable global Git background auto-registration hooks for this specific workspace."
+    },
+    "disable_daemon": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set to true to disable background daemon automated pruning for this specific workspace."
+    },
+    "override_idle_days": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Custom inactivity threshold in days for this specific repository. Overrides global settings."
+    },
+    "custom_bloat_dirs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "List of additional build artifact directory names to clean in this repository (e.g. ['dist', '.cache', 'out'])."
+    },
+    "post_prune_command": {
+      "type": ["string", "null"],
+      "description": "Optional shell command or script to execute after a successful prune pass in this workspace."
+    }
+  },
+  "additionalProperties": false
+}

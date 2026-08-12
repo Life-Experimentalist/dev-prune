@@ -1,0 +1,230 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to the same PR supersedes the previous run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The suite must never touch the machine it runs on. Individual tests set this too,
+  # but a runner that installs a scheduled task and repoints global core.hooksPath is
+  # a bad enough outcome to be worth belt and braces.
+  DEV_PRUNE_NO_AUTO_SETUP: "1"
+
+jobs:
+  test:
+    name: Test & Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      # Several tests shell out to `git init`; a runner without a configured identity
+      # still inits fine, but set one so any future test that commits does not hang.
+      - name: Configure a git identity for the test repos
+        run: |
+          git config --global user.email "ci@example.invalid"
+          git config --global user.name "dev-prune CI"
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # `--all-targets` also lints tests and benches. Without it, warnings in test
+      # code pass CI and only surface locally.
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --all --all-features
+
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      # Cargo.toml advertises rust-version = "1.85"; nothing enforced it, so a stable-only
+      # API could land and silently break every user pinned to the MSRV.
+      - name: Build against the declared MSRV
+        run: cargo check --all-targets --all-features
+
+  package:
+    name: Publishable crate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # `cargo package` applies the `include` allowlist in Cargo.toml and then *compiles*
+      # the resulting tarball. That second half is the point: the binary embeds SKILL.md,
+      # the JSON schema and the MIME icons with `include_bytes!`/`include_str!`, so a file
+      # missing from the allowlist is not a runtime bug — it is a crate that does not
+      # build for anyone who installs it, fixable only by publishing a new version.
+      # Nothing else in this workflow looks at the packaged file list.
+      - name: Package and compile the crate as it would be published
+        run: cargo package --locked
+
+      # crates.io rejects anything over 10 MiB. Catching that here beats finding out
+      # during the release job, after the git tag already exists.
+      - name: Report the packaged size
+        run: ls -lh target/package/*.crate
+
+  changelog:
+    name: Changelog entry
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The release workflow builds the GitHub release body out of this section and
+      # fails without it. Checking on every push means the answer to "can we tag?" is
+      # already known, instead of being discovered after the tag exists — and a tag
+      # cannot be moved once anyone has fetched it.
+      - name: CHANGELOG.md documents the version in Cargo.toml
+        run: |
+          version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          echo "Cargo.toml version: $version"
+          sh scripts/changelog-section.sh "$version" > /dev/null
+          echo "CHANGELOG.md has a section for $version."
+
+  packaging:
+    name: npm and PyPI packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The packaging scripts only ever run during a release, so without this their
+      # first execution is also the first time anyone finds out they are broken — after
+      # the tag exists and six builds have already run. Stand-in binaries are enough:
+      # what is under test is the archive handling, the generated manifests and the
+      # wheel layout, none of which care what the bytes are.
+      - name: Fabricate a set of release assets
+        run: |
+          mkdir -p fake/assets
+          printf 'not a real binary' > fake/dev-prune
+          printf 'not a real binary' > fake/dev-prune.exe
+          for t in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
+            tar -czf "fake/assets/dev-prune-v9.9.9-$t.tar.gz" -C fake dev-prune
+          done
+          for t in windows-x64 windows-arm64; do
+            (cd fake && zip -q "assets/dev-prune-v9.9.9-$t.zip" dev-prune.exe)
+          done
+          ls fake/assets
+
+      - name: Build the npm packages
+        run: sh scripts/npm-prepare.sh 9.9.9 fake/assets fake/npm
+
+      # `npm pack --dry-run` applies the same manifest validation as `npm publish`, so a
+      # malformed `os`/`cpu` field or unparseable JSON fails here rather than partway
+      # through publishing seven packages.
+      - name: Validate every generated manifest
+        run: |
+          for dir in fake/npm/*/; do
+            echo "--- $dir"
+            npm pack --dry-run --pack-destination /tmp "$dir"
+          done
+
+      - name: Build the wheels
+        run: python scripts/build_wheels.py 9.9.9 fake/assets fake/wheels
+
+      # The same metadata check PyPI runs on upload.
+      - name: twine check
+        run: |
+          pip install --quiet twine
+          twine check fake/wheels/*.whl
+
+      # A wheel that installs but leaves out `devp` would ship a product where half the
+      # documentation refers to a command that does not exist.
+      - name: A wheel installs both executables
+        run: |
+          python -m venv fake/venv
+          fake/venv/bin/python -m pip install --quiet --no-index \
+            fake/wheels/dev_prune-9.9.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.musllinux_1_2_x86_64.whl
+          test -x fake/venv/bin/dev-prune
+          test -x fake/venv/bin/devp
+          echo "dev-prune and devp both installed and executable."
+
+  audit:
+    name: Dependency advisory audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  scripts:
+    name: Installer scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The install scripts are the first thing anyone runs; a syntax error in them is
+      # a broken product regardless of how green the Rust build is.
+      - name: shellcheck install.sh
+        run: shellcheck --shell=sh scripts/install.sh
+      - name: shellcheck changelog-section.sh
+        run: shellcheck --shell=sh scripts/changelog-section.sh
+      - name: shellcheck npm-prepare.sh
+        run: shellcheck --shell=sh scripts/npm-prepare.sh
+      - name: Parse install.ps1
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path scripts/install.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+
+  docs:
+    name: Diagram syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # A malformed diagram renders as a red error box on GitHub and nothing else
+      # notices. Parsing them here is the only thing that catches it.
+      - name: Parse every mermaid block
+        run: |
+          npm install --no-save --no-package-lock mermaid@11 jsdom
+          node scripts/check-mermaid.mjs README.md docs/*.md docs/*/*.md \
+            .agents/skills/dev-prune/SKILL.md
+
+  site:
+    name: Site build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+        working-directory: site
+      - run: npm run build
+        working-directory: site

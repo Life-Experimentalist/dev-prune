@@ -1,0 +1,14 @@
+# Every change gets a review from the maintainer.
+* @VKrishna04
+
+# The safety path. Nothing here changes without an explicit invariant review —
+# see docs/SAFETY_INVARIANTS.md.
+/src/adapters/       @VKrishna04
+/src/scanner/        @VKrishna04
+/src/engine.rs       @VKrishna04
+/src/commands/run.rs @VKrishna04
+
+# Release plumbing: what users actually download and execute.
+/.github/workflows/  @VKrishna04
+/scripts/            @VKrishna04
+/npm/                @VKrishna04

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Overwritten by the theme script below once the active theme is known. -->
+    <meta name="theme-color" content="#0B0F17" />
+
+    <!-- Primary Meta Tags -->
+    <title>dev-prune (devp) — Lockfile-Safe node_modules, .venv, target &amp; vendor Cleaner</title>
+    <meta name="title" content="dev-prune (devp) — Lockfile-Safe node_modules, .venv, target & vendor Cleaner" />
+    <meta name="description" content="dev-prune reclaims disk space from idle Git repositories by deleting node_modules, .venv, target and vendor — but only after the package manager proves a lockfile can rebuild them. Rust CLI for Windows, macOS and Linux. Free and open source." />
+    <meta name="keywords" content="dev-prune, devp, node_modules cleaner, delete node_modules, .venv cleaner, cargo target cleaner, go vendor, disk space, rust cli, monorepo, lockfile safety, npm, pnpm, yarn, bun, uv, pip, cargo, go, developer tools" />
+    <meta name="author" content="VKrishna04" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <link rel="canonical" href="https://devprune.vkrishna04.me/" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="dev-prune" />
+    <meta property="og:url" content="https://devprune.vkrishna04.me/" />
+    <meta property="og:title" content="dev-prune (devp) — Lockfile-Safe Workspace Pruner" />
+    <meta property="og:description" content="Reclaim disk space from idle Git repositories. Nothing is deleted until a lockfile proves it can be rebuilt. Eight package managers, any number of them per repository." />
+    <meta property="og:image" content="https://devprune.vkrishna04.me/assets/banner.png" />
+    <meta property="og:image:alt" content="dev-prune — universal, lockfile-safe workspace pruner" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://devprune.vkrishna04.me/" />
+    <meta name="twitter:title" content="dev-prune (devp) — Lockfile-Safe Workspace Pruner" />
+    <meta name="twitter:description" content="Reclaim disk space from idle Git repositories. Nothing is deleted until a lockfile proves it can be rebuilt." />
+    <meta name="twitter:image" content="https://devprune.vkrishna04.me/assets/banner.png" />
+
+    <!-- Favicons -->
+    <link rel="icon" type="image/png" href="/assets/favicon/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon/favicon.svg" />
+    <link rel="shortcut icon" href="/assets/favicon/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="dev-prune" />
+    <link rel="manifest" href="/assets/favicon/site.webmanifest" />
+
+    <!-- For AI agents and crawlers that read structured summaries -->
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt" />
+
+    <!-- Structured data. Kept in step with the README and CLI reference. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://devprune.vkrishna04.me/#app",
+          "name": "dev-prune",
+          "alternateName": "devp",
+          "url": "https://devprune.vkrishna04.me/",
+          "downloadUrl": "https://github.com/Life-Experimentalist/dev-prune/releases",
+          "codeRepository": "https://github.com/Life-Experimentalist/dev-prune",
+          "operatingSystem": "Windows, macOS, Linux",
+          "applicationCategory": "DeveloperApplication",
+          "applicationSubCategory": "Command Line Utility",
+          "softwareVersion": "1.0.0",
+          "programmingLanguage": "Rust",
+          "license": "https://www.apache.org/licenses/LICENSE-2.0",
+          "isAccessibleForFree": true,
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+          "description": "Universal, lockfile-safe workspace pruner and background dependency cleaner. Deletes node_modules, .venv, target and vendor from idle Git repositories only after the package manager confirms a lockfile can rebuild them.",
+          "featureList": [
+            "Lockfile-verified deletion that no flag can bypass",
+            "Eight package managers: npm, pnpm, yarn, bun, uv, pip/venv, cargo, go",
+            "Any number of ecosystems per repository, at any depth",
+            "Idle detection from git log and source file modification times",
+            "One-command dependency restore",
+            "OS-native scheduler and Git hook auto-registration, chainable alongside husky or pre-commit",
+            "Machine-readable --json output for every reporting command",
+            "No telemetry, no diagnostics, no usage data"
+          ],
+          "author": { "@type": "Person", "name": "VKrishna04" }
+        },
+        {
+          "@type": "FAQPage",
+          "@id": "https://devprune.vkrishna04.me/#faq",
+          "mainEntity": [
+            {
+              "@type": "Question",
+              "name": "Can dev-prune delete something I cannot get back?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "No directory is removed until its package manager has confirmed a usable lockfile. If verification fails the directory is left alone and dev-prune prints the exact command to fix it. No flag bypasses this, including --ignore-idle."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "What does --ignore-idle do, and what happened to --force?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "--ignore-idle lifts only the idle-day wait, so a repository you are actively working in becomes a candidate. Lockfile verification still runs and still has to pass. It was called --force until 1.0.0; that spelling still works and prints a note, because 'force' wrongly suggested it could override the safety checks."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Does dev-prune work on monorepos with several package managers?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes. It walks the repository root and, by default, six levels below it — configurable with devp config set scan_depth N — and every directory a package manager recognises is verified and pruned on its own terms: uv, npm and cargo in one root, or spread across frontend/, services/api/ and tools/cli/."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Does dev-prune send anything over the network?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "There is no telemetry, no diagnostics and no usage data of any kind. dev-prune makes exactly one request: an unauthenticated GET to GitHub's public releases endpoint so it can tell you when a newer version exists. It has no body and carries no identifier, it runs at most once a week, and devp config set update_check false switches it off. Everything else on the wire is your own package manager during lockfile verification or restore."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "How do I get my dependencies back after a prune?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Run devp restore in the project, or devp restore <path>. Each project in the tree is reinstalled by its own manager: npm ci, pnpm install --frozen-lockfile, uv sync, go mod vendor, and so on."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is dev-prune free?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes. It is open source under the Apache-2.0 licence and free for personal and commercial use."
+              }
+            }
+          ]
+        }
+      ]
+    }
+    </script>
+
+    <!-- Runs before the first paint, which is the whole point: the prerendered HTML
+         is theme-agnostic, so the palette has to be resolved here or the page would
+         flash the default dark and then repaint.
+
+         `.js` marks the document so entrance animations only apply where JS can
+         finish them — without it, a no-JS visitor or a crawler is served hidden
+         content. A no-JS visitor also keeps the dark default, since nothing can
+         read their stored choice or their `prefers-color-scheme`. -->
+    <script>
+      (function () {
+        var root = document.documentElement;
+        root.classList.add('js');
+        var choice = 'system';
+        try {
+          choice = localStorage.getItem('devprune-theme') || 'system';
+        } catch (e) {
+          /* private mode, or storage disabled — fall through to system */
+        }
+        if (choice !== 'light' && choice !== 'dark') choice = 'system';
+        var resolved = choice;
+        if (choice === 'system') {
+          var prefersLight =
+            !!window.matchMedia &&
+            window.matchMedia('(prefers-color-scheme: light)').matches;
+          resolved = prefersLight ? 'light' : 'dark';
+        }
+        root.dataset.themeChoice = choice;
+        root.dataset.theme = resolved;
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', resolved === 'light' ? '#ffffff' : '#0b0f17');
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"><!--app-html--></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+# Rust build artifacts
+/target
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal agent config. The dev-prune skill itself is NOT ignored: it is compiled into
+# the binary with include_str!, so a clone without it does not build.
+GEMINI.md
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/dev-prune/
+
+# dev-prune's own per-repo config, when developing against itself
+.devprune.json
+ignore.devprune.json
+
+# Release archives are published as GitHub Release assets, never committed.
+/releases/

@@ -1,0 +1,68 @@
+name: Deploy site
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "scripts/install.*"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      # The install one-liners point at https://devprune.vkrishna04.me/install.sh, so
+      # the scripts have to be served from the site root. Copying them at build time
+      # keeps scripts/ the single source of truth instead of maintaining two copies.
+      - name: Stage the install scripts into the site
+        run: cp scripts/install.sh scripts/install.ps1 site/public/
+
+      - name: Build
+        run: npm ci && npm run build
+        working-directory: site
+
+      - name: Verify what actually shipped
+        run: |
+          test -s site/dist/install.sh
+          test -s site/dist/install.ps1
+          test -s site/dist/index.html
+          test -s site/dist/llms.txt
+          test -s site/dist/robots.txt
+          test -s site/dist/sitemap.xml
+          # The page is prerendered so crawlers and no-JS visitors get real content.
+          # These strings only exist in markup React rendered at build time.
+          grep -q 'Reclaim' site/dist/index.html
+          grep -q '<footer' site/dist/index.html
+          # The placeholder must have been substituted, not shipped verbatim.
+          ! grep -q '<!--app-html-->' site/dist/index.html
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

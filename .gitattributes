@@ -1,0 +1,4 @@
+# A shell script checked out with CRLF fails on its shebang line — `/usr/bin/env sh\r`
+# is not a program. CI runs scripts/*.sh on Linux and macOS, and install.sh runs on
+# Windows under Git Bash, so these must be LF wherever they are cloned.
+*.sh text eol=lf

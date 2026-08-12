@@ -1,0 +1,67 @@
+name: Bug report
+description: Something dev-prune did that it should not have, or did not do that it should have.
+labels: ["bug", "needs triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. If dev-prune **deleted something it should not have**, please
+        say so in the title — that is the highest-priority class of bug in this project.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what you got instead.
+      placeholder: |
+        I ran `devp run --dry-run` in ~/Code and …
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence that shows the problem. A throwaway repository is ideal.
+      placeholder: |
+        1. mkdir demo && cd demo && git init
+        2. npm init -y && npm i left-pad
+        3. devp link .
+        4. devp run --force
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Output of `devp -V`
+      description: This includes the version, OS, architecture, config path and PATH audit.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: setup-status
+    attributes:
+      label: Output of `devp setup --status`
+      description: Only needed for hook, scheduler, alias or "it installed something I did not expect" reports.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: managers
+    attributes:
+      label: Package managers involved
+      placeholder: pnpm 9.12.0, uv 0.4.20, cargo 1.85.0
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Full command output
+      description: Paste the whole thing, including any fix snippet dev-prune printed.
+      render: shell
+    validations:
+      required: false

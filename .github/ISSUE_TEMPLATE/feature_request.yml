@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest a capability, a flag, or a change in behaviour.
+labels: ["enhancement", "needs triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that dev-prune makes hard or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like it to do
+      description: If it is a new command or flag, show the invocation you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you have tried instead
+      description: Existing flags, config keys, or other tools — and why they fall short.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety
+      description: >
+        dev-prune will not delete anything it cannot prove is recoverable, and no flag
+        bypasses lockfile verification. Requests to add one will be declined.
+      options:
+        - label: This request does not ask for a way to skip lockfile verification.
+          required: true

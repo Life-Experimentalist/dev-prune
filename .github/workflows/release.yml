@@ -1,0 +1,347 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v1.0.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The asset names below are a contract with scripts/install.sh and scripts/install.ps1,
+  # which construct the download URL as:
+  #   dev-prune-v<version>-<os>-<arch>.<tar.gz|zip>
+  # and refuse to install without the matching .sha256 sidecar. Renaming anything here
+  # breaks every one-line install until the scripts are changed to match.
+  build:
+    name: ${{ matrix.os_name }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl, not gnu, and deliberately so. A glibc build carries a floor — it
+          # refuses to start on any distribution older than the runner that produced
+          # it, and does not run on Alpine or anything else musl-based at all. A
+          # statically linked musl binary has no floor and no libc dependency, so one
+          # asset per architecture covers every Linux distribution. Nothing here links
+          # OpenSSL (`ureq` is built on rustls with bundled roots), so static linking
+          # costs nothing.
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            os_name: linux
+            arch: x64
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            os_name: linux
+            arch: arm64
+          - target: x86_64-apple-darwin
+            runner: macos-latest
+            os_name: darwin
+            arch: x64
+          - target: aarch64-apple-darwin
+            runner: macos-latest
+            os_name: darwin
+            arch: arm64
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            os_name: windows
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            runner: windows-latest
+            os_name: windows
+            arch: arm64
+
+    steps:
+      # Explicitly the tag. On a `workflow_dispatch` run the default checkout is the
+      # branch the workflow was launched from, so without this the job would build
+      # `main` and ship it under the tag's name.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Resolve version from tag
+        id: version
+        shell: bash
+        run: |
+          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+
+      # Before the build, not after: a mismatch fails all six matrix jobs, and there is
+      # no reason to spend six release builds discovering it. A tag that does not match
+      # Cargo.toml ships a binary whose `--version` lies and whose release check compares
+      # against the wrong value.
+      - name: Verify Cargo.toml version matches the tag
+        shell: bash
+        run: |
+          crate_version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+          if [ "$crate_version" != "${{ steps.version.outputs.version }}" ]; then
+            echo "Cargo.toml is $crate_version but the tag is ${{ steps.version.outputs.version }}" >&2
+            exit 1
+          fi
+
+      # Same reasoning, one step later: the release body comes out of CHANGELOG.md, so
+      # a missing section should stop the release before six builds run, not after.
+      - name: Verify CHANGELOG.md documents this version
+        shell: bash
+        run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > /dev/null
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # `ring`, the crypto backend under rustls, compiles C. Against musl it needs
+      # `musl-gcc`, which is not on the runner image by default.
+      - name: Install musl toolchain
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # A Linux asset that turns out to be dynamically linked would still work on the
+      # runner and fail on Alpine, which is exactly the bug this target exists to
+      # prevent — so prove it before publishing rather than after.
+      - name: Verify the Linux binary is static
+        if: endsWith(matrix.target, '-musl')
+        run: |
+          bin="target/${{ matrix.target }}/release/dev-prune"
+          if file "$bin" | grep -q "dynamically linked"; then
+            file "$bin" >&2
+            echo "expected a statically linked binary" >&2
+            exit 1
+          fi
+          file "$bin"
+
+      - name: Package (unix)
+        if: matrix.os_name != 'windows'
+        shell: bash
+        run: |
+          asset="dev-prune-v${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
+          tar -czf "$asset" -C "target/${{ matrix.target }}/release" dev-prune
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$asset" > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" > "$asset.sha256"
+          fi
+
+      - name: Package (windows)
+        if: matrix.os_name == 'windows'
+        shell: pwsh
+        run: |
+          $asset = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.zip"
+          Compress-Archive -Path "target/${{ matrix.target }}/release/dev-prune.exe" -DestinationPath $asset
+          $hash = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
+          # Two spaces: the sha256sum format the install scripts parse.
+          "$hash  $asset" | Out-File -FilePath "$asset.sha256" -Encoding ascii -NoNewline
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dev-prune-${{ matrix.os_name }}-${{ matrix.arch }}
+          path: |
+            dev-prune-v*.tar.gz
+            dev-prune-v*.zip
+            dev-prune-v*.sha256
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Resolve version from tag
+        id: version
+        run: |
+          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -lh dist
+
+      # The release body is the changelog entry, not a generated commit list. The commit
+      # list is still appended by `generate_release_notes` below, so nothing is lost —
+      # but what a reader sees first is the prose that was written deliberately.
+      - name: Build the release body from CHANGELOG.md
+        run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > release-body.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/*
+          body_path: release-body.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  # npm carries the binaries themselves, not a postinstall downloader. Seven packages go
+  # out: six platform packages holding one executable each, marked with `os`/`cpu` so npm
+  # resolves exactly one of them, and the `dev-prune` dispatcher that lists all six as
+  # optionalDependencies. A postinstall download would break `npm ci --ignore-scripts`,
+  # offline installs and every locked-down CI runner; this layout does not.
+  #
+  # Order matters and is not an optimisation: the dispatcher is published last, because
+  # the moment it exists npm will try to resolve its optionalDependencies, and a version
+  # that is not on the registry yet resolves to nothing.
+  publish-npm:
+    name: Publish to npm
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required by `npm publish --provenance`: npm exchanges this token for a signed
+      # attestation tying the tarball to this workflow, this commit and this tag.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Build the packages from the release assets
+        run: sh scripts/npm-prepare.sh "${{ needs.publish.outputs.version }}" dist npm-dist
+
+      # A prerelease published as `latest` becomes what every `npm install dev-prune`
+      # gets. Tags with a `-` go out under `next` instead, which is what the dist-tag
+      # exists for.
+      - name: Choose the dist-tag
+        id: tag
+        run: |
+          version="${{ needs.publish.outputs.version }}"
+          case "$version" in
+            *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.publish.outputs.version }}
+          DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is not set — skipping the npm publish."
+            exit 0
+          fi
+          set -eu
+          for pkg in \
+            dev-prune-linux-x64 dev-prune-linux-arm64 \
+            dev-prune-darwin-x64 dev-prune-darwin-arm64 \
+            dev-prune-win32-x64 dev-prune-win32-arm64 \
+            dev-prune
+          do
+            # Re-running a release is a normal thing to do after fixing one failed job.
+            # Without this, the second run dies on EPUBLISHCONFLICT at whichever package
+            # succeeded the first time and never reaches the ones that did not.
+            if npm view "$pkg@$VERSION" version >/dev/null 2>&1; then
+              echo "$pkg@$VERSION is already on the registry — skipping."
+              continue
+            fi
+            echo "publishing $pkg@$VERSION under --tag $DIST_TAG"
+            npm publish "npm-dist/$pkg" --provenance --tag "$DIST_TAG"
+          done
+
+  # PyPI, for `uv tool install dev-prune`, `uvx dev-prune` and `pipx run dev-prune`.
+  # Nothing about dev-prune is Python; PyPI is simply where those three installers look,
+  # and each wheel is a zip holding one prebuilt executable. uv and ruff ship themselves
+  # exactly this way.
+  #
+  # Gated on a repository variable rather than on a secret, because Trusted Publishing
+  # uses no secret — there would be nothing to test for. Set PYPI_PUBLISH to "true" in
+  # the repository variables once the PyPI side is configured; see docs/RELEASING.md.
+  publish-pypi:
+    name: Publish to PyPI
+    needs: publish
+    runs-on: ubuntu-latest
+    if: vars.PYPI_PUBLISH == 'true'
+    environment:
+      name: pypi
+      url: https://pypi.org/p/dev-prune
+    permissions:
+      contents: read
+      # Trusted Publishing: PyPI accepts this short-lived OIDC token in place of an API
+      # token, so no long-lived credential has to exist anywhere. The binding on the
+      # PyPI side names this workflow file and this environment, so both are fixed.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Deliberately into a directory of its own: the action uploads everything in the
+      # target directory, and `dist/` is full of tarballs and zips that are not wheels.
+      - name: Build the wheels from the release assets
+        run: python scripts/build_wheels.py "${{ needs.publish.outputs.version }}" dist wheels
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: wheels
+
+  # crates.io is published only after every platform built and the release exists, so a
+  # failed build never leaves an unyankable version behind.
+  #
+  # The prerelease gate reads the *tag*, not `github.ref_name`. On a `workflow_dispatch`
+  # run `ref_name` is the branch the workflow was launched from — `main`, which contains
+  # no `-` — so gating on it would push `v1.0.0-rc1` to crates.io as a real release.
+  # A crates.io version cannot be deleted, only yanked.
+  publish-crate:
+    name: Publish to crates.io
+    needs: publish
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Check out the tag being released, not the default branch. A dispatch run
+          # would otherwise publish whatever is on `main` under the tag's name.
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "CARGO_REGISTRY_TOKEN is not set — skipping crates.io publish."
+            exit 0
+          fi
+          cargo publish --locked

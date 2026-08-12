@@ -1,0 +1,288 @@
+/* ================================================================
+   Theming: light, dark, and "follow the browser".
+
+   `index.css` holds the dark palette on `:root` and it is the default.
+   This file holds the light one, plus the control that switches between
+   them. The inline script in index.html resolves the stored choice — or
+   `prefers-color-scheme` when the choice is "system" — onto <html> as
+   `data-theme` before the first paint, so there is no flash and the
+   prerendered markup never has to know which theme is active.
+
+   Two attributes, two jobs:
+     data-theme        light | dark   — what is being rendered right now
+     data-theme-choice light | dark | system — what the visitor picked
+   ================================================================ */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-dark: #ffffff;
+  --bg-card: #f8fafc;
+  --bg-card-hover: #f1f5f9;
+  --bg-deep: #f1f5f9;
+  --border-color: #e2e8f0;
+  --text-main: #0f172a;
+  --text-muted: #475569;
+  --primary: #059669;
+  --primary-glow: rgba(5, 150, 105, 0.25);
+  --secondary: #2563eb;
+  --purple: #7c3aed;
+  --yellow: #b45309;
+  --cyan: #0e7490;
+
+  --on-primary: #ffffff;
+
+  --nav-bg: rgba(255, 255, 255, 0.85);
+  --table-head: rgba(15, 23, 42, 0.05);
+  --table-hover: rgba(15, 23, 42, 0.03);
+  --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 20px 50px rgba(15, 23, 42, 0.14);
+  --glow-1: rgba(16, 185, 129, 0.14);
+  --glow-2: rgba(59, 130, 246, 0.1);
+}
+
+/* The terminal mock and the JSON block keep their dark background in light
+   mode, so their frame has to stop borrowing the page's light border. */
+:root[data-theme="light"] .terminal-container,
+:root[data-theme="light"] .terminal-header,
+:root[data-theme="light"] .info-card pre {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* Repainting every surface at once looks like a glitch; a short crossfade
+   reads as a deliberate switch. Skipped for anyone who asked for less motion. */
+body,
+.navbar,
+.f-card,
+.step-card,
+.info-card,
+.faq-item,
+.mono-card,
+.table-scroll,
+.install-widget,
+.calculator-box {
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease,
+    color 0.25s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body,
+  .navbar,
+  .f-card,
+  .step-card,
+  .info-card,
+  .faq-item,
+  .mono-card,
+  .table-scroll,
+  .install-widget,
+  .calculator-box {
+    transition: none;
+  }
+}
+
+/* ----------------------------------------------------------------
+   The control itself: a day/night switch plus an "Auto" chip.
+
+   Every visual state is driven by the attributes on <html> rather than
+   by React state, so the server-rendered markup and the hydrated markup
+   are byte-identical and the theme is already correct at first paint.
+   ---------------------------------------------------------------- */
+
+.theme-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.theme-auto {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.theme-auto:hover {
+  color: var(--text-main);
+  border-color: var(--primary);
+}
+:root[data-theme-choice="system"] .theme-auto {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+/* Day/night switch. Adapted from the shared toggle template, scaled to
+   navbar height and re-pointed at [data-theme] instead of :checked so it
+   also reflects a system preference the visitor never clicked. */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 58px;
+  height: 29px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.switch__label {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background-color: #2b2b2b;
+  border: 2px solid #5b5b5b;
+  border-radius: 9999px;
+  transition: all 0.4s cubic-bezier(0.46, 0.03, 0.52, 0.96);
+  pointer-events: none;
+}
+
+.switch__indicator {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) translateX(-72%);
+  display: block;
+  width: 19px;
+  height: 19px;
+  background-color: #7b7b7b;
+  border-radius: 9999px;
+  box-shadow: 5px 0 0 0 rgba(0, 0, 0, 0.2) inset;
+  transition: all 0.4s cubic-bezier(0.46, 0.03, 0.52, 0.96);
+}
+
+.switch__indicator::before,
+.switch__indicator::after {
+  position: absolute;
+  content: "";
+  display: block;
+  background-color: #ffffff;
+  border-radius: 9999px;
+  transition: all 0.4s cubic-bezier(0.46, 0.03, 0.52, 0.96);
+}
+.switch__indicator::before {
+  top: 3px;
+  left: 3px;
+  width: 4px;
+  height: 4px;
+  opacity: 0.6;
+}
+.switch__indicator::after {
+  bottom: 4px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  opacity: 0.8;
+}
+
+.switch__decoration {
+  position: absolute;
+  top: 65%;
+  left: 50%;
+  display: block;
+  width: 2.5px;
+  height: 2.5px;
+  background-color: #ffffff;
+  border-radius: 9999px;
+  animation: twinkle 0.8s infinite -0.6s;
+}
+.switch__decoration::before,
+.switch__decoration::after {
+  position: absolute;
+  display: block;
+  content: "";
+  width: 2.5px;
+  height: 2.5px;
+  background-color: #ffffff;
+  border-radius: 9999px;
+}
+.switch__decoration::before {
+  top: -9px;
+  left: 5px;
+  opacity: 1;
+  animation: twinkle 0.6s infinite;
+}
+.switch__decoration::after {
+  top: -3px;
+  left: 14px;
+  animation: twinkle 0.6s infinite -0.2s;
+}
+
+@keyframes twinkle {
+  50% {
+    opacity: 0.2;
+  }
+}
+
+/* Daytime */
+:root[data-theme="light"] .switch__label {
+  background-color: #8fb5f5;
+  border-color: #347cf8;
+}
+:root[data-theme="light"] .switch__indicator {
+  background-color: #ecd21f;
+  box-shadow: none;
+  transform: translate(-50%, -50%) translateX(72%);
+}
+:root[data-theme="light"] .switch__indicator::before,
+:root[data-theme="light"] .switch__indicator::after {
+  opacity: 0;
+}
+:root[data-theme="light"] .switch__decoration {
+  top: 50%;
+  transform: translate(0%, -50%);
+  animation: cloud 8s linear infinite;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px 9999px 0 0;
+}
+:root[data-theme="light"] .switch__decoration::before {
+  width: 5px;
+  height: 5px;
+  top: auto;
+  bottom: 0;
+  left: -4px;
+  animation: none;
+  border-radius: 9999px 9999px 0 0;
+}
+:root[data-theme="light"] .switch__decoration::after {
+  width: 7px;
+  height: 7px;
+  top: auto;
+  bottom: 0;
+  left: 8px;
+  animation: none;
+  border-radius: 9999px 9999px 0 9999px;
+}
+
+@keyframes cloud {
+  0% {
+    transform: translate(0%, -50%);
+  }
+  50% {
+    transform: translate(-50%, -50%);
+  }
+  100% {
+    transform: translate(0%, -50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .switch__label,
+  .switch__indicator,
+  .switch__indicator::before,
+  .switch__indicator::after,
+  .switch__decoration,
+  :root[data-theme="light"] .switch__decoration {
+    transition: none;
+    animation: none;
+  }
+}

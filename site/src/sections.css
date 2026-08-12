@@ -1,0 +1,487 @@
+/* ================================================================
+   v1.0.0 landing page — styles for the sections added in the rebuild.
+   Kept in its own file so index.css stays the source of truth for the
+   original design language: colours, spacing, hero, terminal, footer.
+   ================================================================ */
+
+/* Accessibility --------------------------------------------------- */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  background: var(--primary);
+  color: var(--on-primary);
+  padding: 0.6rem 1rem;
+  border-radius: 0 0 8px 0;
+  font-weight: 700;
+}
+.skip-link:focus {
+  left: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* In-page navigation -----------------------------------------------
+   `html { scroll-behavior: smooth }` in index.css animates the jump; this
+   keeps the sticky navbar from covering the heading it just scrolled to. */
+section[id],
+[id="top"] {
+  scroll-margin-top: 5.5rem;
+}
+
+/* Reveal on scroll ------------------------------------------------
+   Only a document carrying `.js` hides anything. A crawler, reader
+   mode, or a browser with scripting off gets the content outright. */
+.js .reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.js .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .js .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .bg-glow,
+  .glow-pulse {
+    animation: none !important;
+  }
+}
+
+/* Hero additions --------------------------------------------------- */
+.install-note {
+  margin-top: 0.6rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.hero-alias {
+  margin: -0.75rem 0 1.75rem;
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--primary);
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+.hero-alias strong {
+  color: var(--text-main);
+}
+.hero-alias code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  color: var(--primary);
+}
+
+.hero-stats {
+  display: flex;
+  gap: 2.5rem;
+  margin-top: 2rem;
+  flex-wrap: wrap;
+}
+.hero-stats > div {
+  display: flex;
+  flex-direction: column;
+}
+.hero-stats strong {
+  font-size: 1.8rem;
+  line-height: 1.1;
+  background: linear-gradient(120deg, var(--primary), var(--cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero-stats span {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+/* Shared section furniture ------------------------------------------ */
+.container.narrow {
+  max-width: 860px;
+}
+.center {
+  text-align: center;
+}
+.muted {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.section-footnote {
+  margin-top: 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+.section-footnote a {
+  color: var(--primary);
+  text-decoration: none;
+}
+.section-footnote a:hover {
+  text-decoration: underline;
+}
+
+/* Numbered "how it works" steps -------------------------------------- */
+.steps-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1.25rem;
+  margin-top: 2.5rem;
+}
+.step-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 1.75rem 1.25rem 1.25rem;
+  transition:
+    border-color 0.25s,
+    transform 0.25s;
+}
+.step-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-4px);
+}
+.step-num {
+  position: absolute;
+  top: -0.9rem;
+  left: 1.25rem;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--on-primary);
+  background: linear-gradient(135deg, var(--primary), var(--cyan));
+  box-shadow: 0 0 18px var(--primary-glow);
+}
+.step-card h3 {
+  font-size: 1.05rem;
+  margin-bottom: 0.5rem;
+}
+.step-card p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+.step-card code,
+.info-card code,
+.faq-answer code,
+.section-footnote code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--cyan);
+}
+
+/* Data tables -------------------------------------------------------- */
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  background: var(--bg-card);
+  margin-top: 2rem;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  min-width: 640px;
+}
+.data-table th {
+  text-align: left;
+  padding: 0.9rem 1rem;
+  background: var(--table-head);
+  color: var(--text-main);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 0.8rem 1rem;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-muted);
+  vertical-align: top;
+}
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.data-table tbody tr:hover {
+  background: var(--table-hover);
+}
+.data-table .td-name {
+  color: var(--text-main);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.data-table code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--cyan);
+  white-space: nowrap;
+}
+.tag-ro {
+  display: inline-block;
+  margin-left: 0.4rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--yellow);
+  border: 1px solid var(--yellow);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+}
+
+/* Per-language adapter groups -------------------------------------------- */
+.eco-group + .eco-group {
+  margin-top: 3rem;
+}
+.eco-group-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.eco-group-head h3 {
+  font-size: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.eco-group-head p {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  margin-bottom: 0.75rem;
+}
+.eco-group .table-scroll {
+  margin-top: 1rem;
+}
+.eco-tiebreak {
+  margin-top: 1rem;
+  padding: 0.9rem 1.1rem;
+  border-left: 2px solid var(--secondary);
+  background: var(--table-hover);
+  border-radius: 0 10px 10px 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.75;
+}
+.eco-tiebreak strong {
+  color: var(--text-main);
+}
+.eco-tiebreak code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--cyan);
+}
+.eco-contribute {
+  margin-top: 2.5rem;
+}
+
+.dot-note {
+  max-width: 780px;
+  margin: 0.9rem auto 0;
+  font-size: 0.95rem;
+}
+
+/* Monorepo layout examples --------------------------------------------- */
+.mono-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.25rem;
+  margin-top: 1.75rem;
+}
+.mono-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 1.25rem;
+}
+.mono-card h4 {
+  font-size: 0.9rem;
+  margin-bottom: 0.75rem;
+  color: var(--text-main);
+}
+.mono-card pre {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--primary);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Split info cards ------------------------------------------------------ */
+.split-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1.25rem;
+  margin-top: 2rem;
+}
+.info-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 1.5rem;
+  transition: border-color 0.25s;
+}
+.info-card:hover {
+  border-color: var(--secondary);
+}
+.info-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 1rem;
+  margin-bottom: 0.9rem;
+}
+.info-card ul {
+  list-style: none;
+  display: grid;
+  gap: 0.55rem;
+}
+.info-card li {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.info-card p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+.info-card p + p {
+  margin-top: 0.75rem;
+}
+.info-card a {
+  color: var(--primary);
+  text-decoration: none;
+}
+.info-card a:hover {
+  text-decoration: underline;
+}
+.info-card pre {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--term-yellow);
+  background: var(--code-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.9rem;
+  overflow-x: auto;
+}
+
+.cmd-line.small {
+  margin-bottom: 0.75rem;
+}
+
+/* FAQ -------------------------------------------------------------------- */
+.faq-list {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 2rem;
+}
+.faq-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.25s;
+}
+.faq-item[open] {
+  border-color: var(--primary);
+}
+.faq-item summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+.faq-item summary::-webkit-details-marker {
+  display: none;
+}
+.faq-chevron {
+  transition: transform 0.25s;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.faq-item[open] .faq-chevron {
+  transform: rotate(180deg);
+  color: var(--primary);
+}
+.faq-answer {
+  padding: 0 1.25rem 1.25rem;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.75;
+}
+
+/* Closing call to action --------------------------------------------------- */
+.cta-section .cta-cmds {
+  display: grid;
+  /* An implicit `auto` track sizes to max-content and is not capped by the
+     container, so the one-liners inside would push the column past the edge of
+     a phone screen. minmax(0, 1fr) caps the column and lets each command scroll
+     inside its own box. */
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.75rem;
+  margin: 2rem 0 1.25rem;
+  text-align: left;
+}
+
+/* Footer additions ---------------------------------------------------------- */
+.footer-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+.footer-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-weight: 600;
+}
+.footer-tagline {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-size: 0.9rem;
+}
+.footer-links {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 720px) {
+  .hero-stats {
+    gap: 1.5rem;
+  }
+  .footer-content {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

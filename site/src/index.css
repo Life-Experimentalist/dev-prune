@@ -1,0 +1,831 @@
+/* Reset & Variables
+   ------------------------------------------------------------------
+   The dark palette lives here and is the default. `theme.css` carries the
+   light one under `:root[data-theme="light"]`, and the inline script in
+   index.html resolves the visitor's choice — light, dark, or whatever the
+   browser reports — onto <html> before the first paint. */
+:root {
+  color-scheme: dark;
+
+  --bg-dark: #0b0f17;
+  --bg-card: #111827;
+  --bg-card-hover: #1f2937;
+  --bg-deep: #0e131f;
+  --border-color: #1f293d;
+  --text-main: #f9fafb;
+  --text-muted: #9ca3af;
+  --primary: #10b981;
+  --primary-glow: rgba(16, 185, 129, 0.35);
+  --secondary: #3b82f6;
+  --purple: #8b5cf6;
+  --yellow: #facc15;
+  --cyan: #38bdf8;
+  --red: #f87171;
+
+  /* Text that sits on top of a --primary fill. */
+  --on-primary: #04120c;
+
+  --nav-bg: rgba(11, 15, 23, 0.85);
+  --table-head: rgba(22, 32, 49, 0.55);
+  --table-hover: rgba(22, 32, 49, 0.35);
+  --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.6);
+  --glow-1: rgba(16, 185, 129, 0.15);
+  --glow-2: rgba(59, 130, 246, 0.12);
+
+  /* The terminal mock and the JSON sample stay dark in both themes — they
+     depict a terminal, and a white one would be a lie about the thing being
+     shown. Their colours therefore never come from the palette above. */
+  --term-bg: #0d1117;
+  --term-header: #161b22;
+  --term-text: #e6edf3;
+  --term-dim: #6b7280;
+  --term-green: #10b981;
+  --term-yellow: #facc15;
+  --term-blue: #3b82f6;
+  --term-cyan: #38bdf8;
+  --term-red: #f87171;
+  --code-bg: #090d14;
+
+  --font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Custom Sleek Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-dark);
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--primary), var(--secondary));
+  border-radius: 999px;
+  border: 2px solid var(--bg-dark);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+  box-shadow: 0 0 10px var(--primary-glow);
+}
+
+/* Firefox Scrollbar Support */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary) var(--bg-dark);
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  font-family: var(--font-family);
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+/* Ambient Background Glows */
+.bg-glow {
+  position: absolute;
+  width: 600px;
+  height: 600px;
+  border-radius: 50%;
+  filter: blur(140px);
+  pointer-events: none;
+  z-index: 0;
+}
+.bg-glow-1 {
+  top: -150px;
+  left: 15%;
+  background: var(--glow-1);
+  animation: floatGlow 10s ease-in-out infinite alternate;
+}
+.bg-glow-2 {
+  top: 500px;
+  right: 5%;
+  background: var(--glow-2);
+  animation: floatGlow 12s ease-in-out infinite alternate-reverse;
+}
+
+@keyframes floatGlow {
+  0% {
+    transform: translate(0, 0);
+  }
+  100% {
+    transform: translate(30px, 30px);
+  }
+}
+
+/* Navbar */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--nav-bg);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0.85rem 0;
+}
+
+.nav-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+  color: var(--text-main);
+  font-weight: 700;
+  font-size: 1.3rem;
+}
+
+.logo-box {
+  width: 34px;
+  height: 34px;
+  /* background: linear-gradient(135deg, var(--primary), var(--secondary)); */
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+  box-shadow: 0 0 15px var(--primary-glow);
+}
+
+.version-tag {
+  font-size: 0.75rem;
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--primary);
+  border: 1px solid var(--primary);
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.nav-links a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.95rem;
+  transition: color 0.2s;
+}
+
+.nav-links a:hover {
+  color: var(--text-main);
+}
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.25rem;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-secondary {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+}
+
+.btn-secondary:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--primary);
+}
+
+/* Hero */
+.hero {
+  padding: 5rem 0 4rem;
+  position: relative;
+  z-index: 1;
+}
+
+.hero-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  gap: 3rem;
+  align-items: center;
+}
+
+/* Grid items also default to min-width:auto. The terminal mock renders
+   `white-space: pre` lines, so without this the column is as wide as the
+   longest line and the whole hero overflows a phone. */
+.hero-text,
+.terminal-container {
+  min-width: 0;
+}
+
+@media (max-width: 968px) {
+  .hero-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pill-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: var(--primary);
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 1.5rem;
+}
+
+.glow-pulse {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.2);
+}
+
+.hero-title {
+  font-size: 3rem;
+  font-weight: 800;
+  line-height: 1.15;
+  margin-bottom: 1.25rem;
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--primary), var(--secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-description {
+  color: var(--text-muted);
+  font-size: 1.15rem;
+  margin-bottom: 2rem;
+}
+
+.hero-description code {
+  color: var(--primary);
+  background: var(--bg-card);
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+}
+
+/* Install Widget - Expanded width to fit long PowerShell URL without scrollbar */
+.install-widget {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  max-width: 650px;
+  width: 100%;
+}
+
+.widget-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.widget-tabs button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  /* Six channels have to fit the hero column on a laptop before the row wraps. */
+  padding: 0.6rem 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.widget-tabs button.active {
+  color: var(--primary);
+  border-bottom: 2px solid var(--primary);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.widget-tabs button.disabled-tab {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cmd-line {
+  padding: 0.85rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  gap: 0.75rem;
+}
+
+.cmd-prompt {
+  color: var(--primary);
+  font-weight: bold;
+}
+
+.cmd-code {
+  color: var(--text-main);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  overflow-x: auto;
+  /* A flex item defaults to min-width:auto, which is the width of its content —
+     the overflow-x above would never engage and the long install one-liners
+     would widen the whole card instead of scrolling inside it. */
+  min-width: 0;
+  scrollbar-width: none; /* Hide scrollbar inside command box */
+}
+
+.cmd-code::-webkit-scrollbar {
+  display: none;
+}
+
+.copy-button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  padding: 0.3rem;
+  border-radius: 4px;
+}
+.copy-button:hover {
+  color: var(--text-main);
+}
+
+/* Terminal Window & Multi-Line Renderer */
+.terminal-container {
+  background: var(--term-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  transition: border-color 0.3s;
+}
+
+.terminal-container:hover {
+  border-color: var(--primary);
+}
+
+.terminal-header {
+  background: var(--term-header);
+  padding: 0.65rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.t-dots {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.t-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.t-red {
+  background: #ff5f56;
+}
+.t-yellow {
+  background: #ffbd2e;
+}
+.t-green {
+  background: #27c93f;
+}
+
+.t-cmd-tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.t-cmd-tabs button {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.t-cmd-tabs button.active {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.terminal-window {
+  padding: 1.25rem;
+  min-height: 280px;
+  overflow-x: auto;
+}
+
+.term-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.term-line {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--term-text);
+}
+
+.c-cyan {
+  color: var(--cyan);
+}
+.c-green {
+  color: var(--primary);
+}
+.c-yellow {
+  color: var(--yellow);
+}
+.c-blue {
+  color: var(--secondary);
+}
+.c-red {
+  color: var(--red);
+}
+.c-dim {
+  color: var(--term-dim);
+}
+.c-bold {
+  font-weight: bold;
+  color: var(--term-text);
+}
+
+/* Inside the terminal the accents are pinned to the dark palette, because the
+   terminal itself is. Everywhere else these classes track the active theme. */
+.terminal-window .c-cyan {
+  color: var(--term-cyan);
+}
+.terminal-window .c-green {
+  color: var(--term-green);
+}
+.terminal-window .c-yellow {
+  color: var(--term-yellow);
+}
+.terminal-window .c-blue {
+  color: var(--term-blue);
+}
+.terminal-window .c-red {
+  color: var(--term-red);
+}
+
+/* Section Header */
+.section {
+  padding: 5rem 0;
+  position: relative;
+  z-index: 1;
+}
+
+.bg-card-section {
+  background: var(--bg-deep);
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.section-header {
+  text-align: center;
+  margin-bottom: 3rem;
+}
+
+.section-title {
+  font-size: 2.25rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.section-subtitle {
+  color: var(--text-muted);
+  font-size: 1.1rem;
+}
+
+/* Calculator Box */
+.calculator-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 2.5rem;
+  max-width: 850px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2.5rem;
+  align-items: center;
+  box-shadow: var(--shadow-md);
+}
+
+@media (max-width: 768px) {
+  .calculator-box {
+    grid-template-columns: 1fr;
+  }
+}
+
+.slider-group {
+  margin-bottom: 1.5rem;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.val-badge {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+
+.slider-group input[type="range"] {
+  width: 100%;
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+.calc-result {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid var(--primary);
+  border-radius: 12px;
+  padding: 1.75rem;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.res-icon {
+  color: var(--primary);
+}
+
+.res-title {
+  display: block;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.res-value {
+  display: block;
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: var(--primary);
+  font-family: var(--font-mono);
+}
+
+/* Features Grid */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+}
+
+.f-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 2rem;
+  transition: all 0.25s;
+}
+
+.f-card:hover {
+  transform: translateY(-5px);
+  border-color: var(--primary);
+  box-shadow: 0 10px 25px rgba(16, 185, 129, 0.1);
+}
+
+.f-icon {
+  font-size: 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.f-card h3 {
+  font-size: 1.2rem;
+  margin-bottom: 0.6rem;
+}
+
+.f-card p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.f-card code {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+/* Ecosystem Grid */
+.ecosystem-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.25rem;
+}
+
+.eco-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  transition: border-color 0.2s;
+}
+
+.eco-card:hover {
+  border-color: var(--primary);
+}
+
+.eco-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.eco-card code {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.eco-cmd {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-family: var(--font-mono);
+}
+
+/* Install Grid & Card Header */
+.install-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+}
+
+.inst-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  transition: border-color 0.2s;
+}
+
+.inst-card:hover {
+  border-color: var(--primary);
+}
+
+.inst-disabled {
+  opacity: 0.55;
+}
+
+.inst-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.inst-card-header h4 {
+  font-size: 1rem;
+  color: var(--text-main);
+}
+
+.soon-badge {
+  font-size: 0.7rem;
+  background: rgba(250, 204, 21, 0.15);
+  color: var(--yellow);
+  border: 1px solid var(--yellow);
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.inst-card code {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  word-break: break-all;
+  background: var(--bg-deep);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+
+/* Footer */
+.footer {
+  padding: 3rem 0;
+  border-top: 1px solid var(--border-color);
+}
+
+.footer-flex {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.footer-brand p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.footer-links {
+  display: flex;
+  gap: 1.5rem;
+}
+
+.footer-links a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.footer-links a:hover {
+  color: var(--primary);
+}
+
+/* Narrow screens
+   ------------------------------------------------------------------
+   The six in-page anchors are the only part of the header that cannot fit on a
+   phone. They are hidden rather than folded into a hamburger: every one of them
+   points at a section of this same page, so scrolling already reaches them, and
+   a menu button would be a control that exists only to restore what scrolling
+   does. The theme toggle and the GitHub link stay — neither has an equivalent
+   further down the page. */
+@media (max-width: 860px) {
+  .nav-links > a[href^="#"] {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  /* Brand, theme toggle and GitHub button together are wider than a phone even
+     with the anchors gone, so the header wraps onto a second row — and stops
+     being sticky, because two rows of chrome pinned to the top of a 375px
+     screen costs more than it gives. */
+  .navbar {
+    position: static;
+  }
+
+  .nav-content {
+    flex-wrap: wrap;
+    justify-content: center;
+    row-gap: 0.6rem;
+  }
+
+  .hero-title {
+    font-size: 2.1rem;
+  }
+
+  .section-title {
+    font-size: 1.7rem;
+  }
+
+  .hero,
+  .section {
+    padding: 3rem 0;
+  }
+
+  .container {
+    padding: 0 1rem;
+  }
+
+  .calculator-box {
+    padding: 1.5rem;
+  }
+}

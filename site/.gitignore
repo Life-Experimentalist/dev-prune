@@ -1,0 +1,7 @@
+dist/
+dist-ssr/
+node_modules/
+
+# Copied in by the Pages workflow so the install one-liners resolve from the site root.
+public/install.sh
+public/install.ps1

@@ -1,0 +1,137 @@
+# dev-prune (devp)
+
+> A Rust CLI that reclaims disk space from idle Git repositories by deleting dependency
+> and build directories — `node_modules`, `.venv`, `target`, `vendor` — but only after
+> the project's own package manager confirms a lockfile can rebuild them. Apache-2.0,
+> no analytics and no diagnostics; the only network request is an opt-out release
+> check against GitHub. Windows, macOS, Linux.
+
+Version 1.0.0. Repository: https://github.com/Life-Experimentalist/dev-prune
+
+## What it is
+
+`dev-prune` is the binary; `devp` is the same executable under a second name, and both
+work in every shell. It registers Git repositories, judges each one idle from `git log`
+commit timestamps *and* source file modification times, asks each package manager to
+verify its lockfile, and only then deletes. `devp restore` puts everything back.
+
+Deletion is refused when the lockfile is missing, unparseable, or — for
+`requirements.txt` — lists no packages. No flag bypasses verification, including
+`--ignore-idle`, which lifts only the idle-day wait. That flag was called `--force`
+before 1.0.0; the old spelling still works and prints a note explaining the rename.
+
+## Install
+
+- Linux, macOS, and Windows under Git Bash/MSYS2/Cygwin:
+  `curl -fsSL https://devprune.vkrishna04.me/install.sh | sh`
+- Windows PowerShell: `iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex`
+- npm: `npx dev-prune status`, or `npm install -g dev-prune`
+- Python tooling: `uv tool install dev-prune`, `uvx dev-prune status`,
+  `pipx install dev-prune`, `pip install dev-prune`
+- From source: `cargo install dev-prune` (Rust 1.85+)
+
+The npm and PyPI packages contain the prebuilt binary rather than downloading one in a
+postinstall step, so they install correctly under `npm ci --ignore-scripts`, behind a
+registry mirror, and with no network access. `cargo install` is the only channel that
+compiles on your machine.
+
+Both installers take `--version`/`-Version`, `--bin-dir`/`-BinDir`, `--no-path`/`-NoPath`,
+`--no-auto-setup`/`-NoAutoSetup` and `--help`/`-Help`. Piping into a shell has nowhere to
+put an argument, so passing one means `… | sh -s -- --no-auto-setup` or
+`& ([scriptblock]::Create((iwr -useb …))) -NoAutoSetup`; the equivalent environment
+variables (`DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1`,
+`DEV_PRUNE_NO_AUTO_SETUP=1`) work with the plain one-liner, and a flag wins over its
+variable.
+
+The installers verify the published SHA-256 checksum and refuse to install without one.
+Six prebuilt binaries cover everything: Windows, macOS and Linux, x64 and arm64. The
+Linux builds are statically linked against musl, so there is no per-distribution asset
+and no glibc floor — one file per architecture runs on Debian, Ubuntu, Fedora, RHEL,
+Arch, NixOS and Alpine.
+
+## Commands
+
+- `devp init [PATHS]` — crawl for Git repositories and register them, then run the setup pass
+- `devp link [PATH]` / `devp unlink [PATH]` — register or unregister one repository;
+  `devp unlink --missing` drops every entry whose directory no longer exists
+- `devp undo` — revert the most recent `init` or `link`
+- `devp run [PATH]` — prune every registered repository, or one target
+- `devp status` — interactive dashboard; a plain table when there is no TTY
+- `devp restore [PATH]` — reinstall dependencies for every project in a tree;
+  `devp restore --last-run` restores exactly what the most recent prune pass deleted
+- `devp doctor [PATH]` — diagnose the installation, or one repository with a path
+  (`devp doctor .` names the reason a prune pass would skip it); read-only, runs no
+  package manager, repairs nothing
+- `devp config …` — global settings, per-repo config, scheduler, hooks, file-manager icons;
+  `devp config wizard` walks every setting and runs itself on the first install
+- `devp setup [--status]` — install any missing integration; `--status` only reports
+- `devp skill` — export `SKILL.md` for AI coding assistants
+- `devp update [--offline]` — print the installed version, check GitHub for a newer release, and show the upgrade command
+- `devp uninstall [--deep]` — remove the scheduler, hooks and the `devp` copy; `--deep` clears config
+- `devp -V` — version plus an environment audit
+
+Global flags: `--dry-run`, `--ignore-idle` (`--force` is the deprecated alias),
+`-y`/`--yes`, `--json` on the reporting commands. `devp run --except <name>` prunes
+everything *but* the named repositories, which is the usual way to keep one project
+warm. A `.` for `[PATH]` means the current directory and is accepted everywhere a
+path is.
+Exit codes: `0` success, `1` failure, `2` unusable arguments.
+
+## Supported ecosystems
+
+npm, pnpm, yarn, bun (`node_modules`); uv and pip/venv (`.venv`, any directory holding
+`pyvenv.cfg`); cargo (`target`); go (`vendor`). Every ecosystem is verified read-only by
+default: a lockfile that has drifted from its manifest is refused, not repaired, because
+a prune pass can be started by the OS scheduler and must never leave a modified tracked
+file behind. `devp config set allow_manifest_rewrite true` opts into the rewriting form
+(`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`, `go mod tidy`,
+…), which otherwise runs only when no lockfile exists at all.
+
+A repository may hold any number of these, at the root or up to `scan_depth` levels
+below it — six by default, `devp config set scan_depth N` to change it.
+Where several managers claim the same `node_modules`, the owner is chosen from the
+`packageManager` field, else the bookkeeping files inside the installed tree, else the
+most recently written lockfile. uv wins over plain venv when `uv.lock` or `[tool.uv]` is
+present.
+
+## Configuration
+
+Global settings live in `%APPDATA%\dev-prune` (Windows),
+`~/Library/Application Support/dev-prune` (macOS), `$XDG_CONFIG_HOME/dev-prune` (Linux).
+Fourteen keys, all readable with `devp config get <key>` and writable with
+`devp config set <key> <value>`: `idle_days` (15), `min_size_mb` (0), `scan_depth` (6),
+`require_confirmation` (true), `allow_manifest_rewrite` (false),
+`command_timeout_secs` (600), `auto_setup` (true), `auto_daemon` (true),
+`check_interval_days` (2), `auto_hooks` (true), `auto_hooks_chain` (false),
+`update_check` (true), `update_check_interval_days` (7),
+`update_check_timeout_secs` (5). `devp config wizard` walks through all fourteen, and
+runs itself once on a first install.
+
+Per repository: `ignore.devprune.json` in the root is an instant opt-out;
+`.devprune.json` supports `project_name`, `ignore`, `disable_daemon`, `disable_hooks`,
+and the three overrides `override_idle_days`, `min_size_mb`, `scan_depth`. The other
+global settings have no per-repository form — nothing stops a project from committing its
+`.devprune.json`, so a repository must not be able to grant itself
+`allow_manifest_rewrite`. Both files hold inert data only.
+
+## Background automation
+
+The `devp` second binary, the exported `SKILL.md`, global Git auto-registration hooks, the OS
+scheduler and the file-manager folder icons install themselves at install time, and
+again on `devp init` or after an upgrade if any of them is missing. `devp setup` runs
+the same pass by hand and `devp setup --status` only reports. Hooks are skipped when
+`git` is not on `PATH`. When the global `core.hooksPath` already belongs to husky,
+pre-commit or lefthook, the pass skips the hooks and says so; `devp hook install --chain`
+takes the slot and writes shims that `exec` the displaced directory's same-named hook, so
+both run. Chaining is opt-in — `auto_hooks_chain` defaults to false. Turn any of it off with `auto_setup`/`auto_hooks`/`auto_hooks_chain`/
+`auto_daemon`, or `DEV_PRUNE_NO_AUTO_SETUP=1` in the environment.
+
+## Docs
+
+- Index: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/README.md
+- CLI reference: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/CLI_REFERENCE.md
+- Safety invariants: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/SAFETY_INVARIANTS.md
+- Background automation: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/BACKGROUND_AUTOMATION.md
+- Troubleshooting: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/troubleshooting/README.md
+- Architecture: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/architecture/HLD.md
+- AI skill file: https://github.com/Life-Experimentalist/dev-prune/blob/main/.agents/skills/dev-prune/SKILL.md

@@ -1,0 +1,24 @@
+User-agent: *
+Allow: /
+
+# The whole site is one prerendered page plus static docs assets. Nothing is gated,
+# nothing needs JavaScript, and AI crawlers are explicitly welcome.
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+Sitemap: https://devprune.vkrishna04.me/sitemap.xml

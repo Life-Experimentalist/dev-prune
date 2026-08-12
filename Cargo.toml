@@ -1,0 +1,105 @@
+[package]
+name = "dev-prune"
+version = "1.0.0"
+edition = "2024"
+authors = ["VKrishna04"]
+description = "Universal, lockfile-safe workspace pruner and background dependency cleaner"
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/Life-Experimentalist/dev-prune"
+keywords = ["cli", "workspace", "cleanup", "node_modules", "venv"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.85"
+
+# An allowlist, not an exclude list, and deliberately so.
+#
+# Three of these entries are load-bearing: `build.rs` reads `assets/icon.ico`, and the
+# binary embeds `schemas/`, `assets/mimetype/` and `.agents/skills/dev-prune/SKILL.md`
+# with `include_bytes!`/`include_str!`. A published crate missing any of them does not
+# fail at runtime — it fails to compile, for everyone, and the only fix is a new version.
+#
+# The dotted path has to be spelled out: cargo does not pick up `.agents/` on its own.
+# `site/` is omitted on purpose; its `node_modules` is 16k files and belongs nowhere near
+# a crate tarball.
+include = [
+    "/src",
+    "/tests",
+    "/build.rs",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/LICENSE.md",
+    "/CHANGELOG.md",
+    "/SECURITY.md",
+    "/clippy.toml",
+    "/rustfmt.toml",
+    "/docs",
+    "/schemas",
+    "/assets/icon.ico",
+    "/assets/icon.png",
+    "/assets/icon.icns",
+    "/assets/mimetype",
+    "/assets/README.md",
+    "/.agents/skills/dev-prune/SKILL.md",
+]
+
+[[bin]]
+name = "dev-prune"
+path = "src/main.rs"
+
+[dependencies]
+# CLI argument parsing
+clap = { version = "4", features = ["derive", "color", "suggestions"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+
+# Timestamps & time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Cross-platform paths
+dirs = "6"
+
+# Directory walking
+walkdir = "2"
+
+# Terminal UI & Spinners
+ratatui = "0.29"
+crossterm = "0.28"
+indicatif = "0.17"
+
+# Colored terminal output
+colored = "3"
+
+# Human-readable byte sizes
+humansize = "2"
+
+# HTTP. Used by exactly one module — `commands::update` — and nothing else in the binary
+# opens a socket. rustls with bundled roots rather than the platform verifier, so the
+# release check behaves the same on a bare CI container as on a developer laptop.
+ureq = { version = "3.4", default-features = false, features = ["rustls", "gzip"] }
+
+# Restoring the default SIGPIPE disposition, which Rust ignores at startup. Without it
+# `devp status | head` dies in a panic instead of exiting quietly.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# Mock filesystems for testing
+tempfile = "3"
+# Assertions
+assert_cmd = "2"
+predicates = "3"
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3

@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json",
+  "title": "dev-prune Project Configuration Schema",
+  "description": "Per-repository configuration schema for dev-prune workspace cleaner.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference URL for IDE autocomplete and validation."
+    },
+    "project_name": {
+      "type": ["string", "null"],
+      "description": "Custom display name for this project in TUI tables and CLI status views."
+    },
+    "ignore": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set to true to ignore/exclude this repository from all dev-prune cleanup passes."
+    },
+    "disable_hooks": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set to true to stop the global Git hook from auto-registering this workspace. Does not affect `devp link` run by hand."
+    },
+    "disable_daemon": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set to true to exclude this workspace from the scheduled background prune pass. Manual `devp run` still prunes it."
+    },
+    "override_idle_days": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Custom inactivity threshold in days for this specific repository. Overrides global settings. 0 treats the repository as idle as soon as its last activity is in the past."
+    },
+    "min_size_mb": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Smallest bloat directory worth deleting in this repository, in MiB. Overrides the global `min_size_mb` setting; 0 turns the floor off here even when a global floor is set."
+    },
+    "scan_depth": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "maximum": 32,
+      "description": "How many directory levels below this repository root discovery descends. Overrides the global `scan_depth` (6 by default). Raise it when a nested project is not listed by `devp status`; every extra level makes the walk more expensive. Clamped to 32."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,53 @@
+name: Package manager support
+description: Ask for a package manager or ecosystem dev-prune does not handle yet.
+labels: ["adapter", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An adapter needs four things to exist, and dev-prune cannot ship one without all
+        four. See [docs/ADDING_ADAPTERS.md](https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/ADDING_ADAPTERS.md).
+
+  - type: input
+    id: manager
+    attributes:
+      label: Package manager
+      placeholder: composer, gradle, mix, nuget …
+    validations:
+      required: true
+
+  - type: input
+    id: detect
+    attributes:
+      label: How a project is detected
+      description: The manifest or lockfile whose presence identifies it.
+      placeholder: composer.json
+    validations:
+      required: true
+
+  - type: input
+    id: bloat
+    attributes:
+      label: Directory that would be deleted
+      placeholder: vendor
+    validations:
+      required: true
+
+  - type: input
+    id: verify
+    attributes:
+      label: Command that proves the lockfile can rebuild it
+      description: >
+        Must not modify files Git tracks. If the only option rewrites the lockfile, say so —
+        that manager gets read-only treatment like cargo and go.
+      placeholder: composer validate --no-check-publish
+    validations:
+      required: true
+
+  - type: input
+    id: restore
+    attributes:
+      label: Command that restores from the lockfile
+      placeholder: composer install
+    validations:
+      required: true
