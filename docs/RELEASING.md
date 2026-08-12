@@ -184,6 +184,11 @@ run summary, and warns if the release reached the GitHub release page and no reg
    - Permissions: **Read and write** on packages.
    - Scope it to the seven package names below, or leave it account-wide before the
      first publish — granular tokens cannot name a package that does not exist yet.
+   - **Tick "Bypass two-factor authentication".** Without it the registry answers
+     `403 ... Two-factor authentication or granular access token with bypass 2fa enabled
+     is required to publish packages`, because the account requires 2FA for writes and a
+     workflow has no way to answer an OTP prompt. The box can only be ticked when the
+     token is created; an existing token cannot be edited to add it.
    - Set an expiry you will actually remember. 90 days is the default; a year is fine
      for a personal project.
 3. Save it as the repository secret **`NPM_TOKEN`**.
@@ -206,11 +211,33 @@ Nothing needs to be reserved in advance — the first publish creates all seven.
 platform packages are published *before* the dispatcher, because npm resolves the
 dispatcher's `optionalDependencies` as soon as it exists.
 
-Publishes use `--provenance`, which requires the repository to be **public** and the
-workflow to have `id-token: write`. It attaches a signed attestation tying each tarball
-to this workflow, this commit and this tag; npm shows it as a green "Provenance" badge
-on the package page. A private repo makes the publish fail — drop the `--provenance`
-flag in that case.
+Publishes use `--provenance --access public`, which requires the repository to be
+**public** and the workflow to have `id-token: write`. It attaches a signed attestation
+tying each tarball to this workflow, this commit and this tag; npm shows it as a green
+"Provenance" badge on the package page. A private repo makes the publish fail — drop the
+`--provenance` flag in that case.
+
+`--access public` is not optional even though these are unscoped names. npm refuses to
+generate provenance for a package it cannot confirm is public, and a package with no
+published versions has no access setting to read, so the first publish of each name
+fails with `EUSAGE ... you must set access to public` without it.
+
+#### Move to Trusted Publishing once the names exist
+
+The `NPM_TOKEN` above is a bridge, not the destination. **npm removes direct publish
+access from bypass-2FA tokens in January 2027**, and a long-lived token that can publish
+seven packages is the exact thing the 2025 supply-chain attacks abused.
+
+The reason it is still here is bootstrapping: npm can only trust a publisher that is
+configured *on a package*, and a package that has never been published does not exist to
+configure. PyPI solves this with pending publishers; npm has no equivalent. So the first
+publish of a new name must use a token, and every later one need not.
+
+Once 1.0.0 is on the registry, for **each of the seven packages**: npmjs.com → the
+package → Settings → Trusted Publisher → GitHub Actions → repository
+`Life-Experimentalist/dev-prune`, workflow `release.yml`. Then delete the `NPM_TOKEN`
+secret and drop the `NODE_AUTH_TOKEN` guard from `publish-npm`; OIDC replaces it, and
+provenance is generated automatically rather than by the flag.
 
 ### PyPI (Trusted Publishing — no token anywhere)
 
