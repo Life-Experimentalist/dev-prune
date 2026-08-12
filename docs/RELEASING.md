@@ -222,6 +222,31 @@ generate provenance for a package it cannot confirm is public, and a package wit
 published versions has no access setting to read, so the first publish of each name
 fails with `EUSAGE ... you must set access to public` without it.
 
+#### Bootstrapping the seven names without a token at all
+
+The token above is one way past the chicken-and-egg. The better way is to publish the
+first version from a workstation, because an interactive `npm login` session answers the
+2FA challenge itself:
+
+```sh
+gh release download v1.0.0 --dir /tmp/rel
+cd /tmp/rel && sha256sum -c ./*.sha256          # publish the CI binaries, not local ones
+sh scripts/npm-prepare.sh 1.0.0 /tmp/rel /tmp/npm-dist
+sh scripts/npm-publish.sh 1.0.0 /tmp/npm-dist latest --local
+```
+
+`--local` drops `--provenance`, which is not a preference: the attestation is signed
+against a CI OIDC identity and a workstation has none. **The version published this way
+carries no provenance badge.** Every later version, published by CI, does.
+
+Re-run the command as often as you like — the `npm view` check skips whatever already
+made it to the registry, which matters here because a 2FA code expires partway through
+seven publishes more often than not.
+
+Always prepare from the downloaded release assets rather than a local `cargo build`.
+The npm packages must contain the same executables the tarballs, wheels and installers
+ship, and the `.sha256` files next to the assets are what proves it.
+
 #### Move to Trusted Publishing once the names exist
 
 The `NPM_TOKEN` above is a bridge, not the destination. **npm removes direct publish

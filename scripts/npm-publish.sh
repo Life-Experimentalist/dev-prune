@@ -9,12 +9,13 @@
 # never have exercised: it packed the directories but never published them, so the one
 # argument that was wrong was the one nothing tested.
 #
-# Usage: scripts/npm-publish.sh <version> <packages-dir> <dist-tag> [--dry-run]
+# Usage: scripts/npm-publish.sh <version> <packages-dir> <dist-tag> [--dry-run|--local]
 set -eu
 
-version="${1:?usage: $0 <version> <packages-dir> <dist-tag> [--dry-run]}"
-packages="${2:?usage: $0 <version> <packages-dir> <dist-tag> [--dry-run]}"
-dist_tag="${3:?usage: $0 <version> <packages-dir> <dist-tag> [--dry-run]}"
+usage="usage: $0 <version> <packages-dir> <dist-tag> [--dry-run|--local]"
+version="${1:?$usage}"
+packages="${2:?$usage}"
+dist_tag="${3:?$usage}"
 mode="${4:-}"
 
 # An absolute path can never be mistaken for anything but a directory. A relative
@@ -32,6 +33,17 @@ case "$mode" in
         # --provenance is dropped: it signs the tarball against the workflow's OIDC
         # identity, which a CI packaging job neither has nor should have.
         set -- --dry-run
+        ;;
+    --local)
+        # Publishing from a workstation, which is how the seven names are created in the
+        # first place: npm will only let you attach a trusted publisher to a package that
+        # already exists, so the very first publish cannot come from OIDC and cannot come
+        # from CI without a long-lived token. An interactive `npm login` session answers
+        # the 2FA challenge itself, so no token needs to exist at all.
+        #
+        # --provenance is impossible here rather than merely unwanted: the attestation is
+        # signed against a CI OIDC identity, and a laptop has none.
+        set --
         ;;
     "")
         set -- --provenance
