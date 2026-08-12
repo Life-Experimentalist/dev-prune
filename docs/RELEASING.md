@@ -11,6 +11,7 @@ one-time setup or a pre-flight check.
 
 ## 📋 Contents
 
+- [Launch day: the first release](#-launch-day-the-first-release)
 - [The one-time setup](#-the-one-time-setup)
 - [Cutting a release](#-cutting-a-release)
 - [What the workflow does](#-what-the-workflow-does)
@@ -19,6 +20,65 @@ one-time setup or a pre-flight check.
 - [Why a Rust binary is welcome on npm and PyPI](#-why-a-rust-binary-is-welcome-on-npm-and-pypi)
 - [Gated channels not yet wired up](#-gated-channels-not-yet-wired-up)
 - [When a release goes wrong](#-when-a-release-goes-wrong)
+
+---
+
+## 🚀 Launch day: the first release
+
+Every release after the first is [one tag push](#-cutting-a-release). The first one also
+has to bring the outside world into existence. In order, because several steps depend on
+the one above:
+
+1. **Create the repository** as `Life-Experimentalist/dev-prune`, **public**. Public is
+   not cosmetic: `npm publish --provenance` fails on a private repository, and the
+   release check reads the public releases endpoint unauthenticated.
+2. **Push `main`.** CI runs immediately — ten jobs, including `cargo package`, both
+   packaging scripts against fabricated assets, the ARM64 Windows cross-check, and the
+   changelog gate. Nothing below is worth doing until it is green.
+3. **Turn on Pages**: Settings → Pages → Source → **GitHub Actions**. Then point DNS at
+   it — a `CNAME` record for `devprune` at `Life-Experimentalist.github.io` — and tick
+   *Enforce HTTPS* once the certificate is issued. `site/public/CNAME` already carries
+   the hostname, so nothing in the repository needs editing.
+4. **Prove the install scripts are actually served.** The one-liner in the README, the
+   site and every doc points at this URL, and it is the single most-run command in the
+   project:
+
+   ```bash
+   curl -fsSL https://devprune.vkrishna04.me/install.sh | head -5
+   ```
+
+5. **Add the credentials** — [npm](#npm), [PyPI](#pypi-trusted-publishing--no-token-anywhere)
+   and [crates.io](#cratesio). Each one that is missing turns its publish job into a skip
+   rather than a failure, so a partial set is a valid way to start; the rest begin working
+   on the next release with no code change.
+6. **Check the changelog date.** `CHANGELOG.md` dates the 1.0.0 section, and the date
+   should be the day it actually ships. Fix it in place if the calendar has moved on.
+7. **Read the release body before it becomes one.** This exact text is what appears on
+   the GitHub release page:
+
+   ```bash
+   sh scripts/changelog-section.sh 1.0.0
+   ```
+
+8. **Tag and push.**
+
+   ```bash
+   git tag -a v1.0.0 -m "v1.0.0" && git push origin v1.0.0
+   ```
+
+9. **Verify each channel** once the workflow finishes. These are the four commands users
+   will actually run, and running them is the only proof the packages resolve:
+
+   ```bash
+   npx dev-prune@1.0.0 -V
+   uvx dev-prune@1.0.0 -V
+   cargo install dev-prune --version 1.0.0
+   curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
+   ```
+
+Names are unclaimed on all three registries as of the check in
+[Name availability](#name-availability) — but "unclaimed" has a shelf life, and the only
+way to hold a name is to publish under it.
 
 ---
 
