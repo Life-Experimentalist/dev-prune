@@ -402,6 +402,11 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@v1.14.2
         with:
           packages-dir: wheels
+          # Same reasoning as the `npm view` check in publish-npm: re-running a release
+          # after fixing one failed channel is normal, and without this the second run
+          # dies on "File already exists" for wheels the first run uploaded. There are
+          # six wheels here, so a partial upload is a real state to recover from.
+          skip-existing: true
 
   # crates.io is published only after every platform built and the release exists, so a
   # failed build never leaves an unyankable version behind.
@@ -428,12 +433,27 @@ jobs:
       - name: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          VERSION: ${{ needs.publish.outputs.version }}
         run: |
           set -eu
           if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
             echo "::error::CRATES_PUBLISH is 'true' but the CARGO_REGISTRY_TOKEN secret is empty or unset."
             exit 1
           fi
+
+          # The npm and PyPI jobs both tolerate a version that is already on their
+          # registry, because re-running a release after fixing one failed channel is
+          # normal. This job did not, and it is the one where that hurts most: a second
+          # run would die on "crate version already uploaded" and paint the whole
+          # release red for having already succeeded. crates.io needs a descriptive
+          # User-Agent or it answers 403 to everything, which would look like "not
+          # published" and re-publish into the same error.
+          ua="dev-prune-release/${VERSION} (https://github.com/Life-Experimentalist/dev-prune)"
+          if curl -sfL -A "$ua" "https://crates.io/api/v1/crates/dev-prune/${VERSION}" >/dev/null; then
+            echo "dev-prune ${VERSION} is already on crates.io — skipping."
+            exit 0
+          fi
+
           cargo publish --locked
 
   # The first release of this project finished with three green jobs and nothing on any
