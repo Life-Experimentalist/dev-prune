@@ -1,29 +1,21 @@
 <div align="center">
 
 ```text
-
  ___    _____ __     __    ____  ____  _   _ _   _ _____
-|  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
+  |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|
-| |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.0.0
-
+ | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
+         |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.0.0
 ```
 
 # dev-prune &nbsp;·&nbsp; `devp`
 
-**Reclaim the disk space your idle repositories are sitting on — without ever deleting
+>**Reclaim the disk space your idle repositories are sitting on — without ever deleting
 something a lockfile cannot put back.**
 
-[![CI](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml/badge.svg)](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml)
-[![Pages](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/pages.yml/badge.svg)](https://devprune.vkrishna04.me/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
-[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/RELEASES_AND_MANUAL_INSTALL.md)
+[![CI](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml/badge.svg)](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml) | [![Pages](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/pages.yml/badge.svg)](https://devprune.vkrishna04.me/) | [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md) | [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) | [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/RELEASES_AND_MANUAL_INSTALL.md)
 
-[**Website**](https://devprune.vkrishna04.me/) · [**Documentation**](docs/README.md) ·
-[**CLI reference**](docs/CLI_REFERENCE.md) · [**Safety invariants**](docs/SAFETY_INVARIANTS.md) ·
-[**Changelog**](CHANGELOG.md)
+[**Website**](https://devprune.vkrishna04.me/) · [**Documentation**](docs/README.md) · [**CLI reference**](docs/CLI_REFERENCE.md) · [**Safety invariants**](docs/SAFETY_INVARIANTS.md) · [**Changelog**](CHANGELOG.md)
 
 <img src="assets/hero_banner.png" alt="dev-prune" width="820" />
 
