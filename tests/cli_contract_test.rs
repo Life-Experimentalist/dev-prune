@@ -14,9 +14,22 @@ use std::process::{Command, Output};
 use tempfile::TempDir;
 
 fn devp(config_dir: &Path) -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_dev-prune"));
+    let exe = Path::new(env!("CARGO_BIN_EXE_dev-prune"));
+    let mut cmd = Command::new(exe);
     cmd.env("DEV_PRUNE_NO_AUTO_SETUP", "1");
     cmd.env("DEV_PRUNE_CONFIG_DIR", config_dir);
+
+    // `doctor` calls it breakage when the running executable's own directory is not on
+    // PATH, and it is right to: `devp` would not resolve in a new shell. The test binary
+    // lives in `target/debug`, which is on PATH only because cargo puts it there so
+    // Windows can find DLLs. Linux and macOS get `LD_LIBRARY_PATH`/`DYLD_*` instead, so
+    // the doctor tests were asserting a healthy installation on one platform and an
+    // unhealthy one on the other two — three failures that only CI ever saw.
+    if let Some(dir) = exe.parent() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}{sep}{inherited}", dir.display()));
+    }
     cmd
 }
 

@@ -165,7 +165,20 @@ pub fn stable_exe_path() -> PathBuf {
     }
     // Hard link where the filesystem allows it — that also keeps the bytes alive when the
     // package manager deletes the directory the original came from.
-    if fs::hard_link(&current, &managed).is_ok() || fs::copy(&current, &managed).is_ok() {
+    if fs::hard_link(&current, &managed).is_ok() {
+        return managed;
+    }
+
+    // The same hazard `ensure_alias` documents, through a narrower window: the check at the
+    // top of this function saw no managed copy, but another process created one — as a hard
+    // link to `current` — before the link above ran. `fs::copy` opens its destination with
+    // O_TRUNC, and truncating a hard link empties the shared inode, so the copy would
+    // destroy the very binary it is copying.
+    if managed.is_file() {
+        return managed;
+    }
+
+    if fs::copy(&current, &managed).is_ok() {
         managed
     } else {
         current
