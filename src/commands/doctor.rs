@@ -989,6 +989,43 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn an_integration_pointing_at_a_deleted_binary_is_a_problem_not_a_warning() {
+        // The whole point of the check: this is broken, not merely worth knowing, so it
+        // has to reach the non-zero exit code.
+        let mut f = Findings::default();
+        report_integration_target(
+            &mut f,
+            "Scheduler",
+            "installed",
+            Some(PathBuf::from("/nonexistent/dev-prune")),
+            "Re-register it.",
+        );
+        assert_eq!(f.warnings.len(), 0);
+        assert_eq!(f.problems.len(), 1);
+        assert!(f.problems[0].contains("no longer exists"));
+    }
+
+    #[test]
+    fn an_integration_whose_binary_is_present_passes() {
+        let tmp = TempDir::new().unwrap();
+        let exe = tmp.path().join("dev-prune");
+        std::fs::write(&exe, b"binary").unwrap();
+
+        let mut f = Findings::default();
+        report_integration_target(&mut f, "Scheduler", "installed", Some(exe), "Re-register.");
+        assert!(f.problems.is_empty() && f.warnings.is_empty());
+    }
+
+    #[test]
+    fn an_unreadable_entry_is_not_reported_as_broken() {
+        // `None` means the platform could not tell us, which is not evidence of a
+        // problem — reporting it would be a warning nobody can act on.
+        let mut f = Findings::default();
+        report_integration_target(&mut f, "Scheduler", "installed", None, "Re-register.");
+        assert!(f.problems.is_empty() && f.warnings.is_empty());
+    }
+
+    #[test]
     fn overrides_are_listed_by_name() {
         let mut cfg = PerRepoConfig::default();
         assert_eq!(describe_overrides(&cfg), "parses; overrides nothing");
