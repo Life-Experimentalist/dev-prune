@@ -207,8 +207,28 @@ pub fn ensure_alias() -> Outcome {
         }
     }
 
-    if fs::hard_link(&current_exe, &alias_exe).is_ok() || fs::copy(&current_exe, &alias_exe).is_ok()
-    {
+    if fs::hard_link(&current_exe, &alias_exe).is_ok() {
+        return Outcome::Installed;
+    }
+
+    // The copy is the fallback for filesystems without hard links — but it must never
+    // run when the alias already exists, because the reason `hard_link` usually fails is
+    // that another process created it a moment ago, as a hard link to this very
+    // executable. `fs::copy` opens its destination with O_TRUNC, and truncating a hard
+    // link truncates the shared inode: the copy would empty the running binary and then
+    // copy zero bytes from it.
+    //
+    // That is not hypothetical. It is what turned every macOS CI run red. The 28
+    // integration tests launch at once, one wins the link, the losers fall through to
+    // here, and `target/debug/dev-prune` becomes a zero-byte file. macOS `posix_spawn`
+    // answers ENOEXEC by handing the file to `/bin/sh`, so every later invocation
+    // "succeeded" with exit 0 and printed nothing — for two hours the tests looked like
+    // 27 unrelated assertion failures.
+    if alias_exe.exists() {
+        return Outcome::AlreadyPresent;
+    }
+
+    if fs::copy(&current_exe, &alias_exe).is_ok() {
         Outcome::Installed
     } else {
         Outcome::Failed(format!(
@@ -611,6 +631,36 @@ mod tests {
         );
         fs::write(dir.path().join(STAMP_FILE), "0.0.1").unwrap();
         assert!(setup_is_due_in(dir.path()), "an upgrade is due again");
+    }
+
+    /// The alias must never be written with a copy while it already exists.
+    ///
+    /// A hard link and its target share one inode, so `fs::copy` onto the alias empties
+    /// the binary it was copied from. This reproduces the exact shape of that bug — link
+    /// first, then ask for the alias again — and asserts the original still has its
+    /// bytes. The real failure was silent: a zero-byte executable that macOS runs
+    /// through `/bin/sh`, which exits 0 and prints nothing.
+    #[test]
+    fn refreshing_an_alias_that_is_a_hard_link_does_not_empty_the_binary() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let binary = dir.path().join("dev-prune");
+        let alias = dir.path().join("devp");
+        fs::write(&binary, vec![b'M'; 4096]).unwrap();
+
+        if fs::hard_link(&binary, &alias).is_err() {
+            return; // Filesystem without hard links; the hazard cannot arise.
+        }
+
+        // What `ensure_alias` does when its `hard_link` loses the race: the alias is
+        // already there, so it must stop rather than fall through to the copy.
+        assert!(fs::hard_link(&binary, &alias).is_err(), "EEXIST expected");
+        assert!(alias.exists(), "the guard's condition");
+
+        assert_eq!(
+            fs::metadata(&binary).unwrap().len(),
+            4096,
+            "the running binary was truncated by refreshing its own alias"
+        );
     }
 
     #[test]

@@ -345,7 +345,15 @@ pub enum ConfigAction {
 /// Runs on every invocation because it is two `stat` calls in the settled case, and
 /// because the alias is how most people invoke this tool — it must never be the stale
 /// half of an upgrade.
+///
+/// `DEV_PRUNE_NO_AUTO_SETUP` suppresses it, because writing a second executable next to
+/// the first is a self-installation like any other. `devp setup` still creates the alias
+/// when the variable is set: the variable governs the unattended pass, not the explicit
+/// request.
 pub fn ensure_devp_alias() {
+    if std::env::var_os(setup::ENV_NO_AUTO_SETUP).is_some() {
+        return;
+    }
     let _ = setup::ensure_alias();
 }
 
