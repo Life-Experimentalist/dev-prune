@@ -21,7 +21,12 @@
     <meta property="og:url" content="https://devprune.vkrishna04.me/" />
     <meta property="og:title" content="dev-prune (devp) — Lockfile-Safe Workspace Pruner" />
     <meta property="og:description" content="Reclaim disk space from idle Git repositories. Nothing is deleted until a lockfile proves it can be rebuilt. Eight package managers, any number of them per repository." />
-    <meta property="og:image" content="https://devprune.vkrishna04.me/assets/banner.png" />
+    <!-- banner.jpg, not banner.png: the PNG is 8.8 MB, and both Twitter (5 MB) and
+         Slack drop a card whose image exceeds their ceiling rather than resizing it. -->
+    <meta property="og:image" content="https://devprune.vkrishna04.me/assets/banner.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1024" />
+    <meta property="og:image:height" content="572" />
     <meta property="og:image:alt" content="dev-prune — universal, lockfile-safe workspace pruner" />
     <meta property="og:locale" content="en_US" />
 
@@ -30,12 +35,16 @@
     <meta name="twitter:url" content="https://devprune.vkrishna04.me/" />
     <meta name="twitter:title" content="dev-prune (devp) — Lockfile-Safe Workspace Pruner" />
     <meta name="twitter:description" content="Reclaim disk space from idle Git repositories. Nothing is deleted until a lockfile proves it can be rebuilt." />
-    <meta name="twitter:image" content="https://devprune.vkrishna04.me/assets/banner.png" />
+    <meta name="twitter:image" content="https://devprune.vkrishna04.me/assets/banner.jpg" />
+    <meta name="twitter:image:alt" content="dev-prune — universal, lockfile-safe workspace pruner" />
 
-    <!-- Favicons -->
+    <!-- Favicons.
+         No `image/svg+xml` entry: the SVG in the icon set is a 1024×1024 PNG wrapped in
+         an <image> tag, 273 KB of base64 with no vector benefit, and Chrome prefers the
+         SVG when one is offered — so declaring it costs a quarter-megabyte per visit to
+         draw a 16px tab icon. -->
     <link rel="icon" type="image/png" href="/assets/favicon/favicon-96x96.png" sizes="96x96" />
-    <link rel="icon" type="image/svg+xml" href="/assets/favicon/favicon.svg" />
-    <link rel="shortcut icon" href="/assets/favicon/favicon.ico" />
+    <link rel="icon" href="/assets/favicon/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/favicon/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-title" content="dev-prune" />
     <link rel="manifest" href="/assets/favicon/site.webmanifest" />
@@ -48,6 +57,27 @@
     {
       "@context": "https://schema.org",
       "@graph": [
+        {
+          "@type": "Person",
+          "@id": "https://devprune.vkrishna04.me/#author",
+          "name": "VKrishna04",
+          "url": "https://github.com/VKrishna04",
+          "sameAs": [
+            "https://github.com/VKrishna04",
+            "https://github.com/Life-Experimentalist"
+          ]
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://devprune.vkrishna04.me/#website",
+          "url": "https://devprune.vkrishna04.me/",
+          "name": "dev-prune",
+          "description": "Documentation and downloads for dev-prune, the lockfile-safe workspace pruner.",
+          "inLanguage": "en",
+          "publisher": { "@id": "https://devprune.vkrishna04.me/#author" },
+          "about": { "@id": "https://devprune.vkrishna04.me/#app" },
+          "license": "https://www.apache.org/licenses/LICENSE-2.0"
+        },
         {
           "@type": "SoftwareApplication",
           "@id": "https://devprune.vkrishna04.me/#app",
@@ -75,7 +105,15 @@
             "Machine-readable --json output for every reporting command",
             "No telemetry, no diagnostics, no usage data"
           ],
-          "author": { "@type": "Person", "name": "VKrishna04" }
+          "author": { "@id": "https://devprune.vkrishna04.me/#author" },
+          "maintainer": { "@id": "https://devprune.vkrishna04.me/#author" },
+          "installUrl": "https://devprune.vkrishna04.me/#install",
+          "softwareHelp": "https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/CLI_REFERENCE.md",
+          "sameAs": [
+            "https://www.npmjs.com/package/dev-prune",
+            "https://pypi.org/project/dev-prune/",
+            "https://crates.io/crates/dev-prune"
+          ]
         },
         {
           "@type": "FAQPage",

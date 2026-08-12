@@ -190,7 +190,13 @@ absent and reports what it declined to touch.
   no glibc version floor.
 - **Install it however you already install things.** The shell and PowerShell one-liners,
   `npx dev-prune` / `npm install -g dev-prune`, `uv tool install dev-prune` / `uvx` /
-  `pipx` / `pip`, `cargo install dev-prune`, or a direct download from GitHub Releases.
+  `pipx` / `pip`, `cargo binstall dev-prune` / `cargo install dev-prune`, or a direct
+  download from GitHub Releases.
+- **`cargo binstall dev-prune` needs no Rust toolchain.** crates.io distributes source, so
+  `cargo install` has no binary to fetch and always compiles — surprising if you expected
+  a registry install to be instant. `Cargo.toml` now declares where each release archive
+  lives, so `cargo binstall` downloads and unpacks the same executable the installer
+  scripts use, in seconds, on all six platforms.
 - **The npm and PyPI packages contain the binary.** No `postinstall` step downloads
   anything, so they install correctly under `npm ci --ignore-scripts`, behind a corporate
   registry mirror, and with no network access at all — and a dependency install never

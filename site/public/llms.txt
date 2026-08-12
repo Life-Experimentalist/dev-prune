@@ -28,12 +28,15 @@ before 1.0.0; the old spelling still works and prints a note explaining the rena
 - npm: `npx dev-prune status`, or `npm install -g dev-prune`
 - Python tooling: `uv tool install dev-prune`, `uvx dev-prune status`,
   `pipx install dev-prune`, `pip install dev-prune`
-- From source: `cargo install dev-prune` (Rust 1.85+)
+- Cargo, prebuilt: `cargo binstall dev-prune`
+- Cargo, from source: `cargo install dev-prune` (Rust 1.85+)
 
 The npm and PyPI packages contain the prebuilt binary rather than downloading one in a
 postinstall step, so they install correctly under `npm ci --ignore-scripts`, behind a
 registry mirror, and with no network access. `cargo install` is the only channel that
-compiles on your machine.
+compiles on your machine — crates.io distributes source, so there is no binary there for
+cargo to fetch. `cargo binstall` reads the `[package.metadata.binstall]` table in
+`Cargo.toml` and downloads the GitHub release archive instead, needing no toolchain.
 
 Both installers take `--version`/`-Version`, `--bin-dir`/`-BinDir`, `--no-path`/`-NoPath`,
 `--no-auto-setup`/`-NoAutoSetup` and `--help`/`-Help`. Piping into a shell has nowhere to

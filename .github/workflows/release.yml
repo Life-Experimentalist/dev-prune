@@ -188,6 +188,70 @@ jobs:
       - name: Build the release body from CHANGELOG.md
         run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > release-body.md
 
+      # GitHub renders the asset list directly under the body, and the assets are the
+      # first thing a visitor reaches for — usually the wrong thing, because a raw
+      # archive is an executable in a folder with no PATH entry, no `devp` alias and no
+      # checksum verified. This footer sits between the changelog and that list and says
+      # so, and names which archive belongs to whom, since "darwin-arm64" means nothing
+      # to someone who just wants the Mac build.
+      - name: Append the install guide to the release body
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cat >> release-body.md <<EOF
+
+          ---
+
+          ## Which download do I want?
+
+          **Most people want none of them.** The installers below verify the SHA-256
+          sidecar, put the binary somewhere already on \`PATH\`, and create the \`devp\`
+          alias — three things unzipping an archive does not do.
+
+          | You are on | Run this |
+          |---|---|
+          | Windows (PowerShell) | \`iwr -useb https://devprune.vkrishna04.me/install.ps1 \| iex\` |
+          | macOS / Linux | \`curl -fsSL https://devprune.vkrishna04.me/install.sh \| sh\` |
+          | Node projects | \`npm install -g dev-prune@${VERSION}\` — or just \`npx dev-prune status\` |
+          | Python tooling | \`uv tool install dev-prune==${VERSION}\` / \`pipx install dev-prune==${VERSION}\` |
+          | Rust, no compile | \`cargo binstall dev-prune@${VERSION}\` |
+          | Rust, from source | \`cargo install dev-prune --version ${VERSION}\` (needs Rust 1.85+) |
+
+          The npm and PyPI packages contain these same binaries rather than downloading
+          one afterwards, so they work under \`npm ci --ignore-scripts\`, behind a registry
+          mirror, and offline. \`cargo install\` is the only channel that compiles on your
+          machine; \`cargo binstall\` reaches for the archives on this page instead.
+
+          Full instructions: <https://devprune.vkrishna04.me/#install>
+
+          ## The assets, then
+
+          Take one only if you are packaging dev-prune yourself, air-gapping it, or
+          pinning it into a container image.
+
+          | Asset | For |
+          |---|---|
+          | \`dev-prune-v${VERSION}-windows-x64.zip\` | Windows on Intel/AMD — almost every Windows PC |
+          | \`dev-prune-v${VERSION}-windows-arm64.zip\` | Windows on ARM — Surface Pro X, Snapdragon laptops, Windows in a Mac VM |
+          | \`dev-prune-v${VERSION}-darwin-arm64.tar.gz\` | Apple Silicon Macs — M1 and later |
+          | \`dev-prune-v${VERSION}-darwin-x64.tar.gz\` | Intel Macs — 2020 and earlier |
+          | \`dev-prune-v${VERSION}-linux-x64.tar.gz\` | Linux on Intel/AMD |
+          | \`dev-prune-v${VERSION}-linux-arm64.tar.gz\` | Linux on ARM — Raspberry Pi 4/5, Graviton, ARM CI runners |
+
+          Both Linux builds are statically linked against musl, so they run on any
+          distribution including Alpine, with no glibc floor.
+
+          Every archive ships a \`.sha256\` sidecar. Check it before you trust it:
+
+          \`\`\`bash
+          sha256sum -c dev-prune-v${VERSION}-linux-x64.tar.gz.sha256
+          \`\`\`
+
+          \`\`\`powershell
+          (Get-FileHash dev-prune-v${VERSION}-windows-x64.zip).Hash -eq (Get-Content dev-prune-v${VERSION}-windows-x64.zip.sha256).Split(' ')[0].ToUpper()
+          \`\`\`
+          EOF
+
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}

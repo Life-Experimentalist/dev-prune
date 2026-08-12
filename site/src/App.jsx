@@ -432,8 +432,8 @@ export default function App() {
     },
     cargo: {
       label: "Cargo",
-      note: "Builds from source. Requires Rust 1.85 or newer.",
-      cmd: "cargo install dev-prune",
+      note: "crates.io stores source, not binaries, so cargo install always compiles (Rust 1.85+). cargo binstall downloads the same prebuilt archive the installers use.",
+      cmd: "cargo binstall dev-prune",
     },
     release: {
       label: "Release binary",

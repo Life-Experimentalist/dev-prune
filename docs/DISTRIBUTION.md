@@ -84,11 +84,14 @@ pip install dev-prune
 - The Linux wheels carry both `manylinux` and `musllinux` tags from the same static binary, so Debian and Alpine users are both served.
 - Uploaded through PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/): no API token exists anywhere, only a short-lived OIDC credential minted per release.
 
-### 6. Cargo / crates.io (`cargo install dev-prune`)
+### 6. Cargo / crates.io (`cargo binstall` or `cargo install`)
 ```bash
-cargo install dev-prune
+cargo binstall dev-prune   # downloads the release archive
+cargo install dev-prune    # compiles from source
 ```
-Builds from source with the release profile below. Requires Rust 1.85+ (edition 2024). This is the only channel that compiles on the user's machine; every other one ships a prebuilt binary.
+crates.io hosts source, not binaries — there is no executable on the registry for `cargo install` to fetch, so it always builds, and it is the only channel that does. Requires Rust 1.85+ (edition 2024) and the release profile below.
+
+[`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes that gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target — the same six archives listed above — so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
 
 ---
 

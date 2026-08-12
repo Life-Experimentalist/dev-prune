@@ -37,7 +37,8 @@ for anything that isn't.
    `devp config set update_check false`). It never downloads a binary — if a newer version
    exists, tell the user the upgrade command for their install channel: re-run the
    `install.sh`/`install.ps1` one-liner, `npm update -g dev-prune`, `uv tool upgrade
-   dev-prune`, `pipx upgrade dev-prune`, or `cargo install dev-prune --force`.
+   dev-prune`, `pipx upgrade dev-prune`, `cargo binstall dev-prune --force` (prebuilt), or
+   `cargo install dev-prune --force` (compiles).
 
 ## What it will never do
 

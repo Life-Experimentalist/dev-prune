@@ -8,7 +8,7 @@
          |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.0.0
 ```
 
-# dev-prune &nbsp;·&nbsp; `devp`
+# `dev-prune` &nbsp;·&nbsp; `devp`
 
 >**Reclaim the disk space your idle repositories are sitting on — without ever deleting
 something a lockfile cannot put back.**
@@ -74,12 +74,18 @@ npm install -g dev-prune
 uv tool install dev-prune     # or: uvx dev-prune status
 pipx install dev-prune
 pip install dev-prune
+cargo binstall dev-prune      # fetches the prebuilt release archive
 cargo install dev-prune       # builds from source, needs Rust 1.85+
 ```
 
 The npm and PyPI packages **contain the binary** — there is no `postinstall` download
 step, so they work under `npm ci --ignore-scripts`, behind a registry mirror, and
 offline. Everything but `cargo install` ships a prebuilt executable.
+
+crates.io stores source and nothing else, so `cargo install` has no binary to fetch and
+always compiles. [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) is the
+one that downloads: `Cargo.toml` tells it where this project's release archives live, so
+it unpacks the same executable the installers use, with no toolchain involved.
 
 ### Direct download
 

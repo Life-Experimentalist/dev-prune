@@ -39,7 +39,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
   - 🧹 [Uninstall, Reinstall & State Recovery](troubleshooting/UNINSTALL_AND_REINSTALL.md)
   - ⚠️ [Registry Corruption & Edge Cases](troubleshooting/CORRUPTION_AND_EDGE_CASES.md)
 - **[Multi-Ecosystem Distribution & Packaging Manual](DISTRIBUTION.md)**
-  Every install channel and what each one actually ships: the shell and PowerShell one-liners, the six checksummed GitHub release archives, `npx`/`npm install -g` via platform packages, `uv tool install`/`uvx`/`pipx`/`pip` via platform wheels, and `cargo install`.
+  Every install channel and what each one actually ships: the shell and PowerShell one-liners, the six checksummed GitHub release archives, `npx`/`npm install -g` via platform packages, `uv tool install`/`uvx`/`pipx`/`pip` via platform wheels, `cargo binstall` via the release archives, and `cargo install` from source.
 - **[Releasing dev-prune](RELEASING.md)**
   The maintainer's guide: one-time registry setup and every credential the automation needs, what a tag push triggers, the changelog contract the release notes are built from, which registries review submissions (npm, PyPI and crates.io do not), why a Rust binary belongs on npm and PyPI, the gated channels (Homebrew, WinGet, Scoop, Chocolatey), and recovery when a release goes wrong.
 

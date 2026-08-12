@@ -479,7 +479,7 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 ---
 
 ### 10. `devp update [--offline]`
-- **Description**: Prints the installed version, asks GitHub's public API for the latest release, and shows the upgrade command for how you installed it. It never downloads or replaces its own binary — upgrade with `cargo install dev-prune --force`, `npm install -g dev-prune`, or by re-running the installer script.
+- **Description**: Prints the installed version, asks GitHub's public API for the latest release, and shows the upgrade command for how you installed it. It never downloads or replaces its own binary — upgrade with `cargo binstall dev-prune --force`, `cargo install dev-prune --force`, `npm install -g dev-prune`, or by re-running the installer script.
 - **Flags**:
   - `--offline` — skip the release check for this run without changing the setting.
 - **The check is opt-out, not opt-in.** It also runs quietly from `devp run` and `devp status`, at most once every 7 days, and prints one line only when a newer version exists. Disable it permanently with `devp config set update_check false`. It sends no body, no identifier and no usage data — see [PRIVACY.md](PRIVACY.md).

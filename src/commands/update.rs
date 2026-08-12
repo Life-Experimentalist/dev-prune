@@ -88,9 +88,10 @@ pub fn check_now(registry: &mut Registry) -> bool {
     true
 }
 
-/// The three install channels, in one place so they cannot drift apart.
+/// Every install channel, in one place so they cannot drift apart.
 fn print_upgrade_commands() {
     println!("  Upgrade with whichever channel you installed from:");
+    println!("    cargo binstall dev-prune --force");
     println!("    cargo install dev-prune --force");
     println!("    npm install -g dev-prune@latest");
     println!("    curl -fsSL https://devprune.vkrishna04.me/install.sh | sh");
