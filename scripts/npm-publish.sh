@@ -60,5 +60,9 @@ do
     fi
 
     echo "publishing $pkg@$version under --tag $dist_tag"
-    npm publish "$dir" "$@" --tag "$dist_tag"
+    # --access public is redundant for an unscoped package that already exists, and
+    # mandatory for one that does not: `--provenance` refuses to sign a package it cannot
+    # confirm is public, and a package with no published versions has no access setting to
+    # read. All seven were new at 1.0.0, so every one of them hit this.
+    npm publish "$dir" "$@" --tag "$dist_tag" --access public
 done
