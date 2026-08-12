@@ -26,7 +26,7 @@ import base64
 import csv
 import hashlib
 import io
-import os
+import re
 import sys
 import tarfile
 import zipfile
@@ -82,6 +82,44 @@ CLASSIFIERS = [
     "Topic :: System :: Filesystems",
     "Topic :: Utilities",
 ]
+
+
+def absolutize_readme(readme: str, version: str) -> str:
+    """Point every relative link and image in the README at GitHub.
+
+    crates.io and npmjs.com resolve relative README links against the `repository`
+    field. PyPI does not — it renders the description as-is, so `assets/hero_banner.png`
+    is a broken image and `docs/CLI_REFERENCE.md` is a 404 on the project page. Rewriting
+    here rather than in README.md keeps the file readable in the repository, where the
+    relative form is the correct one.
+
+    Pinned to the tag, not to `main`: the page for 1.0.0 should show 1.0.0's docs.
+    """
+    raw = f"{REPOSITORY.replace('github.com', 'raw.githubusercontent.com')}/v{version}"
+    blob = f"{REPOSITORY}/blob/v{version}"
+    absolute = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)")
+
+    def rewrite(target: str, base: str) -> str:
+        return target if absolute.match(target) else f"{base}/{target.lstrip('./')}"
+
+    # Images first, so the second pass sees them as already absolute and leaves them
+    # alone. That is what makes `[![License](shield)](LICENSE.md)` come out right: the
+    # inner image is handled here and the outer link target by the pass below.
+    readme = re.sub(
+        r"(!\[[^\]]*\]\()([^)\s]+)(\))",
+        lambda m: m[1] + rewrite(m[2], raw) + m[3],
+        readme,
+    )
+    readme = re.sub(
+        r"(\]\()([^)\s]+)(\))",
+        lambda m: m[1] + rewrite(m[2], blob) + m[3],
+        readme,
+    )
+    return re.sub(
+        r'(<img\s[^>]*?\bsrc=")([^"]+)(")',
+        lambda m: m[1] + rewrite(m[2], raw) + m[3],
+        readme,
+    )
 
 
 def urlsafe_b64_nopad(data: bytes) -> str:
@@ -209,7 +247,9 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
-    readme = (repo_root / "README.md").read_text(encoding="utf-8")
+    readme = absolutize_readme(
+        (repo_root / "README.md").read_text(encoding="utf-8"), args.version
+    )
     license_text = (repo_root / "LICENSE.md").read_text(encoding="utf-8")
 
     args.out.mkdir(parents=True, exist_ok=True)

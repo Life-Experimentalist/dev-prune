@@ -68,6 +68,30 @@ jobs:
       - name: Build against the declared MSRV
         run: cargo check --all-targets --all-features
 
+  # Five of the six release targets are native builds on their own runner, and the test
+  # matrix already proves those compile. aarch64-pc-windows-msvc is the exception: it is
+  # cross-compiled from an x64 host, and `ring` — the crypto backend under the release
+  # check's HTTPS client — builds C and assembly, so it needs the ARM64 MSVC tools rather
+  # than just a rustup target. Nothing else here would notice if that broke, and the
+  # first run would otherwise be the release itself, after the tag exists.
+  #
+  # `check` rather than `build`: it still runs ring's build script and compiles its
+  # native code, which is the part that can fail, without linking six crates' worth of
+  # release codegen on every push.
+  cross:
+    name: Cross-compile (aarch64-pc-windows-msvc)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64-pc-windows-msvc
+      - name: Check the ARM64 Windows target
+        run: cargo check --locked --target aarch64-pc-windows-msvc
+
   package:
     name: Publishable crate
     runs-on: ubuntu-latest

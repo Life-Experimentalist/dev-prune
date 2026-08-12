@@ -211,6 +211,11 @@ crates.io version can never be deleted, only yanked.
 Both packaging scripts are exercised by the `packaging` job in CI on every push, against
 fabricated assets. Their first real run is therefore not their first run.
 
+The same reasoning covers `aarch64-pc-windows-msvc`, the only release target that is not
+a native build on its own runner. CI's `cross` job type-checks it on every push, so the
+ARM64 Windows toolchain and `ring`'s native code are known to work before a tag exists
+rather than after.
+
 ---
 
 ## 📝 The changelog contract
