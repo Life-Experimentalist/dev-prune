@@ -7,6 +7,11 @@ description = "Universal, lockfile-safe workspace pruner and background dependen
 license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/Life-Experimentalist/dev-prune"
+homepage = "https://devprune.vkrishna04.me"
+# Not docs.rs. This is a binary crate: docs.rs would build the library surface, which is
+# nothing anyone installing `dev-prune` wants to read. Point at the docs that describe
+# the commands instead — crates.io links this field directly.
+documentation = "https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/README.md"
 keywords = ["cli", "workspace", "cleanup", "node_modules", "venv"]
 categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.85"

@@ -54,6 +54,12 @@ while read -r asset_os asset_arch node_os node_arch kind; do
     # be set here rather than at install time.
     chmod +x "$dir/bin/$exe"
 
+    # Apache-2.0 section 4(a) asks for a copy of the licence alongside the thing being
+    # redistributed, and each of these is an independently installable package holding a
+    # binary. The dispatcher carrying one is not enough: `--no-optional` or a direct
+    # install puts the executable on a machine without it.
+    cp "$repo_root/LICENSE.md" "$dir/LICENSE.md"
+
     cat > "$dir/package.json" <<EOF
 {
   "name": "$pkg",
@@ -61,13 +67,16 @@ while read -r asset_os asset_arch node_os node_arch kind; do
   "description": "Prebuilt dev-prune binary for $node_os $node_arch. Installed automatically by the 'dev-prune' package; not meant to be depended on directly.",
   "os": ["$node_os"],
   "cpu": ["$node_arch"],
-  "files": ["bin"],
+  "files": ["bin", "LICENSE.md"],
   "license": "Apache-2.0",
   "author": "VKrishna04",
   "homepage": "https://devprune.vkrishna04.me",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Life-Experimentalist/dev-prune.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Life-Experimentalist/dev-prune/issues"
   }
 }
 EOF

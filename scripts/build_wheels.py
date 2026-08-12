@@ -42,6 +42,10 @@ SUMMARY = (
 )
 HOMEPAGE = "https://devprune.vkrishna04.me"
 REPOSITORY = "https://github.com/Life-Experimentalist/dev-prune"
+DOCUMENTATION = f"{REPOSITORY}/blob/main/docs/README.md"
+# PyPI indexes these for search, and this is the only place they get set — there is no
+# pyproject.toml to read them from.
+KEYWORDS = "cli,cleanup,disk-space,node_modules,venv,monorepo,workspace,prune"
 
 # asset name -> platform tags for the wheel.
 #
@@ -159,7 +163,9 @@ def metadata(version: str, readme: str) -> str:
         f"Summary: {SUMMARY}",
         "Author: VKrishna04",
         "License: Apache-2.0",
+        f"Keywords: {KEYWORDS}",
         f"Project-URL: Homepage, {HOMEPAGE}",
+        f"Project-URL: Documentation, {DOCUMENTATION}",
         f"Project-URL: Source, {REPOSITORY}",
         f"Project-URL: Issues, {REPOSITORY}/issues",
         f"Project-URL: Changelog, {REPOSITORY}/blob/main/CHANGELOG.md",

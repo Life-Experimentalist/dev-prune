@@ -313,6 +313,12 @@ jobs:
       - name: Build the wheels from the release assets
         run: python scripts/build_wheels.py "${{ needs.publish.outputs.version }}" dist wheels
 
+      # The METADATA in these wheels is written by hand — there is no build backend to
+      # get it right. PyPI validates on upload, but by then the GitHub release exists and
+      # the tag is public, so a rejected wheel means a version number burned for a typo.
+      - name: Check the wheel metadata before uploading it
+        run: pipx run twine check wheels/*.whl
+
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: wheels
