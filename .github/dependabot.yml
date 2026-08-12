@@ -34,13 +34,23 @@ updates:
   # up three majors behind without anyone deciding that.
   #
   # Dependabot only sees the `uses:` lines. It does NOT see `node-version:`,
-  # `python-version:`, the `dtolnay/rust-toolchain@<version>` MSRV pin, or the
-  # `runs-on:` labels — those are strings to it. They need a human on a calendar.
+  # `python-version:` or the `runs-on:` labels — those are plain strings to it, so
+  # the runtime pins need a human on a calendar rather than a bot.
+  #
+  # `dtolnay/rust-toolchain@1.85.0` is the trap in between. It *looks* like a pinned
+  # action version and Dependabot treats it as one, but the version is the MSRV the
+  # job exists to prove, so "upgrading" it deletes the test rather than updating it.
+  # Dependabot opened exactly that PR (1.85.0 -> 1.100.0) within an hour of this file
+  # landing, which is why it is ignored below instead of trusted to be reviewed.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Raising the MSRV is a decision recorded in Cargo.toml's `rust-version`, and
+      # this pin follows that. It is never the other way round.
+      - dependency-name: dtolnay/rust-toolchain
     groups:
       # Patch and minor bumps of actions are noise individually and meaningful in bulk.
       # Majors stay ungrouped: for an action, a major is usually a runtime change, and

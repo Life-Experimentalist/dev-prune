@@ -205,10 +205,19 @@ jobs:
   # Order matters and is not an optimisation: the dispatcher is published last, because
   # the moment it exists npm will try to resolve its optionalDependencies, and a version
   # that is not on the registry yet resolves to nothing.
+  # Gated on a repository variable, not on the presence of the secret. The `secrets`
+  # context is not available in a job-level `if:`, so a secret check can only happen
+  # inside a step — and a step that returns early still paints the job green. The first
+  # release of this project reported "Publish to npm: success" while publishing nothing,
+  # because that is exactly what an early `exit 0` looks like from the outside.
+  #
+  # Set NPM_PUBLISH to "true" once NPM_TOKEN exists; see docs/RELEASING.md. Until then
+  # the job reports `skipped`, which is a different word in the UI and in the API.
   publish-npm:
     name: Publish to npm
     needs: publish
     runs-on: ubuntu-latest
+    if: vars.NPM_PUBLISH == 'true'
     permissions:
       contents: read
       # Required by `npm publish --provenance`: npm exchanges this token for a signed
@@ -250,11 +259,14 @@ jobs:
           VERSION: ${{ needs.publish.outputs.version }}
           DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
         run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is not set — skipping the npm publish."
-            exit 0
-          fi
           set -eu
+          # NPM_PUBLISH said this channel is configured, so a missing token is a
+          # mistake, not a state to tiptoe around. Failing here is the only way the
+          # tag's author finds out before someone tries `npx dev-prune`.
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_PUBLISH is 'true' but the NPM_TOKEN secret is empty or unset."
+            exit 1
+          fi
           for pkg in \
             dev-prune-linux-x64 dev-prune-linux-arm64 \
             dev-prune-darwin-x64 dev-prune-darwin-arm64 \
@@ -338,7 +350,10 @@ jobs:
     name: Publish to crates.io
     needs: publish
     runs-on: ubuntu-latest
-    if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+    # Two gates, both job-level so a channel that does not run says `skipped` rather
+    # than `success`. See the note on publish-npm for why the secret cannot be one of
+    # them.
+    if: ${{ vars.CRATES_PUBLISH == 'true' && !contains(github.event.inputs.tag || github.ref_name, '-') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -350,8 +365,53 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
+          set -eu
           if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
-            echo "CARGO_REGISTRY_TOKEN is not set — skipping crates.io publish."
-            exit 0
+            echo "::error::CRATES_PUBLISH is 'true' but the CARGO_REGISTRY_TOKEN secret is empty or unset."
+            exit 1
           fi
           cargo publish --locked
+
+  # The first release of this project finished with three green jobs and nothing on any
+  # registry, and there was no single place that said so. This job is that place: it runs
+  # whatever happened above and turns each channel's result into a sentence on the run
+  # summary page. `skipped` is reported as "not published" in words, because the failure
+  # this guards against is not a job going red — it is a human reading green and stopping.
+  summary:
+    name: What actually shipped
+    needs: [publish, publish-npm, publish-pypi, publish-crate]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write the channel report
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+          NPM: ${{ needs.publish-npm.result }}
+          PYPI: ${{ needs.publish-pypi.result }}
+          CRATE: ${{ needs.publish-crate.result }}
+        run: |
+          set -eu
+          describe() {
+            case "$1" in
+              success)  echo "✅ published" ;;
+              skipped)  echo "⚠️ **not published** — channel not enabled (set \`$2\`)" ;;
+              failure)  echo "❌ **failed** — see the job log" ;;
+              *)        echo "❔ $1" ;;
+            esac
+          }
+          {
+            echo "## dev-prune v${VERSION}"
+            echo
+            echo "| Channel | Result |"
+            echo "|---|---|"
+            echo "| GitHub release | ✅ published |"
+            echo "| npm | $(describe "$NPM" NPM_PUBLISH) |"
+            echo "| PyPI | $(describe "$PYPI" PYPI_PUBLISH) |"
+            echo "| crates.io | $(describe "$CRATE" CRATES_PUBLISH) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # A release where every registry sat out is almost always a misconfiguration
+          # rather than an intent, and it is the one outcome that must not look clean.
+          if [ "$NPM" != "success" ] && [ "$PYPI" != "success" ] && [ "$CRATE" != "success" ]; then
+            echo "::warning::v${VERSION} reached the GitHub release only. No package registry received it."
+          fi

@@ -59,6 +59,16 @@ the one above:
    it — a `CNAME` record for `devprune` at `Life-Experimentalist.github.io` — and tick
    *Enforce HTTPS* once the certificate is issued. `site/public/CNAME` already carries
    the hostname, so nothing in the repository needs editing.
+
+   Pages is off by default and the API says so plainly, which is a faster answer than
+   waiting on DNS:
+
+   ```powershell
+   gh api repos/Life-Experimentalist/dev-prune/pages
+   ```
+
+   `HTTP 404` means Pages has never been enabled. Once it is, that returns the live URL
+   and the certificate state.
 4. **Prove the install scripts are actually served.** The one-liner in the README, the
    site and every doc points at this URL, and it is the single most-run command in the
    project:
@@ -68,9 +78,20 @@ the one above:
    ```
 
 5. **Add the credentials** — [npm](#npm), [PyPI](#pypi-trusted-publishing--no-token-anywhere)
-   and [crates.io](#cratesio). Each one that is missing turns its publish job into a skip
-   rather than a failure, so a partial set is a valid way to start; the rest begin working
-   on the next release with no code change.
+   and [crates.io](#cratesio). Each channel needs a secret *and* its `*_PUBLISH`
+   variable; a channel with neither is skipped, so a partial set is a valid way to
+   start and the rest begin working on the next release with no code change.
+
+   Confirm it rather than assuming it — this is the step whose omission is invisible
+   until after the tag exists:
+
+   ```powershell
+   gh secret list; gh variable list
+   ```
+
+   You want `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` in the first list, and
+   `NPM_PUBLISH`, `CRATES_PUBLISH` and `PYPI_PUBLISH` in the second. Empty output means
+   nothing is configured, and the release will reach the GitHub release page only.
 6. **Check the changelog date.** `CHANGELOG.md` dates the 1.0.0 section, and the date
    should be the day it actually ships. Fix it in place if the calendar has moved on.
 7. **Read the release body before it becomes one.** This exact text is what appears on
@@ -121,17 +142,33 @@ way to hold a name is to publish under it.
 
 ## 🔑 The one-time setup
 
-Five channels publish automatically. Each degrades to a skip rather than a failure when
-its credential is absent, so the first release can go out with only the ones you have
-configured — the rest start working the moment you add the credential.
+Five channels publish automatically, and **each one is off until you switch it on**. A
+channel that is off reports `skipped`, not `success` — so the run page tells you which
+registries actually received the release, rather than looking identical either way.
 
-| Channel | Credential | Where it goes | Absent ⇒ |
+Every channel needs **two** things: the credential, and a repository *variable* saying
+the channel is configured. The variable exists because GitHub does not make the `secrets`
+context available to a job-level `if:`, so a missing secret can only be detected inside
+the job — by which point the job already exists and will report success when it returns
+early. The variable is checked before the job starts.
+
+Once the variable is `true`, a missing or mistyped secret **fails the release loudly**
+instead of quietly skipping it.
+
+| Channel | Credential | Variable to set | Off ⇒ |
 |---|---|---|---|
-| GitHub Release | `GITHUB_TOKEN` | Automatic, nothing to do | n/a |
-| npm | `NPM_TOKEN` secret | Repo → Settings → Secrets → Actions | Job logs a skip, exits 0 |
-| PyPI | *no secret* — Trusted Publishing | See below | Job does not run |
-| crates.io | `CARGO_REGISTRY_TOKEN` secret | Repo → Settings → Secrets → Actions | Job logs a skip, exits 0 |
-| GitHub Pages (site) | Automatic | Repo → Settings → Pages → "GitHub Actions" | Site does not deploy |
+| GitHub Release | `GITHUB_TOKEN` | — always runs | n/a |
+| npm | `NPM_TOKEN` secret | `NPM_PUBLISH` = `true` | Job reports `skipped` |
+| PyPI | *no secret* — Trusted Publishing | `PYPI_PUBLISH` = `true` | Job reports `skipped` |
+| crates.io | `CARGO_REGISTRY_TOKEN` secret | `CRATES_PUBLISH` = `true` | Job reports `skipped` |
+| GitHub Pages (site) | Automatic | — Settings → Pages → "GitHub Actions" | Site does not deploy |
+
+Secrets and variables live in the same place, on two different tabs: **Settings → Secrets
+and variables → Actions**. Putting a variable's value in the Secrets tab is the easiest
+way to get a release that publishes nothing.
+
+Whatever the outcome, the **What actually shipped** job writes a per-channel table to the
+run summary, and warns if the release reached the GitHub release page and no registry.
 
 ### npm
 
@@ -143,6 +180,8 @@ configured — the rest start working the moment you add the credential.
    - Set an expiry you will actually remember. 90 days is the default; a year is fine
      for a personal project.
 3. Save it as the repository secret **`NPM_TOKEN`**.
+4. Set the repository **variable** **`NPM_PUBLISH`** to `true`. Without it the publish
+   job does not run at all, and the release reports `skipped` for npm.
 
 The seven packages the release publishes:
 
@@ -196,6 +235,7 @@ flag in that case.
 1. Sign in at [crates.io](https://crates.io/) with GitHub.
 2. Account Settings → API Tokens → New Token. Scopes: `publish-new` and `publish-update`.
 3. Save it as the repository secret **`CARGO_REGISTRY_TOKEN`**.
+4. Set the repository **variable** **`CRATES_PUBLISH`** to `true`.
 
 ### Name availability
 

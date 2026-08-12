@@ -261,6 +261,9 @@ if [ "$NO_PATH" != "1" ]; then
                 RC_TOUCHED=1
             else
                 echo "-> Adding dev-prune to PATH in $file"
+                # `$PATH` must reach the rc file unexpanded: expanding it here would
+                # freeze this moment's PATH into the user's shell forever.
+                # shellcheck disable=SC2016
                 printf '\n# dev-prune\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$file"
                 RC_TOUCHED=1
             fi
@@ -296,6 +299,12 @@ if [ "$NO_PATH" != "1" ]; then
         echo "-> Adding $WIN_BIN_DIR to your Windows User PATH"
         # Read-modify-write through .NET rather than `setx`, which truncates any PATH
         # longer than 1024 characters.
+        #
+        # The single quotes are the point: this is PowerShell source, and
+        # `$dir`/`$env:`/`$userPath` are its variables, not the shell's. The directory
+        # crosses over as an environment variable so it never has to be quoted into the
+        # script text.
+        # shellcheck disable=SC2016
         DEV_PRUNE_WIN_BIN_DIR="$WIN_BIN_DIR" powershell.exe -NoProfile -NonInteractive -Command '
             $dir = $env:DEV_PRUNE_WIN_BIN_DIR
             $userPath = [Environment]::GetEnvironmentVariable("Path", "User")

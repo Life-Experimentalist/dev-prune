@@ -215,13 +215,17 @@ fn report_file_manager_support() {
     );
 }
 
-fn apply_folder_icon(config_dir: &Path, ico_path: &Path, _png_path: &Path) {
+// Both icon paths are underscore-prefixed because each is used by exactly one target:
+// Windows reads the .ico, Linux reads the .png, and macOS reads neither. Without the
+// prefix the unused one is a `-D warnings` error on the two platforms that ignore it —
+// which only shows up in CI, since a local build sees one platform.
+fn apply_folder_icon(config_dir: &Path, _ico_path: &Path, _png_path: &Path) {
     #[cfg(windows)]
     {
         let ini_file = config_dir.join("desktop.ini");
         let ini_content = format!(
             "[.ShellClassInfo]\r\nIconResource={},0\r\n[ViewState]\r\nMode=\r\nVid=\r\nFolderType=Generic\r\n",
-            ico_path.display()
+            _ico_path.display()
         );
         let _ = fs::write(&ini_file, ini_content);
 
@@ -244,8 +248,6 @@ fn apply_folder_icon(config_dir: &Path, ico_path: &Path, _png_path: &Path) {
 
     #[cfg(target_os = "macos")]
     {
-        let _ = _png_path;
-        let _ = ico_path;
         let _ = config_dir;
     }
 }

@@ -1,6 +1,14 @@
 # Rust build artifacts
 /target
 
+# Node. `site/` has its own ignore file, but the repository root does not otherwise
+# exclude these — and `scripts/check-mermaid.mjs` needs mermaid and jsdom installed
+# here to run, so a maintainer who follows docs/ ends up with a root node_modules that
+# `git add -A` would happily commit.
+node_modules/
+/package.json
+/package-lock.json
+
 # IDE
 .idea/
 .vscode/

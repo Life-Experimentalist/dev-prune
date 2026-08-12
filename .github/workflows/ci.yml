@@ -53,6 +53,22 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
 
+      # TEMPORARY (remove once the macOS contract-test failure is understood).
+      # Every `cli_contract_test` case that asserts on output fails on macOS with exit 0
+      # and zero bytes on both streams, deterministically, while the identical suite
+      # passes on Windows in 12s and takes 0.67s there. That signature says the binary
+      # is not running our `main`, so this prints what the runner actually has.
+      - name: Probe the built binary
+        if: runner.os != 'Windows'
+        run: |
+          set -x
+          cargo build --all-features
+          ls -la target/debug/dev-prune target/debug/devp || true
+          file target/debug/dev-prune
+          ./target/debug/dev-prune --version; echo "version exit=$?"
+          ./target/debug/dev-prune caches --help; echo "help exit=$?"
+          ./target/debug/dev-prune caches --delete-them-all; echo "bogus-flag exit=$?"
+
       - name: Test
         run: cargo test --all --all-features
 
