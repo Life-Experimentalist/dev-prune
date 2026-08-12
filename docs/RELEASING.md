@@ -32,9 +32,29 @@ the one above:
 1. **Create the repository** as `Life-Experimentalist/dev-prune`, **public**. Public is
    not cosmetic: `npm publish --provenance` fails on a private repository, and the
    release check reads the public releases endpoint unauthenticated.
+
+   ```bash
+   gh repo create Life-Experimentalist/dev-prune --public --description "Reclaims disk space from idle Git repositories by deleting only what a lockfile can rebuild." --homepage "https://devprune.vkrishna04.me"
+   ```
+
+   Then set the topics, which are what GitHub search and the topic pages index on:
+
+   ```bash
+   gh repo edit Life-Experimentalist/dev-prune --add-topic rust,cli,developer-tools,disk-space,node-modules,monorepo,cleanup,devtools
+   ```
+
+   The social preview has no API and has to be uploaded by hand: Settings → General →
+   Social preview → Upload `assets/banner.png`. It is the image every link to the
+   repository renders as on Twitter/X, Slack, Discord and Hacker News, and without it
+   they render as a grey octocat.
+
 2. **Push `main`.** CI runs immediately — ten jobs, including `cargo package`, both
    packaging scripts against fabricated assets, the ARM64 Windows cross-check, and the
    changelog gate. Nothing below is worth doing until it is green.
+
+   ```bash
+   git remote add origin https://github.com/Life-Experimentalist/dev-prune.git && git push -u origin main
+   ```
 3. **Turn on Pages**: Settings → Pages → Source → **GitHub Actions**. Then point DNS at
    it — a `CNAME` record for `devprune` at `Life-Experimentalist.github.io` — and tick
    *Enforce HTTPS* once the certificate is issued. `site/public/CNAME` already carries
