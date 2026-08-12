@@ -677,6 +677,47 @@ fn update_offline_still_prints_the_upgrade_commands() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Cache report
+// ---------------------------------------------------------------------------
+//
+// Deliberately no end-to-end run of `devp caches` here. It walks every package manager
+// cache on the machine it runs on — 28 seconds and 27 GiB on the developer laptop this
+// was written on — so a test that invoked it would take longer than the rest of the
+// suite put together, and would measure the runner's disk rather than dev-prune. The
+// document it emits is pinned in `json.rs`, where it is deterministic and free; what is
+// worth asserting out here is the flag surface and the exit codes.
+
+#[test]
+fn caches_advertises_its_json_form_and_that_it_deletes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).args(["caches", "--help"]).output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+
+    let text = combined(&out);
+    assert!(text.contains("--json"), "{text}");
+    // The one promise this command makes. If the wording ever drifts away from saying
+    // so, the safety claim in the docs is no longer visible where people read it.
+    assert!(
+        text.contains("deletes nothing") || text.contains("read-only"),
+        "the help text no longer says it is read-only:\n{text}"
+    );
+}
+
+#[test]
+fn an_unknown_caches_flag_is_a_usage_error_not_a_report() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["caches", "--delete-them-all"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+}
+
 #[test]
 fn a_disabled_check_keeps_run_and_status_off_the_network() {
     let tmp = TempDir::new().unwrap();

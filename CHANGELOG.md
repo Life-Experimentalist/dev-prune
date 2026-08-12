@@ -94,6 +94,16 @@ delete anything it cannot prove is recoverable.
 - `status` — an interactive dashboard of every registered repository, its state,
   reclaimable space and last activity, with `i` to ignore and `p` to prune.
   `status daemon` and `status hook` report the background integrations.
+- **`caches [--json]`** — the answer to "where did my disk actually go?". Finds every
+  package manager cache and store on the machine — npm, pnpm, yarn, bun, uv, pip, cargo's
+  registry, Go's module and build caches — sizes each one, orders them largest first, and
+  prints the command that clears it. Each manager is asked where its cache lives rather
+  than assumed, so a `CARGO_HOME` or a corporate `.npmrc` is followed; a manager you have
+  since uninstalled still has its leftover cache reported. **It deletes nothing, and no
+  flag makes it.** A cache is shared by every project on the machine, so no single
+  lockfile can prove it recoverable — and it is what makes `restore` fast. Run
+  `devp caches` when you want the number, and the clear command yourself when you want
+  the space more than the speed.
 - `restore [PATH] [--last-run]` — reinstall dependencies for every project in a tree.
   `--last-run` restores exactly what the most recent prune pass deleted, wherever those
   projects were, so an over-eager pass is one command to undo.

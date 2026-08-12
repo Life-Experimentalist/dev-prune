@@ -326,13 +326,25 @@ fn probe_binary(program: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Helper: run a command with a configurable timeout.
-pub fn run_command_with_timeout(
+/// The exit status and drained pipes of a finished command.
+struct CommandOutput {
+    status: std::process::ExitStatus,
+    stdout: String,
+    stderr: String,
+}
+
+/// Spawn a command, drain both of its pipes and wait for it, bounded by `timeout`.
+///
+/// Shared by the two public wrappers below. `devp caches` needs a command's *output* —
+/// `npm config get cache` answers a question rather than performing an action — and a
+/// second copy of the draining and polling below would be a second place for the
+/// deadlock it exists to prevent to come back.
+fn spawn_capture(
     program: &str,
     args: &[&str],
     cwd: &Path,
     timeout: std::time::Duration,
-) -> Result<()> {
+) -> Result<CommandOutput> {
     use std::io::Read;
     use std::process::{Command, Stdio};
     use std::thread;
@@ -393,17 +405,60 @@ pub fn run_command_with_timeout(
         .join()
         .map(|b| String::from_utf8_lossy(&b).into_owned())
         .unwrap_or_default();
-    let _ = stdout_reader.join();
+    let stdout = stdout_reader
+        .join()
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
 
-    if status.success() {
+    Ok(CommandOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+/// Helper: run a command with a configurable timeout.
+pub fn run_command_with_timeout(
+    program: &str,
+    args: &[&str],
+    cwd: &Path,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    let out = spawn_capture(program, args, cwd, timeout)?;
+    if out.status.success() {
         Ok(())
     } else {
         anyhow::bail!(
             "{} {} failed (exit code {:?}):\n{}",
             program,
             args.join(" "),
-            status.code(),
-            stderr.trim()
+            out.status.code(),
+            out.stderr.trim()
+        )
+    }
+}
+
+/// Run a command and hand back what it printed on stdout, bounded by `timeout`.
+///
+/// For commands that answer a question instead of doing work. A non-zero exit is an
+/// error like anywhere else, so a caller never mistakes an error message on stderr for
+/// the answer it asked for.
+pub fn capture_command_with_timeout(
+    program: &str,
+    args: &[&str],
+    cwd: &Path,
+    timeout: std::time::Duration,
+) -> Result<String> {
+    let out = spawn_capture(program, args, cwd, timeout)?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        anyhow::bail!(
+            "{} {} failed (exit code {:?}):\n{}",
+            program,
+            args.join(" "),
+            out.status.code(),
+            out.stderr.trim()
         )
     }
 }

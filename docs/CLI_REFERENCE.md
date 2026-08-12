@@ -97,7 +97,7 @@ when the argument is quoted.
 
 ### 1. `devp init [PATHS...]`
 - **Aliases**: `scan`, `onboard`
-- **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#10-devp-setup---status), installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#9-devp-update---offline) does.
+- **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#11-devp-setup---status), installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#10-devp-update---offline) does.
 - **Examples**:
   ```bash
   devp init ~/Code
@@ -119,7 +119,7 @@ when the argument is quoted.
 ### 3. `devp unlink [PATH]`
 - **Description**: Removes a repository from the `dev-prune` registry. Does **not** delete any workspace files on disk.
 - **Flags**:
-  - `--missing` — remove every registered path whose directory no longer exists, instead of one named repository. Clones that were deleted, drives that were reformatted and workspaces that were moved all leave entries behind; [`devp doctor`](#11-devp-doctor-path) counts them in a single warning and sends you here rather than printing one `devp unlink` line per dead path. Conflicts with `PATH`.
+  - `--missing` — remove every registered path whose directory no longer exists, instead of one named repository. Clones that were deleted, drives that were reformatted and workspaces that were moved all leave entries behind; [`devp doctor`](#12-devp-doctor-path) counts them in a single warning and sends you here rather than printing one `devp unlink` line per dead path. Conflicts with `PATH`.
 - **Examples**:
   ```bash
   devp unlink
@@ -220,7 +220,34 @@ reads unambiguously:
 
 ---
 
-### 7. `devp config [ACTION]`
+### 7. `devp caches [--json]`
+- **Description**: Finds every package-manager cache and store on the machine, sizes each one, and prints the command that clears it. Largest first, with a total. **It deletes nothing** — there is no flag that makes it delete anything.
+- **Why it only reports**: a cache lives outside every repository and is shared by all of them, so no single lockfile can prove its contents are recoverable — which is the bar every deletion in dev-prune has to clear. It is also what makes [`devp restore`](#9-devp-restore-path---last-run) fast: clearing a cache turns the next reinstall into a download. So the clear command is printed for you to run deliberately, when you want the space more than the speed.
+- **What it looks at**:
+
+  | Manager | Cache | Cleared by |
+  | :--- | :--- | :--- |
+  | `npm` | cache | `npm cache clean --force` |
+  | `pnpm` | store | `pnpm store prune` |
+  | `yarn` | cache | `yarn cache clean` |
+  | `bun` | cache | `bun pm cache rm` |
+  | `uv` | cache | `uv cache prune` |
+  | `pip` | cache | `pip cache purge` |
+  | `cargo` | registry cache, registry sources | deleting `$CARGO_HOME/registry/{cache,src}` — cargo ships no cache subcommand |
+  | `go` | module cache, build cache | `go clean -modcache`, `go clean -cache` |
+
+  Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. Two probes that resolve to the same directory are counted once.
+- **Flags**:
+  - `--json` — emit one machine-readable document instead of the table.
+- **Examples**:
+  ```bash
+  devp caches
+  devp caches --json | jq '.summary.total_bytes'
+  ```
+
+---
+
+### 8. `devp config [ACTION]`
 - **Description**: Manage global settings, per-repository configuration (`.devprune.json`), background daemons, Git hooks, or the OS file manager's icon for `.devprune.json`.
 - **Sub-Actions**:
   - `config get <key>`: View a global setting.
@@ -238,7 +265,7 @@ reads unambiguously:
     | `check_interval_days` | `2` | How often the OS scheduler runs a pass |
     | `auto_hooks` | `true` | Whether that pass may install the global Git hooks |
     | `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds, forwarding every hook on to it |
-    | `update_check` | `true` | Whether the periodic release check runs (see [`devp update`](#9-devp-update---offline)) |
+    | `update_check` | `true` | Whether the periodic release check runs (see [`devp update`](#10-devp-update---offline)) |
     | `update_check_interval_days` | `7` | Minimum gap between two release checks |
     | `update_check_timeout_secs` | `5` | How long that one request may hang before it is abandoned |
 
@@ -315,9 +342,10 @@ action never silently degrades into a status report.
 
 ## 🤖 Machine-readable output (`--json`)
 
-`devp run --json` and `devp status --json` each emit exactly one JSON document on stdout
-and nothing else. `status --json` makes no changes of any kind — not even to the registry
-file.
+`devp run --json`, `devp status --json` and `devp caches --json` each emit exactly one JSON
+document on stdout and nothing else. `status --json` makes no changes of any kind — not
+even to the registry file — and `caches --json` never touches anything but the sizes it
+reads.
 
 Every document carries `schema`, an integer that increases only when a consumer would
 have to change to keep working: a field removed, renamed, or given a new meaning. **Adding
@@ -404,12 +432,40 @@ The current version is `1`.
 `config_error`. `last_activity` is the later of the last commit and the newest source file
 mtime — the same value the idle decision uses, so the two can never disagree.
 
-Both documents are emitted to stdout; diagnostics go to stderr, so `devp status --json |
+### `devp caches --json`
+
+```jsonc
+{
+  "schema": 1,
+  "version": "1.0.0",
+  "command": "caches",
+  "caches": [
+    {
+      "manager": "uv",
+      "kind": "cache",
+      "path": "~/.cache/uv",
+      "bytes": 17448304640,
+      "clear_command": "uv cache prune"
+      // "note" — present only when clearing this cache costs more than time
+    }
+  ],
+  "summary": {
+    "total_bytes": 29268434944,
+    "count": 9
+  }
+}
+```
+
+`caches` is ordered largest first, the same as the table. Only caches that exist on the
+machine appear, so `count` is a count of what was found rather than of what was looked
+for. `clear_command` is a suggestion printed for a human — dev-prune never runs it.
+
+Every document is emitted to stdout; diagnostics go to stderr, so `devp status --json |
 jq` is always safe. Exit codes are unchanged by `--json`.
 
 ---
 
-### 8. `devp restore [PATH] [--last-run]`
+### 9. `devp restore [PATH] [--last-run]`
 - **Description**: Detects applicable package manager lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `Cargo.lock`, `go.sum`) and re-installs missing dependencies (`npm ci`, `pnpm install`, `uv sync`, etc.). Mirrors pruning: every project in the tree is restored, each by its own manager.
 - **Flags**:
   - `--last-run` — restore exactly what the most recent prune pass deleted, across every repository it touched, and nothing else. Each prune records what it removed; a pass that deleted nothing leaves the previous record intact, and a `--dry-run` records nothing at all. Fails if no pass has been recorded yet. Cannot be combined with a `PATH` — silently ignoring the path would restore the wrong thing.
@@ -422,7 +478,7 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 
 ---
 
-### 9. `devp update [--offline]`
+### 10. `devp update [--offline]`
 - **Description**: Prints the installed version, asks GitHub's public API for the latest release, and shows the upgrade command for how you installed it. It never downloads or replaces its own binary — upgrade with `cargo install dev-prune --force`, `npm install -g dev-prune`, or by re-running the installer script.
 - **Flags**:
   - `--offline` — skip the release check for this run without changing the setting.
@@ -435,7 +491,7 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 
 ---
 
-### 10. `devp setup [--status]`
+### 11. `devp setup [--status]`
 - **Description**: Installs whatever dev-prune integration is missing and leaves the rest alone: the `devp` alias, the exported `SKILL.md`, the file-manager icon registration for `*.devprune.json`, the global Git auto-registration hooks, and the OS scheduler. Safe to run repeatedly — it is the same pass the install scripts run, the same one `devp init` runs, and the same one that runs by itself on the first command after an upgrade.
 - **`--status`**: Report what is installed, what is not, and which automation settings are in force. Changes nothing.
 - **Skips, rather than forces**:
@@ -453,7 +509,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 11. `devp doctor [PATH]`
+### 12. `devp doctor [PATH]`
 - **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. It changes nothing — no config is created, no integration installed, no package manager run.
 - **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
 - **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses and what it overrides, the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.
@@ -467,7 +523,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 12. `devp skill`
+### 13. `devp skill`
 - **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory and displays ready-to-copy AI Agent onboarding prompts for AI assistants (Gemini Antigravity, Claude Code, Cursor, Windsurf, Copilot, OpenClaw).
 - **Examples**:
   ```bash
@@ -476,7 +532,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 13. `devp uninstall [--deep]`
+### 14. `devp uninstall [--deep]`
 - **Description**: Removes the OS daemon scheduler, clears the global `core.hooksPath` (only if it still points at dev-prune), and removes the `devp` alias link. It also stamps the current version so the automatic pass does not put them straight back on the next command; the next *upgrade* will, unless you also run `devp config set auto_setup false`. With `--deep`, also wipes the global configuration folder (`~/.config/dev-prune/`) and every registered repository's `.devprune.json`. `--deep` asks for confirmation, and refuses outright with no terminal to ask on unless `-y` is passed.
 - **Examples**:
   ```bash

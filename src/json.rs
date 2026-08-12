@@ -233,6 +233,44 @@ pub fn status_document(
     })
 }
 
+/// The document emitted by `devp caches --json`.
+///
+/// `clear_command` is the one field an agent can act on, and it is the only place in this
+/// contract that carries a command dev-prune will not run itself: these caches are shared
+/// by every project on the machine, so clearing one is a human's decision. `note` is
+/// present only where there is a cost beyond time.
+pub fn caches_document(reports: &[crate::commands::caches::CacheReport]) -> Value {
+    let total: u64 = reports.iter().map(|r| r.bytes).sum();
+
+    let caches: Vec<Value> = reports
+        .iter()
+        .map(|r| {
+            let mut obj = json!({
+                "manager": r.manager,
+                "kind": r.kind,
+                "path": clean_path(&r.path),
+                "bytes": r.bytes,
+                "clear_command": r.clear_command,
+            });
+            if let Some(note) = r.note {
+                obj["note"] = json!(note);
+            }
+            obj
+        })
+        .collect();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "caches",
+        "caches": caches,
+        "summary": {
+            "total_bytes": total,
+            "count": reports.len(),
+        },
+    })
+}
+
 /// Print a document to stdout as pretty JSON with a trailing newline.
 ///
 /// Pretty rather than compact because a human reads this output far more often than a
@@ -368,6 +406,48 @@ mod tests {
         // a lie an agent would then run.
         assert!(lockfile_fix_command("venv").is_none());
         assert!(lockfile_fix_command("nonsense").is_none());
+    }
+
+    #[test]
+    fn the_cache_report_totals_what_it_lists() {
+        use crate::commands::caches::CacheReport;
+
+        let doc = caches_document(&[
+            CacheReport {
+                manager: "go",
+                kind: "module cache",
+                path: PathBuf::from("/home/dev/go/pkg/mod"),
+                bytes: 4_000,
+                clear_command: "go clean -modcache",
+                note: None,
+            },
+            CacheReport {
+                manager: "pnpm",
+                kind: "store",
+                path: PathBuf::from("/home/dev/.pnpm-store"),
+                bytes: 1_000,
+                clear_command: "pnpm store prune",
+                note: Some("hardlinked"),
+            },
+        ]);
+
+        assert_eq!(doc["command"], "caches");
+        assert_eq!(doc["summary"]["total_bytes"], 5_000);
+        assert_eq!(doc["summary"]["count"], 2);
+        // Absent rather than null where there is nothing to say, matching every other
+        // optional field in this contract.
+        assert!(doc["caches"][0].get("note").is_none());
+        assert_eq!(doc["caches"][1]["note"], "hardlinked");
+        assert_eq!(doc["caches"][0]["clear_command"], "go clean -modcache");
+    }
+
+    #[test]
+    fn an_empty_cache_report_is_still_a_document() {
+        // A machine with no package manager installed must produce a parseable zero, not
+        // an absent `summary` a consumer would have to special-case.
+        let doc = caches_document(&[]);
+        assert_eq!(doc["summary"]["total_bytes"], 0);
+        assert_eq!(doc["caches"].as_array().unwrap().len(), 0);
     }
 
     #[test]

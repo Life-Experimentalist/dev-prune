@@ -15,6 +15,7 @@
 /// Command handler modules.
 ///
 /// Each subcommand has its own module with a `run()` function.
+pub mod caches;
 pub mod config;
 pub mod daemon;
 pub mod doctor;

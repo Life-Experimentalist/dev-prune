@@ -117,7 +117,7 @@ fn is_broken_pipe(err: &anyhow::Error) -> bool {
     about = "Universal, lockfile-safe workspace pruner and background dependency cleaner\nNote: `dev-prune` and `devp` are interchangeable binary aliases."
 )]
 #[command(
-    after_help = "EXAMPLES:\n  devp init ~/Code          Scan directory trees & onboard workspaces\n  devp link                 Register current repository\n  devp run                  Execute prune pass across inactive repositories\n  devp status               View system status dashboard\n  devp status daemon        Check background daemon status (alias for `devp config daemon status`)\n  devp status . hook        Check workspace Git hook status (alias for `devp config . hook status`)\n  devp config . daemon disable  Disable daemon background pass for current workspace\n  devp restore .            Restore missing node_modules/.venv via lockfile\n  devp undo                 Revert most recent init or link action\n\nBINARY ALIAS:\n  `dev-prune` and `devp` invoke the exact same executable."
+    after_help = "EXAMPLES:\n  devp init ~/Code          Scan directory trees & onboard workspaces\n  devp link                 Register current repository\n  devp run                  Execute prune pass across inactive repositories\n  devp status               View system status dashboard\n  devp caches               Size every package manager cache (deletes nothing)\n  devp status daemon        Check background daemon status (alias for `devp config daemon status`)\n  devp status . hook        Check workspace Git hook status (alias for `devp config . hook status`)\n  devp config . daemon disable  Disable daemon background pass for current workspace\n  devp restore .            Restore missing node_modules/.venv via lockfile\n  devp undo                 Revert most recent init or link action\n\nBINARY ALIAS:\n  `dev-prune` and `devp` invoke the exact same executable."
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -220,6 +220,13 @@ pub enum Commands {
     /// View system dashboard: registered repos, background daemon, Git hooks & space metrics.
     Status {
         /// Emit the dashboard as one JSON document instead of the TUI or text table.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Report the size of every package manager cache on this machine (read-only, deletes nothing).
+    Caches {
+        /// Emit the report as one JSON document instead of the table.
         #[arg(long)]
         json: bool,
     },
@@ -521,6 +528,7 @@ pub fn run_cli() {
             })
         }
         Commands::Status { json } => commands::status::run(json),
+        Commands::Caches { json } => commands::caches::run(json),
         Commands::Config { action } => match action {
             Some(ConfigAction::Get { key }) => commands::config::run_get(&key),
             Some(ConfigAction::Set { key, value }) => commands::config::run_set(&key, &value),

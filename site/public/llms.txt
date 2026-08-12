@@ -57,6 +57,11 @@ Arch, NixOS and Alpine.
 - `devp undo` — revert the most recent `init` or `link`
 - `devp run [PATH]` — prune every registered repository, or one target
 - `devp status` — interactive dashboard; a plain table when there is no TTY
+- `devp caches [--json]` — find and size every package-manager cache and store on the
+  machine (npm, pnpm, yarn, bun, uv, pip, cargo, go), largest first, with the command that
+  clears each. It deletes nothing and has no flag that makes it: a cache is shared by
+  every project, so no one lockfile can prove it recoverable, and it is what makes
+  `devp restore` fast
 - `devp restore [PATH]` — reinstall dependencies for every project in a tree;
   `devp restore --last-run` restores exactly what the most recent prune pass deleted
 - `devp doctor [PATH]` — diagnose the installation, or one repository with a path

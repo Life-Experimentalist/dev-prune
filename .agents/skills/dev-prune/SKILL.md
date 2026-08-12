@@ -51,6 +51,10 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 - Never crosses into a nested repository; a submodule is pruned as itself or not at all.
 - Never executes anything named in a repository-tracked file. `.devprune.json` holds
   inert data only.
+- Never touches a package-manager cache. `devp caches` reports their sizes and prints the
+  clear command; running it is the user's decision, not yours. A cache is shared by every
+  project on the machine, so no one lockfile can prove it is recoverable — and it is what
+  makes `devp restore` fast.
 
 ---
 
@@ -66,6 +70,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "clean everything but the API project" | `devp run --except api -y` — never verified, never deleted, never reinstalled |
 | "put the dependencies back" | `devp restore .` |
 | "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched |
+| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and prints the command that clears each. It deletes nothing; the user runs the clear command |
 | "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it |
 | "is anything wrong with my install?" | `devp doctor` |
 | "track my projects folder" | `devp init ~/Code` |
@@ -81,7 +86,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "turn the automation off" | `devp config set auto_setup false` |
 | "remove it" | `devp uninstall` (add `--deep` to wipe config — confirm first) |
 | "what version?" | `devp -V` (also prints OS, arch, config path, PATH audit) |
-| you need to *read* the answer rather than show it | add `--json` to `run` or `status` — see below |
+| you need to *read* the answer rather than show it | add `--json` to `run`, `status` or `caches` — see below |
 
 Global flags, valid on any subcommand: `--dry-run`, `--ignore-idle` (`--force` is the
 deprecated alias), `--yes` / `-y`.
@@ -111,17 +116,19 @@ A run in which any repository failed exits `1` even if others succeeded.
 
 ## 🔌 Machine-readable output — prefer this over parsing the human report
 
-`devp run --json` and `devp status --json` each emit **one** JSON document on stdout and
-nothing else; warnings go to stderr. `--json` implies non-interactive, so it never blocks
-on a prompt. `status --json` changes nothing at all, not even the registry file.
+`devp run --json`, `devp status --json` and `devp caches --json` each emit **one** JSON
+document on stdout and nothing else; warnings go to stderr. `--json` implies
+non-interactive, so it never blocks on a prompt. `status --json` changes nothing at all,
+not even the registry file.
 
 ```bash
 devp status --json          # what exists, what is reclaimable, are the integrations up
 devp run --dry-run --json   # what a pass would do, with exact byte counts
 devp run -y --json          # do it
+devp caches --json          # every package-manager cache, sized, largest first
 ```
 
-Both documents carry `schema`, an integer that increases **only** when a consumer would
+Every document carries `schema`, an integer that increases **only** when a consumer would
 have to change: a field removed, renamed, or given a new meaning. Adding a field does not
 bump it — parse permissively and ignore what you do not recognise. It is `1` today.
 
@@ -136,6 +143,7 @@ The fields worth reading first:
 | `repositories[].state` (status) | `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, `config_error` |
 | `repositories[].error` | the parse failure — present only on `config_error` |
 | `totals.reclaimable_bytes` | the number to quote back to the user |
+| `summary.total_bytes` (caches) | every package-manager cache added up; `caches[].clear_command` is what the *user* runs, never you |
 
 `status` tags and `state` tags are separate vocabularies: the first is what a pass *did*,
 the second is why a repository *is or is not* a candidate. Both are stable and lowercase

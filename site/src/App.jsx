@@ -1269,6 +1269,16 @@ export default function App() {
                   </tr>
                   <tr>
                     <td className="td-name">
+                      <code>devp caches</code>
+                    </td>
+                    <td>
+                      Size every package manager cache on the machine and print
+                      the command that clears each. Reports only — it deletes
+                      nothing
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
                       <code>devp restore [PATH]</code>
                     </td>
                     <td>Reinstall dependencies for every project in a tree</td>

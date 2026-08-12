@@ -126,6 +126,7 @@ devp -V
 | `devp undo` | | Reverts the most recent `init` or `link` registration action |
 | `devp run [PATH]` | | Runs a prune pass across registered repos or a specific target path |
 | `devp status` | | Opens the interactive Ratatui dashboard (shortcuts: `status daemon`, `status hook`) |
+| `devp caches [--json]` | | Sizes every package-manager cache on the machine and prints the command that clears each one. Reports only — it deletes nothing |
 | `devp config [ACTION]` | | Manages global settings (`wizard`, `show`, `get`, `set`), per-repo `.devprune.json`, daemons, hooks, & file-manager icons |
 | `devp restore [PATH]` | `--last-run` | Re-installs missing dependencies using project lockfiles; `--last-run` puts back exactly what the last prune pass deleted |
 | `devp update` | `--offline` | Prints the installed version, checks GitHub for a newer release, and shows how to upgrade |

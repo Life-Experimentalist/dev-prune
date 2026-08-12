@@ -121,6 +121,14 @@ pub const DEVPRUNE_IGNORE_FILE: &str = "ignore.devprune.json";
 /// Default timeout in seconds for lockfile enforcement / CLI commands (10 minutes).
 pub const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 600;
 
+/// Timeout for the "where does your cache live?" queries `devp caches` makes.
+///
+/// Deliberately not `command_timeout_secs`. That ceiling is sized for `npm ci` and
+/// `cargo metadata`; `npm config get cache` prints one line and returns. A query that
+/// has not answered in five seconds is a broken installation, and the report is better
+/// off falling back to the conventional path than waiting ten minutes for it.
+pub const CACHE_QUERY_TIMEOUT_SECS: u64 = 5;
+
 /// Documentation URL for troubleshooting lockfile and pruning failures.
 pub const TROUBLESHOOTING_URL: &str = "https://devprune.vkrishna04.me/docs/troubleshooting";
 /// Name of the structured per-repository configuration file stored inside repo roots.
