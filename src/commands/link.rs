@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Handlers for `dev-prune link` and `dev-prune unlink` commands.
 
 use std::path::Path;

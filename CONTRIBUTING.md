@@ -92,3 +92,24 @@ Before submitting a pull request, verify:
 - [ ] All unit and integration tests pass with `cargo test --all`
 - [ ] New adapters or features include unit tests using `tempfile::TempDir`
 - [ ] Documentation and comments are updated to reflect code changes
+- [ ] Every new source file starts with the two-line licence header (see below)
+
+---
+
+## ⚖️ Licensing
+
+`dev-prune` is Apache-2.0. Contributing means agreeing that your contribution is
+licensed the same way — the terms are in
+[section 5 of `LICENSE.md`](LICENSE.md), and there is no separate CLA to sign.
+
+Every source file starts with these two lines, using whatever comment syntax the
+language wants (`//`, `#`, `/* */`), directly below the shebang if there is one:
+
+```rust
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+```
+
+That is the short form of the boilerplate in the appendix of `LICENSE.md`. It says the
+same thing in one line that automated licence scanners can read, which the thirteen-line
+prose version does not.

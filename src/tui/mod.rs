@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Terminal UI components for dev-prune.
 
 use std::io::{Stdout, stdout};

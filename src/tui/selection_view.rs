@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Interactive TUI candidate selection view.
 //
 // Provides a terminal UI for users to selectively check/uncheck

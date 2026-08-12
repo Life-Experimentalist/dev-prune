@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Handler for the `dev-prune init` command.
 //
 // Scans provided paths for Git repositories, registers them in the registry,

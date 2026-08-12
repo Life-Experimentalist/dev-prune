@@ -540,7 +540,10 @@ Deeper: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
 
 ## License & privacy
 
-Apache-2.0 — [LICENSE.md](LICENSE.md).
+Copyright 2026 VKrishna04. Licensed under the Apache License, Version 2.0 — see
+[LICENSE.md](LICENSE.md). Every source file carries an
+[SPDX](https://spdx.dev/) identifier, so automated licence scanners see the same
+answer the file header does.
 
 > [!IMPORTANT]
 > **No analytics, no diagnostics, no usage data** — none collected, none sent. Your

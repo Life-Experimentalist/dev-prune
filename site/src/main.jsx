@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 import React from 'react';
 import { hydrateRoot, createRoot } from 'react-dom/client';
 import App from './App.jsx';

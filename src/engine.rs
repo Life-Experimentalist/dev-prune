@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Pruning engine — orchestrates the full prune pass.
 //
 // This module is the "brain" of dev-prune. It coordinates:

@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Centralized application constants and default configurations.
 //
 // Serves as the single source of truth for app metadata, versioning,

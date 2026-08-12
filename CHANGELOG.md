@@ -197,6 +197,11 @@ absent and reports what it declined to touch.
   turns into an outbound call to GitHub. npm gets six platform packages selected by
   `os`/`cpu`; PyPI gets six platform wheels. Every npm tarball is published with
   provenance, and every wheel through PyPI Trusted Publishing.
+- **Apache-2.0, and provable.** Copyright 2026 VKrishna04. Every source file carries an
+  `SPDX-License-Identifier`, so a licence scanner in your CI answers the same as the
+  `LICENSE.md` in the repository, and every distributed artefact — the crate, all seven
+  npm packages, all six wheels — ships the full licence text rather than only a field
+  naming it.
 - Configuration lives in the platform config directory: `%APPDATA%\dev-prune` on
   Windows, `~/Library/Application Support/dev-prune` on macOS,
   `$XDG_CONFIG_HOME/dev-prune` on Linux.

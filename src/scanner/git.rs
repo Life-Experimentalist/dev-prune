@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Git-specific activity detection.
 //
 // Determines when a repository was last active by:

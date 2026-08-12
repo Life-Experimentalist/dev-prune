@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+
 # Print the CHANGELOG.md section for one version, without its heading.
 #
 # Used twice, and that is the point: CI runs it to prove the version in Cargo.toml has

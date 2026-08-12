@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // uv package manager adapter for Python projects.
 
 use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command};

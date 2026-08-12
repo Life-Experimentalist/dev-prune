@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Handler for the `dev-prune run` command.
 //
 // Executes a full prune pass across all registered repositories.

@@ -1,3 +1,6 @@
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+
 # Global AI Skill Installer for dev-prune (PowerShell)
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/install-skill.ps1
 

@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Git repository scanner and activity detection.
 //
 // This module provides functions to:

@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Handler for `dev-prune update`, and the periodic release check behind it.
 //
 // The check is opt-*out*. An out-of-date cleanup tool is a tool whose safety fixes you do

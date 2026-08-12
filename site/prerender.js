@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Static prerender step.
 //
 // `npm run build` runs three things in order: the client build, an SSR build of

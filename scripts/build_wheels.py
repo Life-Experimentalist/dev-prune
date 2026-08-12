@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+
 """Build platform wheels for PyPI out of the release assets.
 
 dev-prune is a Rust program with no Python in it. It is on PyPI anyway because that is

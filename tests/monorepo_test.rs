@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 //! End-to-end coverage for repositories that host more than one package manager.
 //!
 //! A single repository may put uv, npm and cargo side by side in its root, spread them

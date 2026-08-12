@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Configuration and registry management for dev-prune.
 //
 // This module handles persistent storage of:

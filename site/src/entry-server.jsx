@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Server entry used only at build time by `prerender.js`. It turns the same component
 // tree the browser hydrates into static HTML, so a crawler that runs no JavaScript still
 // receives the full page.

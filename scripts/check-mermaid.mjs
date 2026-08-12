@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Parse every ```mermaid block in the repository's Markdown and fail on a syntax error.
 //
 // GitHub renders a malformed diagram as a red error box, and nothing in the normal build

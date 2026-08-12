@@ -158,6 +158,10 @@ Docs describe what the code does *now*. There is no "planned", "coming soon" or
   [`docs/SAFETY_INVARIANTS.md`](docs/SAFETY_INVARIANTS.md) — `.git` boundary, lockfile
   pre-verification, symlink refusal, atomic state writes, and the rest — have no bypass
   flag and must not acquire one.
+- **Every source file opens with the licence header.** Two lines — `Copyright 2026
+  VKrishna04` and `SPDX-License-Identifier: Apache-2.0` — in the language's comment
+  syntax, below the shebang if there is one. New files included; a scanner that finds one
+  file without it reports the whole repository as mixed-licence.
 - **New strings go in `src/constants.rs`.** Env var names and path fragments especially:
   they are also referenced from `npm/bin/dev-prune.js`, `scripts/install.sh` and
   `scripts/install.ps1`, and a typo in one of those is invisible until someone hits it.

@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Handler for `dev-prune hook` subcommands.
 //
 // Manages non-blocking global Git hooks (`post-commit`, `post-checkout`, `post-merge`)

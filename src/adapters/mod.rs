@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Package manager adapter trait and registry.
 //
 // This module defines the [`PackageManager`] trait that all ecosystem adapters

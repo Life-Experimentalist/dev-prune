@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Launcher for the dev-prune native binary.
 //
 // dev-prune is a Rust program, so this package ships no JavaScript implementation. The

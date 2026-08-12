@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 import React, { useState, useEffect, useRef } from "react";
 import {
   Check,
@@ -1712,6 +1715,12 @@ export default function App() {
               Apache-2.0
             </a>
           </nav>
+        </div>
+        <div className="container">
+          <p className="footer-legal">
+            Copyright 2026 VKrishna04 · Licensed under the Apache License,
+            Version 2.0
+          </p>
         </div>
       </footer>
     </div>

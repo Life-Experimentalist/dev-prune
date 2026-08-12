@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Workspace discovery — finds every package-manager project inside a repository.
 //
 // A repository is not necessarily one project. A monorepo can carry `frontend/` on

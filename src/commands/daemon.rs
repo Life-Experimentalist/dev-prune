@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Handler for the `dev-prune daemon` command.
 //
 // Manages the OS-native background scheduler (install, uninstall, status).

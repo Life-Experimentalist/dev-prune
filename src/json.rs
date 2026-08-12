@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Machine-readable output for `--json`.
 //
 // This module is the whole contract. Every field an AI agent, CI step or script can rely

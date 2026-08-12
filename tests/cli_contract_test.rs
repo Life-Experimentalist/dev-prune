@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 //! End-to-end coverage for the machine-readable and filtering surface of the CLI:
 //! `--json`, `--only` / `--skip`, `--min-size` / `min_size_mb`, and the release check.
 //!

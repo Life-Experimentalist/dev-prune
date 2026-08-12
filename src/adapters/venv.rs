@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Standard Python venv package manager adapter.
 //
 // Detects Python virtual environments by scanning the repo root for any

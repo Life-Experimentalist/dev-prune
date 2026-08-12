@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+
 # Turn the release assets into publishable npm packages.
 #
 # Produces one package per platform, each holding the real binary and marked with `os`

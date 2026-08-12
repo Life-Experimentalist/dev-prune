@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Handler for `dev-prune undo` command.
 //
 // Reverts the most recent `init` or `link` action by un-registering

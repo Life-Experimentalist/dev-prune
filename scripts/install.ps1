@@ -1,3 +1,6 @@
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+
 # dev-prune Windows installer
 # One-liner: iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
 #

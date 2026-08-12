@@ -1,3 +1,6 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
 // Terminal UI for the `dev-prune status` command.
 //
 // Renders a full interactive, scrollable table of all registered repositories

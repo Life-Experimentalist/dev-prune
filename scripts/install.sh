@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+
 # dev-prune installer — Linux, macOS, and Windows under Git Bash / MSYS2 / Cygwin
 # One-liner: curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
 #
