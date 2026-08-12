@@ -73,9 +73,14 @@ dirs = "6"
 walkdir = "2"
 
 # Terminal UI & Spinners
+#
+# crossterm is held at 0.28 because ratatui 0.29 depends on it. Taking crossterm 0.29 on
+# its own puts two copies of the terminal's raw-mode state in one binary, and the ratatui
+# release that wants 0.29 is 0.30, whose MSRV is 1.88 — above the 1.85 this crate
+# advertises. Bump all three together, or none.
 ratatui = "0.29"
 crossterm = "0.28"
-indicatif = "0.17"
+indicatif = "0.18"
 
 # Colored terminal output
 colored = "3"
