@@ -331,22 +331,9 @@ jobs:
             echo "::error::NPM_PUBLISH is 'true' but the NPM_TOKEN secret is empty or unset."
             exit 1
           fi
-          for pkg in \
-            dev-prune-linux-x64 dev-prune-linux-arm64 \
-            dev-prune-darwin-x64 dev-prune-darwin-arm64 \
-            dev-prune-win32-x64 dev-prune-win32-arm64 \
-            dev-prune
-          do
-            # Re-running a release is a normal thing to do after fixing one failed job.
-            # Without this, the second run dies on EPUBLISHCONFLICT at whichever package
-            # succeeded the first time and never reaches the ones that did not.
-            if npm view "$pkg@$VERSION" version >/dev/null 2>&1; then
-              echo "$pkg@$VERSION is already on the registry — skipping."
-              continue
-            fi
-            echo "publishing $pkg@$VERSION under --tag $DIST_TAG"
-            npm publish "npm-dist/$pkg" --provenance --tag "$DIST_TAG"
-          done
+          # The loop lives in the script so CI can dry-run this exact command. See the
+          # "Dry-run the publish that release.yml will run" step in ci.yml.
+          sh scripts/npm-publish.sh "$VERSION" npm-dist "$DIST_TAG"
 
   # PyPI, for `uv tool install dev-prune`, `uvx dev-prune` and `pipx run dev-prune`.
   # Nothing about dev-prune is Python; PyPI is simply where those three installers look,

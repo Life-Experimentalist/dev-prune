@@ -172,6 +172,14 @@ jobs:
             npm pack --dry-run --pack-destination /tmp "$dir"
           done
 
+      # `npm pack` above proves the manifests are valid; this proves the publish
+      # invocation itself is. They are not the same check — the first v1.0.0 release
+      # packed cleanly here and then failed in release.yml on the publish argument,
+      # because nothing in CI ever ran the publish command. This runs the very script
+      # release.yml runs, so the two cannot drift again.
+      - name: Dry-run the publish that release.yml will run
+        run: sh scripts/npm-publish.sh 9.9.9 fake/npm latest --dry-run
+
       - name: Build the wheels
         run: python scripts/build_wheels.py 9.9.9 fake/assets fake/wheels
 
@@ -227,6 +235,8 @@ jobs:
         run: shellcheck --shell=sh scripts/changelog-section.sh
       - name: shellcheck npm-prepare.sh
         run: shellcheck --shell=sh scripts/npm-prepare.sh
+      - name: shellcheck npm-publish.sh
+        run: shellcheck --shell=sh scripts/npm-publish.sh
       - name: Parse install.ps1
         shell: pwsh
         run: |
