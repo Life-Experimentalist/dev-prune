@@ -5,21 +5,40 @@
 // unquoted `O(1)` in a node label — so the check runs in CI.
 //
 // Usage: node scripts/check-mermaid.mjs <file.md> [more.md ...]
-// Requires `mermaid` and `jsdom` to be resolvable (CI installs them into site/).
+// Requires `mermaid` and `jsdom`. CI installs them at the repository root with
+// `npm install --no-save --no-package-lock mermaid@11 jsdom`; a local `npm i` inside
+// site/ also satisfies it. Both locations are searched.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// Resolve `mermaid` and `jsdom` from the working directory rather than from this file's
-// location, so the check runs whether they were installed at the repository root (CI) or
-// inside site/ (a local `npm i` in the landing-site workspace).
-const requireFromCwd = createRequire(path.join(process.cwd(), 'noop.js'));
-const importFromCwd = async (name) =>
-  import(pathToFileURL(requireFromCwd.resolve(name)).href);
+// Resolve `mermaid` and `jsdom` from the working directory first, then from site/, so the
+// check runs whether they were installed at the repository root (what CI does with
+// `npm install --no-save`) or only inside the landing-site workspace (what a local
+// `npm i` in site/ leaves behind). Resolving from cwd alone made this fail at the
+// repository root on a developer machine, which reads as a broken diagram and is not.
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const searchRoots = [process.cwd(), path.join(repoRoot, 'site'), repoRoot];
 
-const { JSDOM } = await importFromCwd('jsdom');
+const importDep = async (name) => {
+  for (const root of searchRoots) {
+    try {
+      const resolved = createRequire(path.join(root, 'noop.js')).resolve(name);
+      return await import(pathToFileURL(resolved).href);
+    } catch {
+      // Try the next root; only the last failure is worth reporting.
+    }
+  }
+  console.error(
+    `cannot resolve '${name}'. Install it with:\n` +
+      `  npm install --no-save --no-package-lock mermaid@11 jsdom`,
+  );
+  process.exit(2);
+};
+
+const { JSDOM } = await importDep('jsdom');
 
 const dom = new JSDOM('<!doctype html><html><body></body></html>');
 globalThis.window = dom.window;
@@ -38,7 +57,7 @@ try {
   // Node already exposes a read-only navigator; mermaid is happy with either.
 }
 
-const { default: mermaid } = await importFromCwd('mermaid');
+const { default: mermaid } = await importDep('mermaid');
 
 const files = process.argv.slice(2);
 if (files.length === 0) {
