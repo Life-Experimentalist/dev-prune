@@ -116,15 +116,22 @@ the one above:
 
    PowerShell has no `&&`; use `;` and check in between, or just run the two separately.
 
-9. **Verify each channel** once the workflow finishes. These are the four commands users
-   will actually run, and running them is the only proof the packages resolve:
+9. **Verify each channel** once the workflow finishes. These are the commands users will
+   actually run, and running them is the only proof the packages resolve:
 
    ```bash
    npx dev-prune@1.0.0 -V
    uvx dev-prune@1.0.0 -V
    cargo install dev-prune --version 1.0.0
+   cargo binstall dev-prune@1.0.0
    curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
    ```
+
+   `cargo binstall` is the one worth watching: it reads
+   `[package.metadata.binstall]` from the published crate and downloads a release asset
+   by name. If an asset was renamed without updating that table, binstall does not fail
+   — it quietly falls back to compiling from source, which looks like success and takes
+   two minutes instead of two seconds. Run it with `--no-cleanup` and read the log.
 
    The last one is the shell installer. Its Windows counterpart is a different script and
    a different one-liner — `curl` in PowerShell is an alias for `Invoke-WebRequest` and
