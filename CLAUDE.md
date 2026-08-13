@@ -148,9 +148,12 @@ Docs describe what the code does *now*. There is no "planned", "coming soon" or
 - **Comments explain why, never what.** A comment that restates the line above it is
   noise. A comment that records the failure that motivated the code is worth keeping
   forever.
-- **No backwards compatibility.** Nothing is released yet. Do not add migration paths,
-  deprecated aliases, or `#[allow(deprecated)]` shims for versions that never existed.
-  Change the thing.
+- **Backwards compatibility starts at 1.0.0**, which is published and permanent on
+  crates.io and PyPI. The CLI surface — flag names, exit codes, the `--json` shape, the
+  config keys — is something people can now depend on, so breaking any of it is a major
+  version and never a patch. Nothing *internal* is protected: no migration paths for
+  versions that never shipped, and no `#[allow(deprecated)]` shims for spellings that
+  only ever existed in this repository. Change those outright.
 - **Exit codes are a contract**: `0` success, `1` failure, `2` usage error. `devp doctor`
   exits `0` for warnings and `1` only for genuine breakage. `tests/cli_contract_test.rs`
   enforces this.

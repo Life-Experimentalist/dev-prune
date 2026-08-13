@@ -25,6 +25,8 @@ before 1.0.0; the old spelling still works and prints a note explaining the rena
 - Linux, macOS, and Windows under Git Bash/MSYS2/Cygwin:
   `curl -fsSL https://devprune.vkrishna04.me/install.sh | sh`
 - Windows PowerShell: `iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex`
+- Windows Command Prompt: `powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"`
+  (same install; `devp` resolves in the next Command Prompt, not the current one)
 - npm: `npx dev-prune status`, or `npm install -g dev-prune`
 - Python tooling: `uv tool install dev-prune`, `uvx dev-prune status`,
   `pipx install dev-prune`, `pip install dev-prune`

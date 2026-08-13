@@ -28,8 +28,40 @@ curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
 iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
 ```
 
+### Windows (Command Prompt)
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"
+```
+
+`cmd.exe` has no `Invoke-WebRequest`, so it borrows PowerShell for the download and runs
+the same script. One difference matters: the installer adds the bin directory to the User
+PATH *and* to its own process, so that PowerShell's `iwr … | iex; devp init` works on the
+very next line. A `cmd` session cannot inherit the process PATH of the PowerShell child it
+spawned, so `devp` resolves in the next Command Prompt you open, not the current one.
+
+`-ExecutionPolicy Bypass` is belt and braces rather than a requirement — see
+[Execution policy](#execution-policy-and-why-the-one-liner-ignores-it) below.
+
 The shell script also works on Windows under Git Bash, MSYS2 or Cygwin, and installs to
 the same `%APPDATA%\dev-prune\bin` the PowerShell script uses.
+
+### Execution policy, and why the one-liner ignores it
+
+PowerShell's execution policy governs *script files*. `iwr … | iex` never creates one — it
+evaluates a string in the current session — so the one-liner runs unchanged under the
+default `RemoteSigned`, and even under `Restricted`. There is nothing to configure.
+
+It only becomes a problem if you download `install.ps1` and run it as a file, which trips
+two separate guards at once: the execution policy, and the Mark of the Web your browser
+attached to the download. Run it without disturbing either:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`-ExecutionPolicy` on the command line applies to that one process and expires with it.
+Prefer it to `Set-ExecutionPolicy`, which changes the setting for every script you run
+afterwards, for the sake of a single install.
 
 ### Installer options
 

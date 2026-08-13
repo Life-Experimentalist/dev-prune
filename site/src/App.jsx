@@ -412,13 +412,18 @@ export default function App() {
   const installCommands = {
     bash: {
       label: "Linux / macOS",
-      note: "Also works on Windows under Git Bash, MSYS2 or Cygwin.",
+      note: "Needs a Unix shell — also fine on Windows under Git Bash, MSYS2, Cygwin or WSL. In PowerShell or Command Prompt it fails with 'sh is not recognized'; use the Windows tabs there.",
       cmd: "curl -fsSL https://devprune.vkrishna04.me/install.sh | sh",
     },
     powershell: {
       label: "Windows",
       note: "Installs to %APPDATA%\\dev-prune\\bin and registers devp for PowerShell and cmd alike.",
       cmd: "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex",
+    },
+    cmdexe: {
+      label: "Windows (cmd)",
+      note: "Command Prompt has no iwr, so it borrows PowerShell for the download. Same install; devp resolves in the next Command Prompt you open.",
+      cmd: 'powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"',
     },
     npm: {
       label: "npm",
@@ -427,8 +432,13 @@ export default function App() {
     },
     python: {
       label: "uv / pipx",
-      note: "Platform wheels carrying the binary. Nothing Python runs; uvx leaves nothing behind.",
+      note: "Platform wheels carrying the binary. Nothing Python runs. Swap in uvx dev-prune status to run it once and leave nothing behind, or pipx install dev-prune.",
       cmd: "uv tool install dev-prune",
+    },
+    pip: {
+      label: "pip",
+      note: "The same wheels, into whichever environment is active — a venv's Scripts/bin rather than a shared tool directory. Use pip install --user dev-prune for a machine-wide install.",
+      cmd: "pip install dev-prune",
     },
     cargo: {
       label: "Cargo",

@@ -5,6 +5,82 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Windows installation and onboarding fixes. Nothing about pruning, verification or safety
+changed.
+
+### Added
+
+- **The installers now tell you how to register repositories**, which was the missing step
+  between "installed" and "does anything". Both ways are spelled out: `devp init ~\Code`
+  against the one folder that holds your projects, which finds every Git repository inside
+  it however deep, or `devp link .` from inside a single project to register just that one.
+- **`devp setup` says the same thing when nothing is tracked yet.** The installer scripts
+  are not the only way in — `cargo install`, `npm i -g` and `pipx install` never run one —
+  and `devp setup` is the step every channel has in common.
+
+### Fixed
+
+- **`devp` and `dev-prune` now put each other back.** Either name repairs the pair, so a
+  `dev-prune.exe` lost to an antivirus quarantine, a half-finished uninstall or a
+  `Remove-Item` aimed at one name comes back from `devp setup`. Previously that reported
+  the alias as already present and did nothing, because the only direction it knew how to
+  repair was `dev-prune` → `devp`. `dev-prune` stays canonical and remains the only one
+  allowed to replace a *stale* twin, so a repair can never reinstall an older binary over
+  a newer one.
+- **`install.ps1` clears the Mark of the Web itself**, on the downloaded archive and on
+  both installed executables, so the `Windows protected your PC` dialog has nothing left
+  to challenge and there is no `Unblock-File` to remember afterwards.
+- **The Windows installer now tells you when Smart App Control is going to block
+  dev-prune.** It reads the policy state before running the binary it just installed, and
+  a machine in enforcement mode gets an explanation instead of what otherwise looks
+  exactly like a corrupt download. A binary Windows refuses to start also no longer ends
+  the install in a stack trace: the binary is on disk, and only `devp setup` is left over.
+
+### Changed
+
+- **Every install one-liner now says which shell it is for.** Pasting
+  `curl -fsSL … | sh` into a Command Prompt answers `'sh' is not recognized`, which reads
+  like a broken installer rather than the wrong command for the window you are in. The
+  README, the site and the release notes label each form, and
+  [troubleshooting §4](https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/troubleshooting/INSTALLATION_ISSUES.md#4-sh-is-not-recognized--the-install-one-liner-is-for-the-wrong-shell)
+  maps your prompt to the right one.
+- **`pip install dev-prune` is listed on its own**, next to `uv tool install` and `pipx`,
+  with the one thing that actually differs between them: pip follows whichever environment
+  is active, so inside a virtualenv `devp` lives in that venv's `Scripts`/`bin` and
+  disappears with it. `pip install --user` is the machine-wide form.
+
+### Documentation
+
+- **SmartScreen and Smart App Control are now told apart**, because the fixes are not
+  interchangeable and the previous guidance conflated them. SmartScreen challenges
+  unsigned files that carry a Mark of the Web, and `Unblock-File` settles it. Smart App
+  Control refuses unsigned executables outright, never looks at the mark, and ships
+  enabled only on clean installs of Windows 11 22H2 and later — which is the whole reason
+  one laptop installs cleanly and the next one blocks. It cannot be worked around by
+  installing from npm, from PyPI, or by building from source, and turning it off is a
+  one-way switch Windows cannot reverse without a reinstall.
+  [Troubleshooting §3](https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/troubleshooting/INSTALLATION_ISSUES.md#3-windows-will-not-run-dev-pruneexe)
+  now says all of that, including how to read the block out of the CodeIntegrity event log,
+  and how to get past the SmartScreen one you *can* get past — **More info → Run anyway**,
+  or the **Unblock** tick box in the file's Properties.
+- **`uv tool install --system` is documented as the wrong flag**, because it looks like the
+  right one. `--system` belongs to `uv pip install`; `uv tool install` rejects it outright.
+  Where `devp` lands is decided by `UV_TOOL_BIN_DIR`, and no Python is involved at run time
+  regardless — dev-prune is a Rust binary riding inside a wheel.
+
+### For contributors
+
+- **`CONTRIBUTING.md` documents the PowerShell execution policy.** Running
+  `scripts/install.ps1` from a checkout on Windows stops with "running scripts is disabled
+  on this system"; the fix is a process-scoped `-ExecutionPolicy Bypass` rather than a
+  permanent `Set-ExecutionPolicy`. It also explains why the published `iwr … | iex`
+  one-liner is not subject to the policy at all.
+- The pre-PR commands in `CONTRIBUTING.md` now match the four CI runs. `--all-targets`,
+  `--all-features` and the site build were missing, so lint failures that CI catches were
+  invisible locally.
+
 ## [1.0.0] - 2026-08-12
 
 First public release. `dev-prune` reclaims disk space from idle Git repositories by

@@ -185,11 +185,13 @@ pub fn stable_exe_path() -> PathBuf {
     }
 }
 
-/// Create the `devp` alias next to the real binary, and keep it current.
+/// Keep `dev-prune` and `devp` beside each other, whichever of the two is running.
 ///
-/// A stale alias is worse than a missing one: it silently runs the previous version
-/// after an upgrade that replaced only `dev-prune`. So the alias is replaced whenever it
-/// no longer matches the binary that is running.
+/// The pair is one binary under two names, and either one can be the survivor. An upgrade
+/// that could not replace a running `devp` leaves a stale alias; an antivirus quarantine,
+/// a half-finished uninstall or a `Remove-Item` aimed at the wrong name leaves only
+/// `devp`. So this restores *the other* name in whichever direction is missing, rather
+/// than only ever creating `devp` — running either one puts the pair back.
 pub fn ensure_alias() -> Outcome {
     let Ok(current_exe) = std::env::current_exe() else {
         return Outcome::Failed("could not locate the running executable".to_string());
@@ -198,29 +200,55 @@ pub fn ensure_alias() -> Outcome {
         return Outcome::Failed("the running executable has no parent directory".to_string());
     };
 
-    let alias_name = if cfg!(windows) { "devp.exe" } else { "devp" };
-    let alias_exe = parent_dir.join(alias_name);
+    ensure_twin_of(&current_exe, parent_dir)
+}
 
-    // Invoked *as* `devp`: the alias is the binary, there is nothing to link.
-    if alias_exe == current_exe {
-        return Outcome::AlreadyPresent;
-    }
+/// The half of [`ensure_alias`] that takes its paths as arguments, so tests can drive both
+/// directions without being the binary they are testing.
+fn ensure_twin_of(current_exe: &std::path::Path, parent_dir: &std::path::Path) -> Outcome {
+    let running_as_alias = current_exe
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| stem == "devp");
 
-    if alias_exe.exists() {
-        if same_contents(&alias_exe, &current_exe) {
+    // `dev-prune` is the canonical name, and only it may overwrite its twin.
+    //
+    // Installers write `dev-prune` first and upgrades replace it first, so it is never the
+    // older of the two — a stale `devp` is worth replacing, because otherwise it silently
+    // runs the previous version. The reverse is not safe: an upgrade that replaced
+    // `dev-prune` and then failed on a running `devp` leaves exactly the state where the
+    // alias is the *older* binary, and refreshing from there would quietly reinstall the
+    // version the user just upgraded away from. So `devp` may only create a `dev-prune`
+    // that is missing outright.
+    let (twin_name, may_refresh) = if running_as_alias {
+        (
+            if cfg!(windows) {
+                "dev-prune.exe"
+            } else {
+                "dev-prune"
+            },
+            false,
+        )
+    } else {
+        (if cfg!(windows) { "devp.exe" } else { "devp" }, true)
+    };
+    let twin_exe = parent_dir.join(twin_name);
+
+    if twin_exe.exists() {
+        if !may_refresh || same_contents(&twin_exe, current_exe) {
             return Outcome::AlreadyPresent;
         }
         // Replacing a running executable fails on Windows; that is fine, the alias is
         // simply refreshed by the next invocation that is not itself `devp`.
-        if fs::remove_file(&alias_exe).is_err() {
+        if fs::remove_file(&twin_exe).is_err() {
             return Outcome::Skipped(format!(
-                "`{alias_name}` is in use and could not be refreshed — re-run `devp setup` \
+                "`{twin_name}` is in use and could not be refreshed — re-run `devp setup` \
                  from a terminal that is not running it"
             ));
         }
     }
 
-    if fs::hard_link(&current_exe, &alias_exe).is_ok() {
+    if fs::hard_link(current_exe, &twin_exe).is_ok() {
         return Outcome::Installed;
     }
 
@@ -237,16 +265,16 @@ pub fn ensure_alias() -> Outcome {
     // answers ENOEXEC by handing the file to `/bin/sh`, so every later invocation
     // "succeeded" with exit 0 and printed nothing — for two hours the tests looked like
     // 27 unrelated assertion failures.
-    if alias_exe.exists() {
+    if twin_exe.exists() {
         return Outcome::AlreadyPresent;
     }
 
-    if fs::copy(&current_exe, &alias_exe).is_ok() {
+    if fs::copy(current_exe, &twin_exe).is_ok() {
         Outcome::Installed
     } else {
         Outcome::Failed(format!(
             "could not create `{}`",
-            output::clean_path(&alias_exe)
+            output::clean_path(&twin_exe)
         ))
     }
 }
@@ -449,7 +477,7 @@ pub fn ensure_integrations_if_enabled(registry: &Registry) -> Option<SetupReport
 pub fn ensure_integrations(registry: &Registry) -> SetupReport {
     let mut report = SetupReport::default();
 
-    report.push("devp alias", ensure_alias());
+    report.push("dev-prune/devp pair", ensure_alias());
     report.push("SKILL.md", ensure_skill_file());
     report.push("File icons", ensure_icons());
 
@@ -673,6 +701,72 @@ mod tests {
             fs::metadata(&binary).unwrap().len(),
             4096,
             "the running binary was truncated by refreshing its own alias"
+        );
+    }
+
+    /// The on-disk file name for one of the pair, on this platform.
+    fn exe_name(stem: &str) -> String {
+        if cfg!(windows) {
+            format!("{stem}.exe")
+        } else {
+            stem.to_string()
+        }
+    }
+
+    #[test]
+    fn dev_prune_creates_devp_beside_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let canonical = dir.path().join(exe_name("dev-prune"));
+        fs::write(&canonical, "the binary").unwrap();
+
+        assert_eq!(ensure_twin_of(&canonical, dir.path()), Outcome::Installed);
+        let alias = dir.path().join(exe_name("devp"));
+        assert!(alias.is_file(), "`devp` was not created");
+        assert_eq!(fs::read_to_string(&alias).unwrap(), "the binary");
+    }
+
+    /// The pair has to be recoverable from either side.
+    ///
+    /// Deleting `dev-prune` and leaving `devp` is not hypothetical: an antivirus
+    /// quarantine, a half-finished uninstall, or a `Remove-Item` aimed at one name all
+    /// produce it. Before this, `devp setup` reported the alias already present and did
+    /// nothing, because the only direction it knew how to repair was the other one.
+    #[test]
+    fn devp_restores_a_missing_dev_prune() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let alias = dir.path().join(exe_name("devp"));
+        fs::write(&alias, "the binary").unwrap();
+
+        assert_eq!(ensure_twin_of(&alias, dir.path()), Outcome::Installed);
+        let canonical = dir.path().join(exe_name("dev-prune"));
+        assert!(canonical.is_file(), "`dev-prune` was not put back");
+        assert_eq!(fs::read_to_string(&canonical).unwrap(), "the binary");
+    }
+
+    /// `devp` may create `dev-prune`, never overwrite it.
+    ///
+    /// Repairing in both directions opens a downgrade: an upgrade replaces `dev-prune`
+    /// first and can then fail on a `devp` that is running, which leaves the alias holding
+    /// the *older* binary. If the alias were allowed to refresh its twin from there, the
+    /// next `devp setup` would quietly reinstall the version the user just upgraded away
+    /// from — and report it as a repair.
+    #[test]
+    fn devp_does_not_overwrite_an_existing_dev_prune() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let alias = dir.path().join(exe_name("devp"));
+        let canonical = dir.path().join(exe_name("dev-prune"));
+        fs::write(&alias, "the previous version").unwrap();
+        fs::write(&canonical, "the version just upgraded to").unwrap();
+
+        assert_eq!(
+            ensure_twin_of(&alias, dir.path()),
+            Outcome::AlreadyPresent,
+            "`devp` must leave an existing `dev-prune` alone"
+        );
+        assert_eq!(
+            fs::read_to_string(&canonical).unwrap(),
+            "the version just upgraded to",
+            "`devp` downgraded the binary it was supposed to leave alone"
         );
     }
 

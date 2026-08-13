@@ -54,17 +54,37 @@ a single Rust binary, installs its own background schedule, and answers to two n
 
 ### One-liner
 
+Pick the line for the shell you are actually typing into. Pasting the first one into a
+Command Prompt is the most common install failure there is — it answers
+`'sh' is not recognized as an internal or external command`, because `sh` is a Unix shell
+and Windows does not ship one.
+
+**Linux, macOS, or a Unix shell on Windows** — Git Bash, MSYS2, Cygwin, WSL:
+
 ```bash
 curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
 ```
+
+**Windows PowerShell** — the blue or black `PS>` prompt, and Windows Terminal's default:
 
 ```powershell
 iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
 ```
 
-Downloads the prebuilt binary for your platform, verifies its published SHA-256, puts it
-on `PATH`, and runs `dev-prune setup`. Pass `--no-auto-setup` / `-NoAutoSetup` to skip
-that last step.
+**Windows Command Prompt** — the `C:\>` prompt, which has no `iwr` of its own:
+
+```bat
+powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"
+```
+
+All three download the prebuilt binary for your platform, verify its published SHA-256,
+put it on `PATH`, and run `dev-prune setup`. Pass `--no-auto-setup` / `-NoAutoSetup` to
+skip that last step.
+
+The Command Prompt form installs identically to the PowerShell one, but `cmd` cannot
+inherit the `PATH` the installer sets in its own process, so `devp` resolves in the *next*
+Command Prompt you open rather than the current one. PowerShell does not have that
+problem.
 
 ### From a package manager
 
@@ -86,6 +106,11 @@ crates.io stores source and nothing else, so `cargo install` has no binary to fe
 always compiles. [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) is the
 one that downloads: `Cargo.toml` tells it where this project's release archives live, so
 it unpacks the same executable the installers use, with no toolchain involved.
+
+The two Python entry points differ in where they land. `pip install` follows whichever
+environment is active, so inside a virtualenv `devp` lives in that venv's `Scripts`/`bin`
+and disappears with it; `pip install --user`, `pipx` and `uv tool install` are the
+machine-wide forms. [Where each one puts the executables](docs/troubleshooting/INSTALLATION_ISSUES.md#6-uv-tool-install-put-the-executables-somewhere-unexpected).
 
 ### Direct download
 

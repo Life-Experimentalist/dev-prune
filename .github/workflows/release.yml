@@ -211,6 +211,7 @@ jobs:
           | You are on | Run this |
           |---|---|
           | Windows (PowerShell) | \`iwr -useb https://devprune.vkrishna04.me/install.ps1 \| iex\` |
+          | Windows (Command Prompt) | \`powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 \| iex"\` |
           | macOS / Linux | \`curl -fsSL https://devprune.vkrishna04.me/install.sh \| sh\` |
           | Node projects | \`npm install -g dev-prune@${VERSION}\` — or just \`npx dev-prune status\` |
           | Python tooling | \`uv tool install dev-prune==${VERSION}\` / \`pipx install dev-prune==${VERSION}\` |
@@ -240,6 +241,29 @@ jobs:
 
           Both Linux builds are statically linked against musl, so they run on any
           distribution including Alpine, with no glibc floor.
+
+          **Windows: the binaries are not code-signed**, and two separate features react
+          to that.
+
+          \`Windows protected your PC\` is SmartScreen, and it only challenges files
+          carrying a Mark of the Web — which your browser attaches to the download and
+          File Explorer copies onto everything it extracts. Clear the mark on the archive
+          before extracting and nothing inside it is ever marked:
+
+          \`\`\`powershell
+          Unblock-File .\\dev-prune-v${VERSION}-windows-x64.zip
+          \`\`\`
+
+          The installers above already do this for you, on the archive and on both
+          installed copies.
+
+          A refusal with **no dialog and no "run anyway"** is something else: Smart App
+          Control, which blocks unsigned executables outright and never looks at the mark.
+          It is on by default on clean installs of Windows 11 22H2+ and always off on
+          upgraded ones, which is why the same release runs on one machine and not the
+          next. \`Unblock-File\` does not help, and neither does building from source.
+          [The troubleshooting guide](https://devprune.vkrishna04.me/docs/troubleshooting)
+          covers what your options actually are.
 
           Every archive ships a \`.sha256\` sidecar. Check it before you trust it:
 

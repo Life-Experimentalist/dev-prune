@@ -48,7 +48,31 @@ pub fn run(status_only: bool) -> Result<()> {
     }
     output::print_info("Remove all of it again with `devp uninstall`.");
 
+    // Installing dev-prune tracks nothing on its own, and a first-time user who stops here
+    // gets an empty `devp status` with no hint about why. The installer scripts say this
+    // too, but `cargo install`, `npm i -g` and `pipx install` never run one — `devp setup`
+    // is the only step every channel has in common.
+    if registry.repositories.is_empty() {
+        println!();
+        output::print_info("No repositories are tracked yet. Register them either way:");
+        println!(
+            "    devp init {}  # crawl one folder for every Git repo inside it",
+            example_projects_dir()
+        );
+        // Both example directories are six characters wide, so one padding works for both.
+        println!("    devp link .       # or, from inside one project, register just that one");
+    }
+
     Ok(())
+}
+
+/// A plausible "where your projects live" path to show in the onboarding hint.
+///
+/// Purely cosmetic, but a Windows user reading `~/code` and a Linux user reading `~\Code`
+/// both have to translate before they can paste, and the first command a new user runs is
+/// the worst place to make them do that.
+fn example_projects_dir() -> &'static str {
+    if cfg!(windows) { "~\\Code" } else { "~/code" }
 }
 
 /// Report each integration without touching anything.

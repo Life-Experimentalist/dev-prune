@@ -46,6 +46,11 @@ iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
   & ([scriptblock]::Create((iwr -useb https://devprune.vkrishna04.me/install.ps1))) -NoAutoSetup
   ```
   The environment variables `DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1` and `DEV_PRUNE_NO_AUTO_SETUP=1` do the same and work with the plain one-liner. A parameter wins over its variable.
+- From `cmd.exe`, which has no `Invoke-WebRequest`, the same script runs through PowerShell:
+  ```bat
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"
+  ```
+  The install is identical. The one thing `cmd` loses is the current-session PATH update above — a parent shell cannot inherit the environment of the child it spawned — so `devp` resolves in the next Command Prompt rather than immediately. `-ExecutionPolicy Bypass` is defensive rather than required: the policy governs script *files*, and `iwr … | iex` never creates one.
 
 ### 3. Pre-Compiled GitHub Release Binaries
 Six single-binary archives are built automatically for every tagged release and attached to [GitHub Releases](https://github.com/Life-Experimentalist/dev-prune/releases), each with a `.sha256` sidecar in `sha256sum` format:

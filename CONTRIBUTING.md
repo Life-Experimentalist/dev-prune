@@ -20,14 +20,45 @@ cd dev-prune
 
 # Build debug binary
 cargo build
-
-# Run unit & integration tests
-cargo test --all
-
-# Check formatting & lints
-cargo fmt -- --check
-cargo clippy -- -D warnings
 ```
+
+Before opening a pull request, run the same four commands CI runs, on the same flags. The
+flags matter: `--all-targets` is what puts test code under `clippy`, and without
+`--all-features` a feature-gated path goes unchecked locally and fails in CI instead.
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all --all-features
+npm --prefix site run build
+```
+
+### 3. Windows: set the execution policy before running any `.ps1`
+
+`scripts/install.ps1` and the other PowerShell scripts in this repository are *files*, and
+PowerShell's execution policy governs files. The default for a user account is
+`RemoteSigned`, so running one from your checkout stops with:
+
+```
+File install.ps1 cannot be loaded because running scripts is disabled on this system.
+```
+
+Scope the relaxation to the one process that needs it, rather than changing the machine:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1 -NoAutoSetup
+```
+
+The setting dies with that process. Prefer it to `Set-ExecutionPolicy`, which changes the
+policy for every script you run from then on — a permanent change to your machine bought
+to run one script once. If you would rather set it for your own session only, that is
+`Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, which lasts until you close
+the window.
+
+None of this applies to the published one-liner. `iwr … | iex` evaluates a string and
+never creates a file, so there is nothing for the policy to govern — which is also why the
+`-ExecutionPolicy Bypass` in the documented `cmd.exe` command is belt-and-braces rather
+than load-bearing.
 
 ---
 

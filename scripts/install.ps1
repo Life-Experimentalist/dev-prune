@@ -7,7 +7,8 @@
 # What this does:
 #   1. Downloads the release binary from GitHub Releases
 #   2. Verifies it against the published SHA-256 checksum
-#   3. Installs it to %APPDATA%\dev-prune\bin as both dev-prune.exe and devp.exe
+#   3. Installs it to %APPDATA%\dev-prune\bin as both dev-prune.exe and devp.exe, and
+#      clears any Mark of the Web so SmartScreen has nothing to challenge
 #   4. Adds that directory to the User PATH
 #   5. Runs `dev-prune setup`, which installs the parts that were missing: the exported
 #      SKILL.md, the global Git auto-registration hooks, and the scheduled task
@@ -108,6 +109,16 @@ try {
     }
     Write-Host "[OK] Checksum verified" -ForegroundColor Green
 
+    # Strip any Mark of the Web here rather than leaving it for the user to discover.
+    #
+    # On a normal run there is nothing to remove: Invoke-WebRequest writes no
+    # Zone.Identifier and Expand-Archive does not propagate one. It matters when this
+    # script is not what fetched the archive - a proxy that stamps downloads, a group
+    # policy, or someone running a saved copy of this installer against a zip their
+    # browser downloaded. A marked binary is what raises the "Windows protected your PC"
+    # dialog, and one line here is cheaper than the support answer.
+    Unblock-File -Path $zipPath -ErrorAction SilentlyContinue
+
     # Extract into the temp dir first so a malformed archive cannot scatter files
     # into the install directory.
     Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
@@ -164,6 +175,11 @@ try {
         Write-Host "[!] Could not write $aliasPath ($($_.Exception.Message))." -ForegroundColor Yellow
         Write-Host "    Close any running devp and run: dev-prune setup" -ForegroundColor Yellow
     }
+
+    # Copy-Item carries an alternate data stream across with the file, so a mark on the
+    # archive would have survived into both installed copies. Clear them for the same
+    # reason the archive was cleared above. `devp.exe` may legitimately not exist here.
+    Unblock-File -Path $exePath, $aliasPath -ErrorAction SilentlyContinue
 } finally {
     Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -204,9 +220,55 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Write-Host "    then run: devp setup"
 }
 
+# Smart App Control, which is a different thing from the SmartScreen dialog.
+#
+# SmartScreen weighs a file's reputation and only looks at files carrying a Mark of the
+# Web, so the Unblock-File calls above settle it. Smart App Control does not care about the
+# mark: in enforcement mode it refuses to start any executable without a valid Authenticode
+# signature, however it arrived on the machine. dev-prune's releases are not signed, so on
+# such a machine the binary installs and then will not run.
+#
+# It ships enabled only on clean installs of Windows 11 22H2 and later, and is always off
+# on machines upgraded from an earlier build. That is why the identical one-liner installs
+# cleanly on one laptop and is blocked on the next, and it is worth saying out loud here -
+# the symptom otherwise looks exactly like a corrupt download.
+#
+# 0 = off, 1 = enforcement, 2 = evaluation. The key does not exist on Windows 10.
+$sacEnforcing = $false
+try {
+    $ci = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' `
+        -Name 'VerifiedAndReputablePolicyState' -ErrorAction Stop
+    $sacEnforcing = ($ci.VerifiedAndReputablePolicyState -eq 1)
+} catch {
+    # No key, no permission, or Windows 10. Either way there is nothing to warn about.
+}
+
+if ($sacEnforcing) {
+    Write-Host ""
+    Write-Host "[!] Smart App Control is in enforcement mode on this machine." -ForegroundColor Yellow
+    Write-Host "    It blocks every executable that is not code-signed, no matter where it came"
+    Write-Host "    from, and dev-prune's releases are not signed. If dev-prune refuses to start,"
+    Write-Host "    that is why: the download is not corrupt and Unblock-File will not change it."
+    Write-Host "    Turning Smart App Control off is one-way - Windows cannot turn it back on"
+    Write-Host "    without a reset or reinstall - so it is a deliberate decision, not a quick fix:"
+    Write-Host "      Windows Security > App & browser control > Smart App Control"
+    Write-Host "    https://devprune.vkrishna04.me/docs/troubleshooting"
+}
+
 if (-not $noAutoSetup) {
     Write-Host ""
-    & $exePath setup
+    # A binary Windows refuses to start throws here rather than returning an exit code, and
+    # an uncaught throw would end the install in a stack trace over an already-successful
+    # install. The binary is on disk either way; only the integrations are outstanding.
+    try {
+        & $exePath setup
+    } catch {
+        Write-Host "[!] '$exePath setup' could not run: $($_.Exception.Message)" -ForegroundColor Yellow
+        if ($sacEnforcing) {
+            Write-Host "    Smart App Control, above, is the likely reason." -ForegroundColor Yellow
+        }
+        Write-Host "    The binary is installed. Run 'devp setup' once it can start." -ForegroundColor Yellow
+    }
 } else {
     Write-Host ""
     Write-Host "-> Skipped setup (-NoAutoSetup). Run 'devp setup' when you want it." -ForegroundColor Cyan
@@ -218,7 +280,18 @@ if ($pathReady) {
 } else {
     Write-Host "[OK] Installation complete. Add $binDir to your PATH, then:" -ForegroundColor Green
 }
-Write-Host "    devp init ~\Code        # register repositories to track"
+Write-Host ""
+Write-Host "    Nothing is tracked yet. Register your repositories one of two ways:" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "    1. Point it at the folder that holds your projects. It finds every Git"
+Write-Host "       repository inside, however deep:"
+Write-Host "         devp init ~\Code"
+Write-Host ""
+Write-Host "    2. Or go into a single project and register just that one:"
+Write-Host "         cd ~\Code\my-project"
+Write-Host "         devp link ."
+Write-Host ""
+Write-Host "    Then:"
 Write-Host "    devp status             # see what is reclaimable"
 Write-Host "    devp run --dry-run      # preview a prune pass"
 Write-Host ""
