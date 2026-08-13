@@ -600,6 +600,7 @@ export default function App() {
                   {[
                     ["run", "devp run"],
                     ["status", "devp status"],
+                    ["stats", "devp stats"],
                     ["restore", "devp restore"],
                     ["doctor", "devp doctor"],
                     ["setup", "devp setup --status"],
@@ -693,6 +694,60 @@ export default function App() {
                     <div className="term-line c-yellow">
                       [↑/↓/j/k] Navigate [PgUp/PgDn/g/G] Jump [p] Prune [i]
                       Ignore [q] Quit
+                    </div>
+                    <div className="term-line c-dim">
+                      dev-prune · made with ♥ by VKrishna04 ·
+                      github.com/Life-Experimentalist/dev-prune
+                    </div>
+                  </div>
+                )}
+
+                {termTab === "stats" && (
+                  <div className="term-body">
+                    <div className="term-line">$ devp stats</div>
+                    <div className="term-line">&nbsp;</div>
+                    <div className="term-line c-bold">Lifetime</div>
+                    <div className="term-line">
+                      <span className="c-blue">→</span> Space reclaimed:
+                      {"   "}12.41 GB
+                    </div>
+                    <div className="term-line">
+                      <span className="c-blue">→</span> Prune passes:
+                      {"      "}9
+                    </div>
+                    <div className="term-line">
+                      <span className="c-blue">→</span> Repositories:
+                      {"      "}14 tracked
+                    </div>
+                    <div className="term-line">&nbsp;</div>
+                    <div className="term-line c-bold">Most recent pass</div>
+                    <div className="term-line">
+                      <span className="c-blue">→</span> 2026-08-11 06:00 UTC (2
+                      days ago) — 2.00 GB from 3 directories
+                    </div>
+                    <div className="term-line">
+                      <span className="c-blue">→</span> Put it back with: devp
+                      restore --last-run
+                    </div>
+                    <div className="term-line">&nbsp;</div>
+                    <div className="term-line c-bold">Biggest reclaims</div>
+                    <div className="term-line">
+                      {"     "}4.20 GB   ~/Code/MyMonorepo
+                      <span className="c-dim">
+                        {"   "}(last pruned 2 days ago)
+                      </span>
+                    </div>
+                    <div className="term-line">
+                      {"     "}2.90 GB   ~/Code/PyDataLab
+                      <span className="c-dim">
+                        {"   "}(last pruned 12 days ago)
+                      </span>
+                    </div>
+                    <div className="term-line">
+                      {"    "}850.0 MB   ~/Code/ArchivedApp
+                      <span className="c-dim">
+                        {"   "}(last pruned 30 days ago)
+                      </span>
                     </div>
                   </div>
                 )}
