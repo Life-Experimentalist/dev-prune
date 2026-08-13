@@ -69,9 +69,14 @@ pub struct Registry {
     /// Cumulative bytes freed across every prune pass.
     #[serde(default)]
     pub total_freed_bytes: u64,
-    /// Count of successful prune operations.
+    /// How many prune passes have deleted something, ever. One per *pass*, not per
+    /// repository and not per directory. Incremented only in `Registry::record_prune`.
     #[serde(default)]
     pub total_pruned_count: u64,
+    /// A summary of each recent pass, oldest first, capped at `PRUNE_HISTORY_LIMIT`.
+    /// Written from 1.1.0 onward; `devp stats` reads it.
+    #[serde(default)]
+    pub prune_history: Vec<PruneRunSummary>,
     /// Repositories added by the most recent `init` / `link`, for `devp undo`.
     #[serde(default)]
     pub last_added_repos: Vec<PathBuf>,
@@ -107,6 +112,19 @@ pub struct RepoEntry {
     pub last_pruned_at: Option<DateTime<Utc>>,
     pub override_idle_days: Option<u64>,
     pub enabled: bool,
+    /// Bytes this one repository has given back, accumulated across passes.
+    /// Written from 1.1.0 onward; `devp stats` ranks by it.
+    #[serde(default)]
+    pub total_freed_bytes: u64,
+}
+
+/// One entry in `Registry::prune_history` — what a single pass deleted.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PruneRunSummary {
+    pub at: DateTime<Utc>,
+    pub bytes_freed: u64,
+    pub dirs_removed: usize,
+    pub repos_touched: usize,
 }
 ```
 

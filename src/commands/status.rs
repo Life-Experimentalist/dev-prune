@@ -21,7 +21,11 @@ use crate::tui::status_view;
 /// `json` replaces the dashboard with one machine-readable document — no banner, no
 /// TUI, no prompt to prune. It is a pure read of state, which is what makes it safe to
 /// hand to an agent or a monitoring job.
-pub fn run(json_output: bool) -> Result<()> {
+///
+/// `top` trims the repository list to the biggest reclaims. It never changes the totals:
+/// those are computed over every registered repository, so `--top 5` cannot make a
+/// machine look tidier than it is.
+pub fn run(top: Option<usize>, json_output: bool) -> Result<()> {
     let mut registry = Registry::load()?;
 
     let daemon_st = crate::daemon::daemon_status()
@@ -46,7 +50,7 @@ pub fn run(json_output: bool) -> Result<()> {
     if json_output {
         let repos = engine::get_full_status(&registry);
         return crate::json::emit(&crate::json::status_document(
-            &registry, &repos, &daemon_st, &hook_st,
+            &registry, &repos, &daemon_st, &hook_st, top,
         ));
     }
 
@@ -83,20 +87,31 @@ pub fn run(json_output: bool) -> Result<()> {
         registry.repo_count()
     ));
     output::print_info(&format!(
-        "Historical Space Saved: {} across {} prune passes",
+        "Historical Space Saved: {} across {} prune {}",
         output::format_bytes(registry.total_freed_bytes),
-        registry.total_pruned_count
+        registry.total_pruned_count,
+        output::plural(registry.total_pruned_count as usize, "pass", "passes")
     ));
+    if let Some(n) = top {
+        output::print_info(&format!(
+            "Showing:                the {n} {} with the most reclaimable space",
+            output::plural(n, "repository", "repositories")
+        ));
+    }
     println!();
 
-    // Gather full per-repo detail for ALL registered repositories
-    let repos = engine::get_full_status(&registry);
+    // Gather full per-repo detail for ALL registered repositories, then trim the list —
+    // after the totals above, which are deliberately computed over all of them.
+    let repos = engine::take_top(&engine::get_full_status(&registry), top);
 
     if io::stdout().is_terminal() {
         // Interactive TUI — pass a loader closure so the TUI can reload after
         // the user toggles ignore config in .devprune.json or presence of ignore.devprune.json on any repo.
+        // It applies the same trim, so the indices it hands back still address `repos`.
         let registry_ref = &registry;
-        match status_view::render_status_tui(&|| engine::get_full_status(registry_ref)) {
+        match status_view::render_status_tui(&|| {
+            engine::take_top(&engine::get_full_status(registry_ref), top)
+        }) {
             Ok(Some(selected_indices)) if !selected_indices.is_empty() => {
                 // User confirmed a prune from within the status view
                 let candidates: Vec<_> = selected_indices
@@ -109,6 +124,10 @@ pub fn run(json_output: bool) -> Result<()> {
                 let mut total_freed: u64 = 0;
                 let mut pruned_count = 0;
                 let mut error_count = 0;
+                // A prune is a prune wherever it was started from. Without this the
+                // dashboard's own pass left no record, so `devp restore --last-run`
+                // silently restored an *older* one.
+                let mut pruned_dirs: Vec<crate::config::PrunedDir> = Vec::new();
 
                 for path in &candidates {
                     let results = engine::prune_repo(path, 0, false, true);
@@ -118,6 +137,12 @@ pub fn run(json_output: bool) -> Result<()> {
                                 total_freed += result.size_freed;
                                 pruned_count += 1;
                                 registry.mark_pruned(&result.repo_path, result.size_freed);
+                                pruned_dirs.push(crate::config::PrunedDir {
+                                    repo_path: result.repo_path.clone(),
+                                    bloat_dir: result.bloat_dir.clone(),
+                                    adapter: result.adapter_name.clone(),
+                                    size_freed: result.size_freed,
+                                });
                                 output::print_success(&format!(
                                     "{} → {} ({}) — {}",
                                     output::clean_path(&result.repo_path),
@@ -155,6 +180,7 @@ pub fn run(json_output: bool) -> Result<()> {
                     }
                 }
 
+                registry.record_prune(pruned_dirs);
                 registry.save()?;
 
                 output::print_header("Summary");

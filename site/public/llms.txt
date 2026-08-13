@@ -6,7 +6,9 @@
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.0.0. Repository: https://github.com/Life-Experimentalist/dev-prune
+Version 1.1.0. Written by VKrishna04.
+Repository: https://github.com/Life-Experimentalist/dev-prune
+Homepage: https://devprune.vkrishna04.me
 
 ## What it is
 
@@ -61,7 +63,14 @@ Arch, NixOS and Alpine.
   `devp unlink --missing` drops every entry whose directory no longer exists
 - `devp undo` — revert the most recent `init` or `link`
 - `devp run [PATH]` — prune every registered repository, or one target
-- `devp status` — interactive dashboard; a plain table when there is no TTY
+- `devp status [--top N] [--json]` — interactive dashboard; a plain table when there is no
+  TTY. `--top N` lists only the N repositories with the most reclaimable space; the totals
+  above the table still cover every registered repository
+- `devp stats [--json]` — what has already been reclaimed: lifetime total, prune passes,
+  the most recent pass and how to undo it, and the repositories that gave back the most.
+  Per-repository figures and the pass history are recorded from 1.1.0 onward
+- `devp completions <bash|zsh|fish|powershell|elvish>` — print a shell completion script
+  to stdout, generated from the same argument definition the binary parses with
 - `devp caches [--json]` — find and size every package-manager cache and store on the
   machine (npm, pnpm, yarn, bun, uv, pip, cargo, go), largest first, with the command that
   clears each. It deletes nothing and has no flag that makes it: a cache is shared by
@@ -81,7 +90,7 @@ Arch, NixOS and Alpine.
 - `devp -V` — version plus an environment audit
 
 Global flags: `--dry-run`, `--ignore-idle` (`--force` is the deprecated alias),
-`-y`/`--yes`, `--json` on the reporting commands. `devp run --except <name>` prunes
+`-y`/`--yes`, `--json` on the reporting commands (`run`, `status`, `stats`, `caches`). `devp run --except <name>` prunes
 everything *but* the named repositories, which is the usual way to keep one project
 warm. A `.` for `[PATH]` means the current directory and is accepted everywhere a
 path is.

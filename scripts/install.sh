@@ -67,7 +67,7 @@ done
 
 # An option beats its environment variable: it is the more explicit of the two, and it is
 # the one the user typed on the command line they are looking at.
-[ -n "$VERSION" ] || VERSION="${DEV_PRUNE_VERSION:-1.0.0}"
+[ -n "$VERSION" ] || VERSION="${DEV_PRUNE_VERSION:-1.1.0}"
 VERSION="${VERSION#v}"
 [ "$NO_PATH" = "1" ] || NO_PATH="${DEV_PRUNE_NO_PATH:-0}"
 [ "$NO_AUTO_SETUP" = "1" ] || NO_AUTO_SETUP="${DEV_PRUNE_NO_AUTO_SETUP:-0}"

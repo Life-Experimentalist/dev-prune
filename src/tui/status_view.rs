@@ -16,6 +16,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::prelude::*;
 use ratatui::widgets::*;
 
+use crate::constants;
 use crate::engine::{RepoStatusEntry, SkipReason};
 use crate::output::format_bytes;
 use crate::tui::Tui;
@@ -321,7 +322,9 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
         .constraints([
             Constraint::Length(3), // header
             Constraint::Min(5),    // table
-            Constraint::Length(5), // footer
+            // Four content lines plus the border: the keybindings, the mode-specific
+            // line, and the credit line that closes both footers.
+            Constraint::Length(6), // footer
         ])
         .split(frame.area());
 
@@ -488,7 +491,7 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
     frame.render_stateful_widget(table, outer[1], &mut app.table_state.clone());
 
     // ── Footer ────────────────────────────────────────────────────────────────
-    let footer_lines = if is_prune_mode {
+    let mut footer_lines = if is_prune_mode {
         vec![
             Line::from(vec![
                 Span::styled("Selected: ", Style::default().fg(Color::Gray)),
@@ -577,6 +580,14 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
             ]),
         ]
     };
+
+    // The credit, on both footers, in the dimmest colour the theme has. It is one
+    // constant and one push — a fork that does not want it deletes these two lines and
+    // nothing else in the binary cares.
+    footer_lines.push(Line::from(Span::styled(
+        constants::ATTRIBUTION_LINE,
+        Style::default().fg(Color::DarkGray),
+    )));
 
     let footer =
         Paragraph::new(footer_lines).block(Block::default().borders(Borders::ALL).border_style(

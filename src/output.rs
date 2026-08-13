@@ -92,6 +92,21 @@ pub fn print_banner() {
     println!("{}", art.truecolor(64, 224, 208).bold());
 }
 
+/// Print the one-line credit, if anything is going to read it.
+///
+/// Gated on stdout being a terminal, which is the whole of the logic — a person watching
+/// the command run sees it, a pipe, a redirect, a CI log and every `--json` consumer does
+/// not. There is no other condition: no build flag, no environment variable, no check
+/// that the binary is called `devp`. Forks are welcome to change
+/// [`constants::ATTRIBUTION_LINE`] or delete this function, and nothing anywhere will
+/// notice or complain.
+pub fn print_attribution() {
+    use std::io::IsTerminal;
+    if std::io::stdout().is_terminal() {
+        println!("{}", crate::constants::ATTRIBUTION_LINE.dimmed());
+    }
+}
+
 /// Pick the singular or plural form for a count.
 ///
 /// Small, but "Unregistered 1 repositories" is the kind of thing people notice and

@@ -1,20 +1,6 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-// Copyright 2026 VKrishna04
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 pub mod adapters;
 pub mod commands;
 pub mod config;
@@ -116,11 +102,13 @@ fn is_broken_pipe(err: &anyhow::Error) -> bool {
 #[derive(Parser, Debug)]
 #[command(name = constants::APP_NAME)]
 #[command(version = constants::VERSION)]
+#[command(author = constants::AUTHOR)]
+#[command(long_version = constants::LONG_VERSION.as_str())]
 #[command(
     about = "Universal, lockfile-safe workspace pruner and background dependency cleaner\nNote: `dev-prune` and `devp` are interchangeable binary aliases."
 )]
 #[command(
-    after_help = "EXAMPLES:\n  devp init ~/Code          Scan directory trees & onboard workspaces\n  devp link                 Register current repository\n  devp run                  Execute prune pass across inactive repositories\n  devp status               View system status dashboard\n  devp caches               Size every package manager cache (deletes nothing)\n  devp status daemon        Check background daemon status (alias for `devp config daemon status`)\n  devp status . hook        Check workspace Git hook status (alias for `devp config . hook status`)\n  devp config . daemon disable  Disable daemon background pass for current workspace\n  devp restore .            Restore missing node_modules/.venv via lockfile\n  devp undo                 Revert most recent init or link action\n\nBINARY ALIAS:\n  `dev-prune` and `devp` invoke the exact same executable."
+    after_help = "EXAMPLES:\n  devp init ~/Code          Scan directory trees & onboard workspaces\n  devp link                 Register current repository\n  devp run                  Execute prune pass across inactive repositories\n  devp status               View system status dashboard\n  devp status --top 10      Show only the ten biggest reclaims\n  devp stats                Lifetime totals, recent passes, biggest repositories\n  devp caches               Size every package manager cache (deletes nothing)\n  devp completions pwsh     Emit a shell completion script\n  devp status daemon        Check background daemon status (alias for `devp config daemon status`)\n  devp status . hook        Check workspace Git hook status (alias for `devp config . hook status`)\n  devp config . daemon disable  Disable daemon background pass for current workspace\n  devp restore .            Restore missing node_modules/.venv via lockfile\n  devp undo                 Revert most recent init or link action\n\nBINARY ALIAS:\n  `dev-prune` and `devp` invoke the exact same executable.\n\ndev-prune is written by VKrishna04 and licensed Apache-2.0.\n  https://github.com/Life-Experimentalist/dev-prune"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -222,9 +210,30 @@ pub enum Commands {
 
     /// View system dashboard: registered repos, background daemon, Git hooks & space metrics.
     Status {
+        /// Show only the N repositories with the most reclaimable space.
+        ///
+        /// The dashboard lists every registered repository, which on a machine with a
+        /// hundred of them buries the handful actually worth pruning. Applies to the TUI,
+        /// the plain table and `--json` alike.
+        #[arg(long, value_name = "N")]
+        top: Option<usize>,
+
         /// Emit the dashboard as one JSON document instead of the TUI or text table.
         #[arg(long)]
         json: bool,
+    },
+
+    /// Show lifetime space reclaimed, recent prune passes, and the biggest repositories.
+    Stats {
+        /// Emit the figures as one JSON document instead of the text report.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Print a shell completion script for bash, zsh, fish, PowerShell or elvish.
+    Completions {
+        /// Shell to generate for.
+        shell: clap_complete::Shell,
     },
 
     /// Report the size of every package manager cache on this machine (read-only, deletes nothing).
@@ -282,6 +291,30 @@ pub enum Commands {
         #[arg(long)]
         deep: bool,
     },
+}
+
+impl Commands {
+    /// Whether this command's stdout is something another program reads.
+    ///
+    /// Two cases. `--json` promises stdout carries one document and nothing else, and
+    /// `completions` prints a script that gets sourced — a stray line in either is a
+    /// parse error rather than a nicety. `link --quiet` is the Git hook path, which runs
+    /// inside somebody's commit.
+    ///
+    /// Everything else defers to [`output::print_attribution`], which prints only when
+    /// stdout is a terminal. Neither function checks that the line is intact, and nothing
+    /// downstream depends on it having been printed.
+    fn suppresses_attribution(&self) -> bool {
+        match self {
+            Commands::Completions { .. } => true,
+            Commands::Run { json, .. }
+            | Commands::Status { json, .. }
+            | Commands::Stats { json }
+            | Commands::Caches { json } => *json,
+            Commands::Link { quiet, .. } => *quiet,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug)]
@@ -358,10 +391,18 @@ pub fn ensure_devp_alias() {
 }
 
 /// Print rich version & system environment details for -v / -V / --version.
+///
+/// This, not clap, is what `devp --version` actually runs — [`normalize_args`] catches the
+/// flag first. The author and repository are printed here because a copy of this binary
+/// found on a machine with no package manager record should still be able to say where it
+/// came from, and `--version` is the first thing anyone runs on an unknown executable.
 pub fn print_version_info() {
     output::print_banner();
     println!("dev-prune (devp) v{}", constants::VERSION);
     println!("  Binary Aliases:  dev-prune | devp (interchangeable)");
+    println!("  Author:          {}", constants::AUTHOR);
+    println!("  Repository:      {}", constants::REPO_URL);
+    println!("  Homepage:        {}", constants::HOMEPAGE_URL);
     println!("  Target OS:       {}", std::env::consts::OS);
     println!("  Architecture:    {}", std::env::consts::ARCH);
     println!("  Compiler:        Rust 1.85+ (edition 2024)");
@@ -496,6 +537,9 @@ pub fn run_cli() {
         print_force_help();
     }
 
+    // Decided before the match, because that is where `cli.command` is consumed.
+    let credit_the_author = !cli.command.suppresses_attribution();
+
     // Every path the user typed passes through `expand_tilde` on the way in. PowerShell
     // and cmd hand us `~/Code` verbatim, so without this the documented one-liner
     // registers a directory literally named `~`.
@@ -538,7 +582,9 @@ pub fn run_cli() {
                 json,
             })
         }
-        Commands::Status { json } => commands::status::run(json),
+        Commands::Status { top, json } => commands::status::run(top, json),
+        Commands::Stats { json } => commands::stats::run(json),
+        Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Caches { json } => commands::caches::run(json),
         Commands::Config { action } => match action {
             Some(ConfigAction::Get { key }) => commands::config::run_get(&key),
@@ -604,5 +650,11 @@ pub fn run_cli() {
         }
         output::print_error(&format!("{e:#}"));
         std::process::exit(exit_code::FAILURE);
+    }
+
+    // Only on the way out of a successful run: nobody reading an error message needs a
+    // credit under it.
+    if credit_the_author {
+        output::print_attribution();
     }
 }

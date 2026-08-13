@@ -9,7 +9,7 @@
 //
 // All data is stored in `~/.config/dev-prune/registry.json`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -167,6 +167,13 @@ pub struct RepoEntry {
     pub override_idle_days: Option<u64>,
     /// Whether this repo is enabled for pruning.
     pub enabled: bool,
+    /// Cumulative bytes reclaimed from this repository.
+    ///
+    /// Recorded from 1.1.0 onward. Registries written by 1.0.0 have no such figure and
+    /// deserialize to zero, so `devp stats` says where the number starts rather than
+    /// implying a repository pruned last March never freed anything.
+    #[serde(default)]
+    pub total_freed_bytes: u64,
 }
 
 impl RepoEntry {
@@ -177,6 +184,7 @@ impl RepoEntry {
             last_pruned_at: None,
             override_idle_days: None,
             enabled: true,
+            total_freed_bytes: 0,
         }
     }
 }
@@ -412,6 +420,25 @@ pub struct LastPrune {
     pub dirs: Vec<PrunedDir>,
 }
 
+/// A one-line summary of a completed prune pass, for `devp stats`.
+///
+/// Deliberately not a second copy of [`LastPrune`]. That one exists so
+/// `devp restore --last-run` can put files back, so it carries the full directory list
+/// and only ever describes the most recent pass. This one is a trend line — four numbers
+/// per pass, bounded by [`constants::PRUNE_HISTORY_LIMIT`] — and could not restore
+/// anything if it wanted to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PruneRunSummary {
+    /// When the pass ran.
+    pub at: DateTime<Utc>,
+    /// Bytes reclaimed by the pass.
+    pub bytes_freed: u64,
+    /// How many directories it removed.
+    pub dirs_removed: usize,
+    /// How many distinct repositories it touched.
+    pub repos_touched: usize,
+}
+
 /// The top-level registry structure persisted to disk.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Registry {
@@ -424,7 +451,13 @@ pub struct Registry {
     /// Total cumulative bytes freed historically across all prune passes.
     #[serde(default)]
     pub total_freed_bytes: u64,
-    /// Total count of successful prune operations executed historically.
+    /// How many prune passes have deleted something, ever.
+    ///
+    /// One per *pass*, not per repository and not per directory — a `devp run` that
+    /// cleared eleven directories across four repositories counts once. Incremented in
+    /// exactly one place, [`Registry::record_prune`], which is also where the pass is
+    /// recorded for `devp restore --last-run`; keeping the two together is what stops
+    /// them meaning different things depending on which command did the pruning.
     #[serde(default)]
     pub total_pruned_count: u64,
     /// List of repository paths added in the most recent init/link action (for devp undo).
@@ -433,6 +466,11 @@ pub struct Registry {
     /// What the most recent prune pass deleted (for `devp restore --last-run`).
     #[serde(default)]
     pub last_prune: Option<LastPrune>,
+    /// Summaries of recent prune passes, oldest first, for `devp stats`.
+    ///
+    /// Capped at [`constants::PRUNE_HISTORY_LIMIT`]. Recorded from 1.1.0 onward.
+    #[serde(default)]
+    pub prune_history: Vec<PruneRunSummary>,
     /// When the release check last ran, so it runs at most once every
     /// `UPDATE_CHECK_INTERVAL_DAYS` instead of on every command.
     #[serde(default)]
@@ -453,6 +491,7 @@ impl Default for Registry {
             total_pruned_count: 0,
             last_added_repos: Vec::new(),
             last_prune: None,
+            prune_history: Vec::new(),
             last_update_check: None,
             latest_known_version: None,
         }
@@ -552,13 +591,18 @@ impl Registry {
     // `canonical_key`, so `devp`'s own relative paths would have missed the entry and
     // silently returned the global threshold instead of the repository's override.
 
-    /// Marks a repo as pruned with the current timestamp and updates cumulative historical metrics.
+    /// Credit `bytes_freed` to one repository, and to the machine-wide total.
+    ///
+    /// Safe to call once per repository or once per directory — every figure it touches
+    /// is either a sum or a timestamp, so the two styles agree. Counting *passes* is
+    /// deliberately not done here for exactly that reason; that lives in
+    /// [`Registry::record_prune`], which is called once per pass.
     pub fn mark_pruned(&mut self, path: &Path, bytes_freed: u64) {
         if let Some(entry) = self.repositories.get_mut(path) {
             entry.last_pruned_at = Some(Utc::now());
+            entry.total_freed_bytes += bytes_freed;
         }
         self.total_freed_bytes += bytes_freed;
-        self.total_pruned_count += 1;
     }
 
     /// Record what a prune pass deleted, replacing any earlier record.
@@ -566,14 +610,37 @@ impl Registry {
     /// A pass that deleted nothing is not a pass worth remembering, so an empty list is
     /// ignored rather than stored — otherwise `devp run` on an already-clean machine
     /// would quietly throw away the record of the run the user actually wants back.
+    ///
+    /// This is the one place a prune pass is counted. It sets [`Registry::last_prune`],
+    /// appends a [`PruneRunSummary`] to [`Registry::prune_history`] and bumps
+    /// [`Registry::total_pruned_count`], because "a pass happened and it deleted things"
+    /// is exactly the condition all three describe. Splitting them across call sites is
+    /// how the counter previously came to mean repositories in `devp run` and directories
+    /// in the `devp status` dashboard.
     pub fn record_prune(&mut self, dirs: Vec<PrunedDir>) {
         if dirs.is_empty() {
             return;
         }
-        self.last_prune = Some(LastPrune {
-            at: Utc::now(),
-            dirs,
+        let at = Utc::now();
+        self.total_pruned_count += 1;
+
+        self.prune_history.push(PruneRunSummary {
+            at,
+            bytes_freed: dirs.iter().map(|d| d.size_freed).sum(),
+            dirs_removed: dirs.len(),
+            repos_touched: dirs
+                .iter()
+                .map(|d| &d.repo_path)
+                .collect::<HashSet<_>>()
+                .len(),
         });
+        // Oldest first, so the overflow comes off the front.
+        if self.prune_history.len() > constants::PRUNE_HISTORY_LIMIT {
+            let excess = self.prune_history.len() - constants::PRUNE_HISTORY_LIMIT;
+            self.prune_history.drain(..excess);
+        }
+
+        self.last_prune = Some(LastPrune { at, dirs });
     }
 
     /// Returns the number of registered repositories.
@@ -798,7 +865,86 @@ mod tests {
                 .is_some()
         );
         assert_eq!(registry.total_freed_bytes, 1024);
+        // Not the pass counter — that is `record_prune`'s job, once per pass.
+        assert_eq!(registry.total_pruned_count, 0);
+    }
+
+    #[test]
+    fn a_pass_is_counted_once_however_much_it_deleted() {
+        // The counter is published as `prune_passes`, and it used to be incremented once
+        // per repository by `devp run` and once per *directory* by the status dashboard,
+        // so the same work produced a different number depending on where it started.
+        let mut registry = Registry::default();
+        registry.add_repo(PathBuf::from("/repo"));
+
+        registry.mark_pruned(Path::new("/repo"), 1024);
+        registry.mark_pruned(Path::new("/repo"), 1024);
+        registry.record_prune(vec![
+            a_pruned_dir("node_modules"),
+            a_pruned_dir("frontend/node_modules"),
+        ]);
+
         assert_eq!(registry.total_pruned_count, 1);
+
+        registry.record_prune(vec![a_pruned_dir("target")]);
+        assert_eq!(registry.total_pruned_count, 2);
+
+        // A pass that deleted nothing is not a pass.
+        registry.record_prune(Vec::new());
+        assert_eq!(registry.total_pruned_count, 2);
+    }
+
+    #[test]
+    fn each_repository_accumulates_its_own_total() {
+        // `devp stats` ranks repositories against each other, so the per-repo figure has
+        // to be a running total and not the size of the most recent pass.
+        let mut registry = Registry::default();
+        registry.add_repo(PathBuf::from("/test/repo"));
+        registry.add_repo(PathBuf::from("/test/other"));
+
+        registry.mark_pruned(Path::new("/test/repo"), 1024);
+        registry.mark_pruned(Path::new("/test/repo"), 2048);
+        registry.mark_pruned(Path::new("/test/other"), 512);
+
+        assert_eq!(
+            registry.repositories[&PathBuf::from("/test/repo")].total_freed_bytes,
+            3072
+        );
+        assert_eq!(
+            registry.repositories[&PathBuf::from("/test/other")].total_freed_bytes,
+            512
+        );
+        assert_eq!(registry.total_freed_bytes, 3584);
+    }
+
+    #[test]
+    fn the_prune_history_summarises_the_pass() {
+        let mut registry = Registry::default();
+        registry.record_prune(vec![
+            a_pruned_dir("node_modules"),
+            a_pruned_dir("frontend/node_modules"),
+        ]);
+
+        let summary = registry.prune_history.last().expect("pass summarised");
+        assert_eq!(summary.bytes_freed, 84);
+        assert_eq!(summary.dirs_removed, 2);
+        // Both fixtures live under `/repo`, so this is one repository, not two.
+        assert_eq!(summary.repos_touched, 1);
+    }
+
+    #[test]
+    fn the_prune_history_is_capped_and_drops_the_oldest() {
+        // The registry is rewritten in full on every save, so an uncapped list would grow
+        // the file forever on a machine running the scheduled pass.
+        let mut registry = Registry::default();
+        for _ in 0..constants::PRUNE_HISTORY_LIMIT + 5 {
+            registry.record_prune(vec![a_pruned_dir("node_modules")]);
+        }
+
+        assert_eq!(registry.prune_history.len(), constants::PRUNE_HISTORY_LIMIT);
+        let first = registry.prune_history.first().unwrap().at;
+        let last = registry.prune_history.last().unwrap().at;
+        assert!(first <= last, "oldest first");
     }
 
     #[test]

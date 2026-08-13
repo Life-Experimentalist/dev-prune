@@ -12,6 +12,59 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Application name.
 pub const APP_NAME: &str = "dev-prune";
 
+/// Author of dev-prune.
+pub const AUTHOR: &str = "VKrishna04";
+
+/// Canonical source repository.
+///
+/// The one in `Cargo.toml` is only visible to people who already found the crate. This
+/// one is compiled into the binary, so a copy of the executable still says where it came
+/// from.
+pub const REPO_URL: &str = "https://github.com/Life-Experimentalist/dev-prune";
+
+/// Project homepage.
+pub const HOMEPAGE_URL: &str = "https://devprune.vkrishna04.me";
+
+/// The one-line credit printed under interactive output.
+///
+/// Deliberately plain text in plain sight: it is not obfuscated, not assembled at
+/// runtime, and not checked anywhere. Anyone may fork this project and change this line
+/// — the Apache-2.0 licence says so, and nothing in the code argues. It exists so that
+/// the common case, someone running the published binary, shows where it came from.
+pub const ATTRIBUTION_LINE: &str =
+    "dev-prune · made with ♥ by VKrishna04 · github.com/Life-Experimentalist/dev-prune";
+
+/// The body of `devp --version`.
+///
+/// Built at runtime rather than with `concat!`, which only takes literals and would mean
+/// spelling the author and the URL a second time. Two copies of a string are two things
+/// that can disagree, and this one exists precisely so that a stray copy of the binary
+/// can still be traced back.
+pub static LONG_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    format!(
+        "{VERSION}\n\
+         author:     {AUTHOR}\n\
+         repository: {REPO_URL}\n\
+         homepage:   {HOMEPAGE_URL}\n\
+         license:    Apache-2.0"
+    )
+});
+
+/// How many prune passes `devp stats` keeps a summary of.
+///
+/// The registry is rewritten in full on every save, so this list is a file-size decision
+/// as much as a display one. Fifty passes is roughly a year of a fortnightly schedule.
+pub const PRUNE_HISTORY_LIMIT: usize = 50;
+
+/// The release that started recording per-repository totals and the pass history.
+///
+/// A machine that pruned for months on 1.0.0 has a large lifetime total and no history at
+/// all, and reading that as "nothing was ever pruned here" would be wrong. Both `devp
+/// stats` and its `--json` document quote this version so the gap is explained rather than
+/// looking like data loss. It is deliberately not [`VERSION`]: it names the release the
+/// format changed in, and does not move again.
+pub const HISTORY_STARTS_AT: &str = "1.1.0";
+
 /// Default idle threshold in days before a repository is eligible for pruning.
 pub const DEFAULT_IDLE_DAYS: u64 = 15;
 

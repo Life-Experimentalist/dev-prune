@@ -65,6 +65,9 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | :--- | :--- |
 | "how much space can I get back?" | `devp run --dry-run` |
 | "show me my repos" | `devp status` (interactive; prints a plain table when not a TTY) |
+| "just the worst offenders" / "top 10 biggest" | `devp status --top 10` — trims the list, never the totals |
+| "how much has this saved me?" / "what did it clean last week?" | `devp stats` — lifetime total, prune passes, the last pass, and the repositories that gave back the most |
+| "add tab completion" | `devp completions <bash\|zsh\|fish\|powershell\|elvish>` — prints the script to stdout; the user redirects it |
 | "clean up" / "free space" | `devp run --dry-run`, then `devp run -y` |
 | "clean this project" | `devp run . -y` |
 | "clean it even though I'm working on it" | `devp run . --ignore-idle -y` — **ask first** |
@@ -87,7 +90,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "turn the automation off" | `devp config set auto_setup false` |
 | "remove it" | `devp uninstall` (add `--deep` to wipe config — confirm first) |
 | "what version?" | `devp -V` (also prints OS, arch, config path, PATH audit) |
-| you need to *read* the answer rather than show it | add `--json` to `run`, `status` or `caches` — see below |
+| you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats` or `caches` — see below |
 
 Global flags, valid on any subcommand: `--dry-run`, `--ignore-idle` (`--force` is the
 deprecated alias), `--yes` / `-y`.
@@ -117,17 +120,25 @@ A run in which any repository failed exits `1` even if others succeeded.
 
 ## 🔌 Machine-readable output — prefer this over parsing the human report
 
-`devp run --json`, `devp status --json` and `devp caches --json` each emit **one** JSON
-document on stdout and nothing else; warnings go to stderr. `--json` implies
-non-interactive, so it never blocks on a prompt. `status --json` changes nothing at all,
-not even the registry file.
+`devp run --json`, `devp status --json`, `devp stats --json` and `devp caches --json` each
+emit **one** JSON document on stdout and nothing else; warnings go to stderr. `--json`
+implies non-interactive, so it never blocks on a prompt. `status --json` and
+`stats --json` change nothing at all, not even the registry file.
 
 ```bash
 devp status --json          # what exists, what is reclaimable, are the integrations up
+devp status --top 10 --json # the same, trimmed to the ten biggest — totals still cover all
+devp stats --json           # what has already been reclaimed, and by which repositories
 devp run --dry-run --json   # what a pass would do, with exact byte counts
 devp run -y --json          # do it
 devp caches --json          # every package-manager cache, sized, largest first
 ```
+
+`stats` reports history, `status` reports opportunity — reach for `stats` when the user
+asks what dev-prune *has* done and `status` when they ask what it *could* do. On a machine
+upgraded from 1.0.0 the per-repository figures and the pass list in `stats` start empty
+while the lifetime total does not; the document's `history_starts_at` field says so, so
+report the gap rather than reading it as "nothing was ever pruned".
 
 Every document carries `schema`, an integer that increases **only** when a consumer would
 have to change: a field removed, renamed, or given a new meaning. Adding a field does not

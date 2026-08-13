@@ -193,7 +193,7 @@ reads unambiguously:
 
 ---
 
-### 6. `devp status [--json]`
+### 6. `devp status [--top N] [--json]`
 - **Description**: Displays an interactive Ratatui terminal dashboard summarizing registered repositories, status (Candidate, Active, Ignored, No Bloat, Path Missing, Unreadable `.devprune.json`), reclaimable space, and last activity date. A repository whose `.devprune.json` does not parse is reported as such rather than as a candidate — `devp run` refuses to touch it, and the dashboard says the same thing.
 - **Interactive TUI Keybindings**:
   | Key | Action |
@@ -214,6 +214,20 @@ reads unambiguously:
   With no TTY — piped, redirected, or run from a scheduler — `devp status` prints a plain
   table instead of entering the TUI. `--json` replaces it with a machine-readable document
   and makes no changes of any kind.
+- **Flags**:
+  - `--top <N>` — list only the `N` repositories with the most reclaimable space. On a
+    machine tracking a hundred repositories the handful worth pruning are otherwise pushed
+    off the screen. The survivors stay in the dashboard's usual order, so the list reads as
+    a shorter version of the full one rather than a re-sorted one. **The totals above the
+    table are unaffected** — they are computed over every registered repository, so
+    `--top 5` cannot make a machine look tidier than it is. Applies to the TUI, the plain
+    table and `--json` alike; in JSON the trim is reported as a top-level `"top"` field.
+  - `--json` — emit one machine-readable document instead of the dashboard.
+- **Examples**:
+  ```bash
+  devp status --top 10
+  devp status --top 10 --json | jq '.repositories[].path'
+  ```
 - **Status Shortcuts & Aliases**:
   - `devp status daemon` (alias for `devp config daemon status`): Inspect OS background daemon scheduler status.
   - `devp status hook` (alias for `devp config hook status`): Inspect Git auto-registration hook status.
@@ -342,10 +356,10 @@ action never silently degrades into a status report.
 
 ## 🤖 Machine-readable output (`--json`)
 
-`devp run --json`, `devp status --json` and `devp caches --json` each emit exactly one JSON
-document on stdout and nothing else. `status --json` makes no changes of any kind — not
-even to the registry file — and `caches --json` never touches anything but the sizes it
-reads.
+`devp run --json`, `devp status --json`, `devp stats --json` and `devp caches --json` each
+emit exactly one JSON document on stdout and nothing else. `status --json` and
+`stats --json` make no changes of any kind — not even to the registry file — and
+`caches --json` never touches anything but the sizes it reads.
 
 Every document carries `schema`, an integer that increases only when a consumer would
 have to change to keep working: a field removed, renamed, or given a new meaning. **Adding
@@ -357,7 +371,7 @@ The current version is `1`.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -398,17 +412,18 @@ The current version is `1`.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
   "settings": { "idle_days": 15, "min_size_mb": 0, "update_check": true /* ... */ },
+  "top": 10,  // present only when --top was passed; `repositories` is trimmed, `totals` is not
   "totals": {
     "repositories": 12,
     "candidates": 3,
     "reclaimable_bytes": 4812963840,
     "historical_bytes_freed": 0,
-    "prune_passes": 0
+    "prune_passes": 0  // passes that deleted something — not repositories, not directories
   },
   "repositories": [
     {
@@ -432,12 +447,44 @@ The current version is `1`.
 `config_error`. `last_activity` is the later of the last commit and the newest source file
 mtime — the same value the idle decision uses, so the two can never disagree.
 
+### `devp stats --json`
+
+```jsonc
+{
+  "schema": 1,
+  "version": "1.1.0",
+  "command": "stats",
+  "history_starts_at": "1.1.0",  // the version that began recording the two sections below
+  "lifetime": {
+    "bytes_freed": 6772391936,
+    "prune_passes": 9,           // same number and same meaning as totals.prune_passes above
+    "repositories": 12
+  },
+  "last_prune": {                // null if nothing has ever been pruned
+    "at": "2026-08-11T14:02:55+00:00",
+    "bytes_freed": 812963840,
+    "directories": 4
+  },
+  "recent_passes": [             // newest first, capped at 50 passes; empty before 1.1.0
+    { "at": "2026-08-11T14:02:55+00:00", "bytes_freed": 812963840, "directories": 4, "repositories": 2 }
+  ],
+  "repositories": [              // biggest first; bytes_freed is only recorded from 1.1.0
+    { "path": "~/Code/api", "bytes_freed": 481296384, "last_pruned_at": "2026-08-11T14:02:55+00:00" }
+  ]
+}
+```
+
+`lifetime.bytes_freed` and `lifetime.prune_passes` have been accumulating since 1.0.0.
+`recent_passes` and the per-repository `bytes_freed` were not recorded before 1.1.0, so on
+an upgraded machine they start from zero while the lifetime figures do not — which is what
+`history_starts_at` is there to tell a consumer.
+
 ### `devp caches --json`
 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "command": "caches",
   "caches": [
     {
@@ -543,6 +590,45 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
+### 15. `devp stats [--json]`
+- **Description**: What dev-prune has actually done for you, as opposed to what it could do next. Lifetime space reclaimed, how many prune passes there have been, the most recent pass and how to undo it, the last ten passes, and the ten repositories that have given back the most. Read-only — it touches the registry and nothing else.
+- **Why it is separate from `status`**: [`devp status`](#6-devp-status---top-n---json) answers "what can I reclaim right now". Folding a history report into it would put a screen of the past above the list people open it for.
+- **A note on upgraded machines**: the lifetime total has been accumulating since 1.0.0, but the per-repository figures and the pass history are only recorded from **1.1.0** onward. A machine that pruned for months before upgrading will show a large lifetime total next to an empty "Biggest reclaims" section, and the report says so rather than implying nothing ever happened.
+- **Flags**:
+  - `--json` — emit one machine-readable document instead of the report.
+- **Examples**:
+  ```bash
+  devp stats
+  devp stats --json | jq '.lifetime.bytes_freed'
+  ```
+
+---
+
+### 16. `devp completions <SHELL>`
+- **Description**: Prints a shell completion script to stdout. `<SHELL>` is one of `bash`, `zsh`, `fish`, `powershell` or `elvish`. The script is generated from the same argument definition the binary parses with, so a flag cannot exist in one and be missing from the other.
+- **Output**: the script and nothing else — no banner, no header, no credit line. The output is meant to be redirected to a file or `eval`'d, and anything extra in it is a shell error on every new terminal.
+- **Which name gets completed**: whichever one you invoked. `devp completions bash` completes `devp`; `dev-prune completions bash` completes `dev-prune`. They are the same executable, but a completion script is registered against a command *name*, so generate one for each name you actually type.
+- **Examples**:
+
+  ```bash
+  # Bash — current shell, then permanently
+  source <(devp completions bash)
+  devp completions bash > ~/.local/share/bash-completion/completions/devp
+
+  # Zsh (a directory already on $fpath)
+  devp completions zsh > ~/.zfunc/_devp
+
+  # Fish
+  devp completions fish > ~/.config/fish/completions/devp.fish
+  ```
+
+  ```powershell
+  # PowerShell — append to your profile so it loads in every session
+  devp completions powershell | Out-File -Append -Encoding utf8 $PROFILE
+  ```
+
+---
+
 ## 🔍 Rich Environment Audit (`devp -V` / `devp --version`)
 
 Executing `devp -V` prints detailed diagnostic information:
@@ -551,10 +637,13 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.0.0
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.1.0
 
-dev-prune (devp) v1.0.0
+dev-prune (devp) v1.1.0
   Binary Aliases:  dev-prune | devp (interchangeable)
+  Author:          VKrishna04
+  Repository:      https://github.com/Life-Experimentalist/dev-prune
+  Homepage:        https://devprune.vkrishna04.me
   Target OS:       windows
   Architecture:    x86_64
   Compiler:        Rust 1.85+ (edition 2024)
@@ -564,3 +653,7 @@ dev-prune (devp) v1.0.0
   Binary Directory:C:\Users\username\AppData\Roaming\dev-prune\bin
   PATH Audit:      ✓ Executable directory is active in system PATH.
 ```
+
+The author and repository are printed so that a stray copy of the binary — downloaded
+once, moved to a server, forgotten — can still say where it came from. Both are plain
+constants in [`src/constants.rs`](../src/constants.rs); nothing in the code checks them.

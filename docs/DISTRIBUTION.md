@@ -1,6 +1,6 @@
 # `dev-prune` (`devp`) Multi-Ecosystem Distribution & Packaging Manual
 
-Every way to install **`dev-prune`** (`devp`) v1.0.0, what each channel actually ships, and the security guarantees behind them. For the maintainer's side — credentials, registry policies, what to do when a release fails — see [RELEASING.md](RELEASING.md).
+Every way to install **`dev-prune`** (`devp`) v1.1.0, what each channel actually ships, and the security guarantees behind them. For the maintainer's side — credentials, registry policies, what to do when a release fails — see [RELEASING.md](RELEASING.md).
 
 ---
 
@@ -57,12 +57,12 @@ Six single-binary archives are built automatically for every tagged release and 
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.0.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.0.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.0.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.0.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.0.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.0.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.1.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.1.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.1.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.1.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.1.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.1.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
@@ -111,7 +111,7 @@ All published binaries are built with `lto = true`, `codegen-units = 1`, `strip 
 A release is one `git push` of one tag. Nothing is built, archived, uploaded or published by hand:
 
 ```bash
-git tag -a v1.0.0 -m "v1.0.0" && git push origin v1.0.0
+git tag -a v1.1.0 -m "v1.1.0" && git push origin v1.1.0
 ```
 
 `.github/workflows/release.yml` then builds all six targets, verifies the tag matches `Cargo.toml` and that `CHANGELOG.md` documents it, publishes a GitHub Release whose body is that changelog section, and pushes to npm, PyPI and crates.io.

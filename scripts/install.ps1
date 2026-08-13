@@ -62,7 +62,7 @@ The equivalent environment variables work with the plain `iwr ... | iex` one-lin
 
 # A parameter beats its environment variable: it is the more explicit of the two, and it
 # is the one the user typed on the command line they are looking at.
-$version = if ($Version) { $Version } elseif ($env:DEV_PRUNE_VERSION) { $env:DEV_PRUNE_VERSION } else { '1.0.0' }
+$version = if ($Version) { $Version } elseif ($env:DEV_PRUNE_VERSION) { $env:DEV_PRUNE_VERSION } else { '1.1.0' }
 $version = $version.TrimStart('v')
 $noPath = $NoPath -or ($env:DEV_PRUNE_NO_PATH -eq '1')
 $noAutoSetup = $NoAutoSetup -or ($env:DEV_PRUNE_NO_AUTO_SETUP -eq '1')

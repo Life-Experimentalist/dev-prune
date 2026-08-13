@@ -5,15 +5,23 @@
   |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|
  | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
-         |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.0.0
+         |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.1.0
 ```
 
-# `dev-prune` &nbsp;·&nbsp; `devp`
+# `dev-prune` &nbsp;·&nbsp; `devp` &nbsp;—&nbsp; by [VKrishna04](https://github.com/VKrishna04)
 
 >**Reclaim the disk space your idle repositories are sitting on — without ever deleting
 something a lockfile cannot put back.**
 
-[![CI](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml/badge.svg)](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml) | [![Pages](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/pages.yml/badge.svg)](https://devprune.vkrishna04.me/) | [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md) | [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) | [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/RELEASES_AND_MANUAL_INSTALL.md)
+[![crates.io](https://img.shields.io/crates/v/dev-prune.svg?logo=rust)](https://crates.io/crates/dev-prune) | [![PyPI](https://img.shields.io/pypi/v/dev-prune.svg?logo=pypi&logoColor=white)](https://pypi.org/project/dev-prune/) | [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md) | [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) | [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/RELEASES_AND_MANUAL_INSTALL.md)
+
+[![CI](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml/badge.svg)](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml) | [![Pages](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/pages.yml/badge.svg)](https://devprune.vkrishna04.me/)
+
+<!-- The npm badge goes back in the row above the moment `dev-prune` is published to
+     npm; until then shields.io renders it as a red "not found", which is worse than
+     having no badge at all:
+     [![npm](https://img.shields.io/npm/v/dev-prune.svg?logo=npm)](https://www.npmjs.com/package/dev-prune) -->
+
 
 [**Website**](https://devprune.vkrishna04.me/) · [**Documentation**](docs/README.md) · [**CLI reference**](docs/CLI_REFERENCE.md) · [**Safety invariants**](docs/SAFETY_INVARIANTS.md) · [**Changelog**](CHANGELOG.md)
 
@@ -141,9 +149,10 @@ devp run                    # do it, after confirming
 devp restore --last-run     # put back exactly what that pass deleted
 ```
 
-Three more worth knowing on day one:
+A few more worth knowing on day one:
 
 ```bash
+devp stats                  # how much has been reclaimed so far, and by which repositories
 devp caches                 # every package manager cache, sized. Deletes nothing
 devp doctor .               # why is this repository not being pruned?
 devp -V                     # version, OS, architecture, config path, PATH audit
@@ -332,7 +341,9 @@ process that leaves a dirty working tree is a surprise.
 | `devp unlink [PATH]`   | `--missing`                                                         | Unregisters one; `--missing` drops every entry whose directory is gone, in one pass                                 |
 | `devp undo`            |                                                                     | Reverts the most recent `init` or `link`                                                                            |
 | `devp run [PATH]`      | `--dry-run`, `--only`, `--skip`, `--except`, `--min-size`, `--json` | Prunes every registered repository, or one target                                                                   |
-| `devp status`          | `--json`                                                            | Interactive dashboard; a plain table when there is no TTY                                                           |
+| `devp status`          | `--top N`, `--json`                                                 | Interactive dashboard; a plain table when there is no TTY. `--top N` shows only the N biggest repositories          |
+| `devp stats`           | `--json`                                                            | What has already been reclaimed: lifetime total, prune passes, the last pass, and the biggest contributors          |
+| `devp completions`     | `bash`, `zsh`, `fish`, `powershell`, `elvish`                       | Prints a shell completion script to stdout, generated from the same argument definitions the binary parses with     |
 | `devp caches`          | `--json`                                                            | Sizes every package manager cache on the machine and prints the command that clears each. **Deletes nothing**       |
 | `devp restore [PATH]`  | `--last-run`                                                        | Reinstalls dependencies for every project in a tree; `--last-run` undoes the last prune pass                        |
 | `devp doctor [PATH]`   |                                                                     | Diagnoses the installation, or one repository — ending with the single reason a pass would or would not touch it    |

@@ -5,13 +5,55 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-08-13
 
+Three new commands — `devp stats`, `devp completions` and `devp status --top` — plus the
 Windows installation and onboarding fixes. Nothing about pruning, verification or safety
-changed.
+changed: the seven safety invariants are untouched, and no new directory became eligible
+for deletion.
 
 ### Added
 
+- **`devp stats`** answers the question `devp status` cannot: what has dev-prune already
+  done for you. Lifetime space reclaimed, how many prune passes there have been, the most
+  recent pass with the command that undoes it, the last ten passes, and the ten
+  repositories that have given back the most. It is read-only, and `--json` gives an agent
+  the same figures. `devp status` still answers what you could reclaim *next*; folding the
+  history into it would have put a screen of the past above the list people open it for.
+
+  ```bash
+  devp stats
+  devp stats --json | jq '.lifetime.bytes_freed'
+  ```
+
+  Per-repository totals and the pass history start recording in this release, so a machine
+  upgraded from 1.0.0 shows a large lifetime total beside an empty history. The report says
+  so rather than implying nothing was ever pruned, and the JSON document carries a
+  `history_starts_at` field for the same reason.
+- **`devp completions <shell>`** prints a tab-completion script for `bash`, `zsh`, `fish`,
+  `powershell` or `elvish`. It is generated from the same argument definition the binary
+  parses with, so a flag cannot exist in one and be missing from the other. The script is
+  written for whichever name you invoked — `devp completions zsh` completes `devp`,
+  `dev-prune completions zsh` completes `dev-prune`.
+
+  ```bash
+  source <(devp completions bash)          # this shell only
+  devp completions zsh > ~/.zfunc/_devp    # permanently
+  ```
+
+  ```powershell
+  devp completions powershell | Out-File -Append -Encoding utf8 $PROFILE
+  ```
+- **`devp status --top N`** lists only the N repositories with the most reclaimable space.
+  Tracking a hundred repositories pushed the handful actually worth pruning off the screen.
+  The survivors keep the dashboard's usual order, so it reads as a shorter version of the
+  same list rather than a re-sorted one, and **the totals above the table are unaffected** —
+  they are still computed over every registered repository, so `--top 5` cannot make a
+  machine look tidier than it is. Works in the TUI, the plain table and `--json` alike.
+
+  ```bash
+  devp status --top 10
+  ```
 - **The installers now tell you how to register repositories**, which was the missing step
   between "installed" and "does anything". Both ways are spelled out: `devp init ~\Code`
   against the one folder that holds your projects, which finds every Git repository inside
@@ -22,6 +64,17 @@ changed.
 
 ### Fixed
 
+- **A prune started from the `devp status` dashboard is now undoable.** Pressing `p`,
+  selecting repositories and hitting `Enter` deleted them without recording the pass, so
+  `devp restore --last-run` afterwards silently restored an *older* one — or reported that
+  there was nothing to restore. The dashboard now records exactly what `devp run` records.
+- **"Historical Space Saved: … across N prune passes" counts passes.** It previously
+  counted whatever the command that pruned happened to iterate over: `devp run` added one
+  per *repository*, the dashboard added one per *directory*. A single pass across four
+  repositories could therefore report as four passes or as eleven, and the two numbers were
+  not comparable. There is now one place in the code that increments it, and it means what
+  the label says. The figure already accumulated on your machine is left alone; it is the
+  sum of the old inconsistent counting and cannot be recomputed.
 - **`devp` and `dev-prune` now put each other back.** Either name repairs the pair, so a
   `dev-prune.exe` lost to an antivirus quarantine, a half-finished uninstall or a
   `Remove-Item` aimed at one name comes back from `devp setup`. Previously that reported
@@ -40,6 +93,20 @@ changed.
 
 ### Changed
 
+- **dev-prune now says who wrote it.** `devp --version` prints the author, the repository
+  and the homepage alongside the environment audit it already showed, the `devp status`
+  dashboard carries a one-line credit in its footer, and an interactive command closes with
+  the same line. All three are plain constants in
+  [`src/constants.rs`](https://github.com/Life-Experimentalist/dev-prune/blob/main/src/constants.rs) —
+  greppable, changeable, and load-bearing on nothing. Delete them and the binary still
+  builds and still passes the test suite.
+
+  The credit line is printed only when stdout is a terminal. It is never in `--json`, never
+  in a pipe or a redirect, never in a CI log, and never in a completion script, because
+  those outputs are read by programs rather than by people.
+- **A `NOTICE` file ships with the source and the crate**, as Apache-2.0 §4(d) expects of a
+  work that wants attribution carried into derivatives. It also lists how to enumerate the
+  dependency licences.
 - **Every install one-liner now says which shell it is for.** Pasting
   `curl -fsSL … | sh` into a Command Prompt answers `'sh' is not recognized`, which reads
   like a broken installer rather than the wrong command for the window you are in. The

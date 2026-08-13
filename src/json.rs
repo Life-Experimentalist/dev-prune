@@ -206,19 +206,25 @@ fn repo_value(entry: &RepoStatusEntry) -> Value {
 /// `daemon` and `hooks` are the same strings the dashboard shows; they describe the
 /// state of the machine's integrations, which is what an agent needs to decide whether
 /// to suggest `devp setup`.
+///
+/// `top` trims the `repositories` array only. `totals` is always computed over every
+/// registered repository, and `top` is echoed back so a consumer can tell a short list
+/// from a tidy machine.
 pub fn status_document(
     registry: &Registry,
     repos: &[RepoStatusEntry],
     daemon: &str,
     hooks: &str,
+    top: Option<usize>,
 ) -> Value {
     let reclaimable: u64 = repos.iter().map(|r| r.reclaimable_bytes).sum();
     let candidates = repos
         .iter()
         .filter(|r| matches!(r.reason, SkipReason::Candidate))
         .count();
+    let listed = crate::engine::take_top(repos, top);
 
-    json!({
+    let mut doc = json!({
         "schema": SCHEMA_VERSION,
         "version": constants::VERSION,
         "command": "status",
@@ -232,7 +238,61 @@ pub fn status_document(
             "historical_bytes_freed": registry.total_freed_bytes,
             "prune_passes": registry.total_pruned_count,
         },
-        "repositories": repos.iter().map(repo_value).collect::<Vec<_>>(),
+        "repositories": listed.iter().map(repo_value).collect::<Vec<_>>(),
+    });
+
+    // Absent rather than null when the whole list is present, the same rule `message`
+    // and `note` follow elsewhere in this contract.
+    if let Some(n) = top {
+        doc["top"] = json!(n);
+    }
+    doc
+}
+
+/// The document emitted by `devp stats --json`.
+///
+/// Three different vintages of number live here, and the field names say which is which.
+/// `lifetime` has been accumulating since 1.0.0. `recent_passes` and the `bytes_freed`
+/// inside `repositories` are only recorded from 1.1.0 onward, so on an upgraded machine
+/// they start near zero while `lifetime` does not — `history_starts_at` names the version
+/// that changed, so a consumer can say so rather than reporting a regression.
+pub fn stats_document(registry: &Registry) -> Value {
+    let mut repos: Vec<(&std::path::PathBuf, &crate::config::RepoEntry)> =
+        registry.repositories.iter().collect();
+    repos.sort_by(|a, b| {
+        b.1.total_freed_bytes
+            .cmp(&a.1.total_freed_bytes)
+            .then_with(|| a.0.cmp(b.0))
+    });
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "stats",
+        "history_starts_at": constants::HISTORY_STARTS_AT,
+        "lifetime": {
+            "bytes_freed": registry.total_freed_bytes,
+            // Same name and same number as `totals.prune_passes` in the status document.
+            // One per pass that deleted something, wherever it was started from.
+            "prune_passes": registry.total_pruned_count,
+            "repositories": registry.repo_count(),
+        },
+        "last_prune": registry.last_prune.as_ref().map(|p| json!({
+            "at": p.at.to_rfc3339(),
+            "bytes_freed": p.dirs.iter().map(|d| d.size_freed).sum::<u64>(),
+            "directories": p.dirs.len(),
+        })),
+        "recent_passes": registry.prune_history.iter().rev().map(|p| json!({
+            "at": p.at.to_rfc3339(),
+            "bytes_freed": p.bytes_freed,
+            "directories": p.dirs_removed,
+            "repositories": p.repos_touched,
+        })).collect::<Vec<_>>(),
+        "repositories": repos.iter().map(|(path, entry)| json!({
+            "path": clean_path(path),
+            "bytes_freed": entry.total_freed_bytes,
+            "last_pruned_at": entry.last_pruned_at.map(|t| t.to_rfc3339()),
+        })).collect::<Vec<_>>(),
     })
 }
 

@@ -26,7 +26,7 @@ import {
 
 const REPO = "https://github.com/Life-Experimentalist/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -1274,10 +1274,33 @@ export default function App() {
                   </tr>
                   <tr>
                     <td className="td-name">
-                      <code>devp status</code>
+                      <code>devp status [--top N]</code>
                     </td>
                     <td>
-                      Interactive dashboard; a plain table when there is no TTY
+                      Interactive dashboard; a plain table when there is no TTY.{" "}
+                      <code>--top N</code> lists only the N repositories with the
+                      most reclaimable space — the totals above the table still
+                      cover every one of them
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
+                      <code>devp stats</code>
+                    </td>
+                    <td>
+                      What has already been reclaimed: lifetime total, prune
+                      passes, the most recent pass and how to undo it, and the
+                      repositories that gave back the most
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
+                      <code>devp completions &lt;shell&gt;</code>
+                    </td>
+                    <td>
+                      Print a tab-completion script for bash, zsh, fish,
+                      PowerShell or elvish, generated from the same argument
+                      definition the binary parses with
                     </td>
                   </tr>
                   <tr>

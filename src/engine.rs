@@ -899,6 +899,26 @@ pub fn get_full_status(registry: &Registry) -> Vec<RepoStatusEntry> {
     entries
 }
 
+/// The `n` repositories with the most reclaimable space, or all of them when `top` is
+/// `None`.
+///
+/// `devp status` lists every registered repository, which on a machine tracking a hundred
+/// of them pushes the handful actually worth pruning off the screen. Selection is by
+/// reclaimable bytes, descending; the survivors are then put back into the order
+/// [`get_full_status`] produced, so a truncated dashboard reads like a shorter version of
+/// the full one rather than a differently-sorted one.
+pub fn take_top(repos: &[RepoStatusEntry], top: Option<usize>) -> Vec<RepoStatusEntry> {
+    let Some(n) = top else {
+        return repos.to_vec();
+    };
+
+    let mut ranked: Vec<usize> = (0..repos.len()).collect();
+    ranked.sort_by_key(|&i| std::cmp::Reverse(repos[i].reclaimable_bytes));
+    ranked.truncate(n);
+    ranked.sort_unstable();
+    ranked.into_iter().map(|i| repos[i].clone()).collect()
+}
+
 /// Compute crisp, disambiguated project names for a repository path.
 ///
 /// Uses `.devprune.json` custom `project_name` if present. Otherwise defaults to folder name.
