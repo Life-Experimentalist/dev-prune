@@ -556,7 +556,10 @@ impl Registry {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create config dir {}", parent.display()))?;
         }
-        let tmp_path = path.with_extension("json.tmp");
+        // Unique per process. A manual run and the scheduled daemon pass can save at the
+        // same moment; with a shared `registry.json.tmp`, one process could rename the
+        // other's half-written file into place as a torn, unparseable registry.
+        let tmp_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
         let contents =
             serde_json::to_string_pretty(self).context("Failed to serialize registry")?;
         fs::write(&tmp_path, &contents)
@@ -598,7 +601,10 @@ impl Registry {
     /// deliberately not done here for exactly that reason; that lives in
     /// [`Registry::record_prune`], which is called once per pass.
     pub fn mark_pruned(&mut self, path: &Path, bytes_freed: u64) {
-        if let Some(entry) = self.repositories.get_mut(path) {
+        // Same rule as every other accessor: the map is keyed by `canonical_key`, so a
+        // raw lookup would silently skip the per-repo credit for a relative or
+        // differently-spelled path while still growing the machine-wide total.
+        if let Some(entry) = self.repositories.get_mut(&canonical_key(path)) {
             entry.last_pruned_at = Some(Utc::now());
             entry.total_freed_bytes += bytes_freed;
         }
@@ -618,11 +624,26 @@ impl Registry {
     /// how the counter previously came to mean repositories in `devp run` and directories
     /// in the `devp status` dashboard.
     pub fn record_prune(&mut self, dirs: Vec<PrunedDir>) {
+        self.record_prune_progress(Utc::now(), dirs);
+    }
+
+    /// Record a pass's progress mid-flight, superseding this same pass's earlier record.
+    ///
+    /// `at` identifies the pass: a repeated call with the same timestamp replaces the
+    /// history entry and `last_prune` it wrote before, rather than counting a second
+    /// pass. This exists so a long pass can persist after every repository — a crash
+    /// half-way through used to leave `devp restore --last-run` pointing at the
+    /// *previous* pass, offering to reinstall directories that were never deleted while
+    /// saying nothing about the ones that were.
+    pub fn record_prune_progress(&mut self, at: DateTime<Utc>, dirs: Vec<PrunedDir>) {
         if dirs.is_empty() {
             return;
         }
-        let at = Utc::now();
-        self.total_pruned_count += 1;
+        if self.prune_history.last().map(|s| s.at) == Some(at) {
+            self.prune_history.pop();
+        } else {
+            self.total_pruned_count += 1;
+        }
 
         self.prune_history.push(PruneRunSummary {
             at,
@@ -895,6 +916,24 @@ mod tests {
     }
 
     #[test]
+    fn mark_pruned_credits_the_repo_under_its_canonical_key() {
+        // On Windows, `canonicalize` yields a `\\?\`-prefixed path, so a registry keyed
+        // by the canonical form and a `mark_pruned` looking up the raw form would miss —
+        // growing the machine-wide total while the repository's own figure stayed zero.
+        let tmp = TempDir::new().unwrap();
+        let raw = tmp.path().to_path_buf();
+
+        let mut registry = Registry::default();
+        registry.add_repo(raw.clone());
+        registry.mark_pruned(&raw, 1024);
+
+        let entry = &registry.repositories[&canonical_key(&raw)];
+        assert_eq!(entry.total_freed_bytes, 1024);
+        assert!(entry.last_pruned_at.is_some());
+        assert_eq!(registry.total_freed_bytes, 1024);
+    }
+
+    #[test]
     fn each_repository_accumulates_its_own_total() {
         // `devp stats` ranks repositories against each other, so the per-repo figure has
         // to be a running total and not the size of the most recent pass.
@@ -1017,8 +1056,14 @@ mod tests {
         let registry = Registry::default();
         registry.save_to(&path).unwrap();
 
-        let tmp_path = path.with_extension("json.tmp");
-        assert!(!tmp_path.exists());
         assert!(path.exists());
+        // Nothing but the registry itself may remain — a leftover `*.tmp` would mean the
+        // rename never happened.
+        let leftovers: Vec<_> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path() != path)
+            .collect();
+        assert!(leftovers.is_empty(), "leftover files: {leftovers:?}");
     }
 }

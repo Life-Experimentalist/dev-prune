@@ -37,6 +37,13 @@ pub enum PruneStatus {
     SkippedDryRun,
     /// Skipped because lockfile enforcement failed.
     LockfileError(String),
+    /// Skipped because the repository's last activity could not be determined.
+    ///
+    /// Not a `LockfileError`: that tag carries a `fix_command` an agent is told it can
+    /// run, and "git failed to answer" has no such mechanical fix.
+    ActivityCheckError(String),
+    /// The registered path no longer exists on disk.
+    PathMissing,
     /// Skipped because the bloat directory doesn't exist.
     NoBloat,
     /// Repo is disabled in the registry.
@@ -45,6 +52,12 @@ pub enum PruneStatus {
     SkippedIgnored,
     /// Error during deletion.
     DeleteError(String),
+    /// The bloat directory is a symlink or junction, so it was deliberately left alone.
+    ///
+    /// A skip, not an error: the storage it points at is not this repository's to
+    /// delete, and the situation is permanent — reporting it as a failure made every
+    /// scheduled pass over such a repo exit non-zero forever.
+    SkippedSymlink(String),
     /// `.devprune.json` exists but could not be parsed, so the repo was left alone.
     ConfigError(String),
 }
@@ -56,6 +69,13 @@ impl std::fmt::Display for PruneStatus {
             PruneStatus::SkippedActive => write!(f, "Skipped (active)"),
             PruneStatus::SkippedDryRun => write!(f, "Skipped (dry run)"),
             PruneStatus::LockfileError(e) => write!(f, "Lockfile error: {e}"),
+            PruneStatus::ActivityCheckError(e) => write!(f, "Activity check failed: {e}"),
+            PruneStatus::PathMissing => {
+                write!(
+                    f,
+                    "Path no longer exists (`devp unlink --missing` clears it)"
+                )
+            }
             PruneStatus::NoBloat => write!(f, "No bloat found"),
             PruneStatus::Disabled => write!(f, "Disabled"),
             PruneStatus::SkippedIgnored => write!(
@@ -63,6 +83,7 @@ impl std::fmt::Display for PruneStatus {
                 "Ignored (ignore.devprune.json or ignore config in .devprune.json)"
             ),
             PruneStatus::DeleteError(e) => write!(f, "Delete error: {e}"),
+            PruneStatus::SkippedSymlink(e) => write!(f, "Skipped (symlink): {e}"),
             PruneStatus::ConfigError(e) => write!(f, "Unreadable .devprune.json: {e}"),
         }
     }
@@ -295,6 +316,20 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
     let only = opts.only_dirs.as_deref();
     let mut results = Vec::new();
 
+    // A registered path that is gone gets a visible line, not silence. Returning empty
+    // results made the repository vanish from the run report entirely, which reads as
+    // "handled" when the truth is "not found".
+    if !repo_path.exists() {
+        results.push(PruneResult {
+            repo_path: repo_path.to_path_buf(),
+            adapter_name: "-".to_string(),
+            bloat_dir: "-".to_string(),
+            size_freed: 0,
+            status: PruneStatus::PathMissing,
+        });
+        return results;
+    }
+
     // Safety check: must be a git repo
     if !scanner::is_git_repo(repo_path) {
         return results;
@@ -377,7 +412,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     adapter_name: "-".to_string(),
                     bloat_dir: "-".to_string(),
                     size_freed: 0,
-                    status: PruneStatus::LockfileError(format!("Activity check failed: {e}")),
+                    status: PruneStatus::ActivityCheckError(e.to_string()),
                 });
                 return results;
             }
@@ -443,6 +478,30 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             }
 
             for (label, bd) in bloat_dirs {
+                // A symlinked/junctioned bloat dir points at storage we do not own — in
+                // a monorepo it is usually the workspace root's real `node_modules`.
+                // Refuse rather than risk a recursive delete outside the repo. Checked
+                // before the dry-run branch, because an analysis that counted the link
+                // as reclaimable promised space the real pass then refused to touch.
+                if fs::symlink_metadata(&bd.path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false)
+                {
+                    results.push(PruneResult {
+                        repo_path: repo_path.to_path_buf(),
+                        adapter_name: adapter.name().to_string(),
+                        bloat_dir: label,
+                        size_freed: 0,
+                        status: PruneStatus::SkippedSymlink(format!(
+                            "`{}` is a symlink to storage dev-prune does not own — \
+                             left alone. Remove the link yourself if you really want \
+                             it gone.",
+                            bd.path.display()
+                        )),
+                    });
+                    continue;
+                }
+
                 if dry_run {
                     results.push(PruneResult {
                         repo_path: repo_path.to_path_buf(),
@@ -454,29 +513,36 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     continue;
                 }
 
-                // A symlinked/junctioned bloat dir points at storage we do not own — in
-                // a monorepo it is usually the workspace root's real `node_modules`.
-                // Refuse rather than risk a recursive delete outside the repo.
-                if fs::symlink_metadata(&bd.path)
-                    .map(|m| m.file_type().is_symlink())
-                    .unwrap_or(false)
-                {
+                // Invariant 7 keeps the *walk* out of nested repositories, but the
+                // directory about to be deleted can hold one inside it — a `file:`
+                // dependency, a vendored checkout — with its own unpushed history.
+                // No lockfile rebuilds somebody else's git history, so refuse.
+                if let Some(nested) = find_nested_git(&bd.path) {
                     results.push(PruneResult {
                         repo_path: repo_path.to_path_buf(),
                         adapter_name: adapter.name().to_string(),
                         bloat_dir: label,
                         size_freed: 0,
                         status: PruneStatus::DeleteError(format!(
-                            "`{}` is a symlink — refusing to delete linked storage. \
-                             Remove the link yourself if you really want it gone.",
-                            bd.path.display()
+                            "`{}` contains a git repository at `{}` — refusing to \
+                             delete it. Move or remove that checkout yourself if it \
+                             holds nothing you need.",
+                            bd.path.display(),
+                            nested.display()
                         )),
                     });
                     continue;
                 }
 
                 let size = bd.size_bytes;
-                match fs::remove_dir_all(&bd.path) {
+                // `remove_dir_all` is not atomic: one locked file — an antivirus scan,
+                // an editor's file watcher — aborts it half-way, leaving a directory
+                // that is neither usable nor gone. Retry once, because such locks are
+                // usually released within moments of being hit.
+                let delete = fs::remove_dir_all(&bd.path).or_else(|_| fs::remove_dir_all(&bd.path));
+                match delete {
+                    // "Not found" after a failed first attempt means the delete *did*
+                    // complete — treat both the same.
                     Ok(()) => {
                         results.push(PruneResult {
                             repo_path: repo_path.to_path_buf(),
@@ -486,13 +552,41 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             status: PruneStatus::Pruned,
                         });
                     }
-                    Err(e) => {
+                    Err(_) if !bd.path.exists() => {
                         results.push(PruneResult {
                             repo_path: repo_path.to_path_buf(),
                             adapter_name: adapter.name().to_string(),
                             bloat_dir: label,
-                            size_freed: 0,
-                            status: PruneStatus::DeleteError(e.to_string()),
+                            size_freed: size,
+                            status: PruneStatus::Pruned,
+                        });
+                    }
+                    Err(e) => {
+                        // Say what state the failure left behind. A half-deleted
+                        // `node_modules` is corrupt whatever caused the abort, so the
+                        // honest report is "no longer usable, rebuild it" — and the
+                        // bytes already freed, so callers can record the partial pass
+                        // and `devp restore` knows what to rebuild.
+                        let remaining = crate::adapters::dir_size(&bd.path);
+                        let freed = size.saturating_sub(remaining);
+                        let message = if freed > 0 {
+                            format!(
+                                "{e} — `{}` was partially deleted ({} of {} remains) \
+                                 and is no longer usable. Close whatever holds it open, \
+                                 then run `devp restore` to rebuild it.",
+                                bd.path.display(),
+                                crate::output::format_bytes(remaining),
+                                crate::output::format_bytes(size)
+                            )
+                        } else {
+                            e.to_string()
+                        };
+                        results.push(PruneResult {
+                            repo_path: repo_path.to_path_buf(),
+                            adapter_name: adapter.name().to_string(),
+                            bloat_dir: label,
+                            size_freed: freed,
+                            status: PruneStatus::DeleteError(message),
                         });
                     }
                 }
@@ -512,6 +606,20 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
     }
 
     results
+}
+
+/// The first git repository found anywhere inside `dir`, if there is one.
+///
+/// `.git` as a directory is a full repository; as a file it is a submodule or worktree
+/// gitlink. Either way the history it anchors lives (at least partly) in the tree that
+/// is about to be deleted, and no lockfile can rebuild that.
+fn find_nested_git(dir: &Path) -> Option<PathBuf> {
+    walkdir::WalkDir::new(dir)
+        .follow_links(false)
+        .into_iter()
+        .flatten()
+        .find(|e| e.file_name() == ".git")
+        .map(|e| e.into_path())
 }
 
 /// Every bloat directory in a repository, across every nested project.
@@ -622,18 +730,16 @@ pub fn prune_all(registry: &mut Registry, dry_run: bool, force: bool) -> Vec<Pru
 /// Mirrors pruning: if `frontend/`, `services/api/` and `cli/` were each pruned, each is
 /// restored by its own manager. The returned label is the adapter name for a project at
 /// the root and `adapter (relative/path)` for a nested one.
-pub fn restore_project(project_path: &Path) -> Result<Vec<(String, Result<()>)>> {
-    restore_project_to_depth(project_path, crate::constants::DEFAULT_SCAN_DEPTH)
-}
-
-/// [`restore_project`], walking to an explicit depth.
 ///
 /// Restore must reach at least as deep as the prune did. A repository configured to a
 /// depth of 10 and pruned at 10, then restored at the default 6, comes back with its
-/// deepest projects still empty — and nothing would have said so.
+/// deepest projects still empty — and nothing would have said so. `timeout` is the
+/// user's `command_timeout_secs` for the same reason: a full reinstall is the longest
+/// command this tool ever runs, and it used to be the only one that ignored the setting.
 pub fn restore_project_to_depth(
     project_path: &Path,
     global_depth: usize,
+    timeout: std::time::Duration,
 ) -> Result<Vec<(String, Result<()>)>> {
     let depth = workspace::resolve_depth(project_path, global_depth);
     let projects = workspace::discover_to_depth(project_path, depth);
@@ -653,7 +759,7 @@ pub fn restore_project_to_depth(
             } else {
                 format!("{} ({})", adapter.name(), project.relative)
             };
-            results.push((label, adapter.restore(&project.path)));
+            results.push((label, adapter.restore(&project.path, timeout)));
         }
     }
 
@@ -689,6 +795,7 @@ pub fn restore_deleted(
     repo_path: &Path,
     deleted: &[(String, String)],
     global_depth: usize,
+    timeout: std::time::Duration,
 ) -> Vec<(String, Result<()>)> {
     let depth = workspace::resolve_depth(repo_path, global_depth);
     let projects = workspace::discover_to_depth(repo_path, depth);
@@ -697,6 +804,11 @@ pub fn restore_deleted(
     for (bloat_label, adapter_name) in deleted {
         let wanted = owning_project(bloat_label);
         let label = format!("{adapter_name} ({bloat_label})");
+        // The deleted directory's own name, so an adapter that supports several
+        // (venv's `.venv`/`venv`/`my_env`) rebuilds the one that was actually there.
+        let dir_name = bloat_label
+            .rsplit_once('/')
+            .map_or(bloat_label.as_str(), |(_, name)| name);
 
         let found = projects
             .iter()
@@ -704,9 +816,35 @@ pub fn restore_deleted(
             .flat_map(|p| p.adapters.iter().map(move |a| (p, a)))
             .find(|(_, a)| a.name() == adapter_name);
 
-        match found {
-            Some((project, adapter)) => results.push((label, adapter.restore(&project.path))),
-            None => results.push((
+        if let Some((project, adapter)) = found {
+            results.push((
+                label,
+                adapter.restore_named(&project.path, dir_name, timeout),
+            ));
+            continue;
+        }
+
+        // Re-detection can fail *because* the prune succeeded: deleting a virtual
+        // environment removes the very `pyvenv.cfg` that venv detection looks for. The
+        // recorded adapter passed detection and lockfile verification at prune time, so
+        // when the project directory still exists, trust the record over a re-detect
+        // that is looking at the hole the prune left.
+        let project_dir = if wanted == "." {
+            repo_path.to_path_buf()
+        } else {
+            repo_path.join(wanted)
+        };
+        let recorded = crate::adapters::get_all_adapters()
+            .into_iter()
+            .find(|a| a.name() == adapter_name);
+        match recorded {
+            Some(adapter) if project_dir.is_dir() => {
+                results.push((
+                    label,
+                    adapter.restore_named(&project_dir, dir_name, timeout),
+                ));
+            }
+            _ => results.push((
                 label,
                 Err(anyhow::anyhow!(
                     "`{wanted}` in {} is no longer a {adapter_name} project — it may have been \
@@ -987,6 +1125,10 @@ mod tests {
     use std::process::Command;
     use tempfile::TempDir;
 
+    /// Restore in these tests either fails before running anything or runs against an
+    /// empty project; none of them should ever sit anywhere near this long.
+    const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
     fn create_git_repo_with_commit(path: &Path) {
         fs::create_dir_all(path).unwrap();
         Command::new("git")
@@ -1039,7 +1181,7 @@ mod tests {
         }
 
         let deleted = vec![("frontend/node_modules".to_string(), "npm".to_string())];
-        let results = restore_deleted(root, &deleted, 4);
+        let results = restore_deleted(root, &deleted, 4, TEST_TIMEOUT);
 
         assert_eq!(results.len(), 1, "one recorded directory, one attempt");
         assert_eq!(results[0].0, "npm (frontend/node_modules)");
@@ -1051,7 +1193,7 @@ mod tests {
         // restore that quietly skips half its work is the failure this command prevents.
         let tmp = TempDir::new().unwrap();
         let deleted = vec![("services/api/.venv".to_string(), "uv".to_string())];
-        let results = restore_deleted(tmp.path(), &deleted, 4);
+        let results = restore_deleted(tmp.path(), &deleted, 4, TEST_TIMEOUT);
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].0, "uv (services/api/.venv)");
@@ -1297,8 +1439,97 @@ mod tests {
     #[test]
     fn test_restore_project_no_adapters() {
         let tmp = TempDir::new().unwrap();
-        let result = restore_project(tmp.path());
+        let result = restore_project_to_depth(
+            tmp.path(),
+            crate::constants::DEFAULT_SCAN_DEPTH,
+            TEST_TIMEOUT,
+        );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn restore_deleted_trusts_the_record_when_the_prune_erased_detection() {
+        // Deleting a venv removes the very pyvenv.cfg that detection looks for, so
+        // re-detection finds nothing. The recorded adapter must still be attempted —
+        // not reported as "no longer a venv project".
+        let tmp = TempDir::new().unwrap();
+        let api = tmp.path().join("api");
+        fs::create_dir_all(&api).unwrap();
+        fs::write(api.join("requirements.txt"), "requests==2.32.3\n").unwrap();
+        // No .venv on disk — the prune already removed it.
+
+        let deleted = vec![("api/.venv".to_string(), "venv".to_string())];
+        // A zero timeout kills the rebuild the moment it starts; the test is about
+        // which branch routes, not whether python can build an environment here.
+        let results = restore_deleted(tmp.path(), &deleted, 4, std::time::Duration::ZERO);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "venv (api/.venv)");
+        if let Err(e) = &results[0].1 {
+            assert!(
+                !e.to_string().contains("no longer a"),
+                "the recorded adapter must be attempted, got: {e}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_git_repository_inside_a_bloat_directory_refuses_the_delete() {
+        // A vendored checkout inside the directory about to be deleted carries its own
+        // history, which no lockfile rebuilds. The whole delete must be refused.
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        create_git_repo_with_commit(&repo);
+        create_python_project(&repo);
+        fs::create_dir_all(repo.join(".venv/src/vendored/.git")).unwrap();
+
+        let results = prune_repo_selected(&repo, 0, false, true, Some(&[".venv".to_string()]));
+
+        assert_eq!(results.len(), 1);
+        let PruneStatus::DeleteError(msg) = &results[0].status else {
+            panic!("expected a refusal, got {:?}", results[0].status);
+        };
+        assert!(msg.contains("git repository"), "says why: {msg}");
+        assert!(repo.join(".venv").exists(), "nothing may be deleted");
+        assert_eq!(results[0].size_freed, 0);
+    }
+
+    fn status_entry(name: &str, reclaimable: u64) -> RepoStatusEntry {
+        RepoStatusEntry {
+            path: PathBuf::from(name),
+            entry: RepoEntry::new(),
+            reason: SkipReason::Candidate,
+            adapters: Vec::new(),
+            bloat_dirs: Vec::new(),
+            reclaimable_bytes: reclaimable,
+            last_activity: None,
+            idle_days: 15,
+        }
+    }
+
+    #[test]
+    fn take_top_selects_by_size_but_keeps_the_dashboard_order() {
+        let repos = [
+            status_entry("small", 10),
+            status_entry("big", 300),
+            status_entry("mid", 200),
+        ];
+        let names: Vec<String> = take_top(&repos, Some(2))
+            .iter()
+            .map(|e| e.path.display().to_string())
+            .collect();
+        // Selection is by reclaimable bytes; the survivors come back in the order the
+        // full dashboard had them, so a truncated list reads like a shorter version of
+        // the full one rather than a differently-sorted one.
+        assert_eq!(names, vec!["big", "mid"]);
+    }
+
+    #[test]
+    fn take_top_without_a_limit_or_with_an_oversized_one_returns_everything() {
+        let repos = [status_entry("a", 1), status_entry("b", 2)];
+        assert_eq!(take_top(&repos, None).len(), 2);
+        assert_eq!(take_top(&repos, Some(10)).len(), 2);
+        assert_eq!(take_top(&repos, Some(0)).len(), 0);
     }
 
     #[test]
@@ -1306,7 +1537,11 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         fs::write(tmp.path().join("package.json"), "{}").unwrap();
         fs::write(tmp.path().join("package-lock.json"), "{}").unwrap();
-        let results = restore_project(tmp.path());
+        let results = restore_project_to_depth(
+            tmp.path(),
+            crate::constants::DEFAULT_SCAN_DEPTH,
+            TEST_TIMEOUT,
+        );
         // Will fail because npm isn't available in test env, but shouldn't panic
         assert!(results.is_ok());
         let results = results.unwrap();

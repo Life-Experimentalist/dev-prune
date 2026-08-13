@@ -100,6 +100,16 @@ pub fn run(top: Option<usize>, json_output: bool) -> Result<()> {
     }
     println!();
 
+    // Nothing registered is the first-run state, not an error — but an empty dashboard
+    // with no explanation reads as "the tool is broken", so say how to fill it instead.
+    if registry.repositories.is_empty() {
+        output::print_info(
+            "No repositories are registered yet. `devp init <folder>` scans a folder and \
+             registers every Git repository in it; `devp link .` registers just one.",
+        );
+        return Ok(());
+    }
+
     // Gather full per-repo detail for ALL registered repositories, then trim the list —
     // after the totals above, which are deliberately computed over all of them.
     let repos = engine::take_top(&engine::get_full_status(&registry), top);
@@ -112,13 +122,10 @@ pub fn run(top: Option<usize>, json_output: bool) -> Result<()> {
         match status_view::render_status_tui(&|| {
             engine::take_top(&engine::get_full_status(registry_ref), top)
         }) {
-            Ok(Some(selected_indices)) if !selected_indices.is_empty() => {
-                // User confirmed a prune from within the status view
-                let candidates: Vec<_> = selected_indices
-                    .iter()
-                    .map(|&i| repos[i].path.clone())
-                    .collect();
-
+            Ok(Some(candidates)) if !candidates.is_empty() => {
+                // User confirmed a prune from within the status view. The TUI hands
+                // back paths, not indices — an `i` toggle reloads its list, and
+                // indices into the reloaded list do not address `repos` above.
                 output::print_header("Pruning Selected Repositories");
 
                 let mut total_freed: u64 = 0;
@@ -128,9 +135,31 @@ pub fn run(top: Option<usize>, json_output: bool) -> Result<()> {
                 // dashboard's own pass left no record, so `devp restore --last-run`
                 // silently restored an *older* one.
                 let mut pruned_dirs: Vec<crate::config::PrunedDir> = Vec::new();
+                let pass_at = chrono::Utc::now();
+
+                // The dashboard offered only repositories its own analysis classed as
+                // candidates, so the idle check is settled; everything else follows
+                // the user's settings, exactly as `devp run` resolves them. The bare
+                // `prune_repo` defaults used here before ignored the configured scan
+                // depth, command timeout and manifest-rewrite policy.
+                let opts = engine::PruneOptions {
+                    idle_days: 0,
+                    dry_run: false,
+                    force: true,
+                    only_dirs: None,
+                    adapters: engine::AdapterFilter::default(),
+                    min_size_bytes: registry
+                        .settings
+                        .min_size_mb
+                        .saturating_mul(engine::BYTES_PER_MIB),
+                    scan_depth: registry.settings.scan_depth,
+                    allow_manifest_rewrite: registry.settings.allow_manifest_rewrite,
+                    command_timeout_secs: registry.settings.command_timeout_secs,
+                };
 
                 for path in &candidates {
-                    let results = engine::prune_repo(path, 0, false, true);
+                    let recorded_before = pruned_dirs.len();
+                    let results = engine::prune_repo_with(path, &opts);
                     for result in results {
                         match &result.status {
                             PruneStatus::Pruned => {
@@ -161,6 +190,18 @@ pub fn run(top: Option<usize>, json_output: bool) -> Result<()> {
                             }
                             PruneStatus::DeleteError(e) => {
                                 error_count += 1;
+                                // A non-zero size_freed on a delete error means the
+                                // delete got half-way: the directory is corrupt, not
+                                // intact. Record it so `devp restore --last-run` can
+                                // rebuild it — the error still fails the pass.
+                                if result.size_freed > 0 {
+                                    pruned_dirs.push(crate::config::PrunedDir {
+                                        repo_path: result.repo_path.clone(),
+                                        bloat_dir: result.bloat_dir.clone(),
+                                        adapter: result.adapter_name.clone(),
+                                        size_freed: result.size_freed,
+                                    });
+                                }
                                 output::print_error(&format!(
                                     "{} delete failed: {}",
                                     output::clean_path(&result.repo_path),
@@ -175,12 +216,30 @@ pub fn run(top: Option<usize>, json_output: bool) -> Result<()> {
                                     e,
                                 ));
                             }
+                            // A warning, not an error: linked storage is deliberately
+                            // left alone and must not fail the pass.
+                            PruneStatus::SkippedSymlink(e) => {
+                                output::print_warning(&format!(
+                                    "{} → {}",
+                                    output::clean_path(&result.repo_path),
+                                    e.trim(),
+                                ));
+                            }
                             _ => {}
                         }
                     }
+
+                    // Persisted after every repository, same as `devp run`: a pass
+                    // killed half-way through must not leave `--last-run` describing
+                    // the previous one. A save failure here is silent — the final
+                    // save below reports it.
+                    if pruned_dirs.len() > recorded_before {
+                        registry.record_prune_progress(pass_at, pruned_dirs.clone());
+                        let _ = registry.save();
+                    }
                 }
 
-                registry.record_prune(pruned_dirs);
+                registry.record_prune_progress(pass_at, pruned_dirs);
                 registry.save()?;
 
                 output::print_header("Summary");

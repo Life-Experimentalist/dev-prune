@@ -182,7 +182,10 @@ fi
 
 echo "-> Verifying checksum"
 if curl -fsSL "${BASE_URL}/${ASSET}.sha256" -o "$TMP_DIR/$ASSET.sha256"; then
-    EXPECTED="$(cut -d' ' -f1 < "$TMP_DIR/$ASSET.sha256")"
+    # `tr -d '\r'`: a checksum file that picked up CRLF line endings anywhere along the
+    # way (a proxy, a Windows-side mirror) would leave a trailing \r on the hash and
+    # fail every comparison with a message that looks exactly like a corrupt download.
+    EXPECTED="$(tr -d '\r' < "$TMP_DIR/$ASSET.sha256" | cut -d' ' -f1)"
     ACTUAL="$($SHA_CMD "$TMP_DIR/$ASSET" | cut -d' ' -f1)"
     if [ "$EXPECTED" != "$ACTUAL" ]; then
         echo "Checksum mismatch — refusing to install." >&2
@@ -253,11 +256,14 @@ echo "[OK] Installed: $ALIAS_PATH"
 RC_TOUCHED=0
 
 if [ "$NO_PATH" != "1" ]; then
-    # `# dev-prune` is the marker for "already configured". It has to be a string the
-    # block still contains after the alias lines went away.
+    # "Already configured" means the rc file exports *this* BIN_DIR, not merely that
+    # some past install left its `# dev-prune` marker: a reinstall with a different
+    # --bin-dir used to match the old marker and silently leave PATH pointing at a
+    # directory the binary is no longer in.
+    RC_LINE="export PATH=\"$BIN_DIR:\$PATH\""
     for file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
         if [ -f "$file" ]; then
-            if grep -q '^# dev-prune$' "$file"; then
+            if grep -qF "$RC_LINE" "$file"; then
                 RC_TOUCHED=1
             else
                 echo "-> Adding dev-prune to PATH in $file"
@@ -272,7 +278,7 @@ if [ "$NO_PATH" != "1" ]; then
 
     FISH_CFG="$HOME/.config/fish/config.fish"
     if [ -f "$FISH_CFG" ]; then
-        if ! grep -q '^# dev-prune$' "$FISH_CFG"; then
+        if ! grep -qF "fish_add_path '$BIN_DIR'" "$FISH_CFG"; then
             # Quoted: the macOS default is "~/Library/Application Support/dev-prune/bin",
             # which fish would otherwise split into two arguments.
             printf "\n# dev-prune\nfish_add_path '%s'\n" "$BIN_DIR" >> "$FISH_CFG"

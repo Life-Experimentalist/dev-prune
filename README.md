@@ -2,10 +2,10 @@
 
 ```text
  ___    _____ __     __    ____  ____  _   _ _   _ _____
-  |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
+|  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|
- | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
-         |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.1.0
+| |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.1.0
 ```
 
 # `dev-prune` &nbsp;·&nbsp; `devp` &nbsp;—&nbsp; by [VKrishna04](https://github.com/VKrishna04)
@@ -325,7 +325,7 @@ process that leaves a dirty working tree is a surprise.
 | 🩺 **`devp doctor`**                           | One read-only pass that ends by naming the *single* reason a repository would or would not be pruned. Runs no package manager, repairs nothing, safe to run twice                                                                               |
 | 🤖 **Self-installing automation**              | OS-native scheduler (Task Scheduler, LaunchAgent, systemd user timer) and non-blocking Git hooks, installed at install time and restored after an upgrade. `auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1` turn it off |
 | ⚡ **0ms opt-out**                             | An `ignore.devprune.json` in a repository root is honoured by file presence alone — no read, no parse                                                                                                                                           |
-| 🔌 **`--json` on every reporting command**     | `run`, `status` and `caches` each emit one versioned document on stdout, diagnostics on stderr. Built for scripts and agents                                                                                                                    |
+| 🔌 **`--json` on every reporting command**     | `run`, `status`, `stats` and `caches` each emit one versioned document on stdout, diagnostics on stderr. Built for scripts and agents                                                                                                           |
 | 🧠 **AI agent skill**                          | A token-lean `SKILL.md` embedded in the binary; `devp skill` exports it and prints onboarding prompts for Claude Code, Gemini Antigravity, Cursor, Windsurf, Copilot and OpenClaw                                                               |
 | 🖼️ **File manager icons**                      | `devp icon` registers `*.devprune.json` with the OS file manager — a real `shared-mime-info` type plus hicolor icons on Linux, a folder icon on Windows. It never edits your editor settings, `PATH` or shell startup files                     |
 | 🚫 **No telemetry**                            | One optional unauthenticated `GET` to GitHub's public releases endpoint, at most weekly, no body and no identifier. Nothing else leaves the machine                                                                                             |
@@ -459,8 +459,9 @@ that tree only. The rest are deliberately global: a project can commit its
 permission to have its manifests rewritten during an unattended pass.
 
 An out-of-range value is rejected with the range in the message rather than silently
-clamped — except `scan_depth`, capped at `32`, because a deeper walk is a performance
-mistake rather than a request that cannot be honoured.
+clamped. `scan_depth` included: `config set` accepts `1`–`32` and refuses anything else
+outright — the clamp to that range survives only as the backstop for a hand-edited
+config file.
 
 ---
 

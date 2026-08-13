@@ -3,12 +3,37 @@
 
 // Go package manager adapter.
 
-use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command};
-use anyhow::Result;
+use super::{
+    BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command_with_timeout,
+};
+use anyhow::{Result, anyhow};
 use std::path::Path;
 
 /// Adapter for Go modules.
 pub struct Go;
+
+/// Whether `vendor/` carries uncommitted changes Git knows about.
+///
+/// A team that commits its vendor tree sometimes patches a dependency in place. Until
+/// that patch is committed it exists nowhere but the worktree, and `go mod vendor` would
+/// regenerate the tree from the module cache without it. Untracked entries (`??`) are
+/// not counted: an untracked vendor tree is the ordinary gitignored-or-fresh case, and
+/// `vendor/modules.txt` already vouches for how it was built.
+fn vendor_has_uncommitted_changes(path: &Path) -> bool {
+    let Ok(output) = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--", "vendor"])
+        .current_dir(path)
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| !line.trim().is_empty() && !line.starts_with("??"))
+}
 
 impl PackageManager for Go {
     fn name(&self) -> &'static str {
@@ -22,7 +47,10 @@ impl PackageManager for Go {
     fn bloat_dirs(&self, path: &Path) -> Vec<BloatDir> {
         let mut dirs = Vec::new();
         let vendor_path = path.join("vendor");
-        if vendor_path.exists() {
+        // Only a `go mod vendor` product carries `modules.txt`. A vendor tree without it
+        // was assembled some other way, and `go mod vendor` makes no promise of
+        // recreating whatever that was — so it is not this adapter's to delete.
+        if vendor_path.exists() && vendor_path.join("modules.txt").exists() {
             dirs.push(BloatDir {
                 name: "vendor".to_string(),
                 path: vendor_path.clone(),
@@ -38,6 +66,16 @@ impl PackageManager for Go {
     /// never touches tracked files. `tidy` is reached only when there is no `go.sum` to
     /// bootstrap from, or when the user opted in.
     fn enforce_lockfile(&self, path: &Path, policy: EnforcePolicy) -> Result<()> {
+        // An in-place patch to a committed vendor tree exists nowhere but the worktree;
+        // `go mod vendor` after deletion would rebuild the tree from the module cache
+        // without it.
+        if path.join("vendor").exists() && vendor_has_uncommitted_changes(path) {
+            return Err(anyhow!(
+                "`vendor/` has uncommitted changes — deleting it would lose them, and \
+                 `go mod vendor` would rebuild the tree without them. Commit or stash \
+                 the changes first."
+            ));
+        }
         enforce_two_tier(
             &path.join("go.sum"),
             "go",
@@ -48,11 +86,11 @@ impl PackageManager for Go {
         )
     }
 
-    fn restore(&self, path: &Path) -> Result<()> {
+    fn restore(&self, path: &Path, timeout: std::time::Duration) -> Result<()> {
         if path.join("vendor").exists() {
-            run_command("go", &["mod", "vendor"], path)
+            run_command_with_timeout("go", &["mod", "vendor"], path, timeout)
         } else {
-            run_command("go", &["mod", "download"], path)
+            run_command_with_timeout("go", &["mod", "download"], path, timeout)
         }
     }
 
@@ -95,11 +133,47 @@ mod tests {
     fn test_bloat_dirs_present() {
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join("vendor")).unwrap();
+        File::create(dir.path().join("vendor").join("modules.txt")).unwrap();
 
         let adapter = Go;
         let dirs = adapter.bloat_dirs(dir.path());
         assert_eq!(dirs.len(), 1);
         assert_eq!(dirs[0].name, "vendor");
+    }
+
+    #[test]
+    fn a_vendor_tree_without_modules_txt_is_not_claimed() {
+        // `go mod vendor` always writes modules.txt; a tree without it was assembled by
+        // hand and cannot be promised back.
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("vendor")).unwrap();
+        File::create(dir.path().join("vendor").join("some_pkg.go")).unwrap();
+
+        assert!(Go.bloat_dirs(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn staged_vendor_changes_refuse_the_prune() {
+        let dir = tempdir().unwrap();
+        let vendor = dir.path().join("vendor");
+        fs::create_dir(&vendor).unwrap();
+        fs::write(vendor.join("modules.txt"), "# github.com/x/y v1.0.0\n").unwrap();
+
+        // Outside a repo the check must stay quiet…
+        assert!(!vendor_has_uncommitted_changes(dir.path()));
+
+        // …and inside one, a staged-but-uncommitted vendor entry is a refusal. Staging
+        // is enough to move the entry past `??` without needing commit identity.
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap()
+        };
+        assert!(git(&["init", "-q"]).status.success());
+        git(&["add", "vendor"]);
+        assert!(vendor_has_uncommitted_changes(dir.path()));
     }
 
     #[test]

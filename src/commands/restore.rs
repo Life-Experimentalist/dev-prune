@@ -26,12 +26,18 @@ pub fn run(path_str: &str) -> Result<()> {
         output::clean_path(&path)
     ));
 
-    // Read through the user's configured depth, not the built-in default: a repository
-    // pruned at a deeper setting has to be restored at that same setting.
-    let global_depth = crate::config::Registry::load()
-        .map(|r| r.settings.scan_depth)
-        .unwrap_or(crate::constants::DEFAULT_SCAN_DEPTH);
-    let results = engine::restore_project_to_depth(&path, global_depth)?;
+    // Read through the user's configured depth and timeout, not the built-in defaults:
+    // a repository pruned at a deeper setting has to be restored at that same setting,
+    // and a reinstall is the longest command this tool runs — the raised
+    // `command_timeout_secs` was almost certainly raised *for* it.
+    let (global_depth, timeout_secs) = crate::config::Registry::load()
+        .map(|r| (r.settings.scan_depth, r.settings.command_timeout_secs))
+        .unwrap_or((
+            crate::constants::DEFAULT_SCAN_DEPTH,
+            crate::constants::DEFAULT_COMMAND_TIMEOUT_SECS,
+        ));
+    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let results = engine::restore_project_to_depth(&path, global_depth, timeout)?;
 
     let mut failed = 0usize;
 
@@ -109,6 +115,7 @@ pub fn run_last_run() -> Result<()> {
     }
 
     let global_depth = registry.settings.scan_depth;
+    let timeout = std::time::Duration::from_secs(registry.settings.command_timeout_secs);
     let mut attempted = 0usize;
     let mut failed = 0usize;
 
@@ -129,7 +136,7 @@ pub fn run_last_run() -> Result<()> {
             continue;
         }
 
-        for (label, result) in engine::restore_deleted(repo_path, deleted, global_depth) {
+        for (label, result) in engine::restore_deleted(repo_path, deleted, global_depth, timeout) {
             attempted += 1;
             match result {
                 Ok(()) => output::print_success(&format!("  {label}: restored")),

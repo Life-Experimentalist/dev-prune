@@ -156,15 +156,48 @@ fn check_binary(f: &mut Findings) {
 
     let Some(dir) = exe.parent() else { return };
 
-    // The `devp` name people actually type. It is a real executable next to `dev-prune`,
-    // not a shell alias, so this is a file that either exists or does not.
-    let alias = dir.join(if cfg!(windows) { "devp.exe" } else { "devp" });
-    if alias.exists() {
-        f.ok("devp", &output::clean_path(&alias));
+    // The pair is one binary under two names, and either one can be the one running
+    // right now. Looking for `devp` unconditionally made this check vacuous whenever
+    // the user typed `devp doctor` — the file being looked for was the file doing the
+    // looking, so it always "passed". Look for whichever name is *not* running.
+    let running = if exe
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("devp"))
+    {
+        "devp"
     } else {
+        "dev-prune"
+    };
+    let twin_stem = if running == "devp" {
+        "dev-prune"
+    } else {
+        "devp"
+    };
+    let twin = dir.join(if cfg!(windows) {
+        format!("{twin_stem}.exe")
+    } else {
+        twin_stem.to_string()
+    });
+    if !twin.exists() {
         f.warn(
-            "devp",
-            "not installed next to dev-prune — run `dev-prune setup`",
+            twin_stem,
+            &format!("not installed next to {running} — run `{running} setup`"),
+        );
+    } else if same_binary(&exe, &twin) {
+        f.ok(twin_stem, &output::clean_path(&twin));
+    } else {
+        // An upgrade that could not replace a running executable leaves exactly this
+        // state, and the stale name silently runs the previous version from then on.
+        f.warn(
+            twin_stem,
+            &format!(
+                "{} is not the same binary as {} — one of the pair is stale and \
+                 silently runs a different version. `dev-prune setup` refreshes `devp` \
+                 from the canonical `dev-prune`.",
+                output::clean_path(&twin),
+                output::clean_path(&exe)
+            ),
         );
     }
 
@@ -172,7 +205,7 @@ fn check_binary(f: &mut Findings) {
     let on_path = std::env::var("PATH")
         .unwrap_or_default()
         .split(sep)
-        .any(|p| !p.is_empty() && Path::new(p) == dir);
+        .any(|p| !p.is_empty() && same_dir(Path::new(p), dir));
     if on_path {
         f.ok("PATH", &output::clean_path(dir));
     } else {
@@ -184,6 +217,41 @@ fn check_binary(f: &mut Findings) {
             ),
         );
     }
+}
+
+/// Whether a PATH entry names the directory the binary lives in.
+///
+/// Windows paths are case-insensitive but `Path` equality is not, and PATH entries
+/// routinely carry a trailing backslash the installer never wrote. Either mismatch made
+/// doctor report a perfectly good install as "not on PATH" — as a problem, so `devp
+/// doctor` exited 1 on a healthy machine.
+fn same_dir(entry: &Path, dir: &Path) -> bool {
+    if entry == dir {
+        return true;
+    }
+    cfg!(windows) && {
+        let norm = |p: &Path| {
+            p.to_string_lossy()
+                .trim_end_matches(['\\', '/'])
+                .to_lowercase()
+        };
+        norm(entry) == norm(dir)
+    }
+}
+
+/// Whether two files hold the same bytes.
+///
+/// Doctor runs at human speed, so when the cheap size test cannot rule the pair
+/// different this reads both files outright — a stale twin left by a failed upgrade can
+/// share a size with its replacement, and "same version" is the whole question here.
+fn same_binary(a: &Path, b: &Path) -> bool {
+    let (Ok(ma), Ok(mb)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
+        return false;
+    };
+    if ma.len() != mb.len() {
+        return false;
+    }
+    matches!((std::fs::read(a), std::fs::read(b)), (Ok(ba), Ok(bb)) if ba == bb)
 }
 
 /// Read the config directory and validate every stored setting.
@@ -329,11 +397,13 @@ fn check_integrations(f: &mut Findings, registry: Option<&Registry>) {
     if let Some(why) = setup::unattended_environment() {
         f.note("", &format!("unattended installation is off because {why}"));
     }
-    if std::env::var(setup::ENV_NO_AUTO_SETUP).as_deref() == Ok("1") {
+    // The same presence test the suppression itself uses — `=true`, `=0` and even an
+    // empty value all switch setup off, so all of them must be reported here.
+    if setup::no_auto_setup_requested() {
         f.note(
             "",
             &format!(
-                "{}=1 is set — nothing installs by itself. `devp setup` still works.",
+                "{} is set — nothing installs by itself. `devp setup` still works.",
                 setup::ENV_NO_AUTO_SETUP
             ),
         );
@@ -1066,5 +1136,49 @@ mod tests {
 
         f.problem("PATH", "missing");
         assert!(verdict(&f, "fine", None).is_err());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn a_path_entry_matches_regardless_of_case_and_trailing_separator() {
+        // Both differences are ones Windows itself ignores, and either used to turn
+        // into a "not on PATH" problem — a healthy install failing `devp doctor`.
+        let dir = Path::new(r"C:\Users\Someone\AppData\Roaming\dev-prune\bin");
+        assert!(same_dir(
+            Path::new(r"c:\users\someone\appdata\roaming\dev-prune\bin\"),
+            dir
+        ));
+        assert!(!same_dir(Path::new(r"C:\Windows"), dir));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn a_path_entry_on_unix_is_matched_exactly() {
+        assert!(same_dir(
+            Path::new("/usr/local/bin"),
+            Path::new("/usr/local/bin")
+        ));
+        assert!(!same_dir(
+            Path::new("/USR/local/bin"),
+            Path::new("/usr/local/bin")
+        ));
+    }
+
+    #[test]
+    fn a_stale_twin_is_told_apart_from_a_current_one() {
+        let dir = TempDir::new().unwrap();
+        let a = dir.path().join("dev-prune");
+        let b = dir.path().join("devp");
+        std::fs::write(&a, b"version two").unwrap();
+        std::fs::write(&b, b"version two").unwrap();
+        assert!(same_binary(&a, &b));
+
+        // Same length, different bytes — the case a size-only test waves through.
+        std::fs::write(&b, b"version one").unwrap();
+        assert!(!same_binary(&a, &b));
+
+        std::fs::write(&b, b"short").unwrap();
+        assert!(!same_binary(&a, &b));
+        assert!(!same_binary(&a, &dir.path().join("missing")));
     }
 }

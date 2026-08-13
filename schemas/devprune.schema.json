@@ -40,9 +40,9 @@
     },
     "scan_depth": {
       "type": ["integer", "null"],
-      "minimum": 0,
+      "minimum": 1,
       "maximum": 32,
-      "description": "How many directory levels below this repository root discovery descends. Overrides the global `scan_depth` (6 by default). Raise it when a nested project is not listed by `devp status`; every extra level makes the walk more expensive. Clamped to 32."
+      "description": "How many directory levels below this repository root discovery descends. Overrides the global `scan_depth` (6 by default). Raise it when a nested project is not listed by `devp status`; every extra level makes the walk more expensive. Accepts 1-32; a hand-edited value outside that range is clamped to it."
     }
   },
   "additionalProperties": false

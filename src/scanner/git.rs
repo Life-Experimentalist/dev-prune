@@ -15,7 +15,15 @@ use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
 /// Directories to exclude when scanning file mtimes.
-const EXCLUDED_DIRS: &[&str] = &[".git", "node_modules", ".venv", "venv", "target"];
+const EXCLUDED_DIRS: &[&str] = &[".git", "node_modules", ".venv", "venv", "target", "vendor"];
+
+/// Depth ceiling for the mtime fallback walk, matching the repo-discovery scan.
+///
+/// The fallback only exists for repositories with no commits; walking an arbitrarily
+/// deep tree to answer "has anyone touched this lately" costs more than the answer is
+/// worth, and a pathological layout (a recursive junction, a vendored monorepo) could
+/// stall every status refresh.
+const MAX_MTIME_SCAN_DEPTH: usize = 8;
 
 /// Get the timestamp of the most recent commit in a repository.
 ///
@@ -53,8 +61,10 @@ pub fn get_last_commit_time(repo_path: &Path) -> Result<Option<SystemTime>> {
 pub fn get_mtime_activity(repo_path: &Path) -> Result<Option<SystemTime>> {
     let mut latest: Option<SystemTime> = None;
 
+    let now = SystemTime::now();
     let walker = WalkDir::new(repo_path)
         .follow_links(false)
+        .max_depth(MAX_MTIME_SCAN_DEPTH)
         .into_iter()
         .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
@@ -65,6 +75,10 @@ pub fn get_mtime_activity(repo_path: &Path) -> Result<Option<SystemTime>> {
         if entry.file_type().is_file() {
             if let Ok(metadata) = entry.metadata() {
                 if let Ok(mtime) = metadata.modified() {
+                    // A future mtime — a skewed clock, an extracted archive — would make
+                    // the repository read as active forever. Clamped, it reads as
+                    // touched just now and ages out normally.
+                    let mtime = mtime.min(now);
                     latest = Some(match latest {
                         Some(current) if mtime > current => mtime,
                         Some(current) => current,

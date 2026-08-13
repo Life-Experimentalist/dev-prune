@@ -59,10 +59,36 @@ const binaryPath =
 
 const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
 
+// Forward termination to the child. Ctrl+C already reaches it through the shared
+// process group, but a bare `kill` of this wrapper — process managers, CI timeouts —
+// otherwise orphans the binary mid-prune while the wrapper reports itself gone.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  try {
+    process.on(sig, () => {
+      try {
+        child.kill(sig);
+      } catch (_) {}
+    });
+  } catch (_) {
+    // Windows only supports some of these; an unregistrable one stays unforwarded.
+  }
+}
+
 // Without this, a missing binary surfaces as an unhandled 'error' event and a Node
 // stack trace instead of an actionable message.
 child.on('error', (err) => {
-  if (err.code === 'ENOENT') {
+  if (err.code === 'ENOENT' && binaryPath !== exeName && fs.existsSync(binaryPath)) {
+    // The file is right there, yet the loader said "no such file" — the kernel's
+    // report for a binary it cannot load, typically one built for a different
+    // architecture. "Install what you already installed" would loop the user.
+    console.error(
+      `dev-prune: '${binaryPath}' exists but could not be executed.\n\n` +
+        `It may be built for a different architecture than ${process.platform}-${process.arch},\n` +
+        'or the file is damaged. Reinstall, or build a native binary:\n' +
+        '  npm install --force dev-prune\n' +
+        '  cargo install dev-prune'
+    );
+  } else if (err.code === 'ENOENT') {
     console.error(
       `dev-prune: could not find the '${exeName}' binary.\n\n` +
         `No prebuilt binary is published for ${process.platform}-${process.arch}, or the\n` +

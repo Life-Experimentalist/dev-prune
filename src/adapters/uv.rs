@@ -3,13 +3,82 @@
 
 // uv package manager adapter for Python projects.
 
-use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command};
-use anyhow::Result;
+use super::venv::{BASELINE_DISTRIBUTIONS, installed_distributions, normalize_package_name};
+use super::{
+    BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command_with_timeout,
+};
+use anyhow::{Result, anyhow};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
 /// Adapter for uv-based Python projects.
 pub struct Uv;
+
+/// Whether `.venv` was created by uv itself — uv stamps a `uv = <version>` key into
+/// `pyvenv.cfg`. A venv without the stamp was built by some other tool, and uv can make
+/// no claims about what is inside it.
+fn venv_is_uv_managed(path: &Path) -> bool {
+    fs::read_to_string(path.join(".venv").join("pyvenv.cfg"))
+        .map(|content| {
+            content.lines().any(|line| {
+                line.trim_start()
+                    .strip_prefix("uv")
+                    .is_some_and(|rest| rest.trim_start().starts_with('='))
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Every package name `uv.lock` pins, normalised.
+///
+/// `uv.lock` records the full transitive closure — including the project itself — so a
+/// plain name scan is enough; no dependency graph needed. `None` when no names could be
+/// read at all, in which case the caller skips the drift comparison rather than refusing
+/// on a lockfile format this scan does not understand.
+fn lockfile_package_names(lockfile: &Path) -> Option<HashSet<String>> {
+    let content = fs::read_to_string(lockfile).ok()?;
+    let mut names = HashSet::new();
+    let mut in_package = false;
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.starts_with('[') {
+            in_package = line == "[[package]]";
+            continue;
+        }
+        if !in_package {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("name") {
+            if let Some(value) = rest.trim_start().strip_prefix('=') {
+                let value = value.trim().trim_matches('"');
+                if !value.is_empty() {
+                    names.insert(normalize_package_name(value));
+                }
+                // Only the first `name` in each `[[package]]` entry is the package's own.
+                in_package = false;
+            }
+        }
+    }
+    (!names.is_empty()).then_some(names)
+}
+
+/// Installed distributions in `.venv` that `uv.lock` does not record.
+///
+/// Those were installed ad hoc (`uv pip install …`) and `uv sync` after deletion would
+/// not bring them back — exactly what this tool promises never to lose.
+fn unlocked_packages(path: &Path, locked: &HashSet<String>) -> Vec<String> {
+    let Some(installed) = installed_distributions(&path.join(".venv")) else {
+        return Vec::new();
+    };
+    let mut extras: Vec<String> = installed
+        .keys()
+        .filter(|name| !locked.contains(*name) && !BASELINE_DISTRIBUTIONS.contains(&name.as_str()))
+        .cloned()
+        .collect();
+    extras.sort();
+    extras
+}
 
 impl PackageManager for Uv {
     fn name(&self) -> &'static str {
@@ -54,6 +123,21 @@ impl PackageManager for Uv {
     /// Plain `uv lock` is the writing form, for the case where no lockfile exists yet.
     fn enforce_lockfile(&self, path: &Path, policy: EnforcePolicy) -> Result<()> {
         let lockfile = path.join("uv.lock");
+
+        // Generating a lockfile from `pyproject.toml` only proves the *declared*
+        // dependencies resolve — it says nothing about what is actually installed in
+        // `.venv`. When the venv was not even created by uv, `uv sync` against that
+        // fresh lock could rebuild a different environment than the one deleted, so
+        // refuse instead of manufacturing proof.
+        if !lockfile.exists() && path.join(".venv").exists() && !venv_is_uv_managed(path) {
+            return Err(anyhow!(
+                "`pyproject.toml` declares `[tool.uv]` but there is no `uv.lock`, and \
+                 `.venv` was not created by uv — a generated lockfile could not prove the \
+                 environment's contents are recoverable. Rebuild the environment under uv \
+                 first: `uv lock` then `uv sync`."
+            ));
+        }
+
         enforce_two_tier(
             &lockfile,
             "uv",
@@ -61,11 +145,39 @@ impl PackageManager for Uv {
             &["lock"],
             path,
             policy,
-        )
+        )?;
+
+        // The environment can hold packages the lockfile never recorded — a
+        // `uv pip install foo` nobody wrote back. `uv.lock` pins the full transitive
+        // closure, so anything installed but absent from it is recoverable from
+        // nowhere, which is exactly what this tool promises never to delete.
+        if let Some(locked) = lockfile_package_names(&lockfile) {
+            let extras = unlocked_packages(path, &locked);
+            if !extras.is_empty() {
+                let shown = extras
+                    .iter()
+                    .take(10)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let suffix = if extras.len() > 10 {
+                    format!(", … and {} more", extras.len() - 10)
+                } else {
+                    String::new()
+                };
+                return Err(anyhow!(
+                    "`.venv` holds {} package(s) that uv.lock does not record \
+                     ({shown}{suffix}). They were installed ad hoc and `uv sync` would \
+                     not bring them back. Record them first: `uv add <package>`.",
+                    extras.len()
+                ));
+            }
+        }
+        Ok(())
     }
 
-    fn restore(&self, path: &Path) -> Result<()> {
-        run_command("uv", &["sync"], path)
+    fn restore(&self, path: &Path, timeout: std::time::Duration) -> Result<()> {
+        run_command_with_timeout("uv", &["sync"], path, timeout)
     }
 
     fn lockfiles(&self) -> &'static [&'static str] {
@@ -131,5 +243,72 @@ mod tests {
         let adapter = Uv;
         let dirs = adapter.bloat_dirs(dir.path());
         assert!(dirs.is_empty());
+    }
+
+    #[test]
+    fn a_uv_stamped_pyvenv_cfg_marks_the_venv_as_uv_managed() {
+        let dir = tempdir().unwrap();
+        let venv = dir.path().join(".venv");
+        fs::create_dir(&venv).unwrap();
+        let mut cfg = File::create(venv.join("pyvenv.cfg")).unwrap();
+        writeln!(cfg, "home = /usr/bin").unwrap();
+        writeln!(cfg, "uv = 0.5.9").unwrap();
+        assert!(venv_is_uv_managed(dir.path()));
+    }
+
+    #[test]
+    fn a_pip_built_venv_is_not_mistaken_for_a_uv_one() {
+        let dir = tempdir().unwrap();
+        let venv = dir.path().join(".venv");
+        fs::create_dir(&venv).unwrap();
+        // `uvloop` starts with "uv" but is not the uv stamp.
+        let mut cfg = File::create(venv.join("pyvenv.cfg")).unwrap();
+        writeln!(cfg, "home = /usr/bin").unwrap();
+        writeln!(cfg, "uvloop = 1.0").unwrap();
+        assert!(!venv_is_uv_managed(dir.path()));
+    }
+
+    #[test]
+    fn lockfile_names_come_from_package_entries_only() {
+        let dir = tempdir().unwrap();
+        let lock = dir.path().join("uv.lock");
+        fs::write(
+            &lock,
+            "version = 1\n\n[[package]]\nname = \"Requests\"\nversion = \"2.32.3\"\n\n\
+             [package.metadata]\nname = \"not-a-package\"\n\n[[package]]\nname = \"my-proj\"\n",
+        )
+        .unwrap();
+        let names = lockfile_package_names(&lock).unwrap();
+        assert!(names.contains("requests"));
+        assert!(names.contains("my-proj"));
+        assert!(!names.contains("not-a-package"));
+        assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn an_ad_hoc_install_missing_from_the_lockfile_is_flagged() {
+        let dir = tempdir().unwrap();
+        let sp = dir.path().join(".venv").join("Lib").join("site-packages");
+        fs::create_dir_all(sp.join("requests-2.32.3.dist-info")).unwrap();
+        fs::create_dir_all(sp.join("sneaky_pkg-1.0.dist-info")).unwrap();
+        fs::create_dir_all(sp.join("pip-24.0.dist-info")).unwrap();
+
+        let locked: HashSet<String> = ["requests".to_string()].into();
+        assert_eq!(unlocked_packages(dir.path(), &locked), vec!["sneaky-pkg"]);
+    }
+
+    #[test]
+    fn a_foreign_venv_next_to_tool_uv_without_a_lock_is_refused() {
+        let dir = tempdir().unwrap();
+        let mut file = File::create(dir.path().join("pyproject.toml")).unwrap();
+        writeln!(file, "[tool.uv]").unwrap();
+        let venv = dir.path().join(".venv");
+        fs::create_dir(&venv).unwrap();
+        File::create(venv.join("pyvenv.cfg")).unwrap();
+
+        let err = Uv
+            .enforce_lockfile(dir.path(), EnforcePolicy::default())
+            .unwrap_err();
+        assert!(err.to_string().contains("not created by uv"));
     }
 }

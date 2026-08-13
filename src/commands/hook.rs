@@ -440,6 +440,19 @@ fn write_hook(path: &Path, content: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete the hook scripts and chain marker from dev-prune's own hooks directory.
+///
+/// Called once `core.hooksPath` no longer points here. Left behind, the dead scripts
+/// make `devp hook status` warn "files exist but never run" forever, and a stale
+/// `.chain-target` would make the *next* uninstall "restore" a path nothing forwards
+/// to any more.
+fn remove_hook_files(dir: &Path) {
+    let _ = fs::remove_file(dir.join(CHAIN_MARKER));
+    for name in hook_names_in(dir) {
+        let _ = fs::remove_file(dir.join(name));
+    }
+}
+
 /// Uninstall non-blocking global Git hooks.
 pub fn run_uninstall() -> Result<()> {
     // Only clear the setting if it still points at us. Blindly unsetting would delete
@@ -461,7 +474,7 @@ pub fn run_uninstall() -> Result<()> {
                 .status();
             match restored {
                 Ok(status) if status.success() => {
-                    let _ = fs::remove_file(dir.join(CHAIN_MARKER));
+                    remove_hook_files(&dir);
                     output::print_success(&format!(
                         "Restored `core.hooksPath` to `{}`.",
                         output::clean_path(&previous)
@@ -483,10 +496,24 @@ pub fn run_uninstall() -> Result<()> {
             output::print_info(&format!(
                 "`core.hooksPath` is set to `{current}`, which is not dev-prune's — leaving it alone."
             ));
+            // Our own directory can still hold dead scripts (and a stale chain marker)
+            // from an earlier install — the setting was changed out from under them.
+            if !hook_names_in(&dir).is_empty() || dir.join(CHAIN_MARKER).exists() {
+                remove_hook_files(&dir);
+                output::print_info("Removed dev-prune's leftover hook scripts.");
+            }
             return Ok(());
         }
         None => {
-            output::print_info("`core.hooksPath` is not set globally — nothing to remove.");
+            if !hook_names_in(&dir).is_empty() || dir.join(CHAIN_MARKER).exists() {
+                remove_hook_files(&dir);
+                output::print_success(
+                    "`core.hooksPath` was not set globally; removed dev-prune's leftover \
+                     hook scripts.",
+                );
+            } else {
+                output::print_info("`core.hooksPath` is not set globally — nothing to remove.");
+            }
             return Ok(());
         }
         Some(_) => {}
@@ -500,6 +527,7 @@ pub fn run_uninstall() -> Result<()> {
         .status();
     match unset {
         Ok(status) if status.success() => {
+            remove_hook_files(&dir);
             output::print_success(
                 "Removed global Git hook configuration (`git config --global --unset core.hooksPath`).",
             );

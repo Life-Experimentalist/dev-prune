@@ -497,8 +497,19 @@ pub fn run_global_update() -> Result<()> {
     let mut errors_found = 0;
 
     for repo_path in registry.repositories.keys() {
-        total_audited += 1;
         let clean = output::clean_path(repo_path);
+
+        // A registered path that is gone — deleted, on an unplugged drive — is not a
+        // config error, and writing a fresh `.devprune.json` at it would either fail or
+        // conjure a directory where the repository used to be.
+        if !repo_path.exists() {
+            output::print_warning(&format!(
+                "Skipped {clean} — the path no longer exists. `devp unlink --missing` \
+                 clears such entries."
+            ));
+            continue;
+        }
+        total_audited += 1;
 
         match PerRepoConfig::load_with_diagnostics(repo_path) {
             Ok(Some(cfg)) => {
@@ -510,15 +521,12 @@ pub fn run_global_update() -> Result<()> {
                 }
             }
             Ok(None) => {
-                let cfg = PerRepoConfig::default();
-                if let Err(e) = cfg.save_to_repo(repo_path) {
-                    output::print_error(&format!("Failed to write config for {clean}: {e}"));
-                    errors_found += 1;
-                } else {
-                    output::print_success(&format!(
-                        "Audited & initialized default config for {clean}"
-                    ));
-                }
+                // No file means the global defaults apply, which is a valid state, not a
+                // gap to fill. Writing one here would drop an untracked file into every
+                // registered repository in a single command.
+                output::print_info(&format!(
+                    "{clean} has no .devprune.json — global defaults apply."
+                ));
             }
             Err(err_msg) => {
                 errors_found += 1;

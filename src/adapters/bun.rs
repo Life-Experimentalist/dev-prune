@@ -5,7 +5,7 @@
 
 use super::{
     BloatDir, EnforcePolicy, PackageManager, dir_size, lock_sync_or_verify_with_timeout,
-    run_command,
+    run_command_with_timeout,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -70,8 +70,13 @@ impl PackageManager for Bun {
     }
 
     /// Restores the dependencies using the lockfile.
-    fn restore(&self, project_dir: &Path) -> Result<()> {
-        run_command("bun", &["install", "--frozen-lockfile"], project_dir)
+    fn restore(&self, project_dir: &Path, timeout: std::time::Duration) -> Result<()> {
+        run_command_with_timeout(
+            "bun",
+            &["install", "--frozen-lockfile"],
+            project_dir,
+            timeout,
+        )
     }
 
     fn lockfiles(&self) -> &'static [&'static str] {

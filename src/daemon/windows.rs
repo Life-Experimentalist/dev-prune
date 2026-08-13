@@ -57,13 +57,19 @@ pub fn uninstall() -> Result<()> {
         .context("Failed to execute schtasks")?;
 
     if output.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "Failed to uninstall task: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )
+        return Ok(());
     }
+    // A delete that failed because there was nothing to delete is the state the
+    // caller asked for. The error text is localised, so instead of matching it,
+    // ask the scheduler whether the task exists now — `devp uninstall` used to
+    // fail outright on a machine where setup had never managed to register it.
+    if matches!(status(), Ok(DaemonStatus::NotInstalled)) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "Failed to uninstall task: {}",
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 /// Decide the task's state from the output of a task-list query.

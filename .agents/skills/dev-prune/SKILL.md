@@ -148,9 +148,9 @@ The fields worth reading first:
 
 | Path | Use it for |
 | :--- | :--- |
-| `summary.errors` (run) | "did anything go wrong" — the whole answer, in one integer |
-| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `ignored`, `no_bloat`, `disabled`, `lockfile_error`, `delete_error`, `config_error` |
-| `results[].message` | the failure detail — present only on the three error statuses |
+| `summary.errors` (run) | "did anything go wrong" — the whole answer, in one integer (counts `lockfile_error`, `activity_check_error`, `delete_error` and `config_error`) |
+| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_symlink`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
+| `results[].message` | the failure detail — present on the four error statuses and on `skipped_symlink`, where it names the link |
 | `results[].fix_command` | present only on `lockfile_error`, and only when the fix is one mechanical command you may run unattended |
 | `repositories[].state` (status) | `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, `config_error` |
 | `repositories[].error` | the parse failure — present only on `config_error` |
@@ -201,7 +201,7 @@ over plain venv when `uv.lock` or `[tool.uv]` is present.
 | yarn | `yarn.lock` | `node_modules` | `yarn install --immutable --mode update-lockfile` (Berry) | `yarn install --immutable` |
 | bun | `bun.lockb`, `bun.lock` | `node_modules` | `bun install --frozen-lockfile --dry-run --ignore-scripts` | `bun install --frozen-lockfile` |
 | uv | `uv.lock`, `[tool.uv]` | `.venv` | `uv lock --locked` | `uv sync` |
-| venv | `requirements.txt` + `pyvenv.cfg` | every dir holding `pyvenv.cfg` | `requirements.txt` lists ≥1 package | `python -m venv .venv && pip install -r requirements.txt` |
+| venv | `requirements.txt` + `pyvenv.cfg` | every dir holding `pyvenv.cfg` | `requirements.txt` lists ≥1 package and accounts for every installed package | `python -m venv .venv && pip install -r requirements.txt` |
 | cargo | `Cargo.toml` | `target` | `cargo metadata --locked` | next `cargo build` |
 | go | `go.mod` | `vendor` | `go mod download` | `go mod vendor` |
 
@@ -227,13 +227,19 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `command_timeout_secs` | `600` | Ceiling on any package-manager command |
 | `require_confirmation` | `true` | Whether a prune pass asks before deleting |
 | `min_size_mb` | `0` | Smallest bloat directory worth deleting, in MiB; `0` means no floor |
+| `scan_depth` | `6` | How many directory levels below a repository root discovery descends; `config set` accepts `1`–`32` |
+| `allow_manifest_rewrite` | `false` | Whether a pass may run the *writing* sync form that repairs a drifted or missing lockfile |
+| `auto_hooks_chain` | `false` | Whether unattended setup may take `core.hooksPath` from another tool and forward to it |
 | `update_check` | `true` | Whether to ask GitHub for the latest release. Sends nothing but the request itself |
+| `update_check_interval_days` | `7` | Days between automatic release checks; `devp update` always asks |
+| `update_check_timeout_secs` | `5` | How long the release check waits for GitHub before giving up |
 
 **Per repository:**
 - `ignore.devprune.json` in the root — instant skip, checked before anything is parsed.
 - `.devprune.json` — `"project_name"`, `"ignore": true`, `"override_idle_days": 30`,
-  `"disable_daemon": true` (excluded from scheduled passes only), `"disable_hooks": true`
-  (not auto-registered by the global hook). Inert data only.
+  `"min_size_mb": 100`, `"scan_depth": 10`, `"disable_daemon": true` (excluded from
+  scheduled passes only), `"disable_hooks": true` (not auto-registered by the global
+  hook). Inert data only.
 
 A `.devprune.json` that will not parse skips the repository and reports the syntax error
 rather than falling back to defaults — the unreadable file may have been the one saying

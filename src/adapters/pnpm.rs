@@ -3,7 +3,9 @@
 
 // PNPM adapter implementation.
 
-use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command};
+use super::{
+    BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command_with_timeout,
+};
 use anyhow::Result;
 use std::path::Path;
 
@@ -56,8 +58,13 @@ impl PackageManager for Pnpm {
     }
 
     /// Restores the dependencies using the lockfile.
-    fn restore(&self, project_dir: &Path) -> Result<()> {
-        run_command("pnpm", &["install", "--frozen-lockfile"], project_dir)
+    fn restore(&self, project_dir: &Path, timeout: std::time::Duration) -> Result<()> {
+        run_command_with_timeout(
+            "pnpm",
+            &["install", "--frozen-lockfile"],
+            project_dir,
+            timeout,
+        )
     }
 
     fn lockfiles(&self) -> &'static [&'static str] {

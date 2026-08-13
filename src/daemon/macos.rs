@@ -71,6 +71,14 @@ pub fn install(interval_days: u64) -> Result<()> {
     }
     fs::write(&plist_path, plist_content)?;
 
+    // `load` on a label that is already loaded is a no-op that leaves the OLD job
+    // definition running, so a reinstall that changed the interval or repaired the
+    // binary path would report success and change nothing. Unload first; failing
+    // because nothing was loaded is the normal fresh-install case and is ignored.
+    let _ = Command::new("launchctl")
+        .args(["unload", &plist_path.to_string_lossy()])
+        .output();
+
     let output = Command::new("launchctl")
         .args(["load", &plist_path.to_string_lossy()])
         .output()
@@ -89,21 +97,35 @@ pub fn install(interval_days: u64) -> Result<()> {
 /// Uninstalls the macOS LaunchAgent.
 pub fn uninstall() -> Result<()> {
     let plist_path = get_plist_path()?;
-    if plist_path.exists() {
-        let output = Command::new("launchctl")
-            .args(["unload", &plist_path.to_string_lossy()])
+    if !plist_path.exists() {
+        return Ok(());
+    }
+
+    let output = Command::new("launchctl")
+        .args(["unload", &plist_path.to_string_lossy()])
+        .output()
+        .context("Failed to execute launchctl unload")?;
+
+    // `unload` exits non-zero for "was not loaded", which for an uninstall is already
+    // the desired state. What matters is not the exit code but whether the job is still
+    // registered, so ask launchd directly before calling the failure genuine.
+    if !output.status.success() {
+        let still_loaded = Command::new("launchctl")
+            .args(["list", LABEL])
             .output()
-            .context("Failed to execute launchctl unload")?;
-
-        fs::remove_file(&plist_path)?;
-
-        if !output.status.success() {
+            .is_ok_and(|o| o.status.success());
+        if still_loaded {
             anyhow::bail!(
-                "launchctl unload failed: {}",
+                "launchctl unload failed and the job is still loaded: {}",
                 String::from_utf8_lossy(&output.stderr)
-            )
+            );
         }
     }
+
+    // The file goes last. Removing it before the unload was known good would leave a
+    // job loaded in launchd with no plist on disk — invisible to `status`, impossible
+    // to uninstall again, and still firing every interval.
+    fs::remove_file(&plist_path)?;
     Ok(())
 }
 

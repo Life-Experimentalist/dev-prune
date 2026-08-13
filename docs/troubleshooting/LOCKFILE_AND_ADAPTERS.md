@@ -180,7 +180,8 @@ directory with its own `.git`.
   never pruned as part of its parent.
 - **Deeper than `scan_depth` levels**: raise the cap, for this repository only or for
   every one. The cap exists to keep the walk out of large trees, so raise it as far as
-  the tree actually needs and no further — it is clamped to 32 either way.
+  the tree actually needs and no further — `config set` accepts `1`–`32` and rejects
+  anything outside that range.
 
   ```bash
   devp config set scan_depth 10          # everywhere

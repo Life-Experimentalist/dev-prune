@@ -5,10 +5,32 @@
 
 use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier};
 use anyhow::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Adapter for Cargo-based Rust projects.
 pub struct Cargo;
+
+/// The `Cargo.lock` cargo itself would use for this project: the nearest one at or
+/// above `path`, stopping at the repository boundary.
+///
+/// A workspace member has no lockfile of its own — the workspace root's covers it.
+/// Treating the member as lockfile-less used to send enforcement down the
+/// `generate-lockfile` tier, which re-resolves the whole workspace and rewrites the
+/// *root* lockfile as a precondition for deleting one member's `target/`.
+fn workspace_lockfile(path: &Path) -> Option<PathBuf> {
+    let mut dir = path;
+    loop {
+        let candidate = dir.join("Cargo.lock");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        // Past the repository root, any lockfile found belongs to somebody else.
+        if dir.join(".git").exists() {
+            return None;
+        }
+        dir = dir.parent()?;
+    }
+}
 
 impl PackageManager for Cargo {
     fn name(&self) -> &'static str {
@@ -40,8 +62,20 @@ impl PackageManager for Cargo {
     /// re-resolving against a stale local index is how you get a lockfile that does not
     /// build.
     fn enforce_lockfile(&self, path: &Path, policy: EnforcePolicy) -> Result<()> {
+        // Criterion keeps its benchmark history in `target/criterion`. It is the one
+        // thing under `target/` no build regenerates — the next `cargo bench` starts a
+        // fresh baseline with nothing to compare against. Still recoverable-by-rebuild
+        // in the sense that matters, so a warning, not a refusal.
+        if path.join("target").join("criterion").is_dir() {
+            crate::output::print_warning(&format!(
+                "{}: `target/criterion` holds benchmark history that a rebuild does not \
+                 bring back — copy it first if the baselines matter.",
+                crate::output::clean_path(path)
+            ));
+        }
+        let lockfile = workspace_lockfile(path).unwrap_or_else(|| path.join("Cargo.lock"));
         enforce_two_tier(
-            &path.join("Cargo.lock"),
+            &lockfile,
             "cargo",
             &["metadata", "--locked", "--format-version", "1"],
             &["generate-lockfile"],
@@ -50,7 +84,7 @@ impl PackageManager for Cargo {
         )
     }
 
-    fn restore(&self, _path: &Path) -> Result<()> {
+    fn restore(&self, _path: &Path, _timeout: std::time::Duration) -> Result<()> {
         println!("Rust target/ will regenerate on next cargo build");
         Ok(())
     }

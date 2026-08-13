@@ -101,8 +101,28 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
 
         if let Ok(config_dir) = Registry::config_dir() {
             if config_dir.exists() {
-                let _ = fs::remove_dir_all(config_dir);
-                output::print_info("Removed global configuration directory.");
+                match fs::remove_dir_all(&config_dir) {
+                    Ok(()) => output::print_info("Removed global configuration directory."),
+                    Err(e) => {
+                        // Routine on Windows: the managed copy under `<config>/bin` is
+                        // often the very binary running this command, and a running
+                        // executable cannot be deleted. Claiming success here left a
+                        // directory the user believed purged.
+                        let running_inside =
+                            std::env::current_exe().is_ok_and(|exe| exe.starts_with(&config_dir));
+                        let hint = if running_inside {
+                            " The running binary lives inside it — delete the directory \
+                             by hand once this command exits."
+                        } else {
+                            ""
+                        };
+                        output::print_error(&format!(
+                            "Could not remove {}: {e}.{hint}",
+                            output::clean_path(&config_dir)
+                        ));
+                        left_behind.push("the global configuration directory".to_string());
+                    }
+                }
             }
         }
 
@@ -146,13 +166,36 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
     Ok(())
 }
 
-/// Where the binary itself lives, since nothing above removes it.
+/// Where the binaries themselves live, since nothing above removes them.
+///
+/// Both names, not just the one that is running: invoked as `devp`, step 3 above could
+/// not remove the alias (it *is* this process), and the canonical `dev-prune` is never
+/// removed by anything — a hint that named only one of the pair left the other behind.
 fn print_binary_removal_hint() {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
+    let mut targets = vec![output::clean_path(&exe)];
+    if let Some(parent) = exe.parent() {
+        for stem in ["dev-prune", "devp"] {
+            let name = if cfg!(windows) {
+                format!("{stem}.exe")
+            } else {
+                stem.to_string()
+            };
+            let twin = parent.join(name);
+            if twin.exists() && twin != exe {
+                targets.push(output::clean_path(&twin));
+            }
+        }
+    }
     output::print_info(&format!(
-        "To finish, delete the binary: {}",
-        output::clean_path(&exe)
+        "To finish, delete {}: {}",
+        if targets.len() > 1 {
+            "the binaries"
+        } else {
+            "the binary"
+        },
+        targets.join(" and ")
     ));
 }

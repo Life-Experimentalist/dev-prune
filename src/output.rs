@@ -13,7 +13,12 @@ use std::time::Duration;
 /// Helper to strip Windows UNC `\\?\` prefix, macOS `/private/` prefix, and collapse double slashes.
 pub fn clean_path<P: AsRef<Path>>(path: P) -> String {
     let s = path.as_ref().display().to_string();
-    let s = if let Some(stripped) = s.strip_prefix(r"\\?\") {
+    // `\\?\UNC\server\share` is the verbatim spelling of `\\server\share` — dropping
+    // the whole prefix must put the `\\` back, or the result names a relative path
+    // `UNC\server\share` that nothing can open.
+    let s = if let Some(stripped) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{stripped}")
+    } else if let Some(stripped) = s.strip_prefix(r"\\?\") {
         stripped.to_string()
     } else {
         s
@@ -48,8 +53,12 @@ pub fn print_success(msg: &str) {
 }
 
 /// Print a warning message (yellow exclamation)
+///
+/// To stderr, like errors: warnings can fire while stdout is a pipe or holds a pending
+/// `--json` document (adapter drift notices, the criterion note), and a warning printed
+/// into that stream is either invisible or a parse error.
 pub fn print_warning(msg: &str) {
-    println!("{} {}", "⚠".yellow().bold(), msg);
+    eprintln!("{} {}", "⚠".yellow().bold(), msg);
 }
 
 /// Print an error message (red X)
@@ -136,6 +145,10 @@ mod tests {
     #[test]
     fn test_clean_path() {
         assert_eq!(clean_path(r"\\?\C:\Users\krish"), r"C:\Users\krish");
+        assert_eq!(
+            clean_path(r"\\?\UNC\server\share\repo"),
+            r"\\server\share\repo"
+        );
         assert_eq!(clean_path(r"/private/var/tmp/repo"), r"/var/tmp/repo");
         assert_eq!(clean_path(r"//home//user//repo"), r"/home/user/repo");
     }

@@ -575,7 +575,7 @@ export default function App() {
                 </div>
                 <div>
                   <strong>0</strong>
-                  <span>network requests</span>
+                  <span>analytics or telemetry</span>
                 </div>
                 <div>
                   <strong>3</strong>
@@ -1137,7 +1137,7 @@ export default function App() {
               </h3>
               <p>
                 Adding a manager is deliberately small: implement one{" "}
-                <code>Adapter</code> trait — detect, list bloat directories,
+                <code>PackageManager</code> trait — detect, list bloat directories,
                 verify the lockfile, restore — register it in one array, and add
                 its fixtures to the adapter test suite. Nothing else in the
                 codebase has to know it exists. Composer, Gradle, Maven, Bundler,
@@ -1472,7 +1472,9 @@ export default function App() {
                   <code>--skip</code> narrow it to certain managers,{" "}
                   <code>--min-size</code> sets a size floor, and{" "}
                   <code>--json</code> emits one machine-readable document
-                  instead of the report.
+                  instead of the report, on <code>run</code>,{" "}
+                  <code>status</code>, <code>stats</code> and{" "}
+                  <code>caches</code>.
                 </p>
               </div>
               <div className="info-card">

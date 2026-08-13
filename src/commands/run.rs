@@ -159,6 +159,7 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
             matches!(
                 r.status,
                 PruneStatus::LockfileError(_)
+                    | PruneStatus::ActivityCheckError(_)
                     | PruneStatus::DeleteError(_)
                     | PruneStatus::ConfigError(_)
             )
@@ -219,6 +220,12 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
             PruneStatus::LockfileError(e) => {
                 output::print_error(&format!("{clean} lockfile sync failed:\n    {}", e.trim()));
             }
+            PruneStatus::ActivityCheckError(e) => {
+                output::print_error(&format!(
+                    "{clean} skipped — its activity could not be determined:\n    {}",
+                    e.trim()
+                ));
+            }
             PruneStatus::DeleteError(e) => {
                 output::print_error(&format!("{clean} delete error: {e}"));
             }
@@ -228,6 +235,9 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
                      Fix it, or run `devp config {clean} --update` to reset it.",
                     e.trim()
                 ));
+            }
+            PruneStatus::SkippedSymlink(e) => {
+                output::print_warning(&format!("{clean} → {}", e.trim()));
             }
             _ => {}
         }
@@ -257,9 +267,14 @@ fn record_targeted_prune(path: &std::path::Path, results: &[PruneResult], dry_ru
         return;
     }
 
+    // A DeleteError with a non-zero size_freed is a delete that got half-way: the
+    // directory is corrupt, not intact, so `restore --last-run` must know to rebuild it.
     let pruned: Vec<crate::config::PrunedDir> = results
         .iter()
-        .filter(|r| matches!(r.status, PruneStatus::Pruned))
+        .filter(|r| {
+            matches!(r.status, PruneStatus::Pruned)
+                || (matches!(r.status, PruneStatus::DeleteError(_)) && r.size_freed > 0)
+        })
         .map(|r| crate::config::PrunedDir {
             repo_path: r.repo_path.clone(),
             bloat_dir: r.bloat_dir.clone(),
@@ -449,6 +464,8 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     // only ever sees selected candidates, so it never got the chance.
     let mut candidates: Vec<PruneResult> = Vec::new();
     let mut blocked: Vec<PruneResult> = Vec::new();
+    let mut linked: Vec<PruneResult> = Vec::new();
+    let mut missing: Vec<PruneResult> = Vec::new();
     for result in engine::prune_all_with(&mut registry, &analysis) {
         // An excepted repository leaves the pass entirely — including its failures. The
         // user said not to touch it, so a broken config in there is not this run's
@@ -460,7 +477,14 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             PruneStatus::SkippedDryRun => candidates.push(result),
             PruneStatus::ConfigError(_)
             | PruneStatus::LockfileError(_)
+            | PruneStatus::ActivityCheckError(_)
             | PruneStatus::DeleteError(_) => blocked.push(result),
+            // Reported, never failed on: the link is permanent and deliberate, and a
+            // "failure" here made every scheduled pass over the repo exit 1 forever.
+            PruneStatus::SkippedSymlink(_) => linked.push(result),
+            // Same reasoning: a deleted clone stays deleted, and failing on it would
+            // keep every scheduled pass red until the entry is unlinked.
+            PruneStatus::PathMissing => missing.push(result),
             _ => {}
         }
     }
@@ -492,10 +516,13 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     // A dry run stops here in both output modes: sizes are known, nothing was verified.
     if args.dry_run {
         if args.json {
-            json::emit(&json::run_document(&[candidates, blocked].concat(), true))?;
+            json::emit(&json::run_document(
+                &[candidates, blocked, linked, missing].concat(),
+                true,
+            ))?;
             return Ok(());
         }
-        if candidates.is_empty() && blocked.is_empty() {
+        if candidates.is_empty() && blocked.is_empty() && linked.is_empty() && missing.is_empty() {
             output::print_info("No idle repositories or pruneable bloat directories found.");
             return Ok(());
         }
@@ -512,20 +539,27 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         // Reported, but not an error: a dry run's job is to say what it found, and it
         // found this too.
         report_blocked(&blocked);
+        report_linked(&linked);
+        report_missing(&missing);
         return Ok(());
     }
 
     if candidates.is_empty() {
         if args.json {
-            json::emit(&json::run_document(&blocked, false))?;
+            json::emit(&json::run_document(
+                &[blocked.clone(), linked, missing].concat(),
+                false,
+            ))?;
             return fail_if_blocked(&blocked);
         }
-        if blocked.is_empty() {
+        if blocked.is_empty() && linked.is_empty() && missing.is_empty() {
             output::print_info("No idle repositories or pruneable bloat directories found.");
             return Ok(());
         }
         output::print_info("No pruneable bloat directories found.");
         report_blocked(&blocked);
+        report_linked(&linked);
+        report_missing(&missing);
         return fail_if_blocked(&blocked);
     }
 
@@ -539,6 +573,8 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             output::format_bytes(total_reclaimable)
         ));
         report_blocked(&blocked);
+        report_linked(&linked);
+        report_missing(&missing);
     }
 
     // Determine target candidates to prune (either interactive TUI selection or all).
@@ -561,17 +597,31 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         }
         selected
     } else {
+        // Reaching here means stdout is piped. If stdin is too, there is nobody to
+        // answer: the read hits EOF at once, and the old code then reported "aborted by
+        // user" about a user who was never asked. Failing with the fix beats that.
+        if !io::stdin().is_terminal() {
+            anyhow::bail!(
+                "Deleting {} directories ({}) needs confirmation, and there is no \
+                 terminal to ask on. Re-run with `--yes` to confirm, or `--dry-run` \
+                 to only analyse.",
+                candidates.len(),
+                output::format_bytes(total_reclaimable)
+            );
+        }
         println!();
         output::print_warning("CAUTION: Deleting bloat directories cannot be undone directly.");
         output::print_info(
             "Note: You can re-install missing dependencies anytime using `dev-prune restore`.",
         );
-        print!(
+        // The question goes to stderr: stdout is a pipe here, and a prompt written into
+        // it is invisible on the terminal — the command just appears to hang.
+        eprint!(
             "Proceed with deletion of {} directories ({})? [y/N]: ",
             candidates.len(),
             output::format_bytes(total_reclaimable)
         );
-        io::stdout().flush()?;
+        io::stderr().flush()?;
 
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
@@ -613,21 +663,35 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
 
     // Seeded with what the analysis pass could not get past. Those repositories belong in
     // the document and in the exit code exactly as much as a failure from the loop below.
+    // Symlinked directories ride along for the document only — they are not errors.
     let mut error_count = blocked.len();
     let mut all_results: Vec<PruneResult> = blocked;
+    all_results.extend(linked);
+    all_results.extend(missing);
     let mut total_freed: u64 = 0;
     let mut pruned_count = 0;
     let mut pruned_dirs: Vec<crate::config::PrunedDir> = Vec::new();
+    // One timestamp identifies the whole pass, so every incremental save below
+    // supersedes the previous one instead of counting as its own pass.
+    let pass_at = chrono::Utc::now();
 
     for (repo_path, dirs) in &selection {
-        // Candidates were already filtered through the idle check during the dry-run
-        // analysis pass, so re-checking here would only re-walk the tree.
+        let recorded_before = pruned_dirs.len();
+        // The idle check runs again here, not just at analysis: the selector can sit
+        // open for hours, and a repository someone started working in between analysis
+        // and Enter must not be pruned on the strength of a stale answer. Only
+        // `--ignore-idle` skips it, exactly as it skipped the first check.
+        let idle_days = registry
+            .repositories
+            .get(repo_path)
+            .and_then(|e| e.override_idle_days)
+            .unwrap_or(registry.settings.idle_days);
         let single_results = engine::prune_repo_with(
             repo_path,
             &PruneOptions {
-                idle_days: 0,
+                idle_days,
                 dry_run: false,
-                force: true,
+                force: args.force,
                 only_dirs: Some(dirs.clone()),
                 adapters: filter.clone(),
                 min_size_bytes: 0,
@@ -664,8 +728,30 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                         report_lockfile_failure(&result, e);
                     }
                 }
+                PruneStatus::ActivityCheckError(e) => {
+                    error_count += 1;
+                    if !args.json {
+                        output::print_error(&format!(
+                            "{} skipped — its activity could not be determined:\n    {}",
+                            output::clean_path(&result.repo_path),
+                            e.trim()
+                        ));
+                    }
+                }
                 PruneStatus::DeleteError(e) => {
                     error_count += 1;
+                    // A non-zero size_freed on a delete error means the delete got
+                    // half-way: the directory is corrupt, not intact. Record it so
+                    // `devp restore --last-run` knows to rebuild it — while the error
+                    // above still fails the pass.
+                    if result.size_freed > 0 {
+                        pruned_dirs.push(crate::config::PrunedDir {
+                            repo_path: result.repo_path.clone(),
+                            bloat_dir: result.bloat_dir.clone(),
+                            adapter: result.adapter_name.clone(),
+                            size_freed: result.size_freed,
+                        });
+                    }
                     if !args.json {
                         output::print_error(&format!(
                             "{} → delete failed: {}",
@@ -687,13 +773,32 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                         ));
                     }
                 }
+                // The repo saw activity between analysis and execution — the re-check
+                // above caught it. A protective skip, not a failure.
+                PruneStatus::SkippedActive if !args.json => {
+                    output::print_info(&format!(
+                        "{} became active since the analysis — left alone. \
+                         Use `--ignore-idle` to prune it anyway.",
+                        output::clean_path(&result.repo_path)
+                    ));
+                }
                 _ => {}
             }
             all_results.push(result);
         }
+
+        // Persisted after every repository, not once at the end. A pass killed
+        // half-way through used to leave the registry describing the *previous*
+        // pass, so `devp restore --last-run` offered to reinstall directories that
+        // were never deleted and said nothing about the ones that were. A save
+        // failure here is silent — the final save below reports it.
+        if pruned_dirs.len() > recorded_before {
+            registry.record_prune_progress(pass_at, pruned_dirs.clone());
+            let _ = registry.save();
+        }
     }
 
-    registry.record_prune(pruned_dirs);
+    registry.record_prune_progress(pass_at, pruned_dirs);
     registry.save()?;
 
     if args.json {
@@ -759,12 +864,49 @@ fn report_blocked(blocked: &[PruneResult]) {
                 ));
             }
             PruneStatus::LockfileError(e) => report_lockfile_failure(result, e),
+            PruneStatus::ActivityCheckError(e) => {
+                output::print_error(&format!(
+                    "{clean_p} skipped — its activity could not be determined:\n    {}",
+                    e.trim()
+                ));
+            }
             PruneStatus::DeleteError(e) => {
                 output::print_error(&format!("{clean_p} → delete failed: {e}"));
             }
-            // `blocked` is built from exactly the three arms above.
+            // `blocked` is built from exactly the four arms above.
             _ => {}
         }
+    }
+}
+
+/// Report bloat directories that are symlinks and were deliberately left alone.
+///
+/// Informational only, never part of the exit code: the storage a link points at is
+/// not this repository's to delete, the state is permanent, and failing on it would
+/// turn every scheduled pass over such a repo red forever.
+fn report_linked(linked: &[PruneResult]) {
+    for result in linked {
+        if let PruneStatus::SkippedSymlink(e) = &result.status {
+            output::print_warning(&format!(
+                "{} → {}",
+                output::clean_path(&result.repo_path),
+                e.trim()
+            ));
+        }
+    }
+}
+
+/// Report registered paths that no longer exist on disk.
+///
+/// Informational only, never part of the exit code: the clone is already gone, the state
+/// does not fix itself, and failing on it would keep every scheduled pass red until the
+/// user notices. The fix is one command, so name it.
+fn report_missing(missing: &[PruneResult]) {
+    for result in missing {
+        output::print_warning(&format!(
+            "{} no longer exists — `devp unlink --missing` clears such entries.",
+            output::clean_path(&result.repo_path)
+        ));
     }
 }
 

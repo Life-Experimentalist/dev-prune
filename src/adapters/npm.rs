@@ -3,12 +3,112 @@
 
 // NPM adapter implementation.
 
-use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command};
+use super::{
+    BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command_with_timeout,
+};
 use anyhow::Result;
+use std::fs;
 use std::path::Path;
 
 /// NPM package manager adapter.
 pub struct Npm;
+
+/// Refuse when `node_modules` holds packages `package-lock.json` never recorded.
+///
+/// `npm install --no-save` puts a package in the tree without touching the lockfile,
+/// and `npm link` plants a symlink to a package that lives outside the project. Both
+/// survive `npm ci --dry-run` — it checks the lockfile against `package.json`, not
+/// against the tree — and neither comes back after deletion. npm writes its own record
+/// of what it actually installed to `node_modules/.package-lock.json`; comparing that
+/// against the real lockfile catches the `--no-save` case, and a scan for symlinked
+/// entries catches `npm link`.
+fn check_unrecorded_installs(project_dir: &Path) -> Result<()> {
+    let node_modules = project_dir.join("node_modules");
+
+    // `npm link` first: a symlinked package is outside the tree entirely, so the
+    // hidden lockfile comparison below would not see it. Dot-entries are skipped —
+    // `.bin` is symlinks by design.
+    let mut linked: Vec<String> = Vec::new();
+    if let Ok(entries) = fs::read_dir(&node_modules) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let is_link = |p: &Path| {
+                fs::symlink_metadata(p)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false)
+            };
+            if is_link(&entry.path()) {
+                linked.push(name);
+            } else if name.starts_with('@') {
+                // Scoped packages sit one level down: `@scope/pkg`.
+                if let Ok(scoped) = fs::read_dir(entry.path()) {
+                    for pkg in scoped.flatten() {
+                        if is_link(&pkg.path()) {
+                            linked.push(format!("{name}/{}", pkg.file_name().to_string_lossy()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !linked.is_empty() {
+        linked.sort();
+        anyhow::bail!(
+            "`{}` contains npm-linked package(s) ({}) — symlinks to code that lives \
+             outside this project. `npm ci` after deletion would not re-link them. \
+             Run `npm unlink` for each, or install them normally, then retry.",
+            node_modules.display(),
+            linked.join(", ")
+        );
+    }
+
+    // The `--no-save` case: package names npm's own install record knows about that
+    // the committed lockfile does not. Either file missing or unparseable means there
+    // is nothing to compare — not evidence of drift.
+    let package_names = |path: &Path| -> Option<std::collections::HashSet<String>> {
+        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+        Some(
+            json.get("packages")?
+                .as_object()?
+                .keys()
+                .filter(|k| !k.is_empty())
+                .cloned()
+                .collect(),
+        )
+    };
+    let (Some(installed), Some(recorded)) = (
+        package_names(&node_modules.join(".package-lock.json")),
+        package_names(&project_dir.join("package-lock.json")),
+    ) else {
+        return Ok(());
+    };
+    let mut extras: Vec<&String> = installed.difference(&recorded).collect();
+    if extras.is_empty() {
+        return Ok(());
+    }
+    extras.sort();
+    let shown = extras
+        .iter()
+        .take(10)
+        .map(|s| s.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let suffix = if extras.len() > 10 {
+        format!(", … and {} more", extras.len() - 10)
+    } else {
+        String::new()
+    };
+    anyhow::bail!(
+        "`node_modules` holds {} package(s) that package-lock.json does not record \
+         ({shown}{suffix}) — likely installed with `npm install --no-save`. `npm ci` \
+         after deletion would not bring them back. Run `npm install <pkg>` to save \
+         them (or `npm install` to sync), then retry.",
+        extras.len()
+    );
+}
 
 impl PackageManager for Npm {
     /// Returns the name of the package manager.
@@ -44,6 +144,7 @@ impl PackageManager for Npm {
     /// the writing form, kept for the no-lockfile case where there is nothing to
     /// preserve, and for the user who opted into rewriting.
     fn enforce_lockfile(&self, project_dir: &Path, policy: EnforcePolicy) -> Result<()> {
+        check_unrecorded_installs(project_dir)?;
         let lockfile = project_dir.join("package-lock.json");
         enforce_two_tier(
             &lockfile,
@@ -56,8 +157,8 @@ impl PackageManager for Npm {
     }
 
     /// Restores the dependencies using the lockfile.
-    fn restore(&self, project_dir: &Path) -> Result<()> {
-        run_command("npm", &["ci"], project_dir)
+    fn restore(&self, project_dir: &Path, timeout: std::time::Duration) -> Result<()> {
+        run_command_with_timeout("npm", &["ci"], project_dir, timeout)
     }
 
     fn lockfiles(&self) -> &'static [&'static str] {

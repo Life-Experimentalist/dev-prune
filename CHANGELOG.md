@@ -5,12 +5,13 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.1.0] - 2026-08-13
+## [1.1.0] - 2026-08-14
 
 Three new commands — `devp stats`, `devp completions` and `devp status --top` — plus the
-Windows installation and onboarding fixes. Nothing about pruning, verification or safety
-changed: the seven safety invariants are untouched, and no new directory became eligible
-for deletion.
+Windows installation and onboarding fixes, and a full audit pass over the pruning engine,
+every adapter, the installers and the docs. Verification only got stricter: the seven
+safety invariants are untouched, no new directory became eligible for deletion, and
+several kinds that were eligible no longer are.
 
 ### Added
 
@@ -61,6 +62,44 @@ for deletion.
 - **`devp setup` says the same thing when nothing is tracked yet.** The installer scripts
   are not the only way in — `cargo install`, `npm i -g` and `pipx install` never run one —
   and `devp setup` is the step every channel has in common.
+- **Packages that no file records are now grounds for refusal.** A virtual environment
+  can hold a `pip install` that was never written back to `requirements.txt`; deleting it
+  would lose that package with no way to reinstall it. The venv adapter now reads the
+  environment's own `site-packages` metadata, walks the installed dependency graph from
+  every pinned package, and refuses to prune when anything installed is unreachable from
+  the file — naming the packages and suggesting `pip freeze > requirements.txt`.
+  Transitive dependencies of pinned packages are fine; only the genuinely unrecorded are
+  flagged. npm gets the same guard for a `node_modules` holding packages
+  `package-lock.json` does not know about (including `npm link`ed ones), and uv for a
+  `.venv` that has drifted from `uv.lock`. A requirements file that cannot be fully
+  accounted for without running pip — editable installs, bare URLs — skips the comparison
+  rather than guessing in either direction.
+- **Python projects owned by poetry, pipenv or pdm are left to their own tools.** Their
+  `requirements.txt` is usually an exported — and usually stale — copy of the real
+  lockfile, and rebuilding from it would quietly produce a different environment than the
+  one deleted. A project with `poetry.lock`, `Pipfile.lock`, `pdm.lock` or a
+  `[tool.poetry]` table is no longer claimed by the venv adapter at all.
+- **Three more refusals close the remaining gaps.** A bloat directory that turns out to
+  contain a nested `.git` repository is refused rather than deleted with the repository
+  inside it. When a package manager's binary is absent and only the on-disk lockfile can
+  vouch for a rebuild, a manifest *younger* than that lockfile is refused — whatever just
+  changed is not in the lockfile. And go's `vendor/` is claimed only when
+  `vendor/modules.txt` proves `go mod vendor` built it, and refused when git reports it
+  holds uncommitted changes.
+- **A pass re-checks idleness at the moment it deletes.** Between the scan and your `y`,
+  a repository can receive a commit — from you, from a pull, from an editor. Unless you
+  passed `--ignore-idle`, that repository is now skipped as active instead of pruned
+  against stale information.
+- **A prune that would restore surprisingly says so before deleting**: several virtual
+  environments all rebuilt from one `requirements.txt`, an environment whose folder name
+  a plain `devp restore` would not recreate, one built with a Python that is no longer
+  the `python` on PATH, or a `target/` holding criterion benchmark history that no
+  lockfile brings back.
+- **`devp run --json` reports three new statuses**: `skipped_symlink` (the directory is
+  or contains a symlink; `message` names it), `activity_check_error` (idleness could not
+  be proven, so nothing was deleted — counted in `summary.errors`), and `path_missing`
+  (the registered directory no longer exists; `devp unlink --missing` clears such
+  entries). New statuses do not bump the `schema` number — parse permissively.
 
 ### Fixed
 
@@ -90,6 +129,72 @@ for deletion.
   a machine in enforcement mode gets an explanation instead of what otherwise looks
   exactly like a corrupt download. A binary Windows refuses to start also no longer ends
   the install in a stack trace: the binary is on disk, and only `devp setup` is left over.
+- **`devp restore` works on the directory a prune just deleted.** Restore re-detected the
+  project before reinstalling, and for a venv the marker it detects by — `pyvenv.cfg` —
+  was inside the directory that was just deleted, so the restore reported nothing to do.
+  It now uses the package manager recorded at prune time, and rebuilds a virtual
+  environment under the folder name it actually had, so activate scripts and IDE
+  interpreter paths keep pointing at something real.
+- **The dashboard prunes the repositories you selected.** Selection was tracked by row
+  position against a list that can re-sort mid-session, so pressing `Enter` could prune a
+  different repository than the one highlighted. Selections now travel as paths, and a
+  dashboard-started pass reads the same per-repository settings `devp run` does.
+- **An interrupted pass no longer forgets what it already deleted.** The record was
+  written once at the end, so a Ctrl+C, a crash or a shutdown mid-pass left directories
+  deleted with `devp restore --last-run` unaware of them. The registry is now saved after
+  each repository's deletions. When a deletion fails partway — an open file handle, a
+  permissions error — the pass now names what remains and suggests the restore, instead
+  of failing silently with a half-deleted tree.
+- **Two passes can no longer corrupt the registry.** A scheduled pass colliding with a
+  manual one wrote through the same temporary file before the atomic swap; each process
+  now writes through its own, so the last writer's file lands whole rather than as an
+  interleaving of both.
+- **Prune history lands on the right repository regardless of path spelling.** A
+  repository pruned via a differently-spelled path than it was registered under — `.`
+  versus the absolute path, a drive-letter case difference — recorded its statistics
+  under a key that matched nothing, so `devp stats` and `devp restore --last-run` missed
+  it. The lookup now canonicalises the path the same way registration does.
+- **Yarn Berry verification failures are failures again.** A failed
+  `yarn install --immutable` was downgraded to "the lockfile exists" for every yarn
+  project. That concession exists for Yarn Classic — which rejects the
+  `--mode update-lockfile` flag outright — and now applies only to Classic projects; a
+  Berry project whose lockfile cannot rebuild `node_modules` is refused.
+- **Cargo workspace members verify against the workspace root's `Cargo.lock`.** A member
+  crate has no lockfile of its own; that used to read as "no lockfile at all", which
+  could end in `cargo generate-lockfile` writing a spurious one inside the member. The
+  root lockfile is the record for every member, and it is now the one consulted.
+- **A symlinked bloat directory is a skip, not an error.** Refusing to delete through a
+  link is deliberate protection, but it was reported as a failure and made the whole pass
+  exit `1`. It now reports as `skipped_symlink` with the link named, and does not count
+  as an error.
+- **`devp unlink` clears the undo list too.** Unlinking a repository that the last
+  `init` or `link` had added left it in the undo record, so a later `devp undo` reported
+  removing repositories that were already gone.
+- **Confirmation prompts go to stderr.** `devp run > log.txt` used to hang on a question
+  you could not see, because the prompt was redirected into the file with everything
+  else. A pass with no terminal attached and confirmation still required now exits with a
+  message naming `--yes` instead of waiting forever, and `devp status --top 0` is a usage
+  error rather than an empty dashboard.
+- **Scanning is harder to derail.** One unreadable directory no longer aborts repository
+  discovery — it is skipped and the walk continues. The activity check's file-time walk
+  is depth-capped like discovery, and a file whose modification time is in the future — a
+  bad clock, a mangled archive — no longer keeps a repository "active" forever.
+- **Windows housekeeping.** `devp doctor` compares PATH entries case-insensitively, so a
+  correctly installed binary is no longer reported missing; uninstalling a scheduled task
+  that does not exist succeeds instead of failing the uninstall; `devp setup` repairs a
+  scheduler or hook whose registered executable has gone missing; `devp doctor` warns
+  when the `devp` and `dev-prune` executables have drifted apart; and paths are shown
+  without the `\\?\` prefix even for UNC shares. On macOS, reinstalling the LaunchAgent
+  unloads the old one first, so an upgrade cannot leave two copies loaded.
+- **The installers and the npm wrapper handle the awkward machines.** `install.ps1`
+  enables TLS 1.2 on PowerShell 5.1 (github.com refuses the older defaults), detects
+  ARM64 correctly under x64 emulation, compares PATH entries with trailing slashes
+  normalised, and is wrapped so a download truncated mid-stream parses as an error
+  instead of executing half an installer. `install.sh` tolerates CRLF checksum files and
+  ties its "PATH already configured" detection to the actual install directory, so a
+  reinstall with a different `--bin-dir` updates PATH instead of assuming the old entry
+  still covers it. The npm wrapper forwards `SIGTERM`/`SIGINT`/`SIGHUP` to the binary, so
+  a process manager killing the wrapper no longer orphans a prune mid-pass.
 
 ### Changed
 

@@ -37,6 +37,16 @@ const STAMP_FILE: &str = "setup-stamp";
 /// works when it is set — this only governs the unattended pass.
 pub const ENV_NO_AUTO_SETUP: &str = "DEV_PRUNE_NO_AUTO_SETUP";
 
+/// Whether the suppression variable is set — by presence, so `=1`, `=true` and even an
+/// empty value all count.
+///
+/// The one predicate every consumer must share. The doctor note used to answer only for
+/// the literal `=1`, so a machine with `=true` had setup switched off with nothing
+/// anywhere saying so.
+pub fn no_auto_setup_requested() -> bool {
+    std::env::var_os(ENV_NO_AUTO_SETUP).is_some()
+}
+
 /// What one integration did during a pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
@@ -128,18 +138,18 @@ pub fn stable_exe_path() -> PathBuf {
     let Ok(managed) = managed_exe_path() else {
         return current;
     };
-    if managed == current || managed.is_file() {
+    if managed == current {
+        return managed;
+    }
+    if managed.is_file() {
+        refresh_managed_copy_if_stale(&current, &managed);
         return managed;
     }
 
     // Only ever clone something that is actually this CLI. `current_exe()` under `cargo
     // test` is the test harness, and copying that into the config directory would be both
     // wrong and slow.
-    let is_cli = current
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .is_some_and(|stem| stem == "dev-prune" || stem == "devp");
-    if !is_cli {
+    if !is_this_cli(&current) {
         return current;
     }
 
@@ -164,11 +174,80 @@ pub fn stable_exe_path() -> PathBuf {
         return managed;
     }
 
-    if fs::copy(&current, &managed).is_ok() {
-        managed
-    } else {
-        current
+    // Stage beside and rename into place. A copy straight onto the final name has a
+    // window where the file exists but is incomplete — and this path is what the
+    // scheduler and hooks get registered against, so a process killed mid-copy would
+    // leave a torn binary that every later pass happily points at.
+    let staging = managed.with_extension("new");
+    if fs::copy(&current, &staging).is_ok() && fs::rename(&staging, &managed).is_ok() {
+        return managed;
     }
+    let _ = fs::remove_file(&staging);
+    // The rename loses only to a concurrent invocation that installed its own copy,
+    // which serves exactly as well.
+    if managed.is_file() { managed } else { current }
+}
+
+/// Whether this path names one of the CLI's own binaries, by file stem.
+fn is_this_cli(path: &std::path::Path) -> bool {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| stem == "dev-prune" || stem == "devp")
+}
+
+/// Replace the managed copy when it is an older release than the binary running now.
+///
+/// The scheduler and the hooks point at the managed copy precisely because it outlives
+/// package-manager caches — which also means an upgrade through cargo, npm or uv changes
+/// the running binary but not the one the integrations run, and the machine quietly
+/// keeps pruning with the previous version forever.
+///
+/// Staleness is decided by asking the copy its version, not by mtime or content: an
+/// *older* binary running out of a stale npx cache must not overwrite a newer managed
+/// copy, and content inequality cannot say which of the two is the upgrade. A copy that
+/// cannot state a version at all is replaced too — whatever it is, it is not a working
+/// build of this CLI.
+fn refresh_managed_copy_if_stale(current: &std::path::Path, managed: &std::path::Path) {
+    if !is_this_cli(current) || same_contents(managed, current) {
+        return;
+    }
+    match (binary_version(managed), parse_version(constants::VERSION)) {
+        (Some(theirs), Some(ours)) if theirs >= ours => return,
+        _ => {}
+    }
+    // Write beside and rename into place, so a scheduler firing mid-copy never runs a
+    // torn binary. A managed copy that is itself running cannot be renamed over on
+    // Windows; the refresh simply waits for a pass when it is not.
+    let staging = managed.with_extension("new");
+    if fs::copy(current, &staging).is_ok() && fs::rename(&staging, managed).is_err() {
+        let _ = fs::remove_file(&staging);
+    }
+}
+
+/// The `major.minor.patch` a binary reports for itself, if it can.
+fn binary_version(exe: &std::path::Path) -> Option<(u64, u64, u64)> {
+    let output = std::process::Command::new(exe)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .find_map(parse_version)
+}
+
+/// Parse `x.y.z` into an orderable triple. Anything else — including the pre-release
+/// and build suffixes this project never publishes — answers `None`.
+fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.split('.');
+    let triple = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    parts.next().is_none().then_some(triple)
 }
 
 /// Keep `dev-prune` and `devp` beside each other, whichever of the two is running.
@@ -255,25 +334,45 @@ fn ensure_twin_of(current_exe: &std::path::Path, parent_dir: &std::path::Path) -
         return Outcome::AlreadyPresent;
     }
 
-    if fs::copy(current_exe, &twin_exe).is_ok() {
-        Outcome::Installed
-    } else {
-        Outcome::Failed(format!(
-            "could not create `{}`",
-            output::clean_path(&twin_exe)
-        ))
+    // Stage beside and rename into place: copied straight onto the final name, the
+    // alias would exist-but-be-incomplete for the length of the copy, and a `devp`
+    // typed in that window executes a torn binary.
+    let staging = twin_exe.with_extension("new");
+    if fs::copy(current_exe, &staging).is_ok() && fs::rename(&staging, &twin_exe).is_ok() {
+        return Outcome::Installed;
     }
+    let _ = fs::remove_file(&staging);
+    if twin_exe.exists() {
+        // A concurrent invocation won the rename; its alias serves exactly as well.
+        return Outcome::AlreadyPresent;
+    }
+    Outcome::Failed(format!(
+        "could not create `{}`",
+        output::clean_path(&twin_exe)
+    ))
 }
 
-/// Cheap sameness test for two executables: same size and same modification time.
+/// Sameness test for two executables, cheap in the common case.
 ///
-/// A hard link makes both true by construction, so the common case answers correctly
-/// without hashing megabytes on every invocation.
+/// A hard link makes size and mtime equal by construction, so the usual layout answers
+/// without reading either file. When only the mtime differs — the alias came from the
+/// copy fallback, which does not preserve timestamps — the bytes themselves decide,
+/// because calling that pair "different" made every single invocation delete and
+/// recreate an alias whose content never changed.
 fn same_contents(a: &std::path::Path, b: &std::path::Path) -> bool {
     let (Ok(ma), Ok(mb)) = (fs::metadata(a), fs::metadata(b)) else {
         return false;
     };
-    ma.len() == mb.len() && ma.modified().ok() == mb.modified().ok()
+    if ma.len() != mb.len() {
+        return false;
+    }
+    if ma.modified().ok() == mb.modified().ok() {
+        return true;
+    }
+    match (fs::read(a), fs::read(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => false,
+    }
 }
 
 /// Path that `devp skill` and this module export `SKILL.md` to.
@@ -343,6 +442,14 @@ pub fn ensure_hooks(chain: bool) -> Outcome {
     }
 
     match hook::state() {
+        // "Installed" is not the question — "installed and pointing at a binary that
+        // still exists" is. A hook backgrounds itself and discards its own output, so
+        // one left pointing at a deleted npm cache dies silently on every commit and
+        // nothing ever registers again; this pass is the only thing that ever looks.
+        Ok(HookState::Active) if hook_target_is_dead() => match hook::install() {
+            Ok(()) => Outcome::Installed,
+            Err(e) => Outcome::Failed(format!("{e:#}")),
+        },
         Ok(HookState::Active) => Outcome::AlreadyPresent,
         // Drift is repaired here rather than reported: the setup pass already runs on
         // install, on update and on a schedule, and a chain the user opted into is a
@@ -353,6 +460,10 @@ pub fn ensure_hooks(chain: bool) -> Outcome {
                 Err(e) => Outcome::Failed(format!("{e:#}")),
             }
         }
+        Ok(HookState::Chained { .. }) if hook_target_is_dead() => match hook::install_with(true) {
+            Ok(()) => Outcome::Installed,
+            Err(e) => Outcome::Failed(format!("{e:#}")),
+        },
         Ok(HookState::Chained { .. }) => Outcome::AlreadyPresent,
         Ok(HookState::Foreign(_)) if chain => match hook::install_with(true) {
             Ok(()) => Outcome::Installed,
@@ -374,9 +485,25 @@ pub fn ensure_hooks(chain: bool) -> Outcome {
     }
 }
 
+/// Whether the installed hooks name a binary that no longer exists.
+fn hook_target_is_dead() -> bool {
+    hook::registered_exe_path().is_some_and(|exe| !exe.exists())
+}
+
 /// Install the OS scheduler if it is not already registered.
 pub fn ensure_daemon(interval_days: u64) -> Outcome {
     match daemon::daemon_status() {
+        // A task whose binary has been deleted keeps reporting itself `Ready` and dies
+        // the instant it fires, every interval, with nowhere to complain. Re-register
+        // it against the stable path instead of counting the corpse as present.
+        Ok(daemon::DaemonStatus::Installed)
+            if daemon::registered_exe_path().is_some_and(|exe| !exe.exists()) =>
+        {
+            match daemon::install_daemon(interval_days) {
+                Ok(()) => Outcome::Installed,
+                Err(e) => Outcome::Failed(format!("{e:#}")),
+            }
+        }
         Ok(daemon::DaemonStatus::Installed) => Outcome::AlreadyPresent,
         Ok(daemon::DaemonStatus::NotInstalled) => match daemon::install_daemon(interval_days) {
             Ok(()) => Outcome::Installed,
@@ -399,9 +526,7 @@ pub fn ensure_daemon(interval_days: u64) -> Outcome {
 /// directory — a scheduled task, a global git setting — and there are places that must
 /// never happen unasked: container images, CI, and this project's own test suite.
 pub fn auto_setup_enabled(registry: &Registry) -> bool {
-    std::env::var_os(ENV_NO_AUTO_SETUP).is_none()
-        && registry.settings.auto_setup
-        && unattended_environment().is_none()
+    !no_auto_setup_requested() && registry.settings.auto_setup && unattended_environment().is_none()
 }
 
 /// The reason this looks like a machine nobody is sitting at, if it does.
@@ -754,6 +879,28 @@ mod tests {
             "the version just upgraded to",
             "`devp` downgraded the binary it was supposed to leave alone"
         );
+    }
+
+    #[test]
+    fn versions_parse_strictly_or_not_at_all() {
+        assert_eq!(parse_version("1.2.3"), Some((1, 2, 3)));
+        assert_eq!(parse_version("10.0.0"), Some((10, 0, 0)));
+        // Anything this project does not publish must answer None, because a None
+        // means "replace the copy" and a mis-parse would order versions wrongly.
+        assert_eq!(parse_version("1.2"), None);
+        assert_eq!(parse_version("1.2.3.4"), None);
+        assert_eq!(parse_version("1.2.3-rc1"), None);
+        assert_eq!(parse_version("dev-prune"), None);
+        // The version this binary was built with has to be parseable, or the refresh
+        // logic can never decide anything.
+        assert!(parse_version(constants::VERSION).is_some());
+    }
+
+    #[test]
+    fn ordering_of_version_triples_matches_semver() {
+        assert!(parse_version("1.1.0") > parse_version("1.0.9"));
+        assert!(parse_version("2.0.0") > parse_version("1.99.99"));
+        assert!(parse_version("1.0.10") > parse_version("1.0.9"));
     }
 
     #[test]

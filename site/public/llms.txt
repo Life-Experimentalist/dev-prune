@@ -18,7 +18,9 @@ commit timestamps *and* source file modification times, asks each package manage
 verify its lockfile, and only then deletes. `devp restore` puts everything back.
 
 Deletion is refused when the lockfile is missing, unparseable, or — for
-`requirements.txt` — lists no packages. No flag bypasses verification, including
+`requirements.txt` — lists no packages, or when a virtual environment holds packages
+the requirements file never recorded (a `pip install` nobody wrote back is recoverable
+from nowhere). No flag bypasses verification, including
 `--ignore-idle`, which lifts only the idle-day wait. That flag was called `--force`
 before 1.0.0; the old spelling still works and prints a note explaining the rename.
 
@@ -107,7 +109,7 @@ file behind. `devp config set allow_manifest_rewrite true` opts into the rewriti
 …), which otherwise runs only when no lockfile exists at all.
 
 A repository may hold any number of these, at the root or up to `scan_depth` levels
-below it — six by default, `devp config set scan_depth N` to change it.
+below it — six by default, `devp config set scan_depth N` to change it (accepts 1–32).
 Where several managers claim the same `node_modules`, the owner is chosen from the
 `packageManager` field, else the bookkeeping files inside the installed tree, else the
 most recently written lockfile. uv wins over plain venv when `uv.lock` or `[tool.uv]` is

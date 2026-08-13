@@ -39,7 +39,19 @@ param(
     [switch]$Help
 )
 
+# Everything below runs inside one script block so a download truncated mid-stream can
+# never execute half an installer: `iwr | iex` evaluates whatever bytes arrived, and a
+# cut that happens to land on a statement boundary parses cleanly and runs up to it.
+# With the brace, any truncation below this line is an unclosed block — a parse error,
+# and nothing at all has run. The body is deliberately not re-indented.
+& {
+
 $ErrorActionPreference = 'Stop'
+
+# PowerShell 5.1 on an un-updated Windows still offers TLS 1.0/1.1 by default and
+# github.com refuses both, which surfaces as "Could not create SSL/TLS secure channel".
+# `-bor` adds 1.2 without taking away anything newer the OS already negotiates.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 if ($Help) {
     Write-Host @'
@@ -82,7 +94,12 @@ $binDir = if ($BinDir) {
 $exePath = Join-Path $binDir 'dev-prune.exe'
 $aliasPath = Join-Path $binDir 'devp.exe'
 
-$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+# PROCESSOR_ARCHITECTURE reports the *process* architecture, and on Windows-on-ARM this
+# script frequently runs inside an emulated x64 PowerShell — which would read AMD64 and
+# silently install the x64 build. Under any emulation, PROCESSOR_ARCHITEW6432 carries
+# the machine's real architecture; it is unset when the process is native.
+$nativeArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+$arch = if ($nativeArch -eq 'ARM64') { 'arm64' } else { 'x64' }
 $asset = "dev-prune-v$version-windows-$arch.zip"
 $baseUrl = "https://github.com/$repo/releases/download/v$version"
 
@@ -184,12 +201,20 @@ try {
     Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+# `C:\x\bin` and `C:\x\bin\` are the same PATH entry to Windows; a literal -contains
+# treats them as different and appends a duplicate on every re-install.
+function Test-OnPath {
+    param([string]$PathValue, [string]$Dir)
+    $norm = $Dir.TrimEnd('\')
+    @(($PathValue -split ';') | ForEach-Object { $_.TrimEnd('\') }) -contains $norm
+}
+
 if (-not $noPath) {
     # A profile that has never had a User-scoped Path returns $null here, and calling
     # .TrimEnd() on $null is a terminating error.
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     if ($null -eq $userPath) { $userPath = '' }
-    if (($userPath -split ';') -notcontains $binDir) {
+    if (-not (Test-OnPath $userPath $binDir)) {
         Write-Host "-> Adding $binDir to your User PATH" -ForegroundColor Cyan
         # Trim first: appending to an empty Path would leave a leading ';', and an
         # empty PATH entry on Windows means "search the current directory".
@@ -203,12 +228,12 @@ if (-not $noPath) {
     # visible to the very next line they type. It is what makes the documented
     # `iwr ... | iex; devp init ~/Code` sequence work as written; the User PATH set
     # above is only for terminals opened later.
-    if (($env:PATH -split ';') -notcontains $binDir) {
+    if (-not (Test-OnPath $env:PATH $binDir)) {
         $env:PATH = $binDir + ';' + $env:PATH
     }
     $pathReady = $true
 } else {
-    $pathReady = ($env:PATH -split ';') -contains $binDir
+    $pathReady = Test-OnPath $env:PATH $binDir
 }
 
 # Git is not optional: it is how dev-prune recognises a repository at all.
@@ -297,3 +322,5 @@ Write-Host "    devp run --dry-run      # preview a prune pass"
 Write-Host ""
 Write-Host "    devp setup --status     # what got installed alongside the binary"
 Write-Host "    devp uninstall          # remove all of it again"
+
+}

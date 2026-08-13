@@ -9,6 +9,7 @@
 // directly from this view.
 
 use std::io;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -141,14 +142,17 @@ impl<'a> StatusApp<'a> {
 
 /// Render the full interactive status view.
 ///
-/// Returns `Some(Vec<usize>)` of selected repo indices if the user confirmed
-/// a prune, or `None` if they just quit.
+/// Returns `Some` with the selected repositories' paths if the user confirmed a
+/// prune, or `None` if they just quit. Paths, not indices: every `i` toggle
+/// reloads the list, and an ignored repository entering or leaving it renumbers
+/// everything — indices handed to the caller would address the list it loaded
+/// before any of that happened.
 ///
 /// Re-runs automatically when the user toggles ignore config in `devprune.json` so the
 /// status reflects the change immediately.
 pub fn render_status_tui(
     repos_loader: &dyn Fn() -> Vec<RepoStatusEntry>,
-) -> Result<Option<Vec<usize>>> {
+) -> Result<Option<Vec<PathBuf>>> {
     loop {
         let repos = repos_loader();
 
@@ -170,7 +174,11 @@ pub fn render_status_tui(
             continue;
         }
 
-        return Ok(app.confirmed_indices);
+        // Resolved against `repos` — the list this iteration actually displayed —
+        // while it is still in scope, so a reload can never desynchronise them.
+        return Ok(app
+            .confirmed_indices
+            .map(|indices| indices.into_iter().map(|i| repos[i].path.clone()).collect()));
     }
 }
 

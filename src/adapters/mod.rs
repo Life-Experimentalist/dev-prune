@@ -80,7 +80,28 @@ pub trait PackageManager: Send + Sync {
     fn enforce_lockfile(&self, project_path: &Path, policy: EnforcePolicy) -> Result<()>;
 
     /// Restore dependencies from the lockfile (for `dev-prune restore`).
-    fn restore(&self, project_path: &Path) -> Result<()>;
+    ///
+    /// `timeout` is threaded explicitly for the same reason [`EnforcePolicy`] is: the
+    /// restore path used to burn the compiled-in default regardless of
+    /// `command_timeout_secs`, and a full `npm ci` on a large tree needs the raised
+    /// timeout far more often than a verify does.
+    fn restore(&self, project_path: &Path, timeout: std::time::Duration) -> Result<()>;
+
+    /// [`PackageManager::restore`], told the name the pruned directory had.
+    ///
+    /// Most managers have exactly one possible directory name and ignore this. venv does
+    /// not: it prunes any folder carrying a `pyvenv.cfg` — `venv`, `env`, `my_env` — and
+    /// without the recorded name it would rebuild the environment as `.venv`, leaving
+    /// every activate script, IDE interpreter path and Makefile pointing at nothing.
+    fn restore_named(
+        &self,
+        project_path: &Path,
+        dir_name: &str,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        let _ = dir_name;
+        self.restore(project_path, timeout)
+    }
 
     /// The file this manager rebuilds its bloat directory from.
     ///
@@ -466,16 +487,6 @@ pub fn capture_command_with_timeout(
     }
 }
 
-/// Helper: run a command and return success/failure.
-pub fn run_command(program: &str, args: &[&str], cwd: &Path) -> Result<()> {
-    run_command_with_timeout(
-        program,
-        args,
-        cwd,
-        std::time::Duration::from_secs(crate::constants::DEFAULT_COMMAND_TIMEOUT_SECS),
-    )
-}
-
 /// Helper: attempt a command but return `true`/`false` instead of `Err`.
 pub fn try_run_command(program: &str, args: &[&str], cwd: &Path) -> bool {
     std::process::Command::new(resolve_program(program))
@@ -485,6 +496,54 @@ pub fn try_run_command(program: &str, args: &[&str], cwd: &Path) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// How much newer the manifest must be than the lockfile before
+/// [`refuse_if_manifest_newer`] calls it drift.
+///
+/// A clone or checkout writes both files within moments of each other, in whichever
+/// order the tree walk happens to visit them — a strict comparison would refuse half of
+/// all fresh clones. A hand edit that never got a lockfile sync is separated by minutes
+/// or days, which a minute of tolerance still catches.
+const MANIFEST_MTIME_TOLERANCE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// When the package manager is missing, a lockfile is only proof if the manifest has
+/// not been edited since it was written.
+///
+/// With the binary present the verify command answers this properly; without it, mtimes
+/// are the only signal there is. The manifest is inferred from the lockfile's file
+/// name; an unrecognised name changes nothing.
+fn refuse_if_manifest_newer(lockfile: &Path, program: &str, cwd: &Path) -> Result<()> {
+    let manifest_name = match lockfile.file_name().and_then(|n| n.to_str()) {
+        Some("Cargo.lock") => "Cargo.toml",
+        Some("package-lock.json")
+        | Some("yarn.lock")
+        | Some("pnpm-lock.yaml")
+        | Some("bun.lockb")
+        | Some("bun.lock") => "package.json",
+        Some("uv.lock") | Some("poetry.lock") | Some("pdm.lock") => "pyproject.toml",
+        Some("go.sum") => "go.mod",
+        Some("composer.lock") => "composer.json",
+        _ => return Ok(()),
+    };
+    let manifest = cwd.join(manifest_name);
+    let (Ok(manifest_meta), Ok(lock_meta)) =
+        (std::fs::metadata(&manifest), std::fs::metadata(lockfile))
+    else {
+        return Ok(());
+    };
+    if let (Ok(manifest_mtime), Ok(lock_mtime)) = (manifest_meta.modified(), lock_meta.modified()) {
+        if manifest_mtime > lock_mtime + MANIFEST_MTIME_TOLERANCE {
+            anyhow::bail!(
+                "`{program}` is not available, and `{manifest_name}` has been edited more \
+                 recently than `{}` — the lockfile may no longer record the current \
+                 dependencies, and without `{program}` that cannot be verified. Install \
+                 {program} and run its lockfile sync, then prune again.",
+                lockfile.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Two-tier lockfile enforcement with configurable timeout.
@@ -499,6 +558,7 @@ pub fn lock_sync_or_verify_with_timeout(
 
     if !binary_available(program) {
         if lockfile_exists {
+            refuse_if_manifest_newer(lockfile, program, cwd)?;
             return Ok(());
         } else {
             anyhow::bail!(
@@ -613,6 +673,7 @@ pub fn lock_verify_or_generate(
 
     if !binary_available(program) {
         if lockfile_exists {
+            refuse_if_manifest_newer(lockfile, program, cwd)?;
             return Ok(());
         }
         anyhow::bail!(

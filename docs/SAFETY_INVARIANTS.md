@@ -24,7 +24,7 @@ flowchart TD
     Force -->|Yes| Walk
     Force -->|No| Inv3{"Inv 3<br/>idle for override_idle_days<br/>or idle_days?"}
     Inv3 -->|No| Abort3["SkippedActive"]
-    Inv3 -->|Check failed| AbortAct["LockfileError<br/>activity check failed"]
+    Inv3 -->|Check failed| AbortAct["ActivityCheckError<br/>idleness could not be proven"]
     Inv3 -->|Yes| Walk
 
     Walk["Inv 7<br/>workspace::discover — every project,<br/>bounded walk, nested repos excluded"] --> PerAdapter["for each project × adapter:<br/>collect bloat dirs, dedupe claimed paths"]
@@ -33,7 +33,7 @@ flowchart TD
     Dry -->|No| Inv2{"Inv 2<br/>adapter.enforce_lockfile"}
     Inv2 -->|Err| Abort2["LockfileError<br/>every dir of this adapter kept"]
     Inv2 -->|Ok| Inv6{"Inv 6<br/>symlink or junction?"}
-    Inv6 -->|Yes| Abort6["DeleteError<br/>refuse to delete linked storage"]
+    Inv6 -->|Yes| Abort6["SkippedSymlink<br/>refuse to delete linked storage"]
     Inv6 -->|No| Delete["remove_dir_all → Pruned"]
     Delete --> Inv4["Inv 4<br/>registry saved via tmp file + rename"]
 ```
@@ -62,6 +62,12 @@ pub fn is_git_repo(path: &Path) -> bool {
 }
 ```
 If a folder lacks `.git`, it is completely ignored, protecting arbitrary user home directories, system folders, or downloads from accidental cleanup.
+
+The check requires a `.git` **directory**. A linked worktree (`git worktree add`) and a
+submodule checkout carry a `.git` *file* pointing at the real gitdir; dev-prune does not
+treat those as repositories, so they are never registered and never pruned. That is the
+conservative side of the boundary: refusing a worktree costs a manual clean-up, while
+guessing at its idle state — its history lives in another checkout — could cost work.
 
 ---
 
@@ -109,9 +115,18 @@ Two adapters sit slightly outside it:
 - **yarn** runs the shape, then downgrades a failure to `Ok` when `yarn.lock` exists. It
   only errors when verification failed *and* there is no lockfile, because
   `--mode update-lockfile` is a Berry flag that Yarn Classic rejects outright.
-- **venv** runs no command at all. Its check is that `requirements.txt` exists and lists
-  at least one non-comment package, which is the only evidence a plain virtual
-  environment can offer.
+- **venv** runs no command at all. Its check is pure inspection: `requirements.txt`
+  must exist and list at least one non-comment package, and every distribution
+  installed in the environment (read from its `site-packages` `*.dist-info` metadata)
+  must be reachable from something the file pins — directly, or as a transitive
+  dependency of a pinned package. A `pip install foo` that was never written back is
+  recoverable from nowhere, so the prune refuses, names the unrecorded packages, and
+  suggests `pip freeze > requirements.txt`. A file that cannot be fully parsed
+  (editable installs, bare URLs, unreadable includes) skips the comparison rather than
+  guessing in either direction. Projects carrying `poetry.lock`, `Pipfile.lock`,
+  `pdm.lock` or a `[tool.poetry]` table are not claimed at all: their
+  `requirements.txt` is usually a stale export of the real lockfile, and rebuilding
+  from it would quietly produce a different environment than the one deleted.
 
 The verification command per ecosystem, and the writing form it refuses to run for you:
 
@@ -122,7 +137,7 @@ The verification command per ecosystem, and the writing form it refuses to run f
 | yarn      | `yarn install --immutable --mode update-lockfile`          | no      | `yarn install --mode update-lockfile` |
 | bun       | `bun install --frozen-lockfile --dry-run --ignore-scripts` | no      | *(none — bun's natural check is already read-only)* |
 | uv        | `uv lock --locked`                                         | no      | `uv lock` |
-| venv      | `requirements.txt` exists and lists at least one package   | no      | *(none — nothing is executed)* |
+| venv      | `requirements.txt` lists ≥1 package; no installed package is unrecorded | no      | *(none — nothing is executed)* |
 | cargo     | `cargo metadata --locked --format-version 1`               | no      | `cargo generate-lockfile` |
 | go        | `go mod download`                                          | no      | `go mod tidy` |
 
@@ -177,7 +192,7 @@ backup; nothing reads it back.
 
 ### 5. Fast 0ms `ignore.devprune.json` & Per-Repo Settings
 - **`ignore.devprune.json`**: File presence check running in **0ms O(1) latency** bypassing directory iteration without reading or parsing JSON file contents.
-- **`.devprune.json`**: Per-repository configuration supporting `project_name`, `ignore`, `disable_daemon` (excluded from the scheduled pass only), `disable_hooks` (the global Git hook will not auto-register this repo), and `override_idle_days`. Automatically updates `.gitignore` when created.
+- **`.devprune.json`**: Per-repository configuration supporting `project_name`, `ignore`, `disable_daemon` (excluded from the scheduled pass only), `disable_hooks` (the global Git hook will not auto-register this repo), and the three tuning overrides `override_idle_days`, `min_size_mb` and `scan_depth`. Automatically updates `.gitignore` when created.
 
 A `.devprune.json` that cannot be parsed is treated as a refusal to guess, not as a
 missing file: the repository is skipped and the syntax error is printed. Falling back to
@@ -199,7 +214,7 @@ repository does not own — in a monorepo it is typically the workspace root's r
 
 ```rust
 if fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
-    // reported as a DeleteError, never removed
+    // reported as SkippedSymlink, never removed
 }
 ```
 
@@ -214,7 +229,9 @@ verified and pruned on its own terms. That walk is bounded so it can never leave
 repository it was asked about or wander into dependency trees:
 
 - **Depth cap of `scan_depth` levels** below the repository root — six by default,
-  configurable globally and per repository, and clamped to 32.
+  configurable globally and per repository. `config set` accepts `1`–`32` and rejects
+  anything outside that range; the clamp to the same range survives only as the
+  backstop for a hand-edited config file.
 - **Never descends into** `node_modules`, `target`, `vendor`, `bower_components`, any
   directory containing `pyvenv.cfg`, or any hidden directory.
 - **Never descends into a nested repository.** A directory containing its own `.git` is

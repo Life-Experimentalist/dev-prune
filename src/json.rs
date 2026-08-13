@@ -36,11 +36,14 @@ fn status_tag(status: &PruneStatus) -> &'static str {
         PruneStatus::SkippedActive => "skipped_active",
         PruneStatus::SkippedDryRun => "skipped_dry_run",
         PruneStatus::LockfileError(_) => "lockfile_error",
+        PruneStatus::ActivityCheckError(_) => "activity_check_error",
+        PruneStatus::PathMissing => "path_missing",
         PruneStatus::NoBloat => "no_bloat",
         PruneStatus::Disabled => "disabled",
         PruneStatus::SkippedIgnored => "ignored",
         PruneStatus::DeleteError(_) => "delete_error",
         PruneStatus::ConfigError(_) => "config_error",
+        PruneStatus::SkippedSymlink(_) => "skipped_symlink",
     }
 }
 
@@ -48,8 +51,10 @@ fn status_tag(status: &PruneStatus) -> &'static str {
 fn status_message(status: &PruneStatus) -> Option<&str> {
     match status {
         PruneStatus::LockfileError(e)
+        | PruneStatus::ActivityCheckError(e)
         | PruneStatus::DeleteError(e)
-        | PruneStatus::ConfigError(e) => Some(e.trim()),
+        | PruneStatus::ConfigError(e)
+        | PruneStatus::SkippedSymlink(e) => Some(e.trim()),
         _ => None,
     }
 }
@@ -103,7 +108,7 @@ fn result_value(result: &PruneResult) -> Value {
 
 /// The document emitted by `devp run --json`.
 ///
-/// `summary.errors` counts results whose status is one of the three failure tags; a
+/// `summary.errors` counts results whose status is one of the four failure tags; a
 /// consumer that only wants to know "did anything go wrong" can read that alone.
 pub fn run_document(results: &[PruneResult], dry_run: bool) -> Value {
     let bytes_freed: u64 = results
@@ -126,6 +131,7 @@ pub fn run_document(results: &[PruneResult], dry_run: bool) -> Value {
             matches!(
                 r.status,
                 PruneStatus::LockfileError(_)
+                    | PruneStatus::ActivityCheckError(_)
                     | PruneStatus::DeleteError(_)
                     | PruneStatus::ConfigError(_)
             )
@@ -365,11 +371,14 @@ mod tests {
             PruneStatus::SkippedActive,
             PruneStatus::SkippedDryRun,
             PruneStatus::LockfileError("x".into()),
+            PruneStatus::ActivityCheckError("x".into()),
+            PruneStatus::PathMissing,
             PruneStatus::NoBloat,
             PruneStatus::Disabled,
             PruneStatus::SkippedIgnored,
             PruneStatus::DeleteError("x".into()),
             PruneStatus::ConfigError("x".into()),
+            PruneStatus::SkippedSymlink("x".into()),
         ];
         let mut tags: Vec<&str> = all.iter().map(status_tag).collect();
         let count = tags.len();

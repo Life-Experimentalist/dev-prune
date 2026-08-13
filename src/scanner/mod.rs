@@ -49,11 +49,13 @@ pub fn scan_for_repos(root: &Path) -> Result<Vec<PathBuf>> {
                 return true;
             }
             let name = entry.file_name().to_string_lossy();
-            // Skip hidden dot-directories (e.g. .cache, .gemini, .claude, .cargo) and common bloat folders
+            // Skip hidden dot-directories (e.g. .cache, .gemini, .claude, .cargo) and the
+            // same bloat folders `workspace` skips inside a repository — a repo nested in
+            // one of those is a dependency's repo, not the user's.
             if name.starts_with('.')
                 || matches!(
                     name.as_ref(),
-                    "node_modules" | "venv" | "target" | "AppData"
+                    "node_modules" | "venv" | "target" | "vendor" | "bower_components" | "AppData"
                 )
             {
                 return false;
@@ -62,7 +64,11 @@ pub fn scan_for_repos(root: &Path) -> Result<Vec<PathBuf>> {
         });
 
     for entry in walker {
-        let entry = entry?;
+        // One unreadable directory — a permissions boundary, a cloud placeholder — must
+        // not abort the whole scan and hide every repository found after it.
+        let Ok(entry) = entry else {
+            continue;
+        };
         if entry.file_type().is_dir() && is_git_repo(entry.path()) {
             repos.push(entry.path().to_path_buf());
         }

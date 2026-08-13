@@ -108,6 +108,8 @@ when the argument is quoted.
 
 ### 2. `devp link [PATH]`
 - **Description**: Registers a single Git repository for pruning (defaults to current directory `.`).
+- **Flags**:
+  - `--quiet` — print nothing, and skip repositories whose `.devprune.json` sets `disable_hooks`. This is the form the global Git hook invokes; it exists so a hook firing inside someone's commit never writes to their terminal or registers a workspace that opted out.
 - **Examples**:
   ```bash
   devp link
@@ -270,7 +272,7 @@ reads unambiguously:
     | :--- | :---: | :--- |
     | `idle_days` | `15` | How long a repository must be untouched before it is a prune candidate |
     | `min_size_mb` | `0` | Smallest bloat directory worth deleting, in MiB; `0` disables the floor |
-    | `scan_depth` | `6` | How many directory levels below a repository root discovery descends. Clamped to `32`; every extra level costs walk time |
+    | `scan_depth` | `6` | How many directory levels below a repository root discovery descends. Accepts `1`–`32`; every extra level costs walk time |
     | `require_confirmation` | `true` | Whether a prune pass asks before deleting |
     | `allow_manifest_rewrite` | `false` | Whether verification may *repair* a lockfile that has drifted from its manifest, instead of refusing. Off, every adapter verifies read-only; on, each runs its writing form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`, `go mod tidy`, …) |
     | `command_timeout_secs` | `600` | Ceiling on any one package-manager command run during lockfile verification |
@@ -293,8 +295,10 @@ reads unambiguously:
     describe your machine, not a project, and would mean nothing per repository.
 
     A value outside the accepted range is rejected with the range in the message, not
-    silently clamped — except `scan_depth`, which is clamped to `32` because a deeper walk
-    is a performance mistake rather than a request that cannot be honoured.
+    silently clamped. `scan_depth` included: `config set` refuses `0` and anything above
+    `32` outright. The clamp to that range still exists, but only as the backstop for a
+    hand-edited config file — a value typed at the CLI gets the truth, not a silent
+    substitution.
 
   - `config set <key> <value>`: Modify global setting value.
   - `config show [--update]`: View all configuration values or force global update.
@@ -381,7 +385,9 @@ The current version is `1`.
       "directory": "node_modules",
       "status": "skipped_dry_run",
       "bytes": 481296384
-      // "message"     — present only on the three failure statuses
+      // "message"     — present on the statuses that carry detail: `lockfile_error`,
+      //                 `activity_check_error`, `delete_error`, `config_error`,
+      //                 `skipped_symlink`
       // "fix_command" — present only on `lockfile_error`, and only when the fix is a
       //                 single mechanical command an agent can run unattended
     }
@@ -390,7 +396,7 @@ The current version is `1`.
     "bytes_freed": 0,          // only actual deletions; a dry run always reports 0
     "bytes_reclaimable": 481296384,
     "directories_pruned": 0,
-    "errors": 0                // lockfile_error + delete_error + config_error
+    "errors": 0                // lockfile_error + activity_check_error + delete_error + config_error
   }
 }
 ```
@@ -400,10 +406,13 @@ The current version is `1`.
 | `pruned` | The directory was deleted. |
 | `skipped_dry_run` | A candidate, left in place because this was a dry run. |
 | `skipped_active` | The repository has been touched inside its idle window. |
+| `skipped_symlink` | The directory is (or contains) a symlink, so deleting it could reach outside the project. Left in place; `message` names the link. |
 | `ignored` | The repository sets `"ignore": true`, or has an `ignore.devprune.json`. |
 | `no_bloat` | Nothing to delete. |
 | `disabled` | The registry entry is disabled. |
+| `path_missing` | The registered repository path no longer exists on disk. `devp unlink --missing` clears such entries. |
 | `lockfile_error` | The lockfile could not be verified, so nothing was deleted. |
+| `activity_check_error` | The idle check itself failed, so idleness could not be proven and nothing was deleted. Counts as an error. |
 | `delete_error` | Deletion was attempted and failed. |
 | `config_error` | `.devprune.json` does not parse; the repository was not touched. |
 
@@ -650,7 +659,7 @@ dev-prune (devp) v1.1.0
   License:         Apache-2.0 (no analytics, no diagnostics)
 
   Config Path:     C:\Users\username\AppData\Roaming\dev-prune\registry.json
-  Binary Directory:C:\Users\username\AppData\Roaming\dev-prune\bin
+  Binary Dir:      C:\Users\username\AppData\Roaming\dev-prune\bin
   PATH Audit:      ✓ Executable directory is active in system PATH.
 ```
 

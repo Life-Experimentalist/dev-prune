@@ -108,7 +108,7 @@ fn is_broken_pipe(err: &anyhow::Error) -> bool {
     about = "Universal, lockfile-safe workspace pruner and background dependency cleaner\nNote: `dev-prune` and `devp` are interchangeable binary aliases."
 )]
 #[command(
-    after_help = "EXAMPLES:\n  devp init ~/Code          Scan directory trees & onboard workspaces\n  devp link                 Register current repository\n  devp run                  Execute prune pass across inactive repositories\n  devp status               View system status dashboard\n  devp status --top 10      Show only the ten biggest reclaims\n  devp stats                Lifetime totals, recent passes, biggest repositories\n  devp caches               Size every package manager cache (deletes nothing)\n  devp completions pwsh     Emit a shell completion script\n  devp status daemon        Check background daemon status (alias for `devp config daemon status`)\n  devp status . hook        Check workspace Git hook status (alias for `devp config . hook status`)\n  devp config . daemon disable  Disable daemon background pass for current workspace\n  devp restore .            Restore missing node_modules/.venv via lockfile\n  devp undo                 Revert most recent init or link action\n\nBINARY ALIAS:\n  `dev-prune` and `devp` invoke the exact same executable.\n\ndev-prune is written by VKrishna04 and licensed Apache-2.0.\n  https://github.com/Life-Experimentalist/dev-prune"
+    after_help = "EXAMPLES:\n  devp init ~/Code          Scan directory trees & onboard workspaces\n  devp link                 Register current repository\n  devp run                  Execute prune pass across inactive repositories\n  devp status               View system status dashboard\n  devp status --top 10      Show only the ten biggest reclaims\n  devp stats                Lifetime totals, recent passes, biggest repositories\n  devp caches               Size every package manager cache (deletes nothing)\n  devp completions powershell   Emit a shell completion script\n  devp status daemon        Check background daemon status (alias for `devp config daemon status`)\n  devp status . hook        Check workspace Git hook status (alias for `devp config . hook status`)\n  devp config . daemon disable  Disable daemon background pass for current workspace\n  devp restore .            Restore missing node_modules/.venv via lockfile\n  devp undo                 Revert most recent init or link action\n\nBINARY ALIAS:\n  `dev-prune` and `devp` invoke the exact same executable.\n\ndev-prune is written by VKrishna04 and licensed Apache-2.0.\n  https://github.com/Life-Experimentalist/dev-prune"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -215,8 +215,11 @@ pub enum Commands {
         /// The dashboard lists every registered repository, which on a machine with a
         /// hundred of them buries the handful actually worth pruning. Applies to the TUI,
         /// the plain table and `--json` alike.
-        #[arg(long, value_name = "N")]
-        top: Option<usize>,
+        ///
+        /// Zero is rejected up front: "show the top 0" can only be a typo, and an empty
+        /// dashboard that looks like an empty registry is worse than a usage error.
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+        top: Option<u64>,
 
         /// Emit the dashboard as one JSON document instead of the TUI or text table.
         #[arg(long)]
@@ -379,12 +382,13 @@ pub enum ConfigAction {
 /// because the alias is how most people invoke this tool — it must never be the stale
 /// half of an upgrade.
 ///
-/// `DEV_PRUNE_NO_AUTO_SETUP` suppresses it, because writing a second executable next to
-/// the first is a self-installation like any other. `devp setup` still creates the alias
-/// when the variable is set: the variable governs the unattended pass, not the explicit
-/// request.
+/// `DEV_PRUNE_NO_AUTO_SETUP` suppresses it, and so does looking like CI or a container,
+/// because writing a second executable next to the first is a self-installation like any
+/// other — and those environments cannot set the variable before the first run. `devp
+/// setup` still creates the alias in either case: it governs the unattended pass, not
+/// the explicit request.
 pub fn ensure_devp_alias() {
-    if std::env::var_os(setup::ENV_NO_AUTO_SETUP).is_some() {
+    if setup::no_auto_setup_requested() || setup::unattended_environment().is_some() {
         return;
     }
     let _ = setup::ensure_alias();
@@ -471,7 +475,12 @@ fn normalize_args() -> Vec<String> {
 
     // Map `devp status [PATH] daemon` -> `devp config daemon [PATH] status`
     // Map `devp status [PATH] hook`   -> `devp config hook [PATH] status`
-    if normalized.len() >= 3 && normalized[1] == "status" {
+    //
+    // Exactly one optional PATH, and never a flag: `devp status --json daemon` must
+    // reach clap as typed and fail there, not be rewritten with `--json` as a path.
+    if normalized[1] == "status"
+        && (normalized.len() == 3 || (normalized.len() == 4 && !normalized[2].starts_with('-')))
+    {
         let last = normalized
             .last()
             .map(|s| s.to_lowercase())
@@ -488,7 +497,10 @@ fn normalize_args() -> Vec<String> {
 
     // Map `devp config [PATH] daemon [ACTION]` -> `devp config daemon [PATH] [ACTION]`
     // Map `devp config [PATH] hook [ACTION]`   -> `devp config hook [PATH] [ACTION]`
-    if normalized.len() >= 4 && normalized[1] == "config" {
+    //
+    // Only when the second argument can actually be a path — a flag there means the
+    // user is talking to `config` itself and the rewrite would misfile it.
+    if normalized.len() >= 4 && normalized[1] == "config" && !normalized[2].starts_with('-') {
         let third = normalized[3].to_lowercase();
         if third == "daemon" || third == "hook" {
             let mut rewrited = vec![
@@ -582,7 +594,7 @@ pub fn run_cli() {
                 json,
             })
         }
-        Commands::Status { top, json } => commands::status::run(top, json),
+        Commands::Status { top, json } => commands::status::run(top.map(|n| n as usize), json),
         Commands::Stats { json } => commands::stats::run(json),
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Caches { json } => commands::caches::run(json),

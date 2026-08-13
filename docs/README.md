@@ -16,7 +16,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 
 ### 📑 Technical Reference & Specifications
 - **[CLI Command Reference](CLI_REFERENCE.md)**
-  Complete reference for all 13 subcommands (`init`, `link`, `unlink`, `undo`, `run`, `status`, `config`, `restore`, `update`, `skill`, `setup`, `doctor`, `uninstall`), global flags (`--dry-run`, `--ignore-idle`, `-y`, `-v`, `-V`), status shortcuts, and aliases.
+  Complete reference for all 16 subcommands (`init`, `link`, `unlink`, `undo`, `run`, `status`, `stats`, `caches`, `config`, `restore`, `update`, `skill`, `completions`, `setup`, `doctor`, `uninstall`), global flags (`--dry-run`, `--ignore-idle`, `-y`, `-v`, `-V`), status shortcuts, and aliases.
 - **[System Architecture Entry Point](ARCHITECTURE.md)**
   High-level system architecture overview linking directly to HLD and LLD specifications.
 - **[High-Level Design Specification (HLD)](architecture/HLD.md)**
