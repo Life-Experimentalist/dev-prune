@@ -80,6 +80,7 @@ impl PackageManager for Gradle {
                 name: "build".to_string(),
                 path: build_dir.clone(),
                 size_bytes: dir_size(&build_dir),
+                shared_bytes: 0,
             });
         }
         if gradle_dir.is_dir() {
@@ -87,6 +88,7 @@ impl PackageManager for Gradle {
                 name: ".gradle".to_string(),
                 path: gradle_dir.clone(),
                 size_bytes: dir_size(&gradle_dir),
+                shared_bytes: 0,
             });
         }
         dirs
@@ -137,6 +139,11 @@ impl PackageManager for Gradle {
 - **`try_run_command(program, args, cwd)`**: Executes command returning boolean `true`/`false`.
 - **`binary_available(program)`**: Whether `program` is on `PATH`.
 - **`dir_size(path)`**: Calculates directory size in bytes recursively.
+- **`dir_size_with_hardlinks(path)`**: Splits that size into `freed_bytes` (what deleting
+  the tree gives back) and `shared_bytes` (hardlinked from outside — a store keeps them).
+  Use it if your package manager links files out of a global store instead of copying,
+  the way pnpm and bun do, and carry both halves into the `BloatDir`. A manager that
+  copies sets `shared_bytes: 0` and uses plain `dir_size`.
 
 > **Rule for `enforce_lockfile`: resolve, never install, never write.**
 > The command runs as a precondition for *deleting* the tree, so it must not download

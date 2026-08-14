@@ -48,6 +48,7 @@ impl PackageManager for Yarn {
                 name: "node_modules".to_string(),
                 path: node_modules,
                 size_bytes: size,
+                shared_bytes: 0,
             }]
         } else {
             vec![]

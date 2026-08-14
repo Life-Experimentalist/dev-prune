@@ -4,8 +4,8 @@
 // Bun adapter implementation.
 
 use super::{
-    BloatDir, EnforcePolicy, PackageManager, dir_size, lock_sync_or_verify_with_timeout,
-    run_command_with_timeout,
+    BloatDir, EnforcePolicy, PackageManager, dir_size_with_hardlinks,
+    lock_sync_or_verify_with_timeout, run_command_with_timeout,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -25,14 +25,21 @@ impl PackageManager for Bun {
     }
 
     /// Returns the bloat directories for bun (node_modules).
+    ///
+    /// bun hardlinks packages out of `~/.bun/install/cache` on Linux and Windows, so
+    /// deleting `node_modules` does not free those bytes — the cache keeps them. On
+    /// macOS bun uses clonefile instead, which leaves the link count at 1 and is
+    /// invisible to this measurement; APFS clones genuinely are freed block-by-block
+    /// as the cache copy diverges, so counting them as freed is the honest reading.
     fn bloat_dirs(&self, project_dir: &Path) -> Vec<BloatDir> {
         let node_modules = project_dir.join("node_modules");
         if node_modules.exists() {
-            let size = dir_size(&node_modules);
+            let size = dir_size_with_hardlinks(&node_modules);
             vec![BloatDir {
                 name: "node_modules".to_string(),
                 path: node_modules,
-                size_bytes: size,
+                size_bytes: size.freed_bytes,
+                shared_bytes: size.shared_bytes,
             }]
         } else {
             vec![]

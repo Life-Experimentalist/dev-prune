@@ -153,6 +153,13 @@ ureq = { version = "3.4", default-features = false, features = ["rustls", "gzip"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Hardlink counts. pnpm and bun link store files into `node_modules` instead of copying
+# them, and on Windows the link count lives behind an opened handle
+# (`GetFileInformationByHandle`) — std only exposes it on unstable. Already in the
+# dependency tree transitively, so this pins no new crate.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 # Mock filesystems for testing
 tempfile = "3"

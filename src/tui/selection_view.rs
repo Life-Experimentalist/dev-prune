@@ -319,6 +319,7 @@ mod tests {
             adapter_name: "npm".to_string(),
             bloat_dir: "node_modules".to_string(),
             size_freed: 1024,
+            shared_bytes: 0,
             status: crate::engine::PruneStatus::SkippedDryRun,
         };
         let selectable = SelectableCandidate {

@@ -262,6 +262,10 @@ pub struct PruneResult {
     pub bloat_dir: String,
     /// Bytes freed (0 if not pruned).
     pub size_freed: u64,
+    /// Bytes hardlinked into a package-manager store outside the pruned directory.
+    /// The store keeps them, so they are excluded from `size_freed` — this carries
+    /// them separately so reports can say why the number is smaller than `du` says.
+    pub shared_bytes: u64,
     /// What happened.
     pub status: PruneStatus,
 }
@@ -325,6 +329,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             adapter_name: "-".to_string(),
             bloat_dir: "-".to_string(),
             size_freed: 0,
+            shared_bytes: 0,
             status: PruneStatus::PathMissing,
         });
         return results;
@@ -342,6 +347,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             adapter_name: "-".to_string(),
             bloat_dir: "-".to_string(),
             size_freed: 0,
+            shared_bytes: 0,
             status: PruneStatus::SkippedIgnored,
         });
         return results;
@@ -358,6 +364,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                 adapter_name: "-".to_string(),
                 bloat_dir: "-".to_string(),
                 size_freed: 0,
+                shared_bytes: 0,
                 status: PruneStatus::ConfigError(e),
             });
             return results;
@@ -369,6 +376,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             adapter_name: "-".to_string(),
             bloat_dir: "-".to_string(),
             size_freed: 0,
+            shared_bytes: 0,
             status: PruneStatus::SkippedIgnored,
         });
         return results;
@@ -401,6 +409,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     adapter_name: "-".to_string(),
                     bloat_dir: "-".to_string(),
                     size_freed: 0,
+                    shared_bytes: 0,
                     status: PruneStatus::SkippedActive,
                 });
                 return results;
@@ -412,6 +421,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     adapter_name: "-".to_string(),
                     bloat_dir: "-".to_string(),
                     size_freed: 0,
+                    shared_bytes: 0,
                     status: PruneStatus::ActivityCheckError(e.to_string()),
                 });
                 return results;
@@ -470,6 +480,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             adapter_name: adapter.name().to_string(),
                             bloat_dir: label.clone(),
                             size_freed: 0,
+                            shared_bytes: 0,
                             status: PruneStatus::LockfileError(e.to_string()),
                         });
                     }
@@ -492,6 +503,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                         adapter_name: adapter.name().to_string(),
                         bloat_dir: label,
                         size_freed: 0,
+                        shared_bytes: 0,
                         status: PruneStatus::SkippedSymlink(format!(
                             "`{}` is a symlink to storage dev-prune does not own — \
                              left alone. Remove the link yourself if you really want \
@@ -508,6 +520,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                         adapter_name: adapter.name().to_string(),
                         bloat_dir: label,
                         size_freed: bd.size_bytes,
+                        shared_bytes: bd.shared_bytes,
                         status: PruneStatus::SkippedDryRun,
                     });
                     continue;
@@ -523,6 +536,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                         adapter_name: adapter.name().to_string(),
                         bloat_dir: label,
                         size_freed: 0,
+                        shared_bytes: 0,
                         status: PruneStatus::DeleteError(format!(
                             "`{}` contains a git repository at `{}` — refusing to \
                              delete it. Move or remove that checkout yourself if it \
@@ -549,6 +563,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             adapter_name: adapter.name().to_string(),
                             bloat_dir: label,
                             size_freed: size,
+                            shared_bytes: bd.shared_bytes,
                             status: PruneStatus::Pruned,
                         });
                     }
@@ -558,6 +573,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             adapter_name: adapter.name().to_string(),
                             bloat_dir: label,
                             size_freed: size,
+                            shared_bytes: bd.shared_bytes,
                             status: PruneStatus::Pruned,
                         });
                     }
@@ -586,6 +602,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             adapter_name: adapter.name().to_string(),
                             bloat_dir: label,
                             size_freed: freed,
+                            shared_bytes: 0,
                             status: PruneStatus::DeleteError(message),
                         });
                     }
@@ -601,6 +618,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             adapter_name: "-".to_string(),
             bloat_dir: "-".to_string(),
             size_freed: 0,
+            shared_bytes: 0,
             status: PruneStatus::NoBloat,
         });
     }
@@ -691,6 +709,7 @@ pub fn prune_all_with(registry: &mut Registry, opts: &PruneOptions) -> Vec<Prune
                 adapter_name: "-".to_string(),
                 bloat_dir: "-".to_string(),
                 size_freed: 0,
+                shared_bytes: 0,
                 status: PruneStatus::Disabled,
             });
             continue;

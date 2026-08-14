@@ -217,11 +217,15 @@ reads unambiguously:
   table instead of entering the TUI. `--json` replaces it with a machine-readable document
   and makes no changes of any kind.
 
-  Sizes are *apparent* sizes: every file is counted at its full length. Under pnpm, the
-  files in `node_modules` are hardlinks into the global store, so the reclaimable figure
-  for a pnpm project can overstate what deleting it actually frees — the store keeps the
-  data, which is also why `pnpm install` after a prune is fast. The same applies to the
-  freed totals in `devp stats`.
+  Sizes are what deleting the directory actually gives back. For most managers that is
+  the folder's apparent size, but pnpm and bun hardlink packages out of a global store
+  (on Windows too — NTFS hardlinks, whenever store and project share a volume), so most
+  of a pnpm `node_modules` is not freed by deleting it: the store keeps the bytes. Those
+  shared bytes are measured per file via the link count and excluded from every
+  reclaimable and freed figure; the plain table, the run report and `--json`
+  (`shared_bytes`) say how much was excluded and why. A pnpm install that *copied* —
+  store on another volume, a filesystem without hardlinks — has no external links, so it
+  still counts in full. This is also why `pnpm install` after a prune is fast.
 - **Flags**:
   - `--top <N>` — list only the `N` repositories with the most reclaimable space. On a
     machine tracking a hundred repositories the handful worth pruning are otherwise pushed
@@ -408,7 +412,8 @@ The current version is `1`.
       "adapter": "pnpm",
       "directory": "node_modules",
       "status": "skipped_dry_run",
-      "bytes": 481296384
+      "bytes": 481296384,
+      "shared_bytes": 0   // bytes hardlinked into a pnpm/bun store — excluded from `bytes`
       // "message"     — present on the statuses that carry detail: `lockfile_error`,
       //                 `activity_check_error`, `delete_error`, `config_error`,
       //                 `skipped_symlink`
@@ -469,7 +474,7 @@ The current version is `1`.
       "added_at": "2026-04-11T18:22:31+00:00",
       "adapters": ["pnpm"],
       "reclaimable_bytes": 481296384,
-      "directories": [{ "name": "node_modules", "path": "~/Code/api/node_modules", "bytes": 481296384 }]
+      "directories": [{ "name": "node_modules", "path": "~/Code/api/node_modules", "bytes": 481296384, "shared_bytes": 0 }]
       // "error" — present only when `state` is `config_error`, carrying the parse failure
     }
   ]

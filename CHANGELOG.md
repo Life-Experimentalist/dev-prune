@@ -134,6 +134,18 @@ several kinds that were eligible no longer are.
 
 ### Fixed
 
+- **pnpm and bun projects no longer promise space a prune cannot free.** Both managers
+  hardlink packages out of a global store rather than copying them (on Windows too —
+  NTFS hardlinks, whenever the store and the project share a volume), so most of the
+  bytes in their `node_modules` survive its deletion: the store keeps them. Every
+  reclaimable and freed figure — `devp status`, `devp run`, `--dry-run`, `devp stats`
+  and `--json` — previously counted the apparent size and could report gigabytes for a
+  delete that returned megabytes. Sizes are now measured per file via the link count:
+  a file also linked outside the tree is excluded and reported separately, the run
+  report and status table say how much was excluded and why, and `--json` carries it
+  as an additive `shared_bytes` field (no `schema` bump). Installs that genuinely
+  copied — a store on another volume, a filesystem without hardlinks — have no
+  external links and still count in full, and managers that always copy are untouched.
 - **A prune started from the `devp status` dashboard is now undoable.** Pressing `p`,
   selecting repositories and hitting `Enter` deleted them without recording the pass, so
   `devp restore --last-run` afterwards silently restored an *older* one — or reported that

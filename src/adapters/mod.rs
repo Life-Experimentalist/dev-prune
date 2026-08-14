@@ -40,8 +40,12 @@ pub struct BloatDir {
     pub name: String,
     /// Full path to the bloat directory.
     pub path: PathBuf,
-    /// Size in bytes (calculated lazily).
+    /// Bytes that deleting this directory actually gives back to the disk.
     pub size_bytes: u64,
+    /// Bytes reachable through hardlinks from outside this directory — pnpm's and
+    /// bun's store links. Deleting the directory does not free these; the store
+    /// keeps them. Zero for managers that copy instead of link.
+    pub shared_bytes: u64,
 }
 
 impl fmt::Display for BloatDir {
@@ -305,6 +309,94 @@ pub fn dir_size(path: &Path) -> u64 {
         .filter(|meta| meta.is_file())
         .map(|meta| meta.len())
         .sum()
+}
+
+/// A directory's size split by what deleting it would actually free.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DirSizeBreakdown {
+    /// Bytes `remove_dir_all` gives back to the disk.
+    pub freed_bytes: u64,
+    /// Bytes that survive the deletion because a hardlink outside the directory —
+    /// for pnpm and bun, the global store — still points at them.
+    pub shared_bytes: u64,
+}
+
+/// [`dir_size`], but hardlink-aware.
+///
+/// pnpm and bun do not copy packages into `node_modules`; they hardlink them from a
+/// machine-wide store, so summing file sizes counts bytes the store keeps after the
+/// delete and promises space a prune cannot deliver. Here a physical file is counted
+/// once no matter how many names it has inside the tree, and counts as freed only
+/// when every one of its links is inside the tree. A store that fell back to copying
+/// — a different volume, a filesystem without hardlinks — leaves the link count at
+/// one, so copied installs still count in full. A file whose link count cannot be
+/// read is counted as freed, which errs toward the plain [`dir_size`] figure.
+pub fn dir_size_with_hardlinks(path: &Path) -> DirSizeBreakdown {
+    let mut out = DirSizeBreakdown::default();
+    if !path.exists() {
+        return out;
+    }
+    // (volume, file id) → (bytes, links on disk, links seen inside this walk)
+    let mut linked: HashMap<(u64, u64), (u64, u64, u64)> = HashMap::new();
+    for entry in WalkDir::new(path).follow_links(false).into_iter().flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        match file_link_identity(entry.path(), &meta) {
+            Some((dev, ino, nlink)) if nlink > 1 => {
+                linked.entry((dev, ino)).or_insert((meta.len(), nlink, 0)).2 += 1;
+            }
+            _ => out.freed_bytes += meta.len(),
+        }
+    }
+    for (bytes, nlink, seen) in linked.into_values() {
+        if seen >= nlink {
+            out.freed_bytes += bytes;
+        } else {
+            out.shared_bytes += bytes;
+        }
+    }
+    out
+}
+
+/// (volume, file id, hardlink count) for one file, where the platform can say.
+#[cfg(unix)]
+fn file_link_identity(_path: &Path, meta: &std::fs::Metadata) -> Option<(u64, u64, u64)> {
+    use std::os::unix::fs::MetadataExt as _;
+    Some((meta.dev(), meta.ino(), meta.nlink()))
+}
+
+/// Windows keeps the link count behind an opened handle, not in the directory entry
+/// (std exposes it only on an unstable feature), so this costs one metadata-only open
+/// per file. Only the adapters that actually hardlink — pnpm and bun — pay it.
+#[cfg(windows)]
+fn file_link_identity(path: &Path, _meta: &std::fs::Metadata) -> Option<(u64, u64, u64)> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    // access_mode(0) asks for attribute access only, so a file another process holds
+    // open without read sharing — an antivirus scan, an editor — does not fail here.
+    let file = std::fs::OpenOptions::new().access_mode(0).open(path).ok()?;
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: `file` keeps the handle open for the whole call, and `info` is a
+    // plain-data out-parameter the API fills before returning.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return None;
+    }
+    Some((
+        u64::from(info.dwVolumeSerialNumber),
+        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        u64::from(info.nNumberOfLinks),
+    ))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn file_link_identity(_path: &Path, _meta: &std::fs::Metadata) -> Option<(u64, u64, u64)> {
+    None
 }
 
 /// Resolve a program name into something `Command::new` can actually spawn.
@@ -792,8 +884,50 @@ mod tests {
             name: "node_modules".to_string(),
             path: PathBuf::from("/test/node_modules"),
             size_bytes: 1024,
+            shared_bytes: 0,
         };
         assert!(bd.to_string().contains("node_modules"));
+    }
+
+    #[test]
+    fn test_hardlink_size_counts_a_plain_file_in_full() {
+        let tmp = TempDir::new().unwrap();
+        let tree = tmp.path().join("tree");
+        fs::create_dir(&tree).unwrap();
+        fs::write(tree.join("copied.txt"), "12345").unwrap();
+        let size = dir_size_with_hardlinks(&tree);
+        assert_eq!(size.freed_bytes, 5);
+        assert_eq!(size.shared_bytes, 0);
+    }
+
+    #[test]
+    fn test_hardlink_size_excludes_a_file_the_store_keeps() {
+        // The pnpm shape: the store's copy lives outside the tree being deleted, so
+        // deleting the tree frees nothing for this file.
+        let tmp = TempDir::new().unwrap();
+        let store = tmp.path().join("store");
+        let tree = tmp.path().join("tree");
+        fs::create_dir(&store).unwrap();
+        fs::create_dir(&tree).unwrap();
+        fs::write(store.join("pkg.js"), "0123456789").unwrap();
+        fs::hard_link(store.join("pkg.js"), tree.join("pkg.js")).unwrap();
+        let size = dir_size_with_hardlinks(&tree);
+        assert_eq!(size.freed_bytes, 0);
+        assert_eq!(size.shared_bytes, 10);
+    }
+
+    #[test]
+    fn test_hardlink_size_counts_an_internal_pair_once() {
+        // Both names live inside the tree, so the delete removes the last link and
+        // the bytes really are freed — but only once, not per name.
+        let tmp = TempDir::new().unwrap();
+        let tree = tmp.path().join("tree");
+        fs::create_dir(&tree).unwrap();
+        fs::write(tree.join("a.js"), "abcdefg").unwrap();
+        fs::hard_link(tree.join("a.js"), tree.join("b.js")).unwrap();
+        let size = dir_size_with_hardlinks(&tree);
+        assert_eq!(size.freed_bytes, 7);
+        assert_eq!(size.shared_bytes, 0);
     }
 
     #[test]

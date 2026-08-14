@@ -669,6 +669,22 @@ pub fn render_status_plain(repos: &[RepoStatusEntry]) {
         candidates,
         format_bytes(total)
     ));
+
+    // Reclaimable is what a prune actually frees, which for pnpm and bun is less than
+    // the folder's apparent size — the rest is hardlinked into the manager's store.
+    // Said once here rather than per row so the table stays scannable.
+    let shared: u64 = repos
+        .iter()
+        .flat_map(|r| &r.bloat_dirs)
+        .map(|b| b.shared_bytes)
+        .sum();
+    if shared > 0 {
+        output::print_info(&format!(
+            "Excluded: {} hardlinked into package-manager stores (pnpm/bun) — deleting \
+             node_modules does not free those bytes, the store keeps them.",
+            format_bytes(shared)
+        ));
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

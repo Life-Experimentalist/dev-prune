@@ -196,20 +196,22 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
             PruneStatus::Pruned => {
                 total_freed += result.size_freed;
                 output::print_success(&format!(
-                    "{} → {} ({}) — {}",
+                    "{} → {} ({}) — {}{}",
                     output::clean_path(&result.repo_path),
                     result.bloat_dir,
                     output::format_bytes(result.size_freed),
-                    result.adapter_name
+                    result.adapter_name,
+                    output::shared_note(result.shared_bytes, &result.adapter_name)
                 ));
             }
             PruneStatus::SkippedDryRun => {
                 output::print_info(&format!(
-                    "  • {} → {} ({}) [{}] (Dry Run)",
+                    "  • {} → {} ({}) [{}] (Dry Run){}",
                     output::clean_path(&result.repo_path),
                     result.bloat_dir,
                     output::format_bytes(result.size_freed),
-                    result.adapter_name
+                    result.adapter_name,
+                    output::shared_note(result.shared_bytes, &result.adapter_name)
                 ));
             }
             PruneStatus::SkippedActive => {
@@ -714,11 +716,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                     });
                     if !args.json {
                         output::print_success(&format!(
-                            "{} → {} ({}) — {}",
+                            "{} → {} ({}) — {}{}",
                             output::clean_path(&result.repo_path),
                             result.bloat_dir,
                             output::format_bytes(result.size_freed),
                             result.adapter_name,
+                            output::shared_note(result.shared_bytes, &result.adapter_name)
                         ));
                     }
                 }
@@ -949,11 +952,12 @@ fn report_candidates(candidates: &[PruneResult]) {
     output::print_header("Prune Candidates & Space Savings Calculation");
     for candidate in candidates {
         output::print_info(&format!(
-            "  • {} → {} ({}) [{}]",
+            "  • {} → {} ({}) [{}]{}",
             output::clean_path(&candidate.repo_path),
             candidate.bloat_dir,
             output::format_bytes(candidate.size_freed),
-            candidate.adapter_name
+            candidate.adapter_name,
+            output::shared_note(candidate.shared_bytes, &candidate.adapter_name)
         ));
     }
 }

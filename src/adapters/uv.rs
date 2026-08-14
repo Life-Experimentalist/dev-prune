@@ -111,6 +111,7 @@ impl PackageManager for Uv {
                 name: ".venv".to_string(),
                 path: venv_path.clone(),
                 size_bytes: dir_size(&venv_path),
+                shared_bytes: 0,
             });
         }
         dirs

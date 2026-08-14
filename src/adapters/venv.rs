@@ -400,6 +400,7 @@ impl PackageManager for Venv {
                     name,
                     path: venv_path,
                     size_bytes: size,
+                    shared_bytes: 0,
                 }
             })
             .collect()

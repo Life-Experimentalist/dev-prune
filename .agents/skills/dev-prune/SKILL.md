@@ -158,6 +158,7 @@ The fields worth reading first:
 | `repositories[].state` (status) | `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, `config_error` |
 | `repositories[].error` | the parse failure — present only on `config_error` |
 | `totals.reclaimable_bytes` | the number to quote back to the user |
+| `results[].shared_bytes` / `directories[].shared_bytes` | bytes hardlinked into a pnpm/bun store and therefore excluded from `bytes` — if the user asks why the figure is smaller than the folder size, this is the answer |
 | `summary.total_bytes` (caches) | every package-manager cache added up; `caches[].clear_command` is what the *user* runs, never you |
 
 `status` tags and `state` tags are separate vocabularies: the first is what a pass *did*,

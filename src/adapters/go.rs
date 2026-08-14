@@ -55,6 +55,7 @@ impl PackageManager for Go {
                 name: "vendor".to_string(),
                 path: vendor_path.clone(),
                 size_bytes: dir_size(&vendor_path),
+                shared_bytes: 0,
             });
         }
         dirs

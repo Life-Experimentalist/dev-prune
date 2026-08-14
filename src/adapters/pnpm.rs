@@ -4,7 +4,8 @@
 // PNPM adapter implementation.
 
 use super::{
-    BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command_with_timeout,
+    BloatDir, EnforcePolicy, PackageManager, dir_size_with_hardlinks, enforce_two_tier,
+    run_command_with_timeout,
 };
 use anyhow::Result;
 use std::path::Path;
@@ -24,14 +25,22 @@ impl PackageManager for Pnpm {
     }
 
     /// Returns the bloat directories for pnpm (node_modules).
+    ///
+    /// pnpm does not copy packages into `node_modules` — it hardlinks them out of its
+    /// content-addressable store whenever the store and the project sit on the same
+    /// volume (NTFS included; Windows hardlinks work fine). Deleting such a tree frees
+    /// only pnpm's own metadata and any genuinely copied files: the store keeps every
+    /// linked byte. Counting apparent size here would promise gigabytes and deliver
+    /// megabytes, so the split is measured per file via the link count.
     fn bloat_dirs(&self, project_dir: &Path) -> Vec<BloatDir> {
         let node_modules = project_dir.join("node_modules");
         if node_modules.exists() {
-            let size = dir_size(&node_modules);
+            let size = dir_size_with_hardlinks(&node_modules);
             vec![BloatDir {
                 name: "node_modules".to_string(),
                 path: node_modules,
-                size_bytes: size,
+                size_bytes: size.freed_bytes,
+                shared_bytes: size.shared_bytes,
             }]
         } else {
             vec![]
@@ -110,5 +119,24 @@ mod tests {
         let dir = tempdir().unwrap();
         let bloat = Pnpm.bloat_dirs(dir.path());
         assert!(bloat.is_empty());
+    }
+
+    #[test]
+    fn test_bloat_dirs_excludes_store_hardlinks() {
+        // A miniature pnpm layout: one file hardlinked from a "store" outside
+        // node_modules, one file pnpm wrote outright. Only the second is freed by
+        // deleting the tree.
+        let dir = tempdir().unwrap();
+        let store = dir.path().join("store");
+        let node_modules = dir.path().join("node_modules");
+        fs::create_dir(&store).unwrap();
+        fs::create_dir(&node_modules).unwrap();
+        fs::write(store.join("pkg.js"), "0123456789").unwrap();
+        fs::hard_link(store.join("pkg.js"), node_modules.join("pkg.js")).unwrap();
+        fs::write(node_modules.join(".modules.yaml"), "y").unwrap();
+        let bloat = Pnpm.bloat_dirs(dir.path());
+        assert_eq!(bloat.len(), 1);
+        assert_eq!(bloat[0].size_bytes, 1);
+        assert_eq!(bloat[0].shared_bytes, 10);
     }
 }

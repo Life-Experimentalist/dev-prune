@@ -130,6 +130,24 @@ pub fn format_bytes(bytes: u64) -> String {
     format_size(bytes, BINARY)
 }
 
+/// The suffix explaining bytes a prune does not free because a package-manager store
+/// hardlinks them (pnpm, bun). Empty when there is nothing to explain, so call sites
+/// can append it unconditionally.
+///
+/// This line exists because `du` and Explorer report the *apparent* size: without it,
+/// "node_modules (40 MiB)" beside a 2 GiB folder reads as a bug rather than as pnpm
+/// working exactly as designed.
+pub fn shared_note(shared_bytes: u64, adapter: &str) -> String {
+    if shared_bytes == 0 {
+        String::new()
+    } else {
+        format!(
+            " (+{} hardlinked into the {adapter} store — not counted, the store keeps them)",
+            format_bytes(shared_bytes)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

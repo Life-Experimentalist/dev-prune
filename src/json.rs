@@ -93,6 +93,7 @@ fn result_value(result: &PruneResult) -> Value {
         "directory": result.bloat_dir,
         "status": status_tag(&result.status),
         "bytes": result.size_freed,
+        "shared_bytes": result.shared_bytes,
     });
 
     if let Some(message) = status_message(&result.status) {
@@ -194,6 +195,7 @@ fn repo_value(entry: &RepoStatusEntry) -> Value {
             "name": b.name,
             "path": clean_path(&b.path),
             "bytes": b.size_bytes,
+            "shared_bytes": b.shared_bytes,
         })).collect::<Vec<_>>(),
     });
 
@@ -388,6 +390,7 @@ mod tests {
             adapter_name: "pnpm".to_string(),
             bloat_dir: "node_modules".to_string(),
             size_freed: bytes,
+            shared_bytes: 0,
             status,
         }
     }

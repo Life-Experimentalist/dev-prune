@@ -49,6 +49,7 @@ impl PackageManager for Cargo {
                 name: "target".to_string(),
                 path: target_path.clone(),
                 size_bytes: dir_size(&target_path),
+                shared_bytes: 0,
             });
         }
         dirs
