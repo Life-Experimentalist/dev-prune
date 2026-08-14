@@ -221,6 +221,15 @@ pub enum Commands {
         #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
         top: Option<u64>,
 
+        /// Report lockfile drift instead of the dashboard: environments holding packages
+        /// their lockfile never recorded — the installs a prune would refuse to delete
+        /// because nothing could bring them back.
+        ///
+        /// A pure read: no package manager runs, nothing is written. Checked where a
+        /// file-level comparison exists — npm, uv and venv projects.
+        #[arg(long, conflicts_with = "top")]
+        drift: bool,
+
         /// Emit the dashboard as one JSON document instead of the TUI or text table.
         #[arg(long)]
         json: bool,
@@ -286,6 +295,16 @@ pub enum Commands {
     Doctor {
         /// Repository to diagnose. Omit to check the installation itself.
         path: Option<String>,
+
+        /// Repair what the installation check finds broken: refresh a stale or missing
+        /// `devp` twin, re-export SKILL.md, re-register a scheduler or Git hooks whose
+        /// binary moved, and drop registry entries whose repository is gone.
+        ///
+        /// Repairs only what was installed and has since broken — it never installs an
+        /// integration that was never set up (that is `devp setup`), and it cannot fix a
+        /// corrupt registry file, which needs a human decision.
+        #[arg(long, conflicts_with = "path")]
+        fix: bool,
     },
 
     /// Uninstall background daemon, Git hooks, and optionally wipe configuration.
@@ -594,7 +613,9 @@ pub fn run_cli() {
                 json,
             })
         }
-        Commands::Status { top, json } => commands::status::run(top.map(|n| n as usize), json),
+        Commands::Status { top, drift, json } => {
+            commands::status::run(top.map(|n| n as usize), drift, json)
+        }
         Commands::Stats { json } => commands::stats::run(json),
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Caches { json } => commands::caches::run(json),
@@ -649,9 +670,9 @@ pub fn run_cli() {
         Commands::Update { offline } => commands::update::run(offline),
         Commands::Skill => commands::skill::run(),
         Commands::Setup { status } => commands::setup::run(status),
-        Commands::Doctor { path } => {
+        Commands::Doctor { path, fix } => {
             let path = path.map(|p| config::expand_tilde(&p));
-            commands::doctor::run(path.as_deref())
+            commands::doctor::run(path.as_deref(), fix)
         }
         Commands::Uninstall { deep } => commands::uninstall::run(deep, cli.yes),
     };

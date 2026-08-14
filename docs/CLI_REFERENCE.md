@@ -195,7 +195,7 @@ reads unambiguously:
 
 ---
 
-### 6. `devp status [--top N] [--json]`
+### 6. `devp status [--top N] [--drift] [--json]`
 - **Description**: Displays an interactive Ratatui terminal dashboard summarizing registered repositories, status (Candidate, Active, Ignored, No Bloat, Path Missing, Unreadable `.devprune.json`), reclaimable space, and last activity date. A repository whose `.devprune.json` does not parse is reported as such rather than as a candidate — `devp run` refuses to touch it, and the dashboard says the same thing.
 - **Interactive TUI Keybindings**:
   | Key | Action |
@@ -216,6 +216,12 @@ reads unambiguously:
   With no TTY — piped, redirected, or run from a scheduler — `devp status` prints a plain
   table instead of entering the TUI. `--json` replaces it with a machine-readable document
   and makes no changes of any kind.
+
+  Sizes are *apparent* sizes: every file is counted at its full length. Under pnpm, the
+  files in `node_modules` are hardlinks into the global store, so the reclaimable figure
+  for a pnpm project can overstate what deleting it actually frees — the store keeps the
+  data, which is also why `pnpm install` after a prune is fast. The same applies to the
+  freed totals in `devp stats`.
 - **Flags**:
   - `--top <N>` — list only the `N` repositories with the most reclaimable space. On a
     machine tracking a hundred repositories the handful worth pruning are otherwise pushed
@@ -224,11 +230,22 @@ reads unambiguously:
     table are unaffected** — they are computed over every registered repository, so
     `--top 5` cannot make a machine look tidier than it is. Applies to the TUI, the plain
     table and `--json` alike; in JSON the trim is reported as a top-level `"top"` field.
+  - `--drift` — replace the dashboard with the lockfile-drift report: every registered
+    repository, checked for environments holding packages their lockfile never recorded
+    (an `npm install --no-save`, a bare `pip install` into a pinned venv, an ad-hoc
+    `uv pip install`). This is the same comparison a prune *refuses* on, run early and as
+    a pure read — no package manager is executed and nothing is written. Each finding
+    names the directory, the unrecorded packages, and the one command that records them
+    (`npm install <pkg>`, `uv add <package>`, `pip freeze > requirements.txt`). Only the
+    adapters that can compare an environment against its lockfile from files alone take
+    part — npm, uv and venv; the others stay silent rather than guess. Cannot be combined
+    with `--top`: the report is not a repository list, so trimming it would mean nothing.
   - `--json` — emit one machine-readable document instead of the dashboard.
 - **Examples**:
   ```bash
   devp status --top 10
   devp status --top 10 --json | jq '.repositories[].path'
+  devp status --drift           # what would a prune refuse on, and how do I fix it
   ```
 - **Status Shortcuts & Aliases**:
   - `devp status daemon` (alias for `devp config daemon status`): Inspect OS background daemon scheduler status.
@@ -251,8 +268,15 @@ reads unambiguously:
   | `pip` | cache | `pip cache purge` |
   | `cargo` | registry cache, registry sources | deleting `$CARGO_HOME/registry/{cache,src}` — cargo ships no cache subcommand |
   | `go` | module cache, build cache | `go clean -modcache`, `go clean -cache` |
+  | `maven` | local repository | deleting `~/.m2/repository` — Maven ships no cache subcommand either |
+  | `gradle` | caches, wrapper distributions | deleting `~/.gradle/caches` and `~/.gradle/wrapper/dists` (`GRADLE_USER_HOME` respected) |
+  | `nuget` | global packages | `dotnet nuget locals global-packages --clear` |
+  | `vcpkg` | binary cache | deleting the `vcpkg/archives` directory (`VCPKG_DEFAULT_BINARY_CACHE` respected) |
+  | `conan` | package cache | `conan remove "*" --confirm` |
 
-  Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. Two probes that resolve to the same directory are counted once.
+  Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. Two probes that resolve to the same directory are counted once.
+
+  This is also where the Java, .NET and C/C++ ecosystems live in dev-prune, and why they are *not* adapters: a Maven `target/`, a Gradle `build/`, a .NET `bin/`+`obj/` and a CMake `build/` are compiler **outputs** — no lockfile can prove a deleted one comes back byte-for-byte, so deleting them is out of scope by design. Their *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the table.
 - **Examples**:
@@ -456,6 +480,34 @@ The current version is `1`.
 `config_error`. `last_activity` is the later of the last commit and the newest source file
 mtime — the same value the idle decision uses, so the two can never disagree.
 
+### `devp status --drift --json`
+
+```jsonc
+{
+  "schema": 1,
+  "version": "1.1.0",
+  "command": "status --drift",
+  "drift": [
+    {
+      "repository": "~/Code/api",
+      "project": ".",              // project path relative to the repository root
+      "adapter": "venv",
+      "directory": ".venv",
+      "unrecorded": ["sneaky-pkg"],
+      "record_command": "pip freeze > requirements.txt"
+    }
+  ],
+  "summary": {
+    "projects_with_drift": 1,
+    "unrecorded_packages": 1
+  }
+}
+```
+
+`drift` is sorted by repository, project, adapter and directory, so the same machine
+produces the same document twice. An empty `drift` array with both summary counts at `0`
+is the healthy state. Exit code is `0` either way — drift is a report, not a failure.
+
 ### `devp stats --json`
 
 ```jsonc
@@ -565,16 +617,18 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 12. `devp doctor [PATH]`
-- **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. It changes nothing — no config is created, no integration installed, no package manager run.
+### 12. `devp doctor [PATH] [--fix]`
+- **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. Plain `doctor` changes nothing — no config is created, no integration installed, no package manager run — and when some of what it found is repairable, its verdict says how many findings `--fix` would mend.
 - **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
 - **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses and what it overrides, the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.
-- **Exit codes**: `0` when everything works, warnings included — a missing scheduler should not fail a script. `1` only for something actually broken: an unreadable `registry.json`, an out-of-range setting, a registered path that no longer exists, a directory that is not a Git repository.
+- **`--fix`** — diagnosis first, then treatment: run the same checks, then repair what they found. It mends *installed-but-broken* only — a stale or missing `devp` twin, a missing `SKILL.md` export, Git hooks or a scheduler entry whose recorded binary no longer exists, a chained hook set that has drifted from the tool it forwards to, and registry entries whose repository is gone (the same cleanup as `devp unlink --missing`). Each repair is the corresponding `devp setup` pass re-run, so a repair can never do more than setup itself would; each re-checks state first, so a finding that healed in the meantime reports "already in place". It never performs a first-time install (that is `devp setup`'s job, gated by your `auto_*` settings), never touches an unreadable `registry.json` (a parse failure is for you to look at, not for a tool to guess at), and with `DEV_PRUNE_NO_AUTO_SETUP=1` set it skips every repair that writes outside the config directory, naming the command to run yourself. Problems `--fix` cannot mend are re-listed as such. Cannot be combined with a `PATH` — repository findings (not a Git repo, opted out, idle) are facts about your project, not breakage to mend.
+- **Exit codes**: `0` when everything works, warnings included — a missing scheduler should not fail a script. `1` only for something actually broken: an unreadable `registry.json`, an out-of-range setting, a registered path that no longer exists, a directory that is not a Git repository. `--fix` exits `0` when everything it found was repaired, `1` when any repair failed, was skipped, or was out of its reach.
 - **Examples**:
   ```bash
   devp doctor              # the installation
   devp doctor .            # this repository
   devp doctor ~/Code/api
+  devp doctor --fix        # repair what the checks found
   ```
 
 ---

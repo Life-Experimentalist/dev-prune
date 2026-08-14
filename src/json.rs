@@ -340,6 +340,34 @@ pub fn caches_document(reports: &[crate::commands::caches::CacheReport]) -> Valu
     })
 }
 
+/// The document emitted by `devp status --drift --json`.
+///
+/// A separate document from plain `status` because it answers a different question:
+/// not "what could a prune reclaim" but "what would a prune refuse, and why". An empty
+/// `drift` array means nothing was *detected*, across the adapters that can compare an
+/// environment against its lockfile from files alone.
+pub fn drift_document(findings: &[crate::commands::status::ProjectDrift]) -> Value {
+    let unrecorded_total: usize = findings.iter().map(|f| f.report.unrecorded.len()).sum();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "status --drift",
+        "drift": findings.iter().map(|f| json!({
+            "repository": clean_path(&f.repository),
+            "project": f.project,
+            "adapter": f.adapter,
+            "directory": f.report.directory,
+            "unrecorded": f.report.unrecorded,
+            "record_command": f.report.record_command,
+        })).collect::<Vec<_>>(),
+        "summary": {
+            "projects_with_drift": findings.len(),
+            "unrecorded_packages": unrecorded_total,
+        },
+    })
+}
+
 /// Print a document to stdout as pretty JSON with a trailing newline.
 ///
 /// Pretty rather than compact because a human reads this output far more often than a

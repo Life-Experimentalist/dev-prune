@@ -5,7 +5,8 @@
 //!
 //! Every package manager keeps a machine-wide download cache outside any repository:
 //! npm's `_cacache`, pnpm's content-addressable store, the Go module cache, cargo's
-//! registry. They are frequently the largest reclaimable thing on a developer's disk and
+//! registry, Maven's local repository, NuGet's global packages folder. They are
+//! frequently the largest reclaimable thing on a developer's disk and
 //! nobody notices, because nothing ever mentions them — a 4 GiB `GOMODCACHE` looks like
 //! free space that simply went missing.
 //!
@@ -75,6 +76,30 @@ const CARGO_CACHE_CLEAR: &str = "rm -rf ~/.cargo/registry/cache";
 const CARGO_SRC_CLEAR: &str = r"Remove-Item -Recurse -Force $env:USERPROFILE\.cargo\registry\src";
 #[cfg(not(windows))]
 const CARGO_SRC_CLEAR: &str = "rm -rf ~/.cargo/registry/src";
+
+/// Maven has no cache subcommand either — `mvn dependency:purge-local-repository`
+/// exists, but it needs a project to run in and re-resolves as it purges, which is not
+/// "clear the cache". The honest command is the deletion.
+#[cfg(windows)]
+const MAVEN_REPO_CLEAR: &str = r"Remove-Item -Recurse -Force $env:USERPROFILE\.m2\repository";
+#[cfg(not(windows))]
+const MAVEN_REPO_CLEAR: &str = "rm -rf ~/.m2/repository";
+
+#[cfg(windows)]
+const GRADLE_CACHE_CLEAR: &str = r"Remove-Item -Recurse -Force $env:USERPROFILE\.gradle\caches";
+#[cfg(not(windows))]
+const GRADLE_CACHE_CLEAR: &str = "rm -rf ~/.gradle/caches";
+
+#[cfg(windows)]
+const GRADLE_DISTS_CLEAR: &str =
+    r"Remove-Item -Recurse -Force $env:USERPROFILE\.gradle\wrapper\dists";
+#[cfg(not(windows))]
+const GRADLE_DISTS_CLEAR: &str = "rm -rf ~/.gradle/wrapper/dists";
+
+#[cfg(windows)]
+const VCPKG_ARCHIVES_CLEAR: &str = r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\vcpkg\archives";
+#[cfg(not(windows))]
+const VCPKG_ARCHIVES_CLEAR: &str = "rm -rf ~/.cache/vcpkg/archives";
 
 const PROBES: &[Probe] = &[
     Probe {
@@ -151,6 +176,65 @@ const PROBES: &[Probe] = &[
         query: Some(("go", &["env", "GOCACHE"])),
         clear_command: "go clean -cache",
         note: Some("compiled build artifacts; clearing them means the next build is a cold one"),
+    },
+    // `mvn help:evaluate -Dexpression=settings.localRepository` would answer precisely,
+    // but it boots a JVM, resolves the help plugin over the network on first use, and
+    // takes several seconds — the wrong trade for a read-only size report. A relocated
+    // repository (settings.xml `<localRepository>`) is rare enough to miss.
+    Probe {
+        manager: "maven",
+        kind: "local repository",
+        query: None,
+        clear_command: MAVEN_REPO_CLEAR,
+        note: Some(
+            "every Maven build on the machine resolves from here; the next build re-downloads what it needs",
+        ),
+    },
+    Probe {
+        manager: "gradle",
+        kind: "caches",
+        query: None,
+        clear_command: GRADLE_CACHE_CLEAR,
+        note: Some(
+            "downloaded dependencies and build caches shared by every Gradle project; rebuilt on demand",
+        ),
+    },
+    Probe {
+        manager: "gradle",
+        kind: "wrapper distributions",
+        query: None,
+        clear_command: GRADLE_DISTS_CLEAR,
+        note: Some(
+            "one full Gradle per version any wrapper ever asked for; re-downloaded on demand",
+        ),
+    },
+    // `dotnet nuget locals global-packages --list` answers `global-packages: <path>` —
+    // a labelled line, not a bare path — so the conventional locations are simpler and
+    // just as reliable. The clear command, however, is nuget's own.
+    Probe {
+        manager: "nuget",
+        kind: "global packages",
+        query: None,
+        clear_command: "dotnet nuget locals global-packages --clear",
+        note: Some(
+            "every .NET project on the machine restores from here; re-downloaded on the next restore",
+        ),
+    },
+    Probe {
+        manager: "vcpkg",
+        kind: "binary cache",
+        query: None,
+        clear_command: VCPKG_ARCHIVES_CLEAR,
+        note: Some("prebuilt package archives; vcpkg rebuilds from source what it cannot re-fetch"),
+    },
+    Probe {
+        manager: "conan",
+        kind: "package cache",
+        query: None,
+        clear_command: "conan remove \"*\" --confirm",
+        note: Some(
+            "recipes and binaries shared by every Conan project; re-fetched on the next install",
+        ),
     },
 ];
 
@@ -303,6 +387,32 @@ fn fallbacks(manager: &str, kind: &str) -> Vec<PathBuf> {
             std::env::var_os("GOCACHE").map(PathBuf::from),
             under(&cache, "go-build"),
             under(&local, "go-build"),
+        ],
+        ("maven", _) => vec![under(&home, ".m2/repository")],
+        // GRADLE_USER_HOME relocates the whole ~/.gradle tree, caches and wrapper both.
+        ("gradle", "caches") => vec![
+            std::env::var_os("GRADLE_USER_HOME").map(|p| PathBuf::from(p).join("caches")),
+            under(&home, ".gradle/caches"),
+        ],
+        ("gradle", _) => vec![
+            std::env::var_os("GRADLE_USER_HOME")
+                .map(|p| PathBuf::from(p).join("wrapper").join("dists")),
+            under(&home, ".gradle/wrapper/dists"),
+        ],
+        ("nuget", _) => vec![
+            std::env::var_os("NUGET_PACKAGES").map(PathBuf::from),
+            under(&home, ".nuget/packages"),
+        ],
+        ("vcpkg", _) => vec![
+            std::env::var_os("VCPKG_DEFAULT_BINARY_CACHE").map(PathBuf::from),
+            under(&local, "vcpkg/archives"),
+            under(&cache, "vcpkg/archives"),
+        ],
+        // Conan 2 keeps packages under <CONAN_HOME>/p; pointing at `p` rather than the
+        // whole home keeps profiles and remotes out of the size (and out of harm's way).
+        ("conan", _) => vec![
+            std::env::var_os("CONAN_HOME").map(|p| PathBuf::from(p).join("p")),
+            under(&home, ".conan2/p"),
         ],
         _ => vec![],
     };

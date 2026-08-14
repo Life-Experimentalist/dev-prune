@@ -10,11 +10,26 @@
 use anyhow::Result;
 use std::io::{self, IsTerminal};
 
+use crate::adapters::DriftReport;
 use crate::commands::hook::HookState;
 use crate::config::Registry;
 use crate::engine::{self, PruneStatus};
 use crate::output;
 use crate::tui::status_view;
+use crate::workspace;
+
+/// One project's lockfile drift, located: which repository, which project inside it,
+/// which adapter found it, and what it found.
+pub struct ProjectDrift {
+    /// The registered repository the project lives in.
+    pub repository: std::path::PathBuf,
+    /// Project path relative to the repository root, `/`-separated; `"."` is the root.
+    pub project: String,
+    /// The adapter that made the comparison.
+    pub adapter: &'static str,
+    /// The drifted directory, the unrecorded packages, and the command that records them.
+    pub report: DriftReport,
+}
 
 /// Run the `status` command.
 ///
@@ -25,7 +40,14 @@ use crate::tui::status_view;
 /// `top` trims the repository list to the biggest reclaims. It never changes the totals:
 /// those are computed over every registered repository, so `--top 5` cannot make a
 /// machine look tidier than it is.
-pub fn run(top: Option<usize>, json_output: bool) -> Result<()> {
+///
+/// `drift` replaces the dashboard with the lockfile-drift report — the environments
+/// holding packages their lockfile never recorded, found before a prune would refuse
+/// on them.
+pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
+    if drift {
+        return run_drift(json_output);
+    }
     let mut registry = Registry::load()?;
 
     let daemon_st = crate::daemon::daemon_status()
@@ -269,6 +291,115 @@ pub fn run(top: Option<usize>, json_output: bool) -> Result<()> {
         status_view::render_status_plain(&repos);
     }
 
+    Ok(())
+}
+
+/// The `--drift` mode: every registered repository, checked for installed-but-unrecorded
+/// packages.
+///
+/// This is the same comparison a prune refuses on, run early and as a pure read — no
+/// package manager is executed and nothing is written. Only the adapters that can
+/// compare an environment against its lockfile from files alone take part (npm, uv,
+/// venv); the others have nothing cheap to say and stay silent rather than guessing.
+fn run_drift(json_output: bool) -> Result<()> {
+    let registry = Registry::load()?;
+
+    let pb = (!json_output)
+        .then(|| output::create_spinner("Comparing environments against lockfiles..."));
+
+    let mut findings: Vec<ProjectDrift> = Vec::new();
+    for path in registry.repositories.keys() {
+        if !path.exists() {
+            continue;
+        }
+        let depth = workspace::resolve_depth(path, registry.settings.scan_depth);
+        for project in workspace::discover_to_depth(path, depth) {
+            for adapter in &project.adapters {
+                for report in adapter.drift(&project.path) {
+                    findings.push(ProjectDrift {
+                        repository: path.clone(),
+                        project: project.relative.clone(),
+                        adapter: adapter.name(),
+                        report,
+                    });
+                }
+            }
+        }
+    }
+    // The registry is a HashMap; without this the same machine lists its drift in a
+    // different order on every run, which reads like the drift itself changed.
+    findings.sort_by(|a, b| {
+        (&a.repository, &a.project, a.adapter, &a.report.directory).cmp(&(
+            &b.repository,
+            &b.project,
+            b.adapter,
+            &b.report.directory,
+        ))
+    });
+
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
+
+    if json_output {
+        return crate::json::emit(&crate::json::drift_document(&findings));
+    }
+
+    output::print_header("Lockfile drift");
+    println!();
+
+    if findings.is_empty() {
+        output::print_success(
+            "No drift found: nothing is installed that the lockfiles do not record.",
+        );
+        output::print_info(
+            "Checked where a cheap file-level comparison exists: node_modules against \
+             package-lock.json (npm), .venv against uv.lock (uv), and every virtual \
+             environment against requirements.txt (venv).",
+        );
+        return Ok(());
+    }
+
+    let mut last_repo: Option<&std::path::Path> = None;
+    for f in &findings {
+        if last_repo != Some(f.repository.as_path()) {
+            println!("  {}", output::clean_path(&f.repository));
+            last_repo = Some(f.repository.as_path());
+        }
+        let location = if f.project == "." {
+            f.report.directory.clone()
+        } else {
+            format!("{}/{}", f.project, f.report.directory)
+        };
+        let shown = f
+            .report
+            .unrecorded
+            .iter()
+            .take(10)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let suffix = if f.report.unrecorded.len() > 10 {
+            format!(", … and {} more", f.report.unrecorded.len() - 10)
+        } else {
+            String::new()
+        };
+        println!(
+            "    {} ({}): {} unrecorded {} — {shown}{suffix}",
+            location,
+            f.adapter,
+            f.report.unrecorded.len(),
+            output::plural(f.report.unrecorded.len(), "package", "packages"),
+        );
+        println!("      record them: {}", f.report.record_command);
+        println!();
+    }
+
+    output::print_info(
+        "A prune refuses to delete these environments as they are — the unrecorded \
+         packages would be lost with no way back. Record them with the command shown, \
+         or uninstall them, and the refusal goes away.",
+    );
     Ok(())
 }
 

@@ -50,6 +50,18 @@ impl fmt::Display for BloatDir {
     }
 }
 
+/// Packages sitting in a manager's environment directory that its lockfile does not
+/// record — installs a post-prune restore would not bring back.
+#[derive(Debug, Clone)]
+pub struct DriftReport {
+    /// The environment directory that drifted (e.g. `.venv`, `node_modules`).
+    pub directory: String,
+    /// The unrecorded package names, sorted.
+    pub unrecorded: Vec<String>,
+    /// The command that writes them into the lockfile.
+    pub record_command: &'static str,
+}
+
 /// The core trait that every package manager adapter must implement.
 ///
 /// Each adapter is responsible for:
@@ -114,6 +126,18 @@ pub trait PackageManager: Send + Sync {
     /// lockfiles). An empty slice means the manager has no single file to point at.
     fn lockfiles(&self) -> &'static [&'static str] {
         &[]
+    }
+
+    /// Installed-but-unrecorded packages, as data instead of a refusal.
+    ///
+    /// The same comparison [`PackageManager::enforce_lockfile`] refuses a prune on,
+    /// surfaced early so `devp status --drift` can point at the problem before a prune
+    /// is ever attempted. Runs nothing and writes nothing. An empty answer means
+    /// "nothing detected", not "proven clean" — most managers have no cheap way to
+    /// compare and say nothing here.
+    fn drift(&self, project_path: &Path) -> Vec<DriftReport> {
+        let _ = project_path;
+        Vec::new()
     }
 }
 

@@ -65,24 +65,37 @@ Arch, NixOS and Alpine.
   `devp unlink --missing` drops every entry whose directory no longer exists
 - `devp undo` — revert the most recent `init` or `link`
 - `devp run [PATH]` — prune every registered repository, or one target
-- `devp status [--top N] [--json]` — interactive dashboard; a plain table when there is no
-  TTY. `--top N` lists only the N repositories with the most reclaimable space; the totals
-  above the table still cover every registered repository
+- `devp status [--top N] [--drift] [--json]` — interactive dashboard; a plain table when
+  there is no TTY. `--top N` lists only the N repositories with the most reclaimable
+  space; the totals above the table still cover every registered repository. `--drift`
+  replaces the dashboard with the lockfile-drift report: every environment holding
+  packages its lockfile never recorded (`npm install --no-save`, a bare `pip install`
+  into a pinned venv, an ad-hoc `uv pip install`), with the one command that records
+  them — a pure read, and the same comparison a prune refuses on
 - `devp stats [--json]` — what has already been reclaimed: lifetime total, prune passes,
   the most recent pass and how to undo it, and the repositories that gave back the most.
   Per-repository figures and the pass history are recorded from 1.1.0 onward
 - `devp completions <bash|zsh|fish|powershell|elvish>` — print a shell completion script
   to stdout, generated from the same argument definition the binary parses with
 - `devp caches [--json]` — find and size every package-manager cache and store on the
-  machine (npm, pnpm, yarn, bun, uv, pip, cargo, go), largest first, with the command that
-  clears each. It deletes nothing and has no flag that makes it: a cache is shared by
-  every project, so no one lockfile can prove it recoverable, and it is what makes
-  `devp restore` fast
+  machine (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan),
+  largest first, with the command that clears each. It deletes nothing and has no flag
+  that makes it: a cache is shared by every project, so no one lockfile can prove it
+  recoverable, and it is what makes `devp restore` fast. This is also where the Java,
+  .NET and C/C++ ecosystems are covered — their in-repository `target/`, `build/`,
+  `bin/`+`obj/` directories are compiler outputs no lockfile can prove rebuildable, so
+  dev-prune never deletes them, while their dependencies live in these machine-wide
+  stores
 - `devp restore [PATH]` — reinstall dependencies for every project in a tree;
   `devp restore --last-run` restores exactly what the most recent prune pass deleted
-- `devp doctor [PATH]` — diagnose the installation, or one repository with a path
+- `devp doctor [PATH] [--fix]` — diagnose the installation, or one repository with a path
   (`devp doctor .` names the reason a prune pass would skip it); read-only, runs no
-  package manager, repairs nothing
+  package manager, repairs nothing. `devp doctor --fix` then repairs what the checks
+  found, for installed-but-broken integrations only — a stale `devp` twin, hooks or a
+  scheduler entry pointing at a binary that no longer exists, a drifted hook chain, a
+  missing `SKILL.md` export, registry entries whose repository is gone. Each repair is
+  the corresponding setup pass re-run, so it can never do more than `devp setup` would,
+  and it never performs a first-time install
 - `devp config …` — global settings, per-repo config, scheduler, hooks, file-manager icons;
   `devp config wizard` walks every setting and runs itself on the first install
 - `devp setup [--status]` — install any missing integration; `--status` only reports

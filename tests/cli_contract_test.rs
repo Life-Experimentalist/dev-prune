@@ -647,6 +647,125 @@ fn unlink_missing_removes_every_dead_entry_and_leaves_the_live_ones() {
 }
 
 // ---------------------------------------------------------------------------
+// status --drift and doctor --fix
+// ---------------------------------------------------------------------------
+
+/// `--drift` answers a different question than the dashboard, so combining it with a
+/// dashboard-shaping flag is a usage error, not a silent pick between the two.
+#[test]
+fn status_drift_and_top_are_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["status", "--drift", "--top", "5"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+}
+
+/// The repository check has nothing `--fix` could safely repair, so the pair is refused
+/// up front rather than the flag being silently ignored.
+#[test]
+fn doctor_fix_and_a_path_are_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["doctor", "--fix", "."])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+}
+
+/// Drift is a report, not a failure: unrecorded packages exit `0`, and the `--json`
+/// document names the package, the directory, the adapter and the recording command.
+#[test]
+fn status_drift_reports_unrecorded_packages_and_exits_zero() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+
+    let proj = repo.join("api");
+    write(&proj.join("requirements.txt"), "requests==2.32.3\n");
+    write(&proj.join(".venv/pyvenv.cfg"), "home = /usr\n");
+    for dist in ["requests-2.32.3.dist-info", "sneaky_pkg-1.0.dist-info"] {
+        fs::create_dir_all(proj.join(".venv/Lib/site-packages").join(dist)).unwrap();
+    }
+
+    let out = devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "link failed:\n{}", combined(&out));
+
+    let out = devp(&config)
+        .args(["status", "--drift", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", combined(&out));
+    let doc = parse_json(&out);
+    assert_eq!(doc["command"], "status --drift");
+    let drift = doc["drift"].as_array().expect("drift must be an array");
+    let venv = drift
+        .iter()
+        .find(|d| d["adapter"] == "venv")
+        .unwrap_or_else(|| panic!("no venv drift entry in {doc}"));
+    assert_eq!(venv["directory"], ".venv");
+    assert!(
+        venv["unrecorded"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p == "sneaky-pkg"),
+        "sneaky-pkg must be listed:\n{doc}"
+    );
+    assert_eq!(venv["record_command"], "pip freeze > requirements.txt");
+    assert!(doc["summary"]["unrecorded_packages"].as_u64().unwrap() >= 1);
+
+    // The human report carries the same recording command, and still exits 0.
+    let out = devp(&config).args(["status", "--drift"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", combined(&out));
+    assert!(
+        combined(&out).contains("pip freeze > requirements.txt"),
+        "{}",
+        combined(&out)
+    );
+}
+
+/// `doctor --fix` clears the stale bookkeeping the diagnosis flagged — and because the
+/// suite sets `DEV_PRUNE_NO_AUTO_SETUP`, anything that would write outside the config
+/// directory is skipped and named rather than installed.
+#[test]
+fn doctor_fix_clears_dead_registry_entries_without_installing_anything() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let live = tmp.path().join("live");
+    let dead = tmp.path().join("dead");
+    for repo in [&live, &dead] {
+        git_repo(repo);
+        devp(&config)
+            .args(["link", repo.to_str().unwrap()])
+            .output()
+            .unwrap();
+    }
+    fs::remove_dir_all(&dead).unwrap();
+
+    let out = devp(&config).args(["doctor", "--fix"]).output().unwrap();
+    let text = combined(&out);
+    assert!(text.contains("Repairs"), "no repairs section:\n{text}");
+
+    let registry = fs::read_to_string(config.join("registry.json")).unwrap();
+    assert!(!registry.contains("dead"), "the dead entry must be gone");
+    assert!(
+        registry.contains("live"),
+        "the live repository must survive"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Release check
 // ---------------------------------------------------------------------------
 

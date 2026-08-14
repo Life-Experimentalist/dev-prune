@@ -183,6 +183,23 @@ impl PackageManager for Uv {
     fn lockfiles(&self) -> &'static [&'static str] {
         &["uv.lock"]
     }
+
+    /// The comparison `enforce_lockfile` refuses on, as data: distributions in `.venv`
+    /// that `uv.lock` does not pin.
+    fn drift(&self, path: &Path) -> Vec<super::DriftReport> {
+        let Some(locked) = lockfile_package_names(&path.join("uv.lock")) else {
+            return Vec::new();
+        };
+        let extras = unlocked_packages(path, &locked);
+        if extras.is_empty() {
+            return Vec::new();
+        }
+        vec![super::DriftReport {
+            directory: ".venv".to_string(),
+            unrecorded: extras,
+            record_command: "uv add <package>",
+        }]
+    }
 }
 
 #[cfg(test)]
@@ -310,5 +327,38 @@ mod tests {
             .enforce_lockfile(dir.path(), EnforcePolicy::default())
             .unwrap_err();
         assert!(err.to_string().contains("not created by uv"));
+    }
+
+    #[test]
+    fn drift_reports_the_ad_hoc_install_as_data() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("uv.lock"),
+            "[[package]]\nname = \"requests\"\nversion = \"2.32.3\"\n",
+        )
+        .unwrap();
+        let sp = dir.path().join(".venv").join("Lib").join("site-packages");
+        fs::create_dir_all(sp.join("requests-2.32.3.dist-info")).unwrap();
+        fs::create_dir_all(sp.join("sneaky_pkg-1.0.dist-info")).unwrap();
+
+        let reports = Uv.drift(dir.path());
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].directory, ".venv");
+        assert_eq!(reports[0].unrecorded, vec!["sneaky-pkg"]);
+        assert_eq!(reports[0].record_command, "uv add <package>");
+    }
+
+    #[test]
+    fn drift_is_silent_when_the_lockfile_records_everything() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("uv.lock"),
+            "[[package]]\nname = \"requests\"\nversion = \"2.32.3\"\n",
+        )
+        .unwrap();
+        let sp = dir.path().join(".venv").join("Lib").join("site-packages");
+        fs::create_dir_all(sp.join("requests-2.32.3.dist-info")).unwrap();
+
+        assert!(Uv.drift(dir.path()).is_empty());
     }
 }

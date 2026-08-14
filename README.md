@@ -154,7 +154,9 @@ A few more worth knowing on day one:
 ```bash
 devp stats                  # how much has been reclaimed so far, and by which repositories
 devp caches                 # every package manager cache, sized. Deletes nothing
+devp status --drift         # anything installed that the lockfiles don't record?
 devp doctor .               # why is this repository not being pruned?
+devp doctor --fix           # repair a broken integration — never a first-time install
 devp -V                     # version, OS, architecture, config path, PATH audit
 ```
 
@@ -321,8 +323,8 @@ process that leaves a dirty working tree is a surprise.
 | 🧩 **Any number of ecosystems per repository** | uv, npm and cargo in one root, or spread across `frontend/`, `services/api/` and `tools/cli/` — each discovered, verified and pruned on its own terms                                                                                           |
 | ↩️ **One-command restore**                     | `devp restore .` reinstalls a tree; `devp restore --last-run` puts back exactly what the most recent pass deleted, across every repository it touched                                                                                           |
 | 🕒 **Activity-aware**                          | Combines `git log` timestamps with source-file `mtime`, so uncommitted work protects a repository just as a commit does                                                                                                                         |
-| 📊 **Cache report**                            | `devp caches` sizes every package manager cache and store on the machine and prints the command that clears each. Read-only, always                                                                                                             |
-| 🩺 **`devp doctor`**                           | One read-only pass that ends by naming the *single* reason a repository would or would not be pruned. Runs no package manager, repairs nothing, safe to run twice                                                                               |
+| 📊 **Cache report**                            | `devp caches` sizes every package manager cache and store on the machine — npm to cargo to Maven, Gradle, NuGet, vcpkg and Conan — and prints the command that clears each. Read-only, always                                                   |
+| 🩺 **`devp doctor`**                           | One read-only pass that ends by naming the *single* reason a repository would or would not be pruned. Runs no package manager, repairs nothing, safe to run twice. `devp doctor --fix` then mends what it found — installed-but-broken only     |
 | 🤖 **Self-installing automation**              | OS-native scheduler (Task Scheduler, LaunchAgent, systemd user timer) and non-blocking Git hooks, installed at install time and restored after an upgrade. `auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1` turn it off |
 | ⚡ **0ms opt-out**                             | An `ignore.devprune.json` in a repository root is honoured by file presence alone — no read, no parse                                                                                                                                           |
 | 🔌 **`--json` on every reporting command**     | `run`, `status`, `stats` and `caches` each emit one versioned document on stdout, diagnostics on stderr. Built for scripts and agents                                                                                                           |
@@ -341,12 +343,12 @@ process that leaves a dirty working tree is a surprise.
 | `devp unlink [PATH]`   | `--missing`                                                         | Unregisters one; `--missing` drops every entry whose directory is gone, in one pass                                 |
 | `devp undo`            |                                                                     | Reverts the most recent `init` or `link`                                                                            |
 | `devp run [PATH]`      | `--dry-run`, `--only`, `--skip`, `--except`, `--min-size`, `--json` | Prunes every registered repository, or one target                                                                   |
-| `devp status`          | `--top N`, `--json`                                                 | Interactive dashboard; a plain table when there is no TTY. `--top N` shows only the N biggest repositories          |
+| `devp status`          | `--top N`, `--drift`, `--json`                                      | Interactive dashboard; a plain table when there is no TTY. `--top N` shows only the N biggest repositories; `--drift` lists every environment holding packages its lockfile never recorded |
 | `devp stats`           | `--json`                                                            | What has already been reclaimed: lifetime total, prune passes, the last pass, and the biggest contributors          |
 | `devp completions`     | `bash`, `zsh`, `fish`, `powershell`, `elvish`                       | Prints a shell completion script to stdout, generated from the same argument definitions the binary parses with     |
 | `devp caches`          | `--json`                                                            | Sizes every package manager cache on the machine and prints the command that clears each. **Deletes nothing**       |
 | `devp restore [PATH]`  | `--last-run`                                                        | Reinstalls dependencies for every project in a tree; `--last-run` undoes the last prune pass                        |
-| `devp doctor [PATH]`   |                                                                     | Diagnoses the installation, or one repository — ending with the single reason a pass would or would not touch it    |
+| `devp doctor [PATH]`   | `--fix`                                                             | Diagnoses the installation, or one repository — ending with the single reason a pass would or would not touch it. `--fix` repairs what the checks found; it never performs a first-time install |
 | `devp config [ACTION]` | `get`, `set`, `show`, `wizard`, `project`, `daemon`, `hook`, `icon` | Global settings, per-repository `.devprune.json`, scheduler, Git hooks, file manager icons                          |
 | `devp setup`           | `--status`                                                          | Installs any missing integration; `--status` only reports                                                           |
 | `devp update`          | `--offline`                                                         | Prints the installed version, checks GitHub for a newer release, shows the upgrade command for your install channel |

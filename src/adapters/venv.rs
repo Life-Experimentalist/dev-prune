@@ -515,6 +515,34 @@ impl PackageManager for Venv {
     fn lockfiles(&self) -> &'static [&'static str] {
         &["requirements.txt"]
     }
+
+    /// The comparison `enforce_lockfile` refuses on, as data: per venv, the installed
+    /// distributions unreachable from anything `requirements.txt` pins.
+    fn drift(&self, path: &Path) -> Vec<super::DriftReport> {
+        let Some(pinned) = requirement_names(&path.join("requirements.txt"), &mut Vec::new())
+        else {
+            return Vec::new();
+        };
+        let mut reports = Vec::new();
+        for venv in find_venv_dirs(path) {
+            let Some(installed) = installed_distributions(&venv) else {
+                continue;
+            };
+            let extras = unrecorded_packages(&installed, &pinned);
+            if extras.is_empty() {
+                continue;
+            }
+            reports.push(super::DriftReport {
+                directory: venv
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| venv.display().to_string()),
+                unrecorded: extras,
+                record_command: "pip freeze > requirements.txt",
+            });
+        }
+        reports
+    }
 }
 
 #[cfg(test)]
@@ -715,5 +743,33 @@ mod tests {
             Venv.enforce_lockfile(dir.path(), EnforcePolicy::default())
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn drift_names_the_venv_and_the_unrecorded_packages() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("requirements.txt"), "requests==2.32.3\n").unwrap();
+        make_venv(dir.path(), ".venv");
+        install_package(dir.path(), ".venv", "requests", &[]);
+        install_package(dir.path(), ".venv", "sneaky-pkg", &[]);
+
+        let reports = Venv.drift(dir.path());
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].directory, ".venv");
+        assert_eq!(reports[0].unrecorded, vec!["sneaky-pkg"]);
+        assert_eq!(reports[0].record_command, "pip freeze > requirements.txt");
+    }
+
+    /// A dependency of a pinned package is reachable from the requirements file, so it
+    /// is recorded in the only sense that matters: `pip install -r` brings it back.
+    #[test]
+    fn drift_does_not_flag_transitive_dependencies_of_pinned_packages() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("requirements.txt"), "requests==2.32.3\n").unwrap();
+        make_venv(dir.path(), ".venv");
+        install_package(dir.path(), ".venv", "requests", &["urllib3"]);
+        install_package(dir.path(), ".venv", "urllib3", &[]);
+
+        assert!(Venv.drift(dir.path()).is_empty());
     }
 }

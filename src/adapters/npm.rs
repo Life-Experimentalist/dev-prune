@@ -65,31 +65,10 @@ fn check_unrecorded_installs(project_dir: &Path) -> Result<()> {
         );
     }
 
-    // The `--no-save` case: package names npm's own install record knows about that
-    // the committed lockfile does not. Either file missing or unparseable means there
-    // is nothing to compare — not evidence of drift.
-    let package_names = |path: &Path| -> Option<std::collections::HashSet<String>> {
-        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
-        Some(
-            json.get("packages")?
-                .as_object()?
-                .keys()
-                .filter(|k| !k.is_empty())
-                .cloned()
-                .collect(),
-        )
-    };
-    let (Some(installed), Some(recorded)) = (
-        package_names(&node_modules.join(".package-lock.json")),
-        package_names(&project_dir.join("package-lock.json")),
-    ) else {
-        return Ok(());
-    };
-    let mut extras: Vec<&String> = installed.difference(&recorded).collect();
+    let extras = no_save_extras(project_dir);
     if extras.is_empty() {
         return Ok(());
     }
-    extras.sort();
     let shown = extras
         .iter()
         .take(10)
@@ -108,6 +87,33 @@ fn check_unrecorded_installs(project_dir: &Path) -> Result<()> {
          them (or `npm install` to sync), then retry.",
         extras.len()
     );
+}
+
+/// The `--no-save` case, as data: entries npm's own install record
+/// (`node_modules/.package-lock.json`) knows about that the committed lockfile does
+/// not, sorted. Either file missing or unparseable means there is nothing to compare —
+/// not evidence of drift — and answers empty.
+fn no_save_extras(project_dir: &Path) -> Vec<String> {
+    let package_names = |path: &Path| -> Option<std::collections::HashSet<String>> {
+        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+        Some(
+            json.get("packages")?
+                .as_object()?
+                .keys()
+                .filter(|k| !k.is_empty())
+                .cloned()
+                .collect(),
+        )
+    };
+    let (Some(installed), Some(recorded)) = (
+        package_names(&project_dir.join("node_modules").join(".package-lock.json")),
+        package_names(&project_dir.join("package-lock.json")),
+    ) else {
+        return Vec::new();
+    };
+    let mut extras: Vec<String> = installed.difference(&recorded).cloned().collect();
+    extras.sort();
+    extras
 }
 
 impl PackageManager for Npm {
@@ -163,6 +169,21 @@ impl PackageManager for Npm {
 
     fn lockfiles(&self) -> &'static [&'static str] {
         &["package-lock.json"]
+    }
+
+    /// The `--no-save` comparison `enforce_lockfile` refuses on, as data. npm-linked
+    /// packages are deliberately not listed here: a symlink to code outside the project
+    /// is not something any lockfile edit can record, so it stays a prune-time refusal.
+    fn drift(&self, project_dir: &Path) -> Vec<super::DriftReport> {
+        let extras = no_save_extras(project_dir);
+        if extras.is_empty() {
+            return Vec::new();
+        }
+        vec![super::DriftReport {
+            directory: "node_modules".to_string(),
+            unrecorded: extras,
+            record_command: "npm install <pkg> (or `npm install` to sync the lockfile)",
+        }]
     }
 }
 
@@ -238,5 +259,42 @@ mod tests {
         let dir = tempdir().unwrap();
         let bloat = Npm.bloat_dirs(dir.path());
         assert!(bloat.is_empty());
+    }
+
+    #[test]
+    fn drift_reports_the_no_save_install_as_data() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("package-lock.json"),
+            r#"{"packages":{"":{},"node_modules/left-pad":{}}}"#,
+        )
+        .unwrap();
+        let nm = dir.path().join("node_modules");
+        fs::create_dir(&nm).unwrap();
+        fs::write(
+            nm.join(".package-lock.json"),
+            r#"{"packages":{"":{},"node_modules/left-pad":{},"node_modules/sneaky":{}}}"#,
+        )
+        .unwrap();
+
+        let reports = Npm.drift(dir.path());
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].directory, "node_modules");
+        assert_eq!(reports[0].unrecorded, vec!["node_modules/sneaky"]);
+    }
+
+    /// A missing hidden lockfile means npm never recorded what it installed — that is
+    /// "nothing to compare", not drift.
+    #[test]
+    fn drift_is_silent_without_npms_own_install_record() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("package-lock.json"),
+            r#"{"packages":{"":{}}}"#,
+        )
+        .unwrap();
+        fs::create_dir(dir.path().join("node_modules")).unwrap();
+
+        assert!(Npm.drift(dir.path()).is_empty());
     }
 }

@@ -8,9 +8,18 @@
 //! registry, release check. With a path it checks that one repository and ends by naming
 //! the reason it would or would not be pruned right now.
 //!
-//! Everything here is read-only. A diagnostic that repairs things as it goes cannot be
-//! run twice to see whether the first run helped, and `devp setup` already exists for the
-//! repairing. Nothing runs a package manager either: `enforce_lockfile` invokes `npm`,
+//! The plain doctor is read-only. A diagnostic that repairs things as it goes cannot be
+//! run twice to see whether the first run helped, so diagnosis and treatment are two
+//! separate invocations: the report names every finding it could repair, and `--fix` is
+//! the explicit second step that repairs them. `--fix` only mends what is already
+//! installed but broken — a missing or stale twin binary, hooks or a scheduler
+//! registered against a binary that no longer exists, a drifted hook chain, a missing
+//! `SKILL.md` export, registry entries whose repository is gone. It never installs an
+//! integration for the first time (`devp setup` and the individual commands are the
+//! opt-in for that), and it never touches an unreadable `registry.json`, because
+//! guessing at a config it cannot read is exactly what dev-prune refuses to do.
+//!
+//! Nothing here runs a package manager either: `enforce_lockfile` invokes `npm`,
 //! `cargo` and friends, which is minutes of work and, for the opted-in adapters, writes
 //! to tracked files. The doctor reports what it can see.
 
@@ -30,12 +39,37 @@ use crate::scanner::{self, git};
 use crate::setup;
 use crate::workspace;
 
+/// One repair `--fix` knows how to make. Every variant mends something that is already
+/// installed but broken; none of them installs an integration for the first time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Repair {
+    /// The `dev-prune`/`devp` pair is missing a member, or the alias is stale.
+    Twin,
+    /// The `SKILL.md` export is missing or out of date.
+    SkillFile,
+    /// Installed hooks point at a deleted binary, or a chain has drifted.
+    Hooks,
+    /// The installed scheduler points at a deleted binary.
+    Scheduler,
+    /// Registered paths that no longer exist on disk.
+    UnlinkMissing,
+}
+
 /// Tally of everything the report flagged, so the verdict is derived from the same
 /// lines the user just read rather than recomputed from scratch.
 #[derive(Default)]
 struct Findings {
     warnings: Vec<String>,
     problems: Vec<String>,
+    /// Repairs `--fix` would make, in the order their findings were reported.
+    fixes: Vec<Repair>,
+    /// Indices into `problems` that one of `fixes` addresses, so the repair verdict can
+    /// tell "fixed by the pass that just ran" apart from "still needs a human".
+    fixable_problems: Vec<usize>,
+    /// The subset of `fixes` whose finding was a problem rather than a warning. A repair
+    /// from this list that does not actually land leaves the problem standing, and the
+    /// exit code has to say so.
+    problem_repairs: Vec<Repair>,
 }
 
 impl Findings {
@@ -56,6 +90,29 @@ impl Findings {
         self.problems.push(format!("{label}: {detail}"));
     }
 
+    /// Record that the most recent `warn` is one `--fix` can repair.
+    fn fixable(&mut self, repair: Repair) {
+        if !self.fixes.contains(&repair) {
+            self.fixes.push(repair);
+        }
+    }
+
+    /// Record that the most recent `problem` is one `--fix` can repair.
+    ///
+    /// Called immediately after the `problem` it belongs to, so the index bookkeeping
+    /// stays next to the finding it describes.
+    fn fixable_problem(&mut self, repair: Repair) {
+        self.fixable(repair);
+        if !self.problem_repairs.contains(&repair) {
+            self.problem_repairs.push(repair);
+        }
+        if let Some(last) = self.problems.len().checked_sub(1) {
+            if !self.fixable_problems.contains(&last) {
+                self.fixable_problems.push(last);
+            }
+        }
+    }
+
     /// A fact with no verdict attached.
     fn note(&self, label: &str, detail: &str) {
         println!("  {label:<22}   {detail}");
@@ -73,11 +130,13 @@ use colored::Colorize as _;
 /// Run the `doctor` command.
 ///
 /// `path` is whatever the user typed, already tilde-expanded. `None` means the global
-/// installation; `Some(".")` is an ordinary path like any other.
-pub fn run(path: Option<&str>) -> Result<()> {
+/// installation; `Some(".")` is an ordinary path like any other. `fix` applies the
+/// repairs the installation check found; clap refuses `--fix` alongside a path, because
+/// the repository check has nothing it could safely repair.
+pub fn run(path: Option<&str>, fix: bool) -> Result<()> {
     match path {
         Some(p) => check_repository(p),
-        None => check_installation(),
+        None => check_installation(fix),
     }
 }
 
@@ -106,6 +165,14 @@ fn verdict(f: &Findings, all_clear: &str, headline: Option<&str>) -> Result<()> 
         println!("  {} {p}", "✗".red());
     }
 
+    if !f.fixes.is_empty() {
+        println!();
+        println!(
+            "  {} of these can be repaired automatically — run `devp doctor --fix`.",
+            f.fixes.len()
+        );
+    }
+
     println!();
     println!("  Troubleshooting: {}", constants::TROUBLESHOOTING_URL);
 
@@ -130,7 +197,7 @@ fn verdict(f: &Findings, all_clear: &str, headline: Option<&str>) -> Result<()> 
 // Global installation
 // ---------------------------------------------------------------------------
 
-fn check_installation() -> Result<()> {
+fn check_installation(fix: bool) -> Result<()> {
     output::print_header("dev-prune doctor");
     let mut f = Findings::default();
 
@@ -141,7 +208,150 @@ fn check_installation() -> Result<()> {
     check_registry_health(&mut f, registry.as_ref());
     check_release_state(&mut f, registry.as_ref());
 
+    if fix && !f.fixes.is_empty() {
+        return apply_repairs(&f, registry.as_ref());
+    }
+    if fix {
+        // `--fix` with nothing repairable falls through to the ordinary verdict: what
+        // remains (if anything) needs a human, and saying which things is the verdict's
+        // whole job.
+        return verdict(&f, "Everything checks out — nothing to repair.", None);
+    }
     verdict(&f, "Everything checks out.", None)
+}
+
+/// Apply every repair the diagnosis recorded, then give the repair verdict.
+///
+/// Each repair goes through the same `setup::ensure_*` passes the automatic setup uses,
+/// so a repair can never do something the setup pass would not — and like that pass,
+/// each one re-checks the state itself before touching anything, so a finding that
+/// healed between diagnosis and repair reports "already in place" rather than being
+/// re-applied.
+///
+/// `DEV_PRUNE_NO_AUTO_SETUP` disables every self-installation path, and the repairs
+/// that write outside the config directory — the twin binary, the git hooks, the OS
+/// scheduler — are exactly that, so with the variable set they are skipped and named.
+/// Bookkeeping inside dev-prune's own config directory (the `SKILL.md` export, dead
+/// registry entries) is not an installation and still runs.
+///
+/// Exit code: `0` unless a repair failed outright, a *problem*-level finding was left
+/// unrepaired, or a problem remains that no repair addresses. A skipped repair whose
+/// finding was only a warning (the twin is a running executable) exits `0` like any
+/// other warning — the report says what to do, and nothing is more broken than it
+/// already was.
+fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
+    f.section("Repairs");
+
+    let ok = |label: &str, detail: &str| println!("  {label:<22} {} {detail}", "✓".green());
+    let skipped = |label: &str, detail: &str| println!("  {label:<22} {} {detail}", "!".yellow());
+    let failed_line = |label: &str, detail: &str| println!("  {label:<22} {} {detail}", "✗".red());
+
+    let chain = registry
+        .map(|r| r.settings.auto_hooks_chain)
+        .unwrap_or(false);
+    let interval = registry
+        .map(|r| r.settings.check_interval_days)
+        .unwrap_or(constants::DEFAULT_CHECK_INTERVAL_DAYS);
+    let installs_off = setup::no_auto_setup_requested();
+
+    let mut repaired = 0usize;
+    let mut failures = 0usize;
+    let mut attention = 0usize;
+    // Problems whose repair was skipped rather than failed. Failures already count
+    // toward the exit code; a skipped problem has to as well, because the breakage the
+    // diagnosis reported is still there.
+    let mut skipped_problems = 0usize;
+
+    for repair in &f.fixes {
+        let is_problem = f.problem_repairs.contains(repair);
+        let (label, manual) = match repair {
+            Repair::Twin => ("Binary pair", "run `dev-prune setup` yourself"),
+            Repair::SkillFile => ("SKILL.md", "run `devp skill` yourself"),
+            Repair::Hooks => ("Git hooks", "run `devp hook install` yourself"),
+            Repair::Scheduler => ("Scheduler", "run `devp daemon install` yourself"),
+            Repair::UnlinkMissing => {
+                match crate::commands::link::run_unlink_missing() {
+                    Ok(()) => repaired += 1,
+                    Err(e) => {
+                        failed_line("Registry", &format!("{e:#}"));
+                        failures += 1;
+                    }
+                }
+                continue;
+            }
+        };
+        // These three write outside the config directory, which is precisely what the
+        // variable exists to forbid.
+        if installs_off && matches!(repair, Repair::Twin | Repair::Hooks | Repair::Scheduler) {
+            skipped(
+                label,
+                &format!("{} is set — {manual}", setup::ENV_NO_AUTO_SETUP),
+            );
+            attention += 1;
+            if is_problem {
+                skipped_problems += 1;
+            }
+            continue;
+        }
+        let outcome = match repair {
+            Repair::Twin => setup::ensure_alias(),
+            Repair::SkillFile => setup::ensure_skill_file(),
+            Repair::Hooks => setup::ensure_hooks(chain),
+            Repair::Scheduler => setup::ensure_daemon(interval),
+            Repair::UnlinkMissing => unreachable!("handled above"),
+        };
+        match outcome {
+            setup::Outcome::Installed => {
+                ok(label, "repaired");
+                repaired += 1;
+            }
+            setup::Outcome::AlreadyPresent => {
+                ok(label, "already in place");
+                repaired += 1;
+            }
+            setup::Outcome::Skipped(why) => {
+                skipped(label, &why);
+                attention += 1;
+                if is_problem {
+                    skipped_problems += 1;
+                }
+            }
+            setup::Outcome::Failed(why) => {
+                failed_line(label, &why);
+                failures += 1;
+            }
+        }
+    }
+
+    f.section("Verdict");
+    let unfixable: Vec<&String> = f
+        .problems
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !f.fixable_problems.contains(i))
+        .map(|(_, p)| p)
+        .collect();
+    for p in &unfixable {
+        println!("  {} {p} (not auto-repairable)", "✗".red());
+    }
+    if !unfixable.is_empty() {
+        println!();
+        println!("  Troubleshooting: {}", constants::TROUBLESHOOTING_URL);
+    }
+    println!();
+    output::print_info(&format!(
+        "{repaired} repaired, {attention} skipped, {failures} failed. \
+         Run `devp doctor` to confirm."
+    ));
+
+    let unresolved = failures + skipped_problems + unfixable.len();
+    if unresolved > 0 {
+        anyhow::bail!(
+            "{unresolved} {} could not be repaired.",
+            output::plural(unresolved, "finding", "findings")
+        );
+    }
+    Ok(())
 }
 
 fn check_binary(f: &mut Findings) {
@@ -184,6 +394,8 @@ fn check_binary(f: &mut Findings) {
             twin_stem,
             &format!("not installed next to {running} — run `{running} setup`"),
         );
+        // Either name may recreate a twin that is missing outright.
+        f.fixable(Repair::Twin);
     } else if same_binary(&exe, &twin) {
         f.ok(twin_stem, &output::clean_path(&twin));
     } else {
@@ -199,6 +411,12 @@ fn check_binary(f: &mut Findings) {
                 output::clean_path(&exe)
             ),
         );
+        // Only the canonical `dev-prune` may overwrite a differing twin — `devp`
+        // refreshing `dev-prune` could reinstall the version an upgrade just replaced.
+        // So this is repairable only from the canonical side.
+        if running == "dev-prune" {
+            f.fixable(Repair::Twin);
+        }
     }
 
     let sep = if cfg!(windows) { ';' } else { ':' };
@@ -331,7 +549,10 @@ fn check_integrations(f: &mut Findings, registry: Option<&Registry>) {
 
     match setup::skill_path() {
         Ok(p) if p.exists() => f.ok("SKILL.md", &output::clean_path(&p)),
-        _ => f.warn("SKILL.md", "not exported — run `devp skill`"),
+        _ => {
+            f.warn("SKILL.md", "not exported — run `devp skill`");
+            f.fixable(Repair::SkillFile);
+        }
     }
 
     if crate::commands::icon::is_registered() {
@@ -352,15 +573,20 @@ fn check_integrations(f: &mut Findings, registry: Option<&Registry>) {
             Ok(HookState::Chained { previous, drifted }) if drifted.is_empty() => {
                 check_hook_target(f, &format!("active, chained to `{previous}`"))
             }
-            Ok(HookState::Chained { previous, drifted }) => f.warn(
-                "Git hooks",
-                &format!(
-                    "chained to `{previous}`, but {} not forwarded ({}) — \
-                     re-run `devp hook install --chain`",
-                    drifted.len(),
-                    drifted.join(", ")
-                ),
-            ),
+            Ok(HookState::Chained { previous, drifted }) => {
+                f.warn(
+                    "Git hooks",
+                    &format!(
+                        "chained to `{previous}`, but {} not forwarded ({}) — \
+                         re-run `devp hook install --chain`",
+                        drifted.len(),
+                        drifted.join(", ")
+                    ),
+                );
+                // The chain is installed and merely out of date; reinstalling it is the
+                // same repair the automatic setup pass makes.
+                f.fixable(Repair::Hooks);
+            }
             Ok(HookState::Foreign(p)) => f.warn(
                 "Git hooks",
                 &format!(
@@ -429,7 +655,7 @@ fn report_integration_target(
     installed: &str,
     recorded: Option<std::path::PathBuf>,
     repair: &str,
-) {
+) -> bool {
     match recorded {
         // Nothing to report: the entry is unreadable on this machine, which is not
         // evidence of a problem. Saying so would be a warning nobody can act on.
@@ -438,34 +664,42 @@ fn report_integration_target(
             label,
             &format!("{installed} — {}", output::clean_path(&path)),
         ),
-        Some(path) => f.problem(
-            label,
-            &format!(
-                "registered, but `{}` no longer exists — it never runs. {repair}",
-                output::clean_path(&path)
-            ),
-        ),
+        Some(path) => {
+            f.problem(
+                label,
+                &format!(
+                    "registered, but `{}` no longer exists — it never runs. {repair}",
+                    output::clean_path(&path)
+                ),
+            );
+            return true;
+        }
     }
+    false
 }
 
 fn check_scheduler_target(f: &mut Findings) {
-    report_integration_target(
+    if report_integration_target(
         f,
         "Scheduler",
         "installed",
         daemon::registered_exe_path(),
         "Re-register it with `devp daemon install`.",
-    );
+    ) {
+        f.fixable_problem(Repair::Scheduler);
+    }
 }
 
 fn check_hook_target(f: &mut Findings, installed: &str) {
-    report_integration_target(
+    if report_integration_target(
         f,
         "Git hooks",
         installed,
         hook::registered_exe_path(),
         "Rewrite them with `devp hook install`.",
-    );
+    ) {
+        f.fixable_problem(Repair::Hooks);
+    }
 }
 
 /// Check the package-manager binaries the registered repositories actually need.
@@ -581,14 +815,17 @@ fn check_registry_health(f: &mut Findings, registry: Option<&Registry>) {
 
     match missing.len() {
         0 => {}
-        1 => f.warn(
-            "Missing",
-            &format!(
-                "{} no longer exists — `devp unlink {}`",
-                output::clean_path(missing[0]),
-                output::clean_path(missing[0])
-            ),
-        ),
+        1 => {
+            f.warn(
+                "Missing",
+                &format!(
+                    "{} no longer exists — `devp unlink {}`",
+                    output::clean_path(missing[0]),
+                    output::clean_path(missing[0])
+                ),
+            );
+            f.fixable(Repair::UnlinkMissing);
+        }
         n => {
             f.warn(
                 "Missing",
@@ -598,6 +835,7 @@ fn check_registry_health(f: &mut Findings, registry: Option<&Registry>) {
                     output::clean_path(missing[0])
                 ),
             );
+            f.fixable(Repair::UnlinkMissing);
         }
     }
 

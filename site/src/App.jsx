@@ -1340,6 +1340,16 @@ export default function App() {
                   </tr>
                   <tr>
                     <td className="td-name">
+                      <code>devp status --drift</code>
+                    </td>
+                    <td>
+                      Every environment holding packages its lockfile never
+                      recorded, with the one command that records them. A pure
+                      read — this is what a prune would refuse on
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
                       <code>devp stats</code>
                     </td>
                     <td>
@@ -1363,7 +1373,8 @@ export default function App() {
                       <code>devp caches</code>
                     </td>
                     <td>
-                      Size every package manager cache on the machine and print
+                      Size every package manager cache on the machine — npm to
+                      cargo to Maven, Gradle, NuGet, vcpkg and Conan — and print
                       the command that clears each. Reports only — it deletes
                       nothing
                     </td>
@@ -1390,6 +1401,17 @@ export default function App() {
                     <td>
                       Check the installation, or one repository — ending with the
                       single reason a pass would or would not touch it
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
+                      <code>devp doctor --fix</code>
+                    </td>
+                    <td>
+                      Repair what the checks found — a stale <code>devp</code>{" "}
+                      twin, hooks or a scheduler pointing at a binary that is
+                      gone, dead registry entries. Mends installed-but-broken
+                      only; never a first-time install
                     </td>
                   </tr>
                   <tr>

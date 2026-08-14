@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.1.0] - 2026-08-14
 
-Three new commands — `devp stats`, `devp completions` and `devp status --top` — plus the
-Windows installation and onboarding fixes, and a full audit pass over the pruning engine,
-every adapter, the installers and the docs. Verification only got stricter: the seven
+New commands and flags — `devp stats`, `devp completions`, `devp status --top` and
+`--drift`, `devp doctor --fix` — plus cache coverage for the JVM, .NET and C/C++
+ecosystems, the Windows installation and onboarding fixes, and a full audit pass over the
+pruning engine, every adapter, the installers and the docs. Verification only got stricter: the seven
 safety invariants are untouched, no new directory became eligible for deletion, and
 several kinds that were eligible no longer are.
 
@@ -100,6 +101,36 @@ several kinds that were eligible no longer are.
   be proven, so nothing was deleted — counted in `summary.errors`), and `path_missing`
   (the registered directory no longer exists; `devp unlink --missing` clears such
   entries). New statuses do not bump the `schema` number — parse permissively.
+- **`devp status --drift`** lists every environment holding packages its lockfile never
+  recorded — an `npm install --no-save`, a bare `pip install` into a pinned venv, an
+  ad-hoc `uv pip install` — and shows the one command that records them. It is the same
+  comparison a prune refuses on, surfaced as a pure read, so you can fix the drift on
+  your own schedule instead of discovering it the moment a prune declines. `--json`
+  hands the same report to an agent.
+
+  ```bash
+  devp status --drift
+  ```
+- **`devp doctor --fix`** repairs what the checks found. Plain `devp doctor` stays
+  diagnosis-only and now says when a finding is repairable; `--fix` is the treatment,
+  and it mends *installed-but-broken* only — a stale `devp` twin, hooks or a scheduler
+  entry pointing at a binary that no longer exists, a drifted hook chain, a missing
+  `SKILL.md` export, registry entries whose repository is gone. Each repair is the
+  corresponding setup pass re-run, so it can never do more than `devp setup` would, and
+  it never performs a first-time install.
+
+  ```bash
+  devp doctor --fix
+  ```
+- **`devp caches` now covers the JVM, .NET and C/C++ ecosystems**: the Maven local
+  repository, the Gradle caches and wrapper distributions, the NuGet global-packages
+  folder, the vcpkg binary cache and the Conan package cache — found where their
+  relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`,
+  `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) say they are, sized, and listed with the
+  command that clears each. This is deliberately where these ecosystems live: their
+  in-repository `target/`, `build/` and `bin/`+`obj/` directories are compiler outputs
+  no lockfile can prove rebuildable, so dev-prune never deletes those — the gigabytes
+  worth reclaiming sit in these machine-wide stores.
 
 ### Fixed
 

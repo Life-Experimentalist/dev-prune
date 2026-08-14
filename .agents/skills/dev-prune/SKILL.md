@@ -74,9 +74,11 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "clean everything but the API project" | `devp run --except api -y` — never verified, never deleted, never reinstalled |
 | "put the dependencies back" | `devp restore .` |
 | "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched |
-| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and prints the command that clears each. It deletes nothing; the user runs the clear command |
+| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan) and prints the command that clears each. It deletes nothing; the user runs the clear command |
+| "did I install anything my lockfiles don't know about?" | `devp status --drift` — every environment holding packages its lockfile never recorded, with the one command that records them. A pure read; this is what a prune would refuse on |
 | "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it |
 | "is anything wrong with my install?" | `devp doctor` |
+| "fix whatever's broken" | `devp doctor --fix` — repairs installed-but-broken integrations (stale twin, dead-target hooks/scheduler, drifted chain, missing SKILL.md, dead registry entries); never a first-time install |
 | "track my projects folder" | `devp init ~/Code` |
 | "track this repo" | `devp link .` |
 | "stop tracking this" | `devp unlink .` |
@@ -132,6 +134,7 @@ devp stats --json           # what has already been reclaimed, and by which repo
 devp run --dry-run --json   # what a pass would do, with exact byte counts
 devp run -y --json          # do it
 devp caches --json          # every package-manager cache, sized, largest first
+devp status --drift --json  # unrecorded packages per environment, with the record command
 ```
 
 `stats` reports history, `status` reports opportunity — reach for `stats` when the user
@@ -288,8 +291,11 @@ after it.
 Start with `devp doctor` for the installation, or `devp doctor <path>` for one repository
 — it runs every check in the table below at once, changes nothing, and ends by naming the
 single reason a prune pass would or would not touch that repository. Exit `1` means
-something is genuinely broken; warnings alone exit `0`. Reach for the table when you need
-the fix for a specific symptom the report named.
+something is genuinely broken; warnings alone exit `0`. When the verdict says findings
+can be repaired automatically, `devp doctor --fix` mends them — it re-runs the same setup
+passes automatic installation uses, so it can never do more than `devp setup` would, and
+it never performs a first-time install. Reach for the table when you need the fix for a
+specific symptom the report named.
 
 | Symptom | Cause | Fix |
 | :--- | :--- | :--- |
@@ -303,6 +309,7 @@ the fix for a specific symptom the report named.
 | A repository is not in `devp status` at all | It was never registered | `devp link .` in it, or `devp init <parent dir>` |
 | **Path Missing** | The directory was moved or deleted | `devp unlink <old path>`, then `devp link <new path>`. For a registry full of them, `devp unlink --missing` clears the lot |
 | Lockfile verification fails | The lockfile has drifted from the manifest, and verification is read-only so it refuses rather than repairing | Run the exact command dev-prune printed (it is the writing form for that ecosystem), in that project. Or `devp config set allow_manifest_rewrite true` to let dev-prune run it during the pass. Never delete the lockfile |
+| "holds package(s) that the lockfile does not record" | Something was installed without recording it — `npm install --no-save`, a bare `pip install` into a pinned venv, an ad-hoc `uv pip install` | `devp status --drift` lists every such environment with the exact record command (`npm install <pkg>`, `uv add <package>`, `pip freeze > requirements.txt`). Run it, or uninstall the extras. Never delete the directory manually |
 | "`npm` is not available" | that manager is not installed, or not on `PATH` | Install it. dev-prune will not delete a tree it cannot prove it can rebuild |
 | Verification times out | A slow registry or a very large project | `devp config set command_timeout_secs 1800` |
 | Hooks not installed | `git` absent from `PATH`, or another tool owns `core.hooksPath` | `devp setup --status` says which. Install git, or `devp hook install --chain` to sit in front of the other tool and forward to it |
