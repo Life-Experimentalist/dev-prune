@@ -31,15 +31,14 @@ before 1.0.0; the old spelling still works and prints a note explaining the rena
 - Windows PowerShell: `iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex`
 - Windows Command Prompt: `powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"`
   (same install; `devp` resolves in the next Command Prompt, not the current one)
-- npm: `npx dev-prune status`, or `npm install -g dev-prune`
 - Python tooling: `uv tool install dev-prune`, `uvx dev-prune status`,
   `pipx install dev-prune`, `pip install dev-prune`
 - Cargo, prebuilt: `cargo binstall dev-prune`
 - Cargo, from source: `cargo install dev-prune` (Rust 1.85+)
 
-The npm and PyPI packages contain the prebuilt binary rather than downloading one in a
-postinstall step, so they install correctly under `npm ci --ignore-scripts`, behind a
-registry mirror, and with no network access. `cargo install` is the only channel that
+The PyPI packages contain the prebuilt binary rather than downloading one at install
+time, so they install correctly behind a registry mirror and with no network access.
+`cargo install` is the only channel that
 compiles on your machine — crates.io distributes source, so there is no binary there for
 cargo to fetch. `cargo binstall` reads the `[package.metadata.binstall]` table in
 `Cargo.toml` and downloads the GitHub release archive instead, needing no toolchain.

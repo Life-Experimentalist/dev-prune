@@ -68,15 +68,16 @@ The Linux binaries are statically linked against musl. There is no glibc version
 
 The install scripts construct these filenames by hand and refuse to install without the matching `.sha256`, so the naming is a contract rather than a convention.
 
-### 4. NPM (`npx dev-prune` / `npm install -g dev-prune`)
-```bash
-npx dev-prune status
-npm install -g dev-prune
-```
-- The published tarball **contains the binary**. There is no `postinstall` download step, so the package installs correctly under `npm ci --ignore-scripts`, behind a corporate registry mirror, and with no network access to GitHub.
+### 4. NPM — packaging exists, channel currently off
+Nothing is on the npm registry today: the `publish-npm` release job is gated behind the
+`NPM_PUBLISH` repository variable, which is set to `false`. The packaging under `npm/`
+still builds on every release and is described here so it can be turned back on without
+re-deriving it — the bootstrap steps are in [RELEASING.md](RELEASING.md).
+
+- The tarball **contains the binary**. There is no `postinstall` download step, so the package installs correctly under `npm ci --ignore-scripts`, behind a corporate registry mirror, and with no network access to GitHub.
 - Seven packages make that work: six platform packages (`dev-prune-linux-x64`, `dev-prune-darwin-arm64`, `dev-prune-win32-x64`, …), each carrying one executable and declaring `os`/`cpu`, plus the `dev-prune` dispatcher that lists all six as `optionalDependencies`. npm resolves exactly the one that matches the machine and skips the rest.
 - Both `dev-prune` and `devp` are registered as `bin` entries.
-- Every tarball is published with [npm provenance](https://docs.npmjs.com/generating-provenance-statements) — a signed attestation tying it to the workflow run, commit and tag that produced it.
+- When publishing is on, every tarball carries [npm provenance](https://docs.npmjs.com/generating-provenance-statements) — a signed attestation tying it to the workflow run, commit and tag that produced it.
 
 ### 5. PyPI (`uv tool install` / `uvx` / `pipx` / `pip`)
 ```bash
@@ -114,6 +115,6 @@ A release is one `git push` of one tag. Nothing is built, archived, uploaded or 
 git tag -a v1.1.0 -m "v1.1.0" && git push origin v1.1.0
 ```
 
-`.github/workflows/release.yml` then builds all six targets, verifies the tag matches `Cargo.toml` and that `CHANGELOG.md` documents it, publishes a GitHub Release whose body is that changelog section, and pushes to npm, PyPI and crates.io.
+`.github/workflows/release.yml` then builds all six targets, verifies the tag matches `Cargo.toml` and that `CHANGELOG.md` documents it, publishes a GitHub Release whose body is that changelog section, and pushes to PyPI and crates.io (the npm job is gated off — see section 4).
 
 **[docs/RELEASING.md](RELEASING.md)** has the whole process: the credentials each registry needs, which registries review submissions (npm, PyPI and crates.io do not), what to do when a release goes wrong, and the gated channels — Homebrew, WinGet, Scoop — that are not automated because a human sits on the other side.

@@ -213,15 +213,14 @@ jobs:
           | Windows (PowerShell) | \`iwr -useb https://devprune.vkrishna04.me/install.ps1 \| iex\` |
           | Windows (Command Prompt) | \`powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 \| iex"\` |
           | macOS / Linux | \`curl -fsSL https://devprune.vkrishna04.me/install.sh \| sh\` |
-          | Node projects | \`npm install -g dev-prune@${VERSION}\` — or just \`npx dev-prune status\` |
           | Python tooling | \`uv tool install dev-prune==${VERSION}\` / \`pipx install dev-prune==${VERSION}\` |
           | Rust, no compile | \`cargo binstall dev-prune@${VERSION}\` |
           | Rust, from source | \`cargo install dev-prune --version ${VERSION}\` (needs Rust 1.85+) |
 
-          The npm and PyPI packages contain these same binaries rather than downloading
-          one afterwards, so they work under \`npm ci --ignore-scripts\`, behind a registry
-          mirror, and offline. \`cargo install\` is the only channel that compiles on your
-          machine; \`cargo binstall\` reaches for the archives on this page instead.
+          The PyPI packages contain these same binaries rather than downloading one
+          afterwards, so they work behind a registry mirror and offline. \`cargo install\`
+          is the only channel that compiles on your machine; \`cargo binstall\` reaches
+          for the archives on this page instead.
 
           Full instructions: <https://devprune.vkrishna04.me/#install>
 

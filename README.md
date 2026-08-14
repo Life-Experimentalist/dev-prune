@@ -97,8 +97,6 @@ problem.
 ### From a package manager
 
 ```bash
-npx dev-prune status          # no install at all
-npm install -g dev-prune
 uv tool install dev-prune     # or: uvx dev-prune status
 pipx install dev-prune
 pip install dev-prune
@@ -106,9 +104,9 @@ cargo binstall dev-prune      # fetches the prebuilt release archive
 cargo install dev-prune       # builds from source, needs Rust 1.85+
 ```
 
-The npm and PyPI packages **contain the binary** — there is no `postinstall` download
-step, so they work under `npm ci --ignore-scripts`, behind a registry mirror, and
-offline. Everything but `cargo install` ships a prebuilt executable.
+The PyPI packages **contain the binary** — there is no download step at install time,
+so they work behind a registry mirror and offline. Everything but `cargo install` ships
+a prebuilt executable.
 
 crates.io stores source and nothing else, so `cargo install` has no binary to fetch and
 always compiles. [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) is the

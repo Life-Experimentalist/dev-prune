@@ -425,11 +425,6 @@ export default function App() {
       note: "Command Prompt has no iwr, so it borrows PowerShell for the download. Same install; devp resolves in the next Command Prompt you open.",
       cmd: 'powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"',
     },
-    npm: {
-      label: "npm",
-      note: "The package contains the binary — no postinstall download, so it works offline and under --ignore-scripts.",
-      cmd: "npx dev-prune status",
-    },
     python: {
       label: "uv / pipx",
       note: "Platform wheels carrying the binary. Nothing Python runs. Swap in uvx dev-prune status to run it once and leave nothing behind, or pipx install dev-prune.",

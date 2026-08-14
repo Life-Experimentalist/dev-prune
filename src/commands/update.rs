@@ -93,7 +93,6 @@ fn print_upgrade_commands() {
     println!("  Upgrade with whichever channel you installed from:");
     println!("    cargo binstall dev-prune --force");
     println!("    cargo install dev-prune --force");
-    println!("    npm install -g dev-prune@latest");
     println!("    curl -fsSL https://devprune.vkrishna04.me/install.sh | sh");
     println!("    iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex");
 }
