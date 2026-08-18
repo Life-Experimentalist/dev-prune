@@ -1,0 +1,45 @@
+{
+	"name": "dev-prune",
+	"displayName": "dev-prune",
+	"description": "Validation, autocomplete and hover docs for .devprune.json — the per-repository configuration of dev-prune, the lockfile-verified workspace cleaner.",
+	"version": "0.1.0",
+	"publisher": "VKrishna04",
+	"license": "Apache-2.0",
+	"icon": "icons/devprune-128.png",
+	"engines": {
+		"vscode": "^1.85.0"
+	},
+	"categories": [
+		"Linters",
+		"Other"
+	],
+	"keywords": [
+		"dev-prune",
+		"devprune",
+		"devp",
+		"node_modules",
+		"disk space",
+		"cleanup",
+		"json schema"
+	],
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Life-Experimentalist/dev-prune",
+		"directory": "editors/vscode"
+	},
+	"homepage": "https://devprune.vkrishna04.me",
+	"bugs": {
+		"url": "https://github.com/Life-Experimentalist/dev-prune/issues"
+	},
+	"contributes": {
+		"jsonValidation": [
+			{
+				"fileMatch": [
+					".devprune.json",
+					"**/.devprune.json"
+				],
+				"url": "https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json"
+			}
+		]
+	}
+}

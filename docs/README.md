@@ -42,6 +42,8 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
   Every install channel and what each one actually ships: the shell and PowerShell one-liners, the six checksummed GitHub release archives, `uv tool install`/`uvx`/`pipx`/`pip` via platform wheels, `cargo binstall` via the release archives, and `cargo install` from source.
 - **[Releasing dev-prune](RELEASING.md)**
   The maintainer's guide: one-time registry setup and every credential the automation needs, what a tag push triggers, the changelog contract the release notes are built from, which registries review submissions (npm, PyPI and crates.io do not), why a Rust binary belongs on npm and PyPI, the gated channels (Homebrew, WinGet, Scoop, Chocolatey), and recovery when a release goes wrong.
+- **[IDE & Editor Integration](IDE_INTEGRATION.md)**
+  How `.devprune.json` gets IntelliSense and an icon in editors: the hosted JSON Schema and its drift guard, what works today with nothing installed, the extension scaffolds in `editors/`, and the maintainer checklists for SchemaStore, the VS Code / OpenVSX marketplaces, the JetBrains Marketplace, and the icon-theme PRs.
 
 ### 🎓 Tutorials & Contribution Guides
 - **[Adding New Ecosystem Adapters](ADDING_ADAPTERS.md)**

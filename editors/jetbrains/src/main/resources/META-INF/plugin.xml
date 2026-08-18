@@ -1,0 +1,33 @@
+<!-- Copyright 2026 VKrishna04 -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<idea-plugin>
+    <id>me.vkrishna04.dev-prune</id>
+    <name>dev-prune</name>
+    <vendor url="https://devprune.vkrishna04.me">VKrishna04</vendor>
+    <description><![CDATA[
+        Shows the dev-prune icon on <code>.devprune.json</code> and
+        <code>ignore.devprune.json</code> in the project tree.
+        <br/><br/>
+        The files stay ordinary JSON to the IDE, so schema completion and validation —
+        from the <code>$schema</code> link the CLI writes into every file, or from
+        SchemaStore — keep working exactly as before.
+        <br/><br/>
+        <a href="https://devprune.vkrishna04.me">dev-prune</a> (<code>devp</code>)
+        reclaims disk space from idle Git repositories by deleting dependency
+        directories — <code>node_modules</code>, <code>.venv</code>, <code>target</code>,
+        <code>vendor</code> — only after the project's package manager confirms a
+        lockfile can rebuild them.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.json</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType
+            name="dev-prune configuration"
+            implementationClass="me.vkrishna04.devprune.DevPruneFileType"
+            fieldName="INSTANCE"
+            language="JSON"
+            fileNames=".devprune.json;ignore.devprune.json"/>
+    </extensions>
+</idea-plugin>

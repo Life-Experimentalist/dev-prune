@@ -9,6 +9,7 @@
 Version 1.1.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
+JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
 
 ## What it is
 
@@ -17,12 +18,29 @@ work in every shell. It registers Git repositories, judges each one idle from `g
 commit timestamps *and* source file modification times, asks each package manager to
 verify its lockfile, and only then deletes. `devp restore` puts everything back.
 
-Deletion is refused when the lockfile is missing, unparseable, or — for
-`requirements.txt` — lists no packages, or when a virtual environment holds packages
-the requirements file never recorded (a `pip install` nobody wrote back is recoverable
-from nowhere). No flag bypasses verification, including
-`--ignore-idle`, which lifts only the idle-day wait. That flag was called `--force`
-before 1.0.0; the old spelling still works and prints a note explaining the rename.
+The core bet: a `node_modules` in a project you have not touched for weeks is a cache,
+not data — the lockfile is the data. dev-prune deletes only what a lockfile can
+provably regenerate, and treats "provably" literally: the package manager itself is run
+in a read-only verification mode before anything is removed, and a verification that
+fails, times out, or would need to rewrite the lockfile is a refusal.
+
+## Why it exists / when to use it
+
+- A development machine accumulates tens or hundreds of cloned repositories; each
+  JavaScript project can hold 0.2–2 GB of `node_modules`, each Rust project multiple GB
+  of `target`. Most are idle. dev-prune reclaims that space without deleting anything
+  unrecoverable and without the user remembering which projects are safe.
+- It runs unattended (OS scheduler + Git hooks that auto-register new clones), so the
+  reclaiming keeps happening after the first run.
+- Use `devp run --dry-run` to see what a pass would free; `devp status` for the
+  interactive dashboard; `devp stats` for what has already been reclaimed over time.
+
+When NOT to use it: it never deletes build *outputs* (`dist/`, `.next/`, compiled
+artifacts) — those are not provably rebuildable from a lockfile and are permanently out
+of scope. It is not a generic disk cleaner: directories outside registered Git
+repositories are never touched. Machine-wide package caches are *reported* by
+`devp caches` (with the vendor's own clear command) but never deleted, because a shared
+cache cannot be proven recoverable by any one lockfile and it is what makes restore fast.
 
 ## Install
 
@@ -38,10 +56,10 @@ before 1.0.0; the old spelling still works and prints a note explaining the rena
 
 The PyPI packages contain the prebuilt binary rather than downloading one at install
 time, so they install correctly behind a registry mirror and with no network access.
-`cargo install` is the only channel that
-compiles on your machine — crates.io distributes source, so there is no binary there for
-cargo to fetch. `cargo binstall` reads the `[package.metadata.binstall]` table in
-`Cargo.toml` and downloads the GitHub release archive instead, needing no toolchain.
+`cargo install` is the only channel that compiles on your machine — crates.io
+distributes source, so there is no binary there for cargo to fetch. `cargo binstall`
+reads the `[package.metadata.binstall]` table in `Cargo.toml` and downloads the GitHub
+release archive instead, needing no toolchain.
 
 Both installers take `--version`/`-Version`, `--bin-dir`/`-BinDir`, `--no-path`/`-NoPath`,
 `--no-auto-setup`/`-NoAutoSetup` and `--help`/`-Help`. Piping into a shell has nowhere to
@@ -104,28 +122,88 @@ Arch, NixOS and Alpine.
 - `devp -V` — version plus an environment audit
 
 Global flags: `--dry-run`, `--ignore-idle` (`--force` is the deprecated alias),
-`-y`/`--yes`, `--json` on the reporting commands (`run`, `status`, `stats`, `caches`). `devp run --except <name>` prunes
-everything *but* the named repositories, which is the usual way to keep one project
-warm. A `.` for `[PATH]` means the current directory and is accepted everywhere a
-path is.
-Exit codes: `0` success, `1` failure, `2` unusable arguments.
+`-y`/`--yes`, `--json` on the reporting commands (`run`, `status`, `stats`, `caches`).
+`devp run --except <name>` prunes everything *but* the named repositories, which is the
+usual way to keep one project warm. `devp run --only <adapter>` / `--skip <adapter>`
+narrow a pass to named ecosystems. A `.` for `[PATH]` means the current directory and
+is accepted everywhere a path is.
+
+Exit codes are a contract: `0` success, `1` failure (a run in which any repository
+failed exits `1` even if others succeeded), `2` unusable arguments. `devp doctor` exits
+`0` for warnings and `1` only for genuine breakage.
+
+## The seven safety invariants
+
+Enforced in code, with no bypass flag — full detail with the exact commands in
+https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/SAFETY_INVARIANTS.md:
+
+1. **`.git` boundary** — nothing outside a directory containing a `.git` folder is ever
+   processed. Linked worktrees and submodule checkouts (a `.git` *file*) are refused,
+   conservatively.
+2. **Lockfile pre-verification** — before deletion, the ecosystem's manager runs a
+   read-only check (`npm ci --dry-run --ignore-scripts`,
+   `pnpm install --lockfile-only --frozen-lockfile`,
+   `bun install --frozen-lockfile --dry-run --ignore-scripts`, `uv lock --locked`,
+   `cargo metadata --locked`, `go mod download`, …) under a timeout. If the manager is
+   missing but a lockfile exists, the lockfile itself is the proof. A drifted lockfile
+   is a refusal, not something to quietly fix: rewriting forms
+   (`cargo generate-lockfile`, `go mod tidy`, …) run only when no lockfile exists at
+   all, or after the explicit opt-in `devp config set allow_manifest_rewrite true`.
+   The venv adapter runs nothing: it requires `requirements.txt` to list at least one
+   package and refuses when the environment holds packages the file never recorded.
+3. **Idleness** — `max(last commit, newest source mtime)` must be older than
+   `idle_days` (default 15). `--ignore-idle` lifts this check and nothing else.
+4. **Atomic state writes** — the registry is written to a temp file and renamed, never
+   edited in place; a crash mid-write leaves the previous state intact.
+5. **Opt-outs** — `ignore.devprune.json` in a repository root is honoured by file
+   presence alone (0 ms, nothing parsed); `"ignore": true` in `.devprune.json` does the
+   same after a parse. A `.devprune.json` that does not parse skips the repository and
+   reports the error — defaults are never guessed for a file that said something.
+6. **Symlink refusal** — a bloat directory that is a symlink or Windows junction points
+   at storage the repository does not own (typically a monorepo's real `node_modules`)
+   and is refused, never followed. The directory walk never follows links either.
+7. **Nested-repository boundary** — discovery walks at most `scan_depth` levels
+   (default 6, max 32), never descends into `node_modules`/`target`/`vendor`/venvs or
+   hidden directories, and never crosses into a nested `.git` repository — a submodule
+   or vendored checkout has its own history and is pruned only in its own right.
+
+Also deliberate: `--dry-run` verifies nothing (it reports sizes and stops before
+verification, which is why it is instant), and `.devprune.json` holds inert data only —
+no key in it can name a command to run or a path to delete, because the file arrives
+with a `git clone` of possibly-untrusted code.
+
+## What it never does
+
+- Never deletes build outputs (`dist/`, `.next/`, `bin/`+`obj/`, compiled artifacts) —
+  no lockfile proves them rebuildable.
+- Never deletes machine-wide caches (`devp caches` reports them, with each vendor's own
+  clear command).
+- Never executes anything named in a repository-tracked file.
+- Never rewrites a lockfile during verification, by default in every ecosystem.
+- Never edits editor settings, `PATH`, or shell startup files; for editors it prints a
+  snippet you paste yourself.
+- Never phones home: no analytics, no telemetry; the single network request is the
+  opt-out update check against GitHub's public API (no body, no identifier).
 
 ## Supported ecosystems
 
 npm, pnpm, yarn, bun (`node_modules`); uv and pip/venv (`.venv`, any directory holding
-`pyvenv.cfg`); cargo (`target`); go (`vendor`). Every ecosystem is verified read-only by
-default: a lockfile that has drifted from its manifest is refused, not repaired, because
-a prune pass can be started by the OS scheduler and must never leave a modified tracked
-file behind. `devp config set allow_manifest_rewrite true` opts into the rewriting form
-(`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`, `go mod tidy`,
-…), which otherwise runs only when no lockfile exists at all.
+`pyvenv.cfg`); cargo (`target`); go (`vendor`). Java, .NET and C/C++ are covered by
+`devp caches` (their dependencies live in machine-wide stores; their in-repo build
+directories are outputs, see above).
 
 A repository may hold any number of these, at the root or up to `scan_depth` levels
-below it — six by default, `devp config set scan_depth N` to change it (accepts 1–32).
-Where several managers claim the same `node_modules`, the owner is chosen from the
-`packageManager` field, else the bookkeeping files inside the installed tree, else the
-most recently written lockfile. uv wins over plain venv when `uv.lock` or `[tool.uv]` is
-present.
+below it. Where several managers claim the same `node_modules`, the owner is chosen
+from the `packageManager` field, else the bookkeeping files inside the installed tree,
+else the most recently written lockfile. uv wins over plain venv when `uv.lock` or
+`[tool.uv]` is present.
+
+Sizing is honest about hardlinks (1.1.0): under pnpm and bun, files hardlinked into the
+manager's global store are excluded from the reported reclaimable size — deleting
+`node_modules` removes the link but the store keeps the bytes. The excluded amount is
+reported separately (`shared_bytes` in `--json`). Copied installs (exFAT, cross-volume
+stores, macOS clonefile) count in full. The prune itself always removes the whole
+directory; hardlink awareness changes accounting, never what is deleted.
 
 ## Configuration
 
@@ -142,22 +220,47 @@ runs itself once on a first install.
 
 Per repository: `ignore.devprune.json` in the root is an instant opt-out;
 `.devprune.json` supports `project_name`, `ignore`, `disable_daemon`, `disable_hooks`,
-and the three overrides `override_idle_days`, `min_size_mb`, `scan_depth`. The other
-global settings have no per-repository form — nothing stops a project from committing its
-`.devprune.json`, so a repository must not be able to grant itself
-`allow_manifest_rewrite`. Both files hold inert data only.
+and the three overrides `override_idle_days`, `min_size_mb`, `scan_depth`. Files
+written by `devp config project` carry a `$schema` link, and the schema is published at
+https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json for editor IntelliSense.
+The other global settings have no per-repository form deliberately — nothing stops a
+project from committing its `.devprune.json`, so a repository must not be able to grant
+itself `allow_manifest_rewrite`. Both files hold inert data only.
+
+## Machine-readable output (for tools and AI agents)
+
+Add `--json` to `run`, `status`, `stats` or `caches` for a versioned JSON document
+(`schema_version` 1, additive changes only within a major version). Highlights:
+
+- `devp status --json` — per-repository totals, per-directory sizes, and status
+  (candidate / active / ignored / no-bloat / path-missing / config-error).
+- `devp run --json` — one result per repository × directory with the action taken or
+  the refusal reason; refusals include the exact fix command where one exists
+  (e.g. the lockfile-repair command for that ecosystem). `size_freed` counts only bytes
+  deletion actually returns; `shared_bytes` is what hardlinked stores keep.
+- Exit codes carry meaning (see above), so scripting on them is supported.
+
+For AI coding assistants there is a dedicated skill file:
+`devp skill` exports it locally, and the canonical copy is
+https://github.com/Life-Experimentalist/dev-prune/blob/main/.agents/skills/dev-prune/SKILL.md
+— a task-to-command table (including "is this safe?" answers), the JSON field
+reference, and the failure playbook. Agents should prefer `--json` over parsing the
+human report, use `--dry-run` before a destructive suggestion, and never suggest
+`--ignore-idle` without asking the user first.
 
 ## Background automation
 
-The `devp` second binary, the exported `SKILL.md`, global Git auto-registration hooks, the OS
-scheduler and the file-manager folder icons install themselves at install time, and
+The `devp` second binary, the exported `SKILL.md`, global Git auto-registration hooks,
+the OS scheduler and the file-manager icons install themselves at install time, and
 again on `devp init` or after an upgrade if any of them is missing. `devp setup` runs
 the same pass by hand and `devp setup --status` only reports. Hooks are skipped when
 `git` is not on `PATH`. When the global `core.hooksPath` already belongs to husky,
 pre-commit or lefthook, the pass skips the hooks and says so; `devp hook install --chain`
-takes the slot and writes shims that `exec` the displaced directory's same-named hook, so
-both run. Chaining is opt-in — `auto_hooks_chain` defaults to false. Turn any of it off with `auto_setup`/`auto_hooks`/`auto_hooks_chain`/
-`auto_daemon`, or `DEV_PRUNE_NO_AUTO_SETUP=1` in the environment.
+takes the slot and writes shims that `exec` the displaced directory's same-named hook,
+so both run. Chaining is opt-in — `auto_hooks_chain` defaults to false. Turn any of it
+off with `auto_setup`/`auto_hooks`/`auto_hooks_chain`/`auto_daemon`, or
+`DEV_PRUNE_NO_AUTO_SETUP=1` in the environment. Everything the setup pass writes lives
+under your own config and data directories and is removed by `devp uninstall`.
 
 ## Docs
 
@@ -165,6 +268,7 @@ both run. Chaining is opt-in — `auto_hooks_chain` defaults to false. Turn any 
 - CLI reference: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/CLI_REFERENCE.md
 - Safety invariants: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/SAFETY_INVARIANTS.md
 - Background automation: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/BACKGROUND_AUTOMATION.md
+- IDE & editor integration: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/IDE_INTEGRATION.md
 - Troubleshooting: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/troubleshooting/README.md
 - Architecture: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/architecture/HLD.md
 - AI skill file: https://github.com/Life-Experimentalist/dev-prune/blob/main/.agents/skills/dev-prune/SKILL.md
