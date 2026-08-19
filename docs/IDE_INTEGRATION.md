@@ -48,8 +48,10 @@ that have not merged our SchemaStore entry, and the **icon inside IDE file trees
 ## SchemaStore (covers JetBrains, Visual Studio, Neovim, Zed, and more)
 
 One merged PR to [SchemaStore](https://github.com/SchemaStore/schemastore) gives every
-subscribed editor schema-by-filename, no `$schema` key needed. **A maintainer must
-submit this from their own GitHub account.**
+subscribed editor schema-by-filename, no `$schema` key needed.
+
+**Status: submitted** — [SchemaStore/schemastore#6226](https://github.com/SchemaStore/schemastore/pull/6226)
+(2026-08-19). The steps below record what it contains, for the day it needs updating.
 
 1. Fork `SchemaStore/schemastore`.
 2. Add this entry to `src/api/json/catalog.json` (alphabetical by `name`):
@@ -76,7 +78,10 @@ submit this from their own GitHub account.**
 [`editors/vscode/`](../editors/vscode/) holds a zero-code extension: a `package.json`
 with a `jsonValidation` contribution mapping `.devprune.json` to the hosted schema,
 plus the marketplace icon. `npx @vscode/vsce package` in that directory produces the
-`.vsix` (verified working).
+`.vsix` (verified working), and the release workflow packages it on every tag and
+attaches it to the GitHub release as `dev-prune-vscode-<version>.vsix` — the side-load
+path (`code`/`codium`/`cursor --install-extension <file>`) for editors that cannot
+reach a marketplace.
 
 **Deliberate deviation from the obvious plan:** the extension does *not* use
 `contributes.languages` to claim the filename with an icon. Declaring a new language id
@@ -122,9 +127,9 @@ Before first upload it needs a real vector icon — see the gap below.
 
 ## Known gap: no true vector logo
 
-`assets/favicon/favicon.svg` is a 1024×1024 raster image wrapped in an `<svg>` tag, not
-a vector. Every icon consumer beyond the VS Code marketplace tile wants a real SVG:
-JetBrains file-type icons (16×16) and `pluginIcon.svg` (40×40), material-icon-theme and
-vscode-icons PRs, and crisp rendering anywhere themes scale icons. Producing one is a
-design task, not a code task; until it exists, the JetBrains plugin ships a scaled PNG
-and the icon-theme PRs cannot be opened.
+Every `assets/favicon/*.svg` — including the 40×40 and 10×10 added 2026-08-19 — is the
+same 1024×1024 raster image wrapped in an `<svg>` tag with a resized viewport, not
+vector paths. That is good enough for the JetBrains `pluginIcon.svg` (wired, renders
+fine downscaled) but not for the icon-theme PRs: material-icon-theme and vscode-icons
+require genuine vector SVGs and will reject an embedded raster. Producing a true vector
+is a design task, not a code task; until it exists those two PRs cannot be opened.

@@ -19,6 +19,23 @@ so VS Code's built-in JSON language server provides:
 Files that `devp config project` writes carry a `$schema` link already, so those work
 without this extension; installing it covers hand-written files too.
 
+## Install
+
+- **VS Code**: search *dev-prune* in the Extensions view, or `code --install-extension VKrishna04.dev-prune`.
+- **VSCodium / Cursor / anything without marketplace access**: every
+  [GitHub release](https://github.com/Life-Experimentalist/dev-prune/releases) attaches
+  the packaged extension as `dev-prune-vscode-<version>.vsix`. Download it and run:
+
+  ```
+  code --install-extension dev-prune-vscode-<version>.vsix
+  ```
+
+  `codium --install-extension …` and `cursor --install-extension …` work the same way,
+  as does *Extensions view → ⋯ → Install from VSIX*. Because the extension is a single
+  declarative schema mapping, a side-loaded copy is byte-for-byte what the marketplace
+  serves — there is no auto-update to miss out on beyond new schema keys, which arrive
+  through the hosted schema URL anyway, without an extension update.
+
 ## Related
 
 - The CLI: `curl -fsSL https://devprune.vkrishna04.me/install.sh | sh` (or

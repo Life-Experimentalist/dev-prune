@@ -157,9 +157,34 @@ jobs:
             dev-prune-v*.sha256
           if-no-files-found: error
 
+  # The VS Code extension is declarative (a schema mapping, no code), so packaging it
+  # here costs seconds and gives every release page a side-loadable .vsix — the install
+  # path for VSCodium/Cursor users until the OpenVSX listing exists.
+  package-vsix:
+    name: Package VS Code extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Package the .vsix
+        working-directory: editors/vscode
+        run: npx --yes @vscode/vsce package --out "dev-prune-vscode-$(node -p "require('./package.json').version").vsix"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vscode-extension
+          path: editors/vscode/*.vsix
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: build
+    needs: [build, package-vsix]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -240,6 +265,12 @@ jobs:
 
           Both Linux builds are statically linked against musl, so they run on any
           distribution including Alpine, with no glibc floor.
+
+          The \`dev-prune-vscode-*.vsix\` is the VS Code extension (schema
+          IntelliSense for \`.devprune.json\`), for editors that cannot reach the
+          marketplace — side-load it with
+          \`code --install-extension dev-prune-vscode-<version>.vsix\`
+          (\`codium\`/\`cursor\` work the same way).
 
           **Windows: the binaries are not code-signed**, and two separate features react
           to that.

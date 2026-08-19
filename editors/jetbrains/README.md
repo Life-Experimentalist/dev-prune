@@ -22,9 +22,10 @@ in [docs/IDE_INTEGRATION.md](../../docs/IDE_INTEGRATION.md).
 
 ## Known gaps before first publish
 
-- `src/main/resources/icons/devprune.png` is a 48px raster scaled down to the 16px slot;
-  JetBrains wants a real SVG here and a 40×40 `META-INF/pluginIcon.svg` for the
-  marketplace listing. The project has no true vector logo yet — the existing
-  `assets/favicon/favicon.svg` is a raster image wrapped in an SVG tag.
+- `META-INF/pluginIcon.svg` (the marketplace listing icon) exists but embeds a raster
+  image rather than vector paths, and `src/main/resources/icons/devprune.png` is a 48px
+  raster scaled down to the 16px file-tree slot. Both work; both would look crisper as
+  a true vector, which the project does not have yet — every `assets/favicon/*.svg` is
+  a PNG wrapped in an SVG tag.
 - This scaffold has not been built in CI. `buildPlugin` downloads the IntelliJ platform
   (several GB) on first run, which is why it is not part of the repository gate.

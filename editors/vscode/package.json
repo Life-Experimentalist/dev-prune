@@ -6,6 +6,10 @@
 	"publisher": "VKrishna04",
 	"license": "Apache-2.0",
 	"icon": "icons/devprune-128.png",
+	"galleryBanner": {
+		"color": "#0f172a",
+		"theme": "dark"
+	},
 	"engines": {
 		"vscode": "^1.85.0"
 	},
