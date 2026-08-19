@@ -1,2 +1,3 @@
 .vscodeignore
 *.vsix
+sync-schema.mjs

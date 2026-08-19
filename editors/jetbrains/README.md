@@ -22,10 +22,10 @@ in [docs/IDE_INTEGRATION.md](../../docs/IDE_INTEGRATION.md).
 
 ## Known gaps before first publish
 
-- `META-INF/pluginIcon.svg` (the marketplace listing icon) exists but embeds a raster
-  image rather than vector paths, and `src/main/resources/icons/devprune.png` is a 48px
-  raster scaled down to the 16px file-tree slot. Both work; both would look crisper as
-  a true vector, which the project does not have yet — every `assets/favicon/*.svg` is
-  a PNG wrapped in an SVG tag.
 - This scaffold has not been built in CI. `buildPlugin` downloads the IntelliJ platform
   (several GB) on first run, which is why it is not part of the repository gate.
+
+Both icons — `META-INF/pluginIcon.svg` (marketplace listing) and
+`icons/devprune.svg` (file tree) — are true vectors derived from
+[`assets/devprune.svg`](../../assets/devprune.svg), so they render crisply at every
+size and HiDPI factor.

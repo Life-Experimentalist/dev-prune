@@ -76,12 +76,18 @@ subscribed editor schema-by-filename, no `$schema` key needed.
 ## VS Code family (VS Code, VSCodium, Cursor, Windsurf)
 
 [`editors/vscode/`](../editors/vscode/) holds a zero-code extension: a `package.json`
-with a `jsonValidation` contribution mapping `.devprune.json` to the hosted schema,
-plus the marketplace icon. `npx @vscode/vsce package` in that directory produces the
-`.vsix` (verified working), and the release workflow packages it on every tag and
-attaches it to the GitHub release as `dev-prune-vscode-<version>.vsix` — the side-load
-path (`code`/`codium`/`cursor --install-extension <file>`) for editors that cannot
-reach a marketplace.
+with a `jsonValidation` contribution mapping `.devprune.json` to a **bundled** copy of
+the schema, plus the marketplace icon. Bundling (added in extension 1.2.0) means
+hand-written files validate offline, instantly, with nothing to go stale in VS Code's
+remote-schema cache; files the CLI writes carry an in-file `$schema` link, which VS
+Code prefers, so those keep tracking the hosted URL. The bundled copy cannot drift:
+`sync-schema.mjs` runs as `vscode:prepublish`, so every packaging pass — CI or by
+hand — refreshes it from `schemas/devprune.schema.json` first. `npx @vscode/vsce
+package` in that directory produces the `.vsix` (verified working end to end in a live
+VS Code), and the release workflow packages it on every tag and attaches it to the
+GitHub release as `dev-prune-vscode-<version>.vsix` — the side-load path
+(`code`/`codium`/`cursor --install-extension <file>`) for editors that cannot reach a
+marketplace.
 
 **Deliberate deviation from the obvious plan:** the extension does *not* use
 `contributes.languages` to claim the filename with an icon. Declaring a new language id
@@ -100,6 +106,13 @@ Both need a maintainer-submitted PR with an SVG icon.
 **Status: published on both** (2026-08-19) —
 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune)
 and [OpenVSX](https://open-vsx.org/extension/VKrishna04/dev-prune), publisher `VKrishna04`.
+
+**If validation goes quiet** — a file full of stale keys showing zero problems — the
+cause is almost always VS Code's remote-schema cache: the JSON language server keeps a
+downloaded schema for the life of the window, so a window opened before a schema fix
+deployed validates against the pre-fix copy indefinitely. *Developer: Reload Window* or
+*JSON: Clear Schema Cache* clears it. This is exactly why the extension bundles the
+schema — only files with their own `$schema` link still fetch remotely.
 
 **Publishing a new version (maintainer):**
 
@@ -127,11 +140,20 @@ Before first upload it needs a real vector icon — see the gap below.
 
 ---
 
-## Known gap: no true vector logo
+## The vector logo
 
-Every `assets/favicon/*.svg` — including the 40×40 and 10×10 added 2026-08-19 — is the
-same 1024×1024 raster image wrapped in an `<svg>` tag with a resized viewport, not
-vector paths. That is good enough for the JetBrains `pluginIcon.svg` (wired, renders
-fine downscaled) but not for the icon-theme PRs: material-icon-theme and vscode-icons
-require genuine vector SVGs and will reject an embedded raster. Producing a true vector
-is a design task, not a code task; until it exists those two PRs cannot be opened.
+[`assets/devprune.svg`](../assets/devprune.svg) is a true vector — a single traced
+path with the brand gradient (`#27ff63` → `#01f6fb`) as a real `linearGradient`, 2.2 KB,
+produced 2026-08-20 by tracing the 256px raster with potrace and sampling the gradient
+endpoints from the 512px one. It is the source for the JetBrains `pluginIcon.svg`
+(40×40) and the JetBrains file-tree icon (`icons/devprune.svg`, 16×16 — IntelliJ's
+`IconLoader` rasterizes SVG crisply at every HiDPI factor, which the 48px PNG it
+replaced could not).
+
+The `assets/favicon/*.svg` files are still the 1024×1024 raster wrapped in an `<svg>`
+tag — fine for favicons, but anything new should start from `assets/devprune.svg`.
+
+**Remaining gap:** the material-icon-theme and vscode-icons PRs (the only way
+`.devprune.json` gets its own icon in VS Code file trees, since icon themes always win
+over extension contributions) have not been submitted yet. The vector they require now
+exists, so they are unblocked.

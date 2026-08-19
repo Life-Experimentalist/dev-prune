@@ -5,9 +5,10 @@ per-repository configuration file of [dev-prune](https://devprune.vkrishna04.me)
 (`devp`), the CLI that reclaims disk space from idle Git repositories by deleting
 dependency directories a lockfile can provably rebuild.
 
-This extension contains no code. It maps `.devprune.json` to the
-[hosted JSON Schema](https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json),
-so VS Code's built-in JSON language server provides:
+This extension contains no code. It maps `.devprune.json` to a bundled copy of the
+[dev-prune JSON Schema](https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json),
+so VS Code's built-in JSON language server provides — offline, with no network
+fetch —:
 
 - **Autocomplete** for every key: `project_name`, `ignore`, `disable_hooks`,
   `disable_daemon`, `override_idle_days`, `min_size_mb`, `scan_depth`.
@@ -17,7 +18,14 @@ so VS Code's built-in JSON language server provides:
   guess at what it meant.
 
 Files that `devp config project` writes carry a `$schema` link already, so those work
-without this extension; installing it covers hand-written files too.
+without this extension; installing it covers hand-written files too. When a file has
+its own `$schema` key, VS Code prefers that link — the hosted schema it points to is
+republished from the same canonical file on every site build, so both paths agree.
+
+**Seeing no squiggles on a file you know is wrong?** VS Code caches downloaded schemas
+for the life of the window. If validation went quiet after a dev-prune release, run
+*Developer: Reload Window* (or *JSON: Clear Schema Cache*) once — the bundled schema
+this extension ships is immune, but a file with its own `$schema` link fetches remotely.
 
 ## Install
 

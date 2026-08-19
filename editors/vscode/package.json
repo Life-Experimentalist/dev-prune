@@ -2,7 +2,7 @@
 	"name": "dev-prune",
 	"displayName": "dev-prune",
 	"description": "Validation, autocomplete and hover docs for .devprune.json — the per-repository configuration of dev-prune, the lockfile-verified workspace cleaner.",
-	"version": "0.1.0",
+	"version": "1.2.0",
 	"publisher": "VKrishna04",
 	"license": "Apache-2.0",
 	"icon": "icons/devprune-128.png",
@@ -12,6 +12,15 @@
 	},
 	"engines": {
 		"vscode": "^1.85.0"
+	},
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"scripts": {
+		"vscode:prepublish": "node sync-schema.mjs"
 	},
 	"categories": [
 		"Linters",
@@ -42,7 +51,7 @@
 					".devprune.json",
 					"**/.devprune.json"
 				],
-				"url": "https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json"
+				"url": "./schemas/devprune.schema.json"
 			}
 		]
 	}

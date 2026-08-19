@@ -31,6 +31,8 @@ class DevPruneFileType : LanguageFileType(JsonLanguage.INSTANCE) {
         @JvmField
         val INSTANCE = DevPruneFileType()
 
-        private val ICON = IconLoader.getIcon("/icons/devprune.png", DevPruneFileType::class.java)
+        // SVG so IconLoader can rasterize crisply at every tree scale and HiDPI factor;
+        // the 48px PNG this replaced was visibly soft in the 16px slot.
+        private val ICON = IconLoader.getIcon("/icons/devprune.svg", DevPruneFileType::class.java)
     }
 }
