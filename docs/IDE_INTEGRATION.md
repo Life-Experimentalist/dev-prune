@@ -97,16 +97,18 @@ comes from icon themes, and the way real config files get one is upstream PRs:
 
 Both need a maintainer-submitted PR with an SVG icon.
 
-**Publishing (maintainer, one-time accounts):**
+**Status: published on both** (2026-08-19) —
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune)
+and [OpenVSX](https://open-vsx.org/extension/VKrishna04/dev-prune), publisher `VKrishna04`.
 
-1. Create a publisher on the [VS Code Marketplace](https://marketplace.visualstudio.com/manage)
-   (Azure DevOps PAT) with the id `VKrishna04` — it must match the `publisher` field in
-   `editors/vscode/package.json`, or that field must change to match.
-2. `npx @vscode/vsce publish` from `editors/vscode/`, or upload the `.vsix` in the web UI.
-3. Create a namespace on [open-vsx.org](https://open-vsx.org) (Eclipse account), sign
-   the publisher agreement, and `npx ovsx publish dev-prune-<version>.vsix -p <token>`.
-   OpenVSX is what VSCodium and some Cursor builds resolve against, so both uploads
-   matter.
+**Publishing a new version (maintainer):**
+
+1. Bump `version` in `editors/vscode/package.json`.
+2. `npx @vscode/vsce publish` from `editors/vscode/` (Azure DevOps PAT with
+   Marketplace → Manage scope), or upload the `.vsix` in the
+   [manage UI](https://marketplace.visualstudio.com/manage/publishers/VKrishna04).
+3. `npx ovsx publish dev-prune-vscode-<version>.vsix -p <token>` for OpenVSX, which is
+   what VSCodium and some Cursor builds resolve against — both uploads matter.
 
 ---
 

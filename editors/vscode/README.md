@@ -21,8 +21,11 @@ without this extension; installing it covers hand-written files too.
 
 ## Install
 
-- **VS Code**: search *dev-prune* in the Extensions view, or `code --install-extension VKrishna04.dev-prune`.
-- **VSCodium / Cursor / anything without marketplace access**: every
+- **VS Code**: [marketplace listing](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune),
+  or search *dev-prune* in the Extensions view, or `code --install-extension VKrishna04.dev-prune`.
+- **VSCodium / Cursor**: [OpenVSX listing](https://open-vsx.org/extension/VKrishna04/dev-prune) —
+  the same search and command work there.
+- **Anything without marketplace access**: every
   [GitHub release](https://github.com/Life-Experimentalist/dev-prune/releases) attaches
   the packaged extension as `dev-prune-vscode-<version>.vsix`. Download it and run:
 
