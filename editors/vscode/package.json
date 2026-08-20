@@ -13,10 +13,16 @@
 	"engines": {
 		"vscode": "^1.85.0"
 	},
+	"main": "./extension.js",
+	"activationEvents": [
+		"workspaceContains:.devprune.json",
+		"workspaceContains:ignore.devprune.json"
+	],
 	"capabilities": {
 		"virtualWorkspaces": true,
 		"untrustedWorkspaces": {
-			"supported": true
+			"supported": "limited",
+			"description": "Schema validation works everywhere. The check that devp is installed only runs once the workspace is trusted."
 		}
 	},
 	"scripts": {

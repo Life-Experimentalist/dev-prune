@@ -75,9 +75,11 @@ subscribed editor schema-by-filename, no `$schema` key needed.
 
 ## VS Code family (VS Code, VSCodium, Cursor, Windsurf)
 
-[`editors/vscode/`](../editors/vscode/) holds a zero-code extension: a `package.json`
-with a `jsonValidation` contribution mapping `.devprune.json` to a **bundled** copy of
-the schema, plus the marketplace icon. Bundling (added in extension 1.2.0) means
+[`editors/vscode/`](../editors/vscode/) holds a near-zero-code extension: a
+`package.json` with a `jsonValidation` contribution mapping `.devprune.json` to a
+**bundled** copy of the schema, the marketplace icon, and one small `extension.js`
+whose sole job is a one-time "devp is not on PATH" notification when a workspace
+contains `.devprune.json` but the CLI is missing (trusted workspaces only). Bundling (added in extension 1.2.0) means
 hand-written files validate offline, instantly, with nothing to go stale in VS Code's
 remote-schema cache; files the CLI writes carry an in-file `$schema` link, which VS
 Code prefers, so those keep tracking the hosted URL. The bundled copy cannot drift:

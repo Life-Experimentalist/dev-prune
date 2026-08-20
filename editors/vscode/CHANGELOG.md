@@ -7,9 +7,14 @@
   no network fetch, nothing to go stale in VS Code's remote-schema cache. Files the
   CLI writes carry a `$schema` link and keep tracking the hosted schema, which always
   matches the latest CLI.
-- **Works in Restricted Mode and virtual workspaces.** The extension declares
-  `untrustedWorkspaces` and `virtualWorkspaces` support explicitly — it contains no
-  code, so there is nothing to restrict.
+- **A missing CLI is called out instead of staying silent.** When a workspace
+  contains `.devprune.json` (or `ignore.devprune.json`) but `devp` is not on PATH,
+  the extension shows a one-time notification with install instructions — a
+  config file nothing acts on otherwise looks exactly like a working setup.
+  "Don't show again" is remembered permanently.
+- **Works in Restricted Mode and virtual workspaces.** Schema validation works
+  everywhere; the CLI check is the only code and it runs solely in trusted
+  workspaces, so there is nothing for Restricted Mode to restrict.
 
 ## 0.1.0 - 2026-08-19
 

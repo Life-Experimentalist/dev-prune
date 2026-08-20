@@ -5,7 +5,7 @@ per-repository configuration file of [dev-prune](https://devprune.vkrishna04.me)
 (`devp`), the CLI that reclaims disk space from idle Git repositories by deleting
 dependency directories a lockfile can provably rebuild.
 
-This extension contains no code. It maps `.devprune.json` to a bundled copy of the
+The extension maps `.devprune.json` to a bundled copy of the
 [dev-prune JSON Schema](https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json),
 so VS Code's built-in JSON language server provides — offline, with no network
 fetch —:
@@ -16,6 +16,10 @@ fetch —:
 - **Validation** — unknown keys and out-of-range values are underlined, because a
   `.devprune.json` that does not parse makes `devp` skip the repository rather than
   guess at what it meant.
+- **A heads-up when the CLI is missing** — a workspace with a `.devprune.json` but
+  no `devp` on PATH gets a one-time notification, because a config file nothing
+  acts on looks exactly like a working setup. This is the extension's only code;
+  it runs solely in trusted workspaces and "Don't show again" is remembered.
 
 Files that `devp config project` writes carry a `$schema` link already, so those work
 without this extension; installing it covers hand-written files too. When a file has
@@ -42,10 +46,10 @@ this extension ships is immune, but a file with its own `$schema` link fetches r
   ```
 
   `codium --install-extension …` and `cursor --install-extension …` work the same way,
-  as does *Extensions view → ⋯ → Install from VSIX*. Because the extension is a single
-  declarative schema mapping, a side-loaded copy is byte-for-byte what the marketplace
-  serves — there is no auto-update to miss out on beyond new schema keys, which arrive
-  through the hosted schema URL anyway, without an extension update.
+  as does *Extensions view → ⋯ → Install from VSIX*. A side-loaded copy is
+  byte-for-byte what the marketplace serves — there is no auto-update to miss out on
+  beyond new schema keys, which arrive through the hosted schema URL anyway, without
+  an extension update.
 
 ## Related
 
