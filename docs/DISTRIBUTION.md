@@ -89,6 +89,7 @@ pip install dev-prune
 - Six platform wheels, each a zip holding the prebuilt executable under `dev_prune-<version>.data/scripts/`. No Python runs, no compiler is invoked, and no build backend is involved — installers unpack the binaries straight into the environment's `bin`/`Scripts` directory.
 - The Linux wheels carry both `manylinux` and `musllinux` tags from the same static binary, so Debian and Alpine users are both served.
 - Uploaded through PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/): no API token exists anywhere, only a short-lived OIDC credential minted per release.
+- A `pip install` inside a virtualenv is fine: the first run copies the binary to the managed location (`%APPDATA%\dev-prune\bin` / `~/.config/dev-prune/bin`) and puts it on `PATH`, so `devp` survives the venv being deactivated or deleted. Details in [INSTALLATION_ISSUES.md §9](troubleshooting/INSTALLATION_ISSUES.md#9-pip-install-in-a-virtual-environment--what-happens-when-the-venv-goes-away).
 
 ### 6. Cargo / crates.io (`cargo binstall` or `cargo install`)
 ```bash

@@ -1,28 +1,28 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! Handler for `dev-prune caches`.
-//!
-//! Every package manager keeps a machine-wide download cache outside any repository:
-//! npm's `_cacache`, pnpm's content-addressable store, the Go module cache, cargo's
-//! registry, Maven's local repository, NuGet's global packages folder. They are
-//! frequently the largest reclaimable thing on a developer's disk and
-//! nobody notices, because nothing ever mentions them — a 4 GiB `GOMODCACHE` looks like
-//! free space that simply went missing.
-//!
-//! This command finds them, sizes them, and prints the command that clears each one.
-//!
-//! **It deletes nothing, ever.** That is the entire design. A cache is shared by every
-//! project on the machine, so its contents are not something dev-prune can prove is
-//! recoverable for any one repository — which is the bar every deletion in this tool has
-//! to clear. It is also the thing that makes `devp restore` fast: clearing a cache turns
-//! the next reinstall into a download. Reporting is most of the value and none of the
-//! risk, so the clear commands are printed for a human to run deliberately.
-//!
-//! Each manager is asked where its own cache lives rather than being assumed — a
-//! `CARGO_HOME`, a `--cache-dir`, a corporate `.npmrc` all move it. Every one of those
-//! queries is read-only, and a manager that is not installed falls back to the
-//! conventional location, so a cache left behind by an uninstalled manager still shows up.
+// Handler for `dev-prune caches`.
+//
+// Every package manager keeps a machine-wide download cache outside any repository:
+// npm's `_cacache`, pnpm's content-addressable store, the Go module cache, cargo's
+// registry, Maven's local repository, NuGet's global packages folder. They are
+// frequently the largest reclaimable thing on a developer's disk and
+// nobody notices, because nothing ever mentions them — a 4 GiB `GOMODCACHE` looks like
+// free space that simply went missing.
+//
+// This command finds them, sizes them, and prints the command that clears each one.
+//
+// **It deletes nothing, ever.** That is the entire design. A cache is shared by every
+// project on the machine, so its contents are not something dev-prune can prove is
+// recoverable for any one repository — which is the bar every deletion in this tool has
+// to clear. It is also the thing that makes `devp restore` fast: clearing a cache turns
+// the next reinstall into a download. Reporting is most of the value and none of the
+// risk, so the clear commands are printed for a human to run deliberately.
+//
+// Each manager is asked where its own cache lives rather than being assumed — a
+// `CARGO_HOME`, a `--cache-dir`, a corporate `.npmrc` all move it. Every one of those
+// queries is read-only, and a manager that is not installed falls back to the
+// conventional location, so a cache left behind by an uninstalled manager still shows up.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

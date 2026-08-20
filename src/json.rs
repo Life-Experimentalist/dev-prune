@@ -374,9 +374,76 @@ pub fn drift_document(findings: &[crate::commands::status::ProjectDrift]) -> Val
 ///
 /// Pretty rather than compact because a human reads this output far more often than a
 /// parser does, and `jq` does not care either way.
+///
+/// When stdout is a terminal, the same document also lands on the clipboard: a pipe or
+/// a redirect means a program is consuming the output, but a terminal means a *person*
+/// asked for JSON, and the next thing they usually do is paste it somewhere. The
+/// notice goes to stderr and the copy is skipped entirely when piped, so the stdout
+/// contract — one document, byte-identical either way — holds.
 pub fn emit(document: &Value) -> anyhow::Result<()> {
-    println!("{}", serde_json::to_string_pretty(document)?);
+    use std::io::IsTerminal;
+    let text = serde_json::to_string_pretty(document)?;
+    println!("{text}");
+    if std::io::stdout().is_terminal() && copy_to_clipboard(&text) {
+        use colored::Colorize;
+        eprintln!("{}", "(also copied to your clipboard)".dimmed());
+    }
     Ok(())
+}
+
+/// Best-effort: put `text` on the system clipboard. Returns whether it worked.
+///
+/// Spawns the platform's own clipboard tool rather than linking a clipboard crate — a
+/// native dependency is a heavy price for a nicety. `clip` on Windows, `pbcopy` on
+/// macOS, then `wl-copy`/`xclip`/`xsel` in that order on Linux; a headless box has
+/// none of them, and quietly not copying is the right behaviour there.
+fn copy_to_clipboard(text: &str) -> bool {
+    // `clip.exe` reads its input in the console codepage unless a BOM says otherwise;
+    // UTF-16LE with a BOM is the one encoding it always honours, and repository paths
+    // are not guaranteed to be ASCII.
+    let bytes: Vec<u8> = if cfg!(windows) {
+        let mut utf16 = vec![0xFF, 0xFE];
+        for unit in text.encode_utf16() {
+            utf16.extend_from_slice(&unit.to_le_bytes());
+        }
+        utf16
+    } else {
+        text.as_bytes().to_vec()
+    };
+
+    let tools: &[&[&str]] = if cfg!(windows) {
+        &[&["clip"]]
+    } else if cfg!(target_os = "macos") {
+        &[&["pbcopy"]]
+    } else {
+        &[
+            &["wl-copy"],
+            &["xclip", "-selection", "clipboard"],
+            &["xsel", "--clipboard", "--input"],
+        ]
+    };
+    tools.iter().any(|tool| pipe_into(tool, &bytes))
+}
+
+/// Run `command`, feed `bytes` to its stdin, and report whether it exited cleanly.
+fn pipe_into(command: &[&str], bytes: &[u8]) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new(command[0])
+        .args(&command[1..])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let wrote = child
+        .stdin
+        .take()
+        .is_some_and(|mut stdin| stdin.write_all(bytes).is_ok());
+    let exited_cleanly = child.wait().map(|status| status.success()).unwrap_or(false);
+    wrote && exited_cleanly
 }
 
 #[cfg(test)]

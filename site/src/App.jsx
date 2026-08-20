@@ -1433,7 +1433,8 @@ export default function App() {
                       <code>devp skill</code>
                     </td>
                     <td>
-                      Export <code>SKILL.md</code> for AI coding assistants
+                      Export <code>SKILL.md</code> and install it into your AI
+                      agent's skills directory
                     </td>
                   </tr>
                   <tr>
@@ -1447,8 +1448,9 @@ export default function App() {
                       <code>devp uninstall [--deep]</code>
                     </td>
                     <td>
-                      Remove the scheduler, hooks and alias; <code>--deep</code>{" "}
-                      also clears config
+                      Remove the program — scheduler, hooks, agent skill, PATH
+                      entry and every copy of the binary, install channels
+                      included; <code>--deep</code> also clears config
                     </td>
                   </tr>
                   <tr>
@@ -1728,10 +1730,16 @@ export default function App() {
                 or restore.
               </Faq>
               <Faq q="How do I remove it?">
-                <code>devp uninstall</code> removes the scheduler, hooks and
-                alias. Add <code>--deep</code> to also wipe the configuration
-                directory and every registered repository's{" "}
-                <code>.devprune.json</code> — it asks first.
+                <code>devp uninstall</code> removes the program: the scheduler,
+                hooks, the installed agent skill, the PATH entry and the
+                binaries themselves — then finds every other copy that pip,
+                npm, cargo or uv left behind and removes them all after one
+                confirmation, printing each manager's own uninstall line so
+                its records clear too. On Windows the last files disappear a
+                few seconds after the command exits — no reboot needed. Add{" "}
+                <code>--deep</code> to also wipe the configuration directory and
+                every registered repository's <code>.devprune.json</code> — it
+                asks first.
               </Faq>
             </div>
           </div>

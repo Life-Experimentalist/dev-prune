@@ -195,14 +195,54 @@ impl Default for RepoEntry {
     }
 }
 
-/// Helper to ensure an entry (e.g. ".devprune.json") is present in the repository's `.gitignore`.
-/// If `.gitignore` doesn't exist, it creates it and adds the entry.
-pub fn ensure_in_gitignore(repo_path: &Path, entry: &str) -> Result<()> {
-    let gitignore_path = repo_path.join(".gitignore");
-    if gitignore_path.exists() {
-        let content = fs::read_to_string(&gitignore_path)?;
+/// Resolve where a repository's shared git directory actually lives.
+///
+/// `.git` is a directory in an ordinary clone, but in worktrees and submodules it is a
+/// one-line `gitdir: <path>` pointer file — and a worktree's private gitdir in turn
+/// holds a `commondir` file pointing at the shared one, which is where `info/exclude`
+/// lives. Returns `None` when the path is not inside a git repository at all.
+fn git_common_dir(repo_path: &Path) -> Option<PathBuf> {
+    let dot_git = repo_path.join(".git");
+    let git_dir = if dot_git.is_dir() {
+        dot_git
+    } else {
+        let pointer = fs::read_to_string(&dot_git).ok()?;
+        let target = pointer.strip_prefix("gitdir:")?.trim();
+        let target = Path::new(target);
+        if target.is_absolute() {
+            target.to_path_buf()
+        } else {
+            repo_path.join(target)
+        }
+    };
+    if let Ok(common) = fs::read_to_string(git_dir.join("commondir")) {
+        let target = Path::new(common.trim());
+        if target.is_absolute() {
+            return Some(target.to_path_buf());
+        }
+        return Some(git_dir.join(target));
+    }
+    Some(git_dir)
+}
+
+/// Ensure an entry (e.g. ".devprune.json") is in the repository's `.git/info/exclude`.
+///
+/// The exclude file, not `.gitignore`: the config records one machine's preferences,
+/// and `.gitignore` is a tracked file shared by everyone who clones the repository —
+/// appending to it silently puts an uncommitted change in the user's diff. The exclude
+/// file gives the same "never shows up in `git status`" result without touching
+/// anything the repository tracks.
+pub fn ensure_in_git_exclude(repo_path: &Path, entry: &str) -> Result<()> {
+    let Some(git_dir) = git_common_dir(repo_path) else {
+        return Ok(());
+    };
+    let info_dir = git_dir.join("info");
+    fs::create_dir_all(&info_dir)?;
+    let exclude_path = info_dir.join("exclude");
+    if exclude_path.exists() {
+        let content = fs::read_to_string(&exclude_path)?;
         if !content.lines().any(|line| line.trim() == entry) {
-            let mut file = fs::OpenOptions::new().append(true).open(&gitignore_path)?;
+            let mut file = fs::OpenOptions::new().append(true).open(&exclude_path)?;
             let prefix = if content.ends_with('\n') || content.is_empty() {
                 ""
             } else {
@@ -211,7 +251,7 @@ pub fn ensure_in_gitignore(repo_path: &Path, entry: &str) -> Result<()> {
             writeln!(file, "{prefix}{entry}")?;
         }
     } else {
-        fs::write(&gitignore_path, format!("{entry}\n"))?;
+        fs::write(&exclude_path, format!("{entry}\n"))?;
     }
     Ok(())
 }
@@ -297,7 +337,8 @@ pub struct PerRepoConfig {
 // Only the settings whose right value depends on the *project* have a per-repository
 // form. `allow_manifest_rewrite` is a permission the user grants their own machine, and
 // — exactly as with `post_prune_command` below — nothing stops a project from committing
-// its `.devprune.json` despite the `.gitignore` entry [`PerRepoConfig::save`] writes. A
+// its `.devprune.json`: the `.git/info/exclude` entry [`PerRepoConfig::save_to_repo`]
+// writes is local to one clone and excludes nothing already tracked. A
 // per-repository form would therefore let a repository nobody has read grant itself the
 // right to have `cargo generate-lockfile` / `go mod tidy` rewrite its tracked manifests
 // during an unattended pass. The `auto_*` and `update_check*` settings describe the
@@ -379,13 +420,14 @@ impl PerRepoConfig {
         }
     }
 
-    /// Save per-repo config to `.devprune.json` in the repo root and auto-update `.gitignore`.
+    /// Save per-repo config to `.devprune.json` in the repo root, and record it in the
+    /// repository's `.git/info/exclude` so it never shows up in `git status`.
     pub fn save_to_repo(&self, repo_path: &Path) -> Result<()> {
         let config_file = repo_path.join(constants::PER_REPO_CONFIG_FILE);
         let content = serde_json::to_string_pretty(self)?;
         fs::write(&config_file, content)?;
-        let _ = ensure_in_gitignore(repo_path, constants::PER_REPO_CONFIG_FILE);
-        let _ = ensure_in_gitignore(repo_path, constants::DEVPRUNE_IGNORE_FILE);
+        let _ = ensure_in_git_exclude(repo_path, constants::PER_REPO_CONFIG_FILE);
+        let _ = ensure_in_git_exclude(repo_path, constants::DEVPRUNE_IGNORE_FILE);
         Ok(())
     }
 }
@@ -1065,5 +1107,72 @@ mod tests {
             .filter(|e| e.path() != path)
             .collect();
         assert!(leftovers.is_empty(), "leftover files: {leftovers:?}");
+    }
+
+    #[test]
+    fn exclude_entry_lands_in_git_info_exclude_not_gitignore() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        fs::create_dir(repo.join(".git")).unwrap();
+
+        ensure_in_git_exclude(repo, ".devprune.json").unwrap();
+
+        let exclude = fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+        assert!(exclude.lines().any(|l| l == ".devprune.json"));
+        // The whole point of using the exclude file: the shared, tracked `.gitignore`
+        // must never be created or touched.
+        assert!(!repo.join(".gitignore").exists());
+    }
+
+    #[test]
+    fn exclude_entry_is_appended_once_and_preserves_existing_lines() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        fs::create_dir_all(repo.join(".git/info")).unwrap();
+        // No trailing newline, deliberately — the append must not glue two entries
+        // onto one line.
+        fs::write(repo.join(".git/info/exclude"), "*.log").unwrap();
+
+        ensure_in_git_exclude(repo, ".devprune.json").unwrap();
+        ensure_in_git_exclude(repo, ".devprune.json").unwrap();
+
+        let exclude = fs::read_to_string(repo.join(".git/info/exclude")).unwrap();
+        let lines: Vec<_> = exclude.lines().collect();
+        assert_eq!(lines, vec!["*.log", ".devprune.json"]);
+    }
+
+    #[test]
+    fn exclude_follows_a_gitdir_pointer_file() {
+        // Worktrees and submodules have a one-line `.git` *file*, and a worktree's
+        // private gitdir points at the shared one via `commondir` — where the real
+        // `info/exclude` lives.
+        let tmp = TempDir::new().unwrap();
+        let shared = tmp.path().join("main-clone/.git");
+        let worktree_gitdir = shared.join("worktrees/wt");
+        fs::create_dir_all(&worktree_gitdir).unwrap();
+        fs::write(worktree_gitdir.join("commondir"), "../..\n").unwrap();
+
+        let wt = tmp.path().join("wt");
+        fs::create_dir(&wt).unwrap();
+        fs::write(
+            wt.join(".git"),
+            format!("gitdir: {}\n", worktree_gitdir.display()),
+        )
+        .unwrap();
+
+        ensure_in_git_exclude(&wt, ".devprune.json").unwrap();
+
+        let exclude = fs::read_to_string(shared.join("info/exclude")).unwrap();
+        assert!(exclude.lines().any(|l| l == ".devprune.json"));
+    }
+
+    #[test]
+    fn exclude_is_a_no_op_outside_a_git_repository() {
+        let tmp = TempDir::new().unwrap();
+
+        ensure_in_git_exclude(tmp.path(), ".devprune.json").unwrap();
+
+        assert!(!tmp.path().join(".git").exists());
+        assert!(!tmp.path().join(".gitignore").exists());
     }
 }

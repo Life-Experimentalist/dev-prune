@@ -14,6 +14,7 @@ This document addresses all potential issues related to installing **`dev-prune`
 6. [`uv tool install` put the executables somewhere unexpected](#6-uv-tool-install-put-the-executables-somewhere-unexpected)
 7. [`dev-prune` works but `devp` does not](#7-dev-prune-works-but-devp-does-not)
 8. [Current working directory (CWD) determinism check](#8-current-working-directory-cwd-determinism-check)
+9. [`pip install` in a virtual environment — what happens when the venv goes away](#9-pip-install-in-a-virtual-environment--what-happens-when-the-venv-goes-away)
 
 ---
 
@@ -352,3 +353,36 @@ ln -sf ~/.config/dev-prune/bin/dev-prune ~/.config/dev-prune/bin/devp
 `dev-prune` state files and binary alias resolutions operate completely independently of the directory from which `devp` is called:
 - `~/.config/dev-prune/registry.json` (or `%APPDATA%\dev-prune\registry.json`) is global.
 - Relative arguments (e.g. `devp run .`) are immediately converted to absolute filesystem paths before execution.
+
+---
+
+### 9. `pip install` in a virtual environment — what happens when the venv goes away
+
+#### Symptom
+`pip install dev-prune` inside an activated virtualenv works, but the worry is what
+happens later: the executables land in `<venv>\Scripts` (Windows) or `<venv>/bin`, and a
+venv is exactly the kind of directory that gets deleted — sometimes by dev-prune itself.
+
+#### What actually happens
+Nothing is lost. On its first run, dev-prune copies itself to a *managed* location —
+`%APPDATA%\dev-prune\bin` on Windows, `~/.config/dev-prune/bin` elsewhere — creates the
+`devp` twin beside it, and puts that directory on your user `PATH` (on Linux and macOS it
+symlinks both names into `~/.local/bin` instead). Every integration — scheduler, hooks,
+agent skill — is registered against that managed copy, never against the venv's.
+
+So the venv copy is just the delivery vehicle. Deactivate the venv, delete it, or let a
+prune pass reclaim it: `devp` keeps working from every new terminal, because the shell
+finds the managed copy.
+
+#### Removing it cleanly
+Two halves, because pip only knows about its own files:
+
+```powershell
+devp uninstall            # removes the managed copy, PATH entry, scheduler, hooks, skill
+pip uninstall dev-prune   # removes the venv's copy so pip's records stay consistent
+```
+
+`devp uninstall` detects a pip-owned copy, leaves it alone, and prints that second
+command for you. Running only `pip uninstall` leaves the managed copy behind — which is
+by design (it is what keeps `devp` alive after the venv dies), but means `devp
+uninstall` is the half you must not skip.

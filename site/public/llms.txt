@@ -116,13 +116,21 @@ Arch, NixOS and Alpine.
 - `devp config …` — global settings, per-repo config, scheduler, hooks, file-manager icons;
   `devp config wizard` walks every setting and runs itself on the first install
 - `devp setup [--status]` — install any missing integration; `--status` only reports
-- `devp skill` — export `SKILL.md` for AI coding assistants
+- `devp skill` — export `SKILL.md` and install it into a detected agent skills directory
+  (`~/.claude/skills/dev-prune/`); prints onboarding prompts for agents without one
 - `devp update [--offline]` — print the installed version, check GitHub for a newer release, and show the upgrade command
-- `devp uninstall [--deep]` — remove the scheduler, hooks and the `devp` copy; `--deep` clears config
+- `devp uninstall [--deep]` — remove the program: scheduler, hooks, agent skill, PATH
+  entry and the binaries themselves, then a sweep over PATH and the well-known install
+  dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) removes every other
+  copy after one confirmation (`-y` covers it; non-interactive without `-y` skips the
+  sweep with a note). Manager-owned copies get the exact uninstall line printed so the
+  manager's records clear too; `--deep` also clears config
 - `devp -V` — version plus an environment audit
 
 Global flags: `--dry-run`, `--ignore-idle` (`--force` is the deprecated alias),
 `-y`/`--yes`, `--json` on the reporting commands (`run`, `status`, `stats`, `caches`).
+Piped `--json` output is one document on stdout and nothing else; only when stdout is
+an actual terminal is the document also copied to the human's clipboard (stderr note).
 `devp run --except <name>` prunes everything *but* the named repositories, which is the
 usual way to keep one project warm. `devp run --only <adapter>` / `--skip <adapter>`
 narrow a pass to named ecosystems. A `.` for `[PATH]` means the current directory and
@@ -250,7 +258,10 @@ human report, use `--dry-run` before a destructive suggestion, and never suggest
 
 ## Background automation
 
-The `devp` second binary, the exported `SKILL.md`, global Git auto-registration hooks,
+The `devp` second binary, the managed binary directory on `PATH` (a user `PATH` entry
+on Windows, `~/.local/bin` symlinks elsewhere — this is what keeps a pip-in-venv
+install working after the venv is gone), the exported `SKILL.md`, the skill installed
+into any detected agent skills directory, global Git auto-registration hooks,
 the OS scheduler and the file-manager icons install themselves at install time, and
 again on `devp init` or after an upgrade if any of them is missing. `devp setup` runs
 the same pass by hand and `devp setup --status` only reports. Hooks are skipped when

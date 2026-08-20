@@ -1,11 +1,11 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! Handler for `dev-prune setup`.
-//!
-//! The same pass dev-prune runs by itself after an install or an upgrade, available to
-//! run by hand — which is what the installer scripts do, and what the error messages
-//! point people at when an integration was skipped.
+// Handler for `dev-prune setup`.
+//
+// The same pass dev-prune runs by itself after an install or an upgrade, available to
+// run by hand — which is what the installer scripts do, and what the error messages
+// point people at when an integration was skipped.
 
 use anyhow::Result;
 
@@ -33,6 +33,8 @@ pub fn run(status_only: bool) -> Result<()> {
         output::print_success("Everything dev-prune needs is in place.");
     }
     output::print_info("Remove all of it again with `devp uninstall`.");
+
+    setup::offer_vscode_extension();
 
     // Installing dev-prune tracks nothing on its own, and a first-time user who stops here
     // gets an empty `devp status` with no hint about why. The installer scripts say this
@@ -79,6 +81,15 @@ fn run_status() -> Result<()> {
             .unwrap_or_else(|| "not installed".to_string())
     );
 
+    print!("  Command on PATH:       ");
+    match setup::managed_bin_dir() {
+        Ok(dir) if crate::pathenv::is_reachable(&dir) => {
+            println!("{} is on your PATH", output::clean_path(&dir))
+        }
+        Ok(dir) => println!("{} is not on your PATH", output::clean_path(&dir)),
+        Err(_) => println!("unknown (no config directory)"),
+    }
+
     let skill = setup::skill_path().ok().filter(|p| p.exists());
     println!(
         "  SKILL.md:              {}",
@@ -87,6 +98,23 @@ fn run_status() -> Result<()> {
             .map(output::clean_path)
             .unwrap_or_else(|| "not exported".to_string())
     );
+
+    let agent_roots = setup::agent_skill_roots();
+    if agent_roots.is_empty() {
+        println!("  AI agent skills:       no AI agent detected");
+    } else {
+        for root in &agent_roots {
+            println!(
+                "  AI agent skills:       {} ({})",
+                output::clean_path(root),
+                if root.join("SKILL.md").is_file() {
+                    "installed"
+                } else {
+                    "not installed"
+                }
+            );
+        }
+    }
 
     println!(
         "  File icons:            {}",

@@ -90,7 +90,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "is the background stuff working?" | `devp setup --status` |
 | "set it all up" | `devp setup` |
 | "turn the automation off" | `devp config set auto_setup false` |
-| "remove it" | `devp uninstall` (add `--deep` to wipe config — confirm first) |
+| "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed (add `--deep` to wipe config — confirm first) |
 | "what version?" | `devp -V` (also prints OS, arch, config path, PATH audit) |
 | you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats` or `caches` — see below |
 
@@ -125,7 +125,9 @@ A run in which any repository failed exits `1` even if others succeeded.
 `devp run --json`, `devp status --json`, `devp stats --json` and `devp caches --json` each
 emit **one** JSON document on stdout and nothing else; warnings go to stderr. `--json`
 implies non-interactive, so it never blocks on a prompt. `status --json` and
-`stats --json` change nothing at all, not even the registry file.
+`stats --json` change nothing at all, not even the registry file. (When a human runs
+`--json` in a real terminal the document is also copied to their clipboard, with a
+dimmed stderr note — piped output, the way you consume it, never triggers this.)
 
 ```bash
 devp status --json          # what exists, what is reclaimable, are the integrations up

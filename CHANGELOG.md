@@ -5,6 +5,93 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-08-20
+
+An uninstall that actually uninstalls, an install that survives the environment it was
+installed from, automatic AI-agent skill setup, and color in the terminal output. No
+change to pruning, verification or any of the seven safety invariants.
+
+### Added
+
+- **The AI agent skill installs itself.** Setup now detects an on-disk agent skills
+  directory (`~/.claude/skills/`) and places the bundled skill at
+  `~/.claude/skills/dev-prune/SKILL.md`, so agents like Claude Code discover `devp`
+  automatically — no copy-paste prompt needed. The skill costs the agent almost nothing
+  until it is actually used: only its one-line description is loaded per session. `devp
+  skill` does the same install on demand and still prints the onboarding prompts for
+  agents without a skills directory, and `devp setup --status` shows an "AI agent skills"
+  line telling you where it landed. On a machine with no agent installed the step is
+  skipped silently — nothing warns about software you don't have.
+- **`devp` stays on your PATH no matter how you installed it.** Setup now puts the
+  managed copy's directory (`<config>/bin`) on your user PATH on Windows, and symlinks
+  both names into `~/.local/bin` on Linux and macOS. This is what makes `pip install
+  dev-prune` inside a virtual environment work permanently: the venv's copy disappears
+  when the venv does, but the managed copy it registered on first run remains reachable
+  from every new terminal. `devp setup --status` shows a "Command on PATH" line.
+- **Color in the output.** Backticked commands are highlighted so instructions stand out
+  from prose, headers are cyan, sizes and paths carry their own colors, and `devp -V`
+  colorizes the version report. Everything still degrades to plain text when piped —
+  `--json` and redirected output are byte-identical to before.
+- **`--json` output lands on your clipboard.** When you run `devp run`, `status`,
+  `stats` or `caches` with `--json` in an actual terminal, the document is also copied
+  to the clipboard, so pasting it into an issue, a chat or an editor is one keystroke.
+  A dimmed `(also copied to your clipboard)` note goes to stderr. Piped or redirected
+  output — the way scripts and agents consume `--json` — is untouched: stdout still
+  carries the document and nothing else, and no clipboard is involved.
+- **Setup offers the editor extension — in VS Code and its forks.** When a VS
+  Code-family editor is on your PATH (VS Code, VSCodium, Cursor, Windsurf, Positron,
+  Kiro, or an Insiders build) and the dev-prune extension is not installed, `devp
+  setup` (and the first-run walkthrough) asks once whether to install it into each
+  editor found — the extension validates `.devprune.json` as you type and shows the
+  reclaimable size in the status bar. Each editor installs from its own registry
+  (Marketplace or OpenVSX); if a fork's registry does not carry the extension, the
+  `.vsix` from the latest GitHub release is installed instead, so the offer works
+  everywhere the CLI does. One question, once ever, only at an interactive terminal:
+  decline and it never comes up again, and CI, containers and
+  `DEV_PRUNE_NO_AUTO_SETUP=1` never see the question at all. Install it by hand any
+  time with `code --install-extension VKrishna04.dev-prune`.
+- **`--help` is now the manual.** Every command and every `config` subcommand carries
+  full long-form help: what it does, the behaviour that is not obvious from the flag
+  list, and worked examples — `devp run --help`, `devp config hook --help`, and so on,
+  at every level. `-h` still prints the short version. The same text answers "which
+  keys can I set?" (`devp config get --help` lists all fourteen with defaults) and
+  "how do I install completions?" (`devp completions --help` shows the line per shell).
+
+### Changed
+
+- **The per-repo config no longer touches your `.gitignore`.** When the CLI writes a
+  `.devprune.json`, it now records it (and `ignore.devprune.json`) in the repository's
+  `.git/info/exclude` instead of appending to `.gitignore`. The result is the same —
+  the config never shows up in `git status` — but `.gitignore` is a tracked file shared
+  with everyone who clones the repository, and a disk-cleanup preference that applies to
+  one machine has no business appearing in your diff. Entries already added to a
+  `.gitignore` by earlier versions are left alone; remove them by hand if you like.
+
+### Fixed
+
+- **The dashboard is readable on light-theme terminals.** Repository paths and the
+  header row of `devp status` (and the `devp run` selection list) were drawn in fixed
+  white, which vanishes on a white background. Text now uses the terminal's own default
+  foreground, switching to white only on rows the dashboard paints dark itself — so
+  both light and dark themes get legible contrast without any configuration.
+- **`devp uninstall` now removes the program.** Previously it stopped the scheduler and
+  hooks but left both binaries in place and on PATH, so `devp` kept working as if
+  nothing had happened. Both modes now delete the managed pair and the copy you ran,
+  remove the PATH entry (or the `~/.local/bin` symlinks), and delete the installed
+  agent skill; `--deep` additionally purges the config directory and per-repository
+  `.devprune.json` files. On Windows, where a running executable cannot delete itself,
+  a detached helper removes the last files a few seconds after the command exits — no
+  reboot, no closing the terminal. It then sweeps for every *other* copy of the binary —
+  installing from pip, npm, cargo and uv over time leaves `devp` in `~/.cargo/bin`,
+  `~/.local/bin`, npm's global directory and one `Scripts` folder per virtualenv, and
+  any one of them keeps the command resolving after an "uninstall". The sweep scans
+  your PATH and the well-known install directories, lists what it found (annotated
+  with the package manager that owns each copy), and removes them all after one
+  confirmation — `--yes` covers it, and declining leaves them in place without failing
+  the uninstall. For each manager-owned copy the exact `pip uninstall` /
+  `npm uninstall -g` / `cargo uninstall` / `uv tool uninstall` / `pipx uninstall` line
+  is still printed at the end, so the manager's own records get cleared too.
+
 ## [1.1.0] - 2026-08-14
 
 New commands and flags — `devp stats`, `devp completions`, `devp status --top` and

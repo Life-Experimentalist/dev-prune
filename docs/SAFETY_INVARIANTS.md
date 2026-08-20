@@ -192,7 +192,7 @@ backup; nothing reads it back.
 
 ### 5. Fast 0ms `ignore.devprune.json` & Per-Repo Settings
 - **`ignore.devprune.json`**: File presence check running in **0ms O(1) latency** bypassing directory iteration without reading or parsing JSON file contents.
-- **`.devprune.json`**: Per-repository configuration supporting `project_name`, `ignore`, `disable_daemon` (excluded from the scheduled pass only), `disable_hooks` (the global Git hook will not auto-register this repo), and the three tuning overrides `override_idle_days`, `min_size_mb` and `scan_depth`. Automatically updates `.gitignore` when created.
+- **`.devprune.json`**: Per-repository configuration supporting `project_name`, `ignore`, `disable_daemon` (excluded from the scheduled pass only), `disable_hooks` (the global Git hook will not auto-register this repo), and the three tuning overrides `override_idle_days`, `min_size_mb` and `scan_depth`. Automatically recorded in the repository's `.git/info/exclude` when created, so it never shows up in `git status` and the shared `.gitignore` is never touched.
 
 A `.devprune.json` that cannot be parsed is treated as a refusal to guess, not as a
 missing file: the repository is skipped and the syntax error is printed. Falling back to

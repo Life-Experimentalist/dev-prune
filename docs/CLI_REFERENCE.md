@@ -95,6 +95,11 @@ when the argument is quoted.
 
 ## 💻 Subcommands
 
+This reference is also built into the binary: `devp <command> --help` prints the
+long-form help for any command — the full description plus worked examples — and it
+goes all the way down (`devp config hook --help`, `devp config get --help`, …). `-h`
+prints the short version, `devp help <command>` is equivalent to `--help`.
+
 ### 1. `devp init [PATHS...]`
 - **Aliases**: `scan`, `onboard`
 - **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#11-devp-setup---status), installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#10-devp-update---offline) does.
@@ -335,6 +340,10 @@ reads unambiguously:
     install, so the defaults are something you agreed to rather than something you
     inherited. It never runs unattended: no TTY means it is skipped, not guessed at.
   - `config project [PATH] [--update]`: Inspect or create per-repository `.devprune.json` config.
+    Whenever the CLI writes this file it also records `.devprune.json` and
+    `ignore.devprune.json` in the repository's `.git/info/exclude`, so the config —
+    one machine's preference, not part of the project — never shows up in `git status`
+    and the shared, tracked `.gitignore` is never modified.
   - `config daemon [PATH] [enable|disable|status]`: Configure OS background scheduler globally or for workspace.
   - `config hook [PATH] [enable|disable|status] [--chain]`: Configure Git auto-registration hooks globally or for workspace.
 
@@ -397,6 +406,14 @@ Every document carries `schema`, an integer that increases only when a consumer 
 have to change to keep working: a field removed, renamed, or given a new meaning. **Adding
 a field does not bump it**, so parse permissively and ignore what you do not recognise.
 The current version is `1`.
+
+When `--json` is run interactively — stdout is an actual terminal, not a pipe or a
+redirect — the document is also copied to the clipboard, and a dimmed
+`(also copied to your clipboard)` note goes to stderr. Piped output, the way scripts and
+agents consume `--json`, is untouched: stdout carries the document and nothing else, no
+clipboard is involved, and nothing extra is printed. The copy uses the platform tool
+(`clip` on Windows, `pbcopy` on macOS, `wl-copy`/`xclip`/`xsel` on Linux) and is skipped
+silently when none is available.
 
 ### `devp run --json`
 
@@ -605,12 +622,13 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 ---
 
 ### 11. `devp setup [--status]`
-- **Description**: Installs whatever dev-prune integration is missing and leaves the rest alone: the `devp` alias, the exported `SKILL.md`, the file-manager icon registration for `*.devprune.json`, the global Git auto-registration hooks, and the OS scheduler. Safe to run repeatedly — it is the same pass the install scripts run, the same one `devp init` runs, and the same one that runs by itself on the first command after an upgrade.
+- **Description**: Installs whatever dev-prune integration is missing and leaves the rest alone: the `devp` alias, the managed binary directory on your `PATH` (a user `PATH` entry on Windows, `~/.local/bin` symlinks elsewhere — this is what keeps `devp` working after the venv or npx cache it was installed from disappears), the exported `SKILL.md`, the skill installed into any detected AI agent skills directory (`~/.claude/skills/dev-prune/`), the file-manager icon registration for `*.devprune.json`, the global Git auto-registration hooks, and the OS scheduler. Safe to run repeatedly — it is the same pass the install scripts run, the same one `devp init` runs, and the same one that runs by itself on the first command after an upgrade.
 - **`--status`**: Report what is installed, what is not, and which automation settings are in force. Changes nothing.
 - **Skips, rather than forces**:
   - Git hooks, when `git` is not on `PATH` (with instructions to install it), or when `core.hooksPath` already belongs to husky, pre-commit or lefthook and `auto_hooks_chain` is off. Take the slot without displacing that tool: `devp hook install --chain`.
   - The alias, when the running process *is* `devp` and the file cannot be replaced under it (Windows).
   - Anything switched off by `auto_setup`, `auto_hooks`, `auto_daemon`, or `DEV_PRUNE_NO_AUTO_SETUP=1`.
+- **Editor extension**: when a VS Code-family CLI is on `PATH` — `code`, `code-insiders`, `codium`, `codium-insiders`, `cursor`, `windsurf`, `positron` or `kiro` — and the [dev-prune extension](IDE_INTEGRATION.md) is not installed, one run asks — once ever, only at an interactive terminal, never in CI or containers — whether to install it into each editor found. Each editor installs from its own registry (Marketplace for VS Code, OpenVSX for most forks); if a fork's registry does not carry the extension, the `.vsix` attached to the latest GitHub release is installed instead. Decline and it never asks again; `code --install-extension VKrishna04.dev-prune` installs it by hand later.
 - **Examples**:
   ```bash
   devp setup
@@ -639,7 +657,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ---
 
 ### 13. `devp skill`
-- **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory and displays ready-to-copy AI Agent onboarding prompts for AI assistants (Gemini Antigravity, Claude Code, Cursor, Windsurf, Copilot, OpenClaw).
+- **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory, installs it into any detected on-disk agent skills directory (`~/.claude/skills/dev-prune/` — the same install `devp setup` performs automatically), and displays ready-to-copy AI Agent onboarding prompts for assistants without a skills directory (Gemini Antigravity, Cursor, Windsurf, Copilot, OpenClaw).
 - **Examples**:
   ```bash
   devp skill
@@ -648,12 +666,13 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ---
 
 ### 14. `devp uninstall [--deep]`
-- **Description**: Removes the OS daemon scheduler, clears the global `core.hooksPath` (only if it still points at dev-prune), and removes the `devp` alias link. It also stamps the current version so the automatic pass does not put them straight back on the next command; the next *upgrade* will, unless you also run `devp config set auto_setup false`. With `--deep`, also wipes the global configuration folder (`~/.config/dev-prune/`) and every registered repository's `.devprune.json`. `--deep` asks for confirmation, and refuses outright with no terminal to ask on unless `-y` is passed.
+- **Description**: Removes dev-prune from the machine: the OS daemon scheduler, the global `core.hooksPath` (only if it still points at dev-prune), the installed agent skill, the `PATH` entry (or `~/.local/bin` symlinks), and the binaries themselves — both the managed pair and the copy you invoked. On Windows, where a running executable cannot delete itself, a detached helper removes the last files a few seconds after the command exits; nothing needs a reboot or a closed terminal. Without `--deep` the configuration survives, so a reinstall picks up where you left off. With `--deep`, also wipes the global configuration folder (`~/.config/dev-prune/`) and every registered repository's `.devprune.json`; `--deep` asks for confirmation, and refuses outright with no terminal to ask on unless `-y` is passed. Exits `1` if anything could not be removed, naming each leftover.
+- **The stray-copy sweep**: installing from pip, npm, cargo and uv over time leaves copies of `devp` in `~/.cargo/bin`, `~/.local/bin`, npm's global directory and one `Scripts` folder per virtualenv — some on PATH, some not, and any one of them keeps the command resolving after an "uninstall". Both modes therefore end by scanning every directory on your PATH plus the well-known install locations for other copies of `dev-prune`/`devp` (matched by name only; nothing else in those directories is ever touched, and dev builds under a `target/` folder are skipped). What it finds is listed — each copy annotated with the package manager that owns it — and removed after **one confirmation**: `[Y/n]` interactively, `--yes` auto-confirms, and with no terminal and no `--yes` the copies are left in place with a note, without failing the uninstall. For each manager-owned copy the manager's own line (`pip uninstall dev-prune`, `npm uninstall -g dev-prune`, `cargo uninstall dev-prune`, `uv tool uninstall dev-prune`, `pipx uninstall dev-prune`) is printed at the end so its records get cleared too.
 - **Examples**:
   ```bash
   devp uninstall
   devp uninstall --deep
-  devp uninstall --deep -y     # non-interactive
+  devp uninstall --deep -y     # non-interactive; also confirms the stray-copy sweep
   ```
 
 ---

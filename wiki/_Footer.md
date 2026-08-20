@@ -1,0 +1,1 @@
+This wiki is generated from [`wiki/`](https://github.com/Life-Experimentalist/dev-prune/tree/main/wiki) in the repository — edit there, not here. dev-prune is written by [VKrishna04](https://github.com/VKrishna04) and licensed Apache-2.0 · [Website](https://devprune.vkrishna04.me) · [Report an issue](https://github.com/Life-Experimentalist/dev-prune/issues)

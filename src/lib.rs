@@ -7,8 +7,10 @@ pub mod config;
 pub mod constants;
 pub mod daemon;
 pub mod engine;
+pub mod help;
 pub mod json;
 pub mod output;
+pub mod pathenv;
 pub mod scanner;
 pub mod setup;
 pub mod tui;
@@ -141,6 +143,7 @@ pub struct Cli {
 pub enum Commands {
     /// Workspace onboarding & discovery: crawl paths for Git repositories and register them.
     #[command(alias = "scan", alias = "onboard")]
+    #[command(long_about = help::INIT_LONG, after_long_help = help::INIT_EXAMPLES)]
     Init {
         /// Paths to scan for Git repositories (defaults to current directory).
         #[arg(default_value = ".")]
@@ -148,6 +151,7 @@ pub enum Commands {
     },
 
     /// Register a single Git repository for pruning (defaults to current directory `.`).
+    #[command(long_about = help::LINK_LONG, after_long_help = help::LINK_EXAMPLES)]
     Link {
         /// Path to the Git repository to register.
         #[arg(default_value = ".")]
@@ -159,6 +163,7 @@ pub enum Commands {
     },
 
     /// Remove a repository from the dev-prune registry (does not delete workspace files).
+    #[command(long_about = help::UNLINK_LONG, after_long_help = help::UNLINK_EXAMPLES)]
     Unlink {
         /// Path to the Git repository to unregister.
         #[arg(default_value = ".")]
@@ -170,9 +175,11 @@ pub enum Commands {
     },
 
     /// Revert the most recent init or link action.
+    #[command(long_about = help::UNDO_LONG, after_long_help = help::UNDO_EXAMPLES)]
     Undo,
 
     /// Run a prune pass across all registered repositories or a target directory (`devp run .`).
+    #[command(long_about = help::RUN_LONG, after_long_help = help::RUN_EXAMPLES)]
     Run {
         /// Optional target workspace path. If omitted, runs across all registered repositories.
         target_path: Option<String>,
@@ -209,6 +216,7 @@ pub enum Commands {
     },
 
     /// View system dashboard: registered repos, background daemon, Git hooks & space metrics.
+    #[command(long_about = help::STATUS_LONG, after_long_help = help::STATUS_EXAMPLES)]
     Status {
         /// Show only the N repositories with the most reclaimable space.
         ///
@@ -236,6 +244,7 @@ pub enum Commands {
     },
 
     /// Show lifetime space reclaimed, recent prune passes, and the biggest repositories.
+    #[command(long_about = help::STATS_LONG, after_long_help = help::STATS_EXAMPLES)]
     Stats {
         /// Emit the figures as one JSON document instead of the text report.
         #[arg(long)]
@@ -243,12 +252,14 @@ pub enum Commands {
     },
 
     /// Print a shell completion script for bash, zsh, fish, PowerShell or elvish.
+    #[command(long_about = help::COMPLETIONS_LONG, after_long_help = help::COMPLETIONS_EXAMPLES)]
     Completions {
         /// Shell to generate for.
         shell: clap_complete::Shell,
     },
 
     /// Report the size of every package manager cache on this machine (read-only, deletes nothing).
+    #[command(long_about = help::CACHES_LONG, after_long_help = help::CACHES_EXAMPLES)]
     Caches {
         /// Emit the report as one JSON document instead of the table.
         #[arg(long)]
@@ -256,12 +267,14 @@ pub enum Commands {
     },
 
     /// Manage global settings, background daemon, Git hooks, custom icons, or per-project .devprune.json.
+    #[command(long_about = help::CONFIG_LONG, after_long_help = help::CONFIG_EXAMPLES)]
     Config {
         #[command(subcommand)]
         action: Option<ConfigAction>,
     },
 
     /// Restore dependencies in a project using its lockfile (npm ci, pnpm install, uv sync).
+    #[command(long_about = help::RESTORE_LONG, after_long_help = help::RESTORE_EXAMPLES)]
     Restore {
         /// Path to the project to restore (defaults to current directory).
         path: Option<String>,
@@ -273,6 +286,7 @@ pub enum Commands {
     },
 
     /// Print the installed version, check for a newer release, and show how to upgrade.
+    #[command(long_about = help::UPDATE_LONG, after_long_help = help::UPDATE_EXAMPLES)]
     Update {
         /// Skip the release check for this run. The check is the only thing in dev-prune
         /// that opens a network connection; `devp config set update_check false` turns
@@ -282,9 +296,11 @@ pub enum Commands {
     },
 
     /// Export SKILL.md and display ready-to-copy AI Agent onboarding & skill import prompts.
+    #[command(long_about = help::SKILL_LONG, after_long_help = help::SKILL_EXAMPLES)]
     Skill,
 
     /// Install whatever dev-prune integration is missing: alias, SKILL.md, Git hooks, scheduler.
+    #[command(long_about = help::SETUP_LONG, after_long_help = help::SETUP_EXAMPLES)]
     Setup {
         /// Report what is installed without changing anything.
         #[arg(long)]
@@ -292,6 +308,7 @@ pub enum Commands {
     },
 
     /// Diagnose the installation, or one repository if given a path (`devp doctor .`).
+    #[command(long_about = help::DOCTOR_LONG, after_long_help = help::DOCTOR_EXAMPLES)]
     Doctor {
         /// Repository to diagnose. Omit to check the installation itself.
         path: Option<String>,
@@ -307,7 +324,8 @@ pub enum Commands {
         fix: bool,
     },
 
-    /// Uninstall background daemon, Git hooks, and optionally wipe configuration.
+    /// Remove dev-prune: scheduler, hooks, PATH entry, agent skill, and every copy of the binary.
+    #[command(long_about = help::UNINSTALL_LONG, after_long_help = help::UNINSTALL_EXAMPLES)]
     Uninstall {
         /// Perform a deep uninstall (wipe configuration folder and .devprune.json files).
         #[arg(long)]
@@ -342,6 +360,7 @@ impl Commands {
 #[derive(Subcommand, Debug)]
 pub enum ConfigAction {
     /// Display a global configuration value.
+    #[command(long_about = help::CONFIG_GET_LONG, after_long_help = help::CONFIG_GET_EXAMPLES)]
     Get {
         /// Any key `devp config show` lists — idle_days, min_size_mb, scan_depth,
         /// require_confirmation, allow_manifest_rewrite, command_timeout_secs,
@@ -350,6 +369,7 @@ pub enum ConfigAction {
         key: String,
     },
     /// Set a global configuration value.
+    #[command(long_about = help::CONFIG_SET_LONG, after_long_help = help::CONFIG_SET_EXAMPLES)]
     Set {
         /// Configuration key.
         key: String,
@@ -357,12 +377,14 @@ pub enum ConfigAction {
         value: String,
     },
     /// Show all global configuration values or sync per-repo configurations.
+    #[command(long_about = help::CONFIG_SHOW_LONG, after_long_help = help::CONFIG_SHOW_EXAMPLES)]
     Show {
         /// Force update/sync pass across all registered repos.
         #[arg(long, short)]
         update: bool,
     },
     /// Inspect or initialize per-repository config (.devprune.json) for a workspace path.
+    #[command(long_about = help::CONFIG_PROJECT_LONG, after_long_help = help::CONFIG_PROJECT_EXAMPLES)]
     Project {
         /// Path to the repository (defaults to current directory).
         #[arg(default_value = ".")]
@@ -372,6 +394,7 @@ pub enum ConfigAction {
         update: bool,
     },
     /// Configure OS background daemon scheduler globally or for a workspace path.
+    #[command(long_about = help::CONFIG_DAEMON_LONG, after_long_help = help::CONFIG_DAEMON_EXAMPLES)]
     Daemon {
         /// Optional workspace path or sub-action (enable, disable, status).
         target: Option<String>,
@@ -379,6 +402,7 @@ pub enum ConfigAction {
         sub_action: Option<String>,
     },
     /// Configure non-blocking global Git background auto-registration hooks globally or for a workspace path.
+    #[command(long_about = help::CONFIG_HOOK_LONG, after_long_help = help::CONFIG_HOOK_EXAMPLES)]
     Hook {
         /// Optional workspace path or sub-action (enable, disable, status).
         target: Option<String>,
@@ -390,8 +414,10 @@ pub enum ConfigAction {
         chain: bool,
     },
     /// Register a file-manager icon for .devprune.json, and print an editor snippet.
+    #[command(long_about = help::CONFIG_ICON_LONG, after_long_help = help::CONFIG_ICON_EXAMPLES)]
     Icon,
     /// Walk through every global setting, confirming or changing each one.
+    #[command(long_about = help::CONFIG_WIZARD_LONG, after_long_help = help::CONFIG_WIZARD_EXAMPLES)]
     Wizard,
 }
 
@@ -420,19 +446,36 @@ pub fn ensure_devp_alias() {
 /// found on a machine with no package manager record should still be able to say where it
 /// came from, and `--version` is the first thing anyone runs on an unknown executable.
 pub fn print_version_info() {
+    use colored::Colorize;
     output::print_banner();
-    println!("dev-prune (devp) v{}", constants::VERSION);
-    println!("  Binary Aliases:  dev-prune | devp (interchangeable)");
-    println!("  Author:          {}", constants::AUTHOR);
-    println!("  Repository:      {}", constants::REPO_URL);
-    println!("  Homepage:        {}", constants::HOMEPAGE_URL);
-    println!("  Target OS:       {}", std::env::consts::OS);
-    println!("  Architecture:    {}", std::env::consts::ARCH);
+    println!(
+        "dev-prune (devp) {}",
+        format!("v{}", constants::VERSION).green().bold()
+    );
+    println!(
+        "  Binary Aliases:  {} | {}",
+        "dev-prune".cyan(),
+        "devp".cyan()
+    );
+    println!(
+        "  Author:          {}",
+        constants::AUTHOR.truecolor(64, 224, 208)
+    );
+    println!(
+        "  Repository:      {}",
+        constants::REPO_URL.bright_blue().underline()
+    );
+    println!(
+        "  Homepage:        {}",
+        constants::HOMEPAGE_URL.bright_blue().underline()
+    );
+    println!("  Target OS:       {}", std::env::consts::OS.yellow());
+    println!("  Architecture:    {}", std::env::consts::ARCH.yellow());
     println!("  Compiler:        Rust 1.85+ (edition 2024)");
-    println!("  License:         Apache-2.0 (no analytics, no diagnostics)");
+    println!("  License:         Apache-2.0");
     println!();
     let reg_path = config::Registry::registry_path()
-        .map(|p| output::clean_path(&p))
+        .map(output::styled_path)
         .unwrap_or_else(|_| "unknown".to_string());
     println!("  Config Path:     {reg_path}");
 
@@ -444,12 +487,21 @@ pub fn print_version_info() {
                 .split(if cfg!(windows) { ';' } else { ':' })
                 .any(|p| std::path::Path::new(p) == exe_dir);
 
-            println!("  Binary Dir:      {exe_dir_str}");
+            println!("  Binary Dir:      {}", exe_dir_str.cyan());
             if is_in_path {
-                println!("  PATH Audit:      ✓ Executable directory is active in system PATH.");
+                println!(
+                    "  PATH Audit:      {}",
+                    "✓ Executable directory is active in system PATH.".green()
+                );
             } else {
-                println!("  PATH Audit:      ⚠ Executable directory is NOT in system PATH!");
-                println!("                   Add `{exe_dir_str}` to Environment Variables.");
+                println!(
+                    "  PATH Audit:      {}",
+                    "⚠ Executable directory is NOT in system PATH!".yellow()
+                );
+                println!(
+                    "                   Add `{}` to Environment Variables.",
+                    exe_dir_str.cyan()
+                );
             }
         }
     }

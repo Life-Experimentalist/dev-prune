@@ -26,6 +26,30 @@ pub fn run() -> Result<()> {
     };
 
     output::print_success(&format!("Bundled SKILL.md exported to `{skill_path}`"));
+
+    // Agents with an on-disk skill format get the file put where they read it, so the
+    // prompts below are only needed for the ones without one.
+    let agent_roots = crate::setup::agent_skill_roots();
+    match crate::setup::ensure_agent_skills() {
+        crate::setup::Outcome::Installed | crate::setup::Outcome::AlreadyPresent => {
+            for root in &agent_roots {
+                output::print_success(&format!(
+                    "Skill installed for your AI agent at `{}`",
+                    output::clean_path(root.join("SKILL.md"))
+                ));
+            }
+        }
+        crate::setup::Outcome::Skipped(_) => {
+            output::print_info(
+                "No AI agent skills directory was found — use the prompts below instead.",
+            );
+        }
+        crate::setup::Outcome::Failed(why) => {
+            output::print_warning(&format!(
+                "Could not install into the agent skills directory: {why}"
+            ));
+        }
+    }
     println!();
     output::print_header("🤖 AI Agent Onboarding Prompts (Copy & Paste to your AI Assistant)");
     println!();

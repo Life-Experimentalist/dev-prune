@@ -1,11 +1,11 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! Handler for `dev-prune completions`.
-//!
-//! The script is generated from the same clap definition the binary parses arguments
-//! with, so a flag cannot exist in one and be missing from the other. That is the whole
-//! reason this is a subcommand rather than five checked-in files that go stale.
+// Handler for `dev-prune completions`.
+//
+// The script is generated from the same clap definition the binary parses arguments
+// with, so a flag cannot exist in one and be missing from the other. That is the whole
+// reason this is a subcommand rather than five checked-in files that go stale.
 
 use std::path::PathBuf;
 

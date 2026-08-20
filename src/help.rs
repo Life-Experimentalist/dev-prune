@@ -1,0 +1,517 @@
+// Copyright 2026 VKrishna04
+// SPDX-License-Identifier: Apache-2.0
+
+// The long-form help text: what `devp <command> --help` prints.
+//
+// `-h` stays short — one line per flag, no scrolling. `--help` (and `devp help
+// <command>`) gets these: the full description, the behaviour that is not obvious from
+// the flag list, and worked examples for every command and subcommand. The text is
+// kept in one file rather than inline in the derive so the CLI definition in `lib.rs`
+// stays readable, and because these paragraphs are documentation first — they carry
+// the same facts as `docs/CLI_REFERENCE.md`, and changing one means changing both.
+
+pub const INIT_LONG: &str = "\
+Crawl the given directory trees for Git repositories and register every one found, up \
+to 8 levels deep. Registration is one entry in dev-prune's own registry file — nothing \
+in the repository is created, changed or deleted.
+
+After registering, it runs the same integration pass as `devp setup` (installing \
+whatever is missing, reporting whatever it skipped) and the same quiet release check \
+as `devp update`.
+
+Registration is what makes a repository visible to `devp run`, `devp status` and the \
+background pass. Repositories are never auto-discovered at prune time: what dev-prune \
+touches is exactly what you registered.";
+
+pub const INIT_EXAMPLES: &str = "\
+EXAMPLES:
+  devp init                       Register repositories under the current directory
+  devp init ~/Code                Register everything under ~/Code
+  devp init ~/Code ~/Work/oss     Multiple trees in one pass
+  devp scan ~/Code                Same command — `scan` and `onboard` are aliases
+  DEV_PRUNE_NO_AUTO_SETUP=1 devp init ~/Code
+                                  Register repositories, install nothing
+
+UNDO:
+  devp undo                       Reverts the most recent init or link";
+
+pub const LINK_LONG: &str = "\
+Register one Git repository for pruning. The path defaults to `.`, so inside a \
+repository `devp link` is the whole command. Registration writes one entry to \
+dev-prune's registry; the repository itself is untouched.
+
+`--quiet` is the form the global Git hook invokes: it prints nothing (a hook fires \
+inside someone's commit, whose terminal is not dev-prune's to write to) and it skips \
+repositories whose `.devprune.json` sets `disable_hooks`, so a workspace that opted \
+out of auto-registration stays out.";
+
+pub const LINK_EXAMPLES: &str = "\
+EXAMPLES:
+  devp link                       Register the current directory
+  devp link ~/Code/my-app         Register a repository by path
+  devp link . --quiet             What the Git hook runs; silent, honours opt-outs
+
+UNDO:
+  devp undo                       Reverts the most recent init or link
+  devp unlink                     Unregister (keeps every file on disk)";
+
+pub const UNLINK_LONG: &str = "\
+Remove a repository from dev-prune's registry. This deletes the registry entry and \
+nothing else — no workspace file is touched, and the repository's `.devprune.json`, \
+if it has one, stays where it is.
+
+`--missing` removes every registered path whose directory no longer exists, instead \
+of one named repository. Deleted clones, reformatted drives and moved workspaces all \
+leave dead entries behind; `devp doctor` counts them in one warning and points here \
+rather than printing one `devp unlink` line per dead path.";
+
+pub const UNLINK_EXAMPLES: &str = "\
+EXAMPLES:
+  devp unlink                     Unregister the current directory
+  devp unlink ~/Code/old-app      Unregister a repository by path
+  devp unlink --missing           Drop every entry whose path no longer exists";
+
+pub const UNDO_LONG: &str = "\
+Revert the most recent `devp init` or `devp link`: whatever repositories that one \
+action registered are unregistered again. Only registration is undone — `undo` never \
+deletes files, and it is not the undo for a prune (that is `devp restore --last-run`).";
+
+pub const UNDO_EXAMPLES: &str = "\
+EXAMPLES:
+  devp undo                       Unregister whatever the last init/link registered
+
+RELATED:
+  devp restore --last-run         The undo for a prune pass — reinstalls what it deleted";
+
+pub const RUN_LONG: &str = "\
+Execute a prune pass: across every registered repository with no path, or on one \
+repository with `devp run <path>`. Each repository goes through the same gauntlet, \
+and a directory is deleted only when every check passes:
+
+  1. `ignore.devprune.json` in the root, or `\"ignore\": true` — skipped instantly.
+  2. Idle check: last commit and newest source mtime, against `idle_days` (15 by
+     default). `--ignore-idle` lifts this one check and nothing else.
+  3. Project discovery: the root and up to `scan_depth` levels below it (6 by
+     default), so a monorepo's every package is found.
+  4. The package manager's own binary must be present — a directory whose manager
+     is missing cannot be verified, so it is not touched.
+  5. Lockfile verification: the manager itself confirms the lockfile can rebuild
+     the directory. No flag bypasses this, and none ever will.
+  6. Size floor (`min_size_mb` / `--min-size`), symlink refusal, nested-repository
+     refusal.
+
+Interactively, a selection TUI shows what would be deleted before anything is; `-y` \
+skips the confirmation, and `--dry-run` reports what a pass would do without deleting \
+anything at all. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
+venv, cargo, go — an unknown name is an error listing the valid ones, not a silently \
+empty pass.
+
+`--except` is the safe spelling of \"clean up but keep the API project\": the named \
+repositories are never verified, never deleted and never restored, which beats \
+pruning them and downloading everything back. Entries match by full path or by \
+directory name, case-insensitively, `~` expanded.";
+
+pub const RUN_EXAMPLES: &str = "\
+EXAMPLES:
+  devp run --dry-run              What would be pruned, and why the rest would not
+  devp run                        Prune across all registered repositories (asks first)
+  devp run -y                     Same, no confirmation prompt
+  devp run .                      Prune only the current repository
+  devp run ~/Code/my-app --ignore-idle -y
+                                  Prune it even though it was touched recently
+  devp run --except api-service,~/Code/playground
+                                  Everything except the ones you name
+  devp run --only cargo,uv --dry-run
+                                  Only these package managers
+  devp run --skip venv --min-size 50
+                                  Skip venvs; ignore directories under 50 MiB
+  devp run --json --dry-run       One JSON document on stdout (schema in CLI_REFERENCE)
+
+Run interactively with a terminal, `--json` also copies the document to the clipboard.
+A run in which any repository failed exits 1, even if others succeeded.";
+
+pub const STATUS_LONG: &str = "\
+The dashboard: every registered repository with its state (Candidate, Active, \
+Ignored, No Bloat, Path Missing, or an unreadable `.devprune.json`), its reclaimable \
+space, and its last activity. In a terminal this is an interactive TUI; piped or \
+redirected it prints a plain table; `--json` replaces either with one document and \
+changes nothing at all.
+
+Sizes are what deleting the directory actually gives back: bytes hardlinked into a \
+pnpm or bun store are measured per file and excluded, because the store keeps them.
+
+TUI KEYS:
+  Up/Down, j/k      Move           PgUp/PgDn        Jump ten rows
+  Home/End, g/G     First/last     p                Prune-select mode (candidates pre-selected)
+  Space             Toggle row     a                Toggle all candidates
+  Enter             Prune the selection             i    Toggle ignore in .devprune.json
+  Esc               Leave mode / exit               q, Ctrl-C   Exit
+
+SHORTCUTS:
+  devp status daemon              = devp config daemon status
+  devp status . hook              = devp config hook . status";
+
+pub const STATUS_EXAMPLES: &str = "\
+EXAMPLES:
+  devp status                     The dashboard (TUI in a terminal, table when piped)
+  devp status --top 10            Only the ten biggest repositories; totals unaffected
+  devp status --drift             What would a prune refuse on, and how to record it
+  devp status --json | jq '.totals.reclaimable_bytes'
+                                  Machine-readable; stdout carries the document only
+  devp status --top 5 --json      The trim is reported as a top-level \"top\" field
+
+Run interactively with a terminal, `--json` also copies the document to the clipboard.";
+
+pub const STATS_LONG: &str = "\
+What dev-prune has already done, as opposed to what it could do next: lifetime space \
+reclaimed, how many prune passes there have been, the most recent pass and how to \
+undo it, the last passes, and the repositories that have given back the most. \
+Read-only — it reads the registry and touches nothing.
+
+On a machine upgraded from before 1.1.0 the lifetime total has been accumulating \
+since 1.0.0, but per-repository figures and the pass history only start at 1.1.0 — \
+the report (and `history_starts_at` in the JSON) says so rather than implying \
+nothing ever happened.";
+
+pub const STATS_EXAMPLES: &str = "\
+EXAMPLES:
+  devp stats                      The report
+  devp stats --json | jq '.lifetime.bytes_freed'
+                                  Lifetime bytes as a number
+
+Run interactively with a terminal, `--json` also copies the document to the clipboard.";
+
+pub const COMPLETIONS_LONG: &str = "\
+Print a shell completion script to stdout — the script and nothing else, because the \
+output is meant to be redirected or eval'd and anything extra becomes a shell error \
+on every new terminal.
+
+The script is generated from the same argument definition the binary parses with, so \
+a flag cannot exist in one and be missing from the other. It completes whichever name \
+invoked it: `devp completions bash` completes `devp`, `dev-prune completions bash` \
+completes `dev-prune` — generate one for each name you actually type.";
+
+pub const COMPLETIONS_EXAMPLES: &str = "\
+EXAMPLES:
+  source <(devp completions bash)                       Bash, current shell
+  devp completions bash > ~/.local/share/bash-completion/completions/devp
+  devp completions zsh  > ~/.zfunc/_devp                Zsh (a directory on $fpath)
+  devp completions fish > ~/.config/fish/completions/devp.fish
+  devp completions powershell | Out-File -Append -Encoding utf8 $PROFILE
+                                                        PowerShell, permanently";
+
+pub const CACHES_LONG: &str = "\
+Find every package-manager cache and store on the machine, size each one, and print \
+the command that clears it — largest first, with a total. It deletes nothing, and no \
+flag makes it delete anything: a cache is shared by every repository, so no single \
+lockfile can prove its contents recoverable, which is the bar every dev-prune \
+deletion has to clear. Clearing a cache also turns the next `devp restore` into a \
+download — so the clear command is printed for you to run deliberately.
+
+Covered: npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg and \
+conan. Each manager is asked where its cache is (`npm config get cache`, `go env \
+GOMODCACHE`, …) rather than assumed, with read-only queries run from your home \
+directory; a manager that is not installed falls back to the conventional location, \
+because a cache left behind by an uninstalled manager is exactly the multi-gigabyte \
+directory nobody remembers.";
+
+pub const CACHES_EXAMPLES: &str = "\
+EXAMPLES:
+  devp caches                     The table, largest first, with clear commands
+  devp caches --json | jq '.summary.total_bytes'
+                                  Machine-readable
+
+Run interactively with a terminal, `--json` also copies the document to the clipboard.";
+
+pub const CONFIG_LONG: &str = "\
+Everything configurable lives under here: global settings (get/set/show/wizard), the \
+per-repository `.devprune.json` (project), the OS background scheduler (daemon), the \
+global Git auto-registration hooks (hook), and the file-manager icon registration \
+(icon).
+
+SHORTHANDS — `daemon`, `hook` and `icon` work without the leading `config`, and the \
+action words people reach for are accepted:
+  devp hook install       = devp config hook enable
+  devp hook uninstall     = devp config hook disable
+  devp daemon on / off    = devp config daemon enable / disable
+  devp icon               = devp config icon
+Accepted action words: enable/install/on, disable/uninstall/remove/off, status/show. \
+Anything else is rejected — a mistyped action never silently degrades into a status \
+report.";
+
+pub const CONFIG_EXAMPLES: &str = "\
+EXAMPLES:
+  devp config show                Every global setting and its value
+  devp config get idle_days       One setting
+  devp config set idle_days 30    Change it (rejects out-of-range values)
+  devp config wizard              Walk through every setting, Enter keeps the current
+  devp config project .           Inspect or create this repo's .devprune.json
+  devp config daemon status       Is the background pass scheduled?
+  devp config . daemon disable    Opt this repository out of the background pass
+  devp config hook enable --chain Take core.hooksPath, forwarding to the tool holding it
+  devp config icon                Register the .devprune.json icon and schema";
+
+pub const CONFIG_GET_LONG: &str = "\
+Print one global setting's current value. The keys, defaults and meanings:
+
+  idle_days                  15     Days untouched before a repo is a candidate
+  min_size_mb                0      Smallest directory worth deleting (0 = no floor)
+  scan_depth                 6      Directory levels below a repo root discovery descends (1-32)
+  require_confirmation       true   Whether a prune pass asks before deleting
+  allow_manifest_rewrite     false  Whether verification may repair a drifted lockfile
+  command_timeout_secs       600    Ceiling on any one package-manager command
+  auto_setup                 true   Whether the integration pass may run unattended
+  auto_daemon                true   …and may register the OS scheduler
+  check_interval_days        2      How often the scheduler runs a pass
+  auto_hooks                 true   …and may install the global Git hooks
+  auto_hooks_chain           false  …and may chain onto another tool's core.hooksPath
+  update_check               true   Whether the periodic release check runs
+  update_check_interval_days 7      Minimum gap between two release checks
+  update_check_timeout_secs  5      How long that one request may hang
+
+Three have a per-repository override in `.devprune.json`, where they win for that \
+tree only: `idle_days` (spelled `override_idle_days` there), `min_size_mb` and \
+`scan_depth`. The rest are deliberately global — a committed `.devprune.json` must \
+not be able to grant a repository `allow_manifest_rewrite` over its own manifests.";
+
+pub const CONFIG_GET_EXAMPLES: &str = "\
+EXAMPLES:
+  devp config get idle_days
+  devp config get update_check";
+
+pub const CONFIG_SET_LONG: &str = "\
+Change one global setting. A value outside the accepted range is rejected with the \
+range in the message, never silently clamped — `scan_depth 0` and `scan_depth 40` are \
+both refused outright. Keys are the same list `devp config get --help` shows.";
+
+pub const CONFIG_SET_EXAMPLES: &str = "\
+EXAMPLES:
+  devp config set idle_days 30
+  devp config set min_size_mb 50
+  devp config set command_timeout_secs 1200
+  devp config set update_check false    Turn the release check off for good";
+
+pub const CONFIG_SHOW_LONG: &str = "\
+Print every global setting with its current value. With `--update`, also run a sync \
+pass across all registered repositories, refreshing each one's `.devprune.json` \
+scaffolding without touching values you have changed.";
+
+pub const CONFIG_SHOW_EXAMPLES: &str = "\
+EXAMPLES:
+  devp config show
+  devp config show --update";
+
+pub const CONFIG_PROJECT_LONG: &str = "\
+Inspect a repository's `.devprune.json`, or create it when missing. The file holds \
+the per-repository overrides — `override_idle_days`, `min_size_mb`, `scan_depth`, \
+`ignore`, `disable_daemon`, `disable_hooks` — and carries a `$schema` line so any \
+editor with JSON Schema support validates and completes it.
+
+`--update` refreshes the file's scaffolding (schema pointer, missing keys) while \
+keeping every value you have set. A file that does not parse is refused, not reset — \
+fix it, or pass `--update` deliberately.
+
+Writing the file also records it in the repository's `.git/info/exclude`, so the \
+config — one machine's preference, not part of the project — never shows up in \
+`git status`. The shared, tracked `.gitignore` is never modified.";
+
+pub const CONFIG_PROJECT_EXAMPLES: &str = "\
+EXAMPLES:
+  devp config project .           Show (or create) this repository's config
+  devp config project ~/Code/api
+  devp config project . --update  Refresh scaffolding, keep your values";
+
+pub const CONFIG_DAEMON_LONG: &str = "\
+The OS background scheduler — Task Scheduler on Windows, launchd on macOS, systemd \
+timers on Linux — which runs `devp run --daemon` every `check_interval_days` days.
+
+Globally: `enable` registers the schedule, `disable` removes it, `status` reports \
+it. With a path first, the same words act on one repository via `disable_daemon` in \
+its `.devprune.json`: the machine-wide pass keeps running, that repository sits it \
+out.";
+
+pub const CONFIG_DAEMON_EXAMPLES: &str = "\
+EXAMPLES:
+  devp daemon status              Machine-wide scheduler state
+  devp daemon enable              Register the schedule (also: install, on)
+  devp daemon disable             Remove it (also: uninstall, remove, off)
+  devp config . daemon disable    This repository opts out of the background pass
+  devp config ~/Code/api daemon enable";
+
+pub const CONFIG_HOOK_LONG: &str = "\
+The global Git hooks (via `core.hooksPath`) that auto-register any repository you \
+commit in — `devp link --quiet`, silent, honouring opt-outs. `enable` installs them, \
+`disable` removes them (restoring what was there), `status` reports them. With a \
+path first, the same words act on one repository via `disable_hooks`.
+
+Git has exactly one global `core.hooksPath` and no way to chain two, so a tool that \
+holds it (husky, pre-commit, lefthook) shuts every other one out. `--chain` is the \
+way through: dev-prune takes the slot and writes, per hook, a shim that does its own \
+work and then execs the same-named hook in the displaced directory — their hooks \
+keep firing, their exit codes still block commits. `devp hook uninstall` puts the \
+original back. The chain snapshots the other tool's hooks at install time; `devp \
+hook status` reports any that have drifted, and `devp hook install --chain` rebuilds.";
+
+pub const CONFIG_HOOK_EXAMPLES: &str = "\
+EXAMPLES:
+  devp hook status                Installed? Chained? Drifted?
+  devp hook install               Take the free core.hooksPath slot
+  devp hook install --chain       Take a slot husky/pre-commit/lefthook holds, forwarding
+  devp hook uninstall             Restore the previous core.hooksPath
+  devp config . hook disable      This repository opts out of auto-registration";
+
+pub const CONFIG_ICON_LONG: &str = "\
+Register `*.devprune.json` with the OS file manager and write the icon files and the \
+JSON Schema into the config directory. On Linux this is a complete registration \
+(shared-mime-info plus hicolor icons — Nautilus, Dolphin, Thunar, Nemo, PCManFM). On \
+Windows, Explorer resolves icons by last extension only, so the config folder gets \
+its own icon instead of hijacking every `.json` on the machine. On macOS a UTI must \
+come from an application bundle, which a single binary is not.
+
+It also prints an editor snippet to paste yourself — it never edits your editor \
+settings, your PATH, or your shell startup files.";
+
+pub const CONFIG_ICON_EXAMPLES: &str = "\
+EXAMPLES:
+  devp icon                       Same command, without the leading `config`";
+
+pub const CONFIG_WIZARD_LONG: &str = "\
+Walk through every global setting one at a time, showing the current value and the \
+default; Enter keeps what is there. It runs itself once on a first install — so the \
+defaults are something you agreed to, not something you inherited — and never runs \
+unattended: no TTY means skipped, not guessed at.";
+
+pub const CONFIG_WIZARD_EXAMPLES: &str = "\
+EXAMPLES:
+  devp config wizard";
+
+pub const RESTORE_LONG: &str = "\
+Put dependencies back: detect each project's lockfile and run its manager's install \
+(`npm ci`, `pnpm install`, `uv sync`, `cargo fetch`, …). Mirrors pruning — every \
+project in the tree is restored, each by its own manager, so a monorepo comes back \
+whole.
+
+`--last-run` restores exactly what the most recent prune pass deleted, across every \
+repository it touched, and nothing else: the undo for a `devp run`. Each prune \
+records what it removed (a dry run records nothing), and the flag fails cleanly if \
+no pass has been recorded yet. It cannot be combined with a path — silently ignoring \
+the path would restore the wrong thing.";
+
+pub const RESTORE_EXAMPLES: &str = "\
+EXAMPLES:
+  devp restore                    Restore the current directory's projects
+  devp restore ~/Code/my-app
+  devp restore --last-run         Undo the last prune pass, everywhere it acted";
+
+pub const UPDATE_LONG: &str = "\
+Print the installed version, ask GitHub's public API for the latest release, and \
+show the upgrade command for how this copy was installed. It never downloads or \
+replaces its own binary.
+
+The same check also runs quietly from `devp run` and `devp status`, at most once \
+every `update_check_interval_days` (7 by default), printing one line only when a \
+newer version exists. It is the only thing in dev-prune that opens a network \
+connection, sends no body and no identifier, and `devp config set update_check \
+false` turns it off for good; `--offline` skips it for one run without changing the \
+setting.";
+
+pub const UPDATE_EXAMPLES: &str = "\
+EXAMPLES:
+  devp update                     Version, latest release, upgrade command
+  devp update --offline           No network this run";
+
+pub const SKILL_LONG: &str = "\
+Teach your AI assistant this tool. Exports SKILL.md — the full agent-facing manual: \
+every command, the JSON contracts, the safety invariants, the troubleshooting tree — \
+into the config directory, installs it into any detected agent skills directory \
+(`~/.claude/skills/dev-prune/`, the same install `devp setup` performs), and prints \
+ready-to-copy onboarding prompts for assistants without one (Gemini Antigravity, \
+Cursor, Windsurf, Copilot, OpenClaw).";
+
+pub const SKILL_EXAMPLES: &str = "\
+EXAMPLES:
+  devp skill";
+
+pub const SETUP_LONG: &str = "\
+Install whatever integration is missing and leave the rest alone: the `devp` alias, \
+the managed binary directory on your PATH (a user PATH entry on Windows, \
+`~/.local/bin` symlinks elsewhere — what keeps `devp` working after the venv or npx \
+cache it came from disappears), the exported SKILL.md and its agent-directory \
+install, the file-manager icon registration, the global Git hooks, and the OS \
+scheduler. Safe to run repeatedly: it is the same pass the install scripts run, the \
+same one `devp init` runs, and the same one that runs by itself on the first command \
+after an upgrade.
+
+It skips rather than forces: Git hooks when `git` is missing or another tool holds \
+`core.hooksPath` (take the slot with `devp hook install --chain`), the alias when \
+the running process is `devp` itself on Windows, and anything switched off by \
+`auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1`.
+
+When a VS Code-family editor is on your PATH (VS Code, VSCodium, Cursor, Windsurf, \
+Positron, Kiro, or an Insiders build) and the dev-prune extension is not installed, \
+one run also asks — once ever, only at a terminal — whether to install it into each \
+editor found. Each editor installs from its own registry; when a fork's registry does \
+not carry the extension, the `.vsix` from the latest GitHub release is installed \
+instead. Decline and it never asks again; install it yourself later with \
+`code --install-extension VKrishna04.dev-prune`.";
+
+pub const SETUP_EXAMPLES: &str = "\
+EXAMPLES:
+  devp setup                      Install what is missing, report what was skipped
+  devp setup --status             Report only; change nothing
+  DEV_PRUNE_NO_AUTO_SETUP=1 devp init ~/Code
+                                  Register repositories, install nothing";
+
+pub const DOCTOR_LONG: &str = "\
+One read-only pass that answers \"why is this not doing what I expect\". Without a \
+path it checks the installation: binary and twin, PATH, registry health, every \
+stored setting revalidated, SKILL.md, icons, hooks, scheduler, the package-manager \
+binaries your repositories actually need, and the release-check state. With a path \
+it checks that repository and ends by naming the single reason a prune would or \
+would not touch it.
+
+`--fix` is diagnosis first, then treatment — and it mends installed-but-broken only: \
+a stale or missing `devp` twin, a missing SKILL.md export, hooks or a scheduler \
+whose recorded binary moved, a drifted hook chain, and registry entries whose \
+repository is gone. Each repair is the corresponding `devp setup` pass re-run, so a \
+repair can never do more than setup itself would. It never performs a first-time \
+install, and never touches an unreadable registry — a parse failure is for you to \
+look at, not for a tool to guess at.
+
+EXIT CODES: 0 when everything works, warnings included — a missing scheduler should \
+not fail a script. 1 only for genuine breakage: an unreadable registry, an \
+out-of-range setting, a dead registered path, a directory that is not a Git \
+repository. `--fix` exits 1 when any repair failed or was out of reach.";
+
+pub const DOCTOR_EXAMPLES: &str = "\
+EXAMPLES:
+  devp doctor                     Check the installation
+  devp doctor .                   Why would a prune touch (or skip) this repository?
+  devp doctor ~/Code/api
+  devp doctor --fix               Repair what the installation check finds broken";
+
+pub const UNINSTALL_LONG: &str = "\
+Remove dev-prune from the machine: the OS scheduler, the global Git hooks (only if \
+`core.hooksPath` still points at dev-prune), the file-type icons, the installed \
+agent skill, the PATH entry (or `~/.local/bin` symlinks), and the binaries — the \
+managed pair, the copy you invoked, and, with your confirmation, every other copy \
+found on PATH or in the well-known install directories (`~/.cargo/bin`, \
+`~/.local/bin`, npm's global directory, pip's Scripts directories). A copy owned by \
+a package manager is listed with its manager, and after removal the manager's own \
+uninstall command is printed so its records can be cleared too.
+
+On Windows, where a running executable cannot delete itself, a detached helper \
+removes the last files a few seconds after the command exits — no reboot, no closed \
+terminal.
+
+Without `--deep` the configuration survives, so a reinstall picks up where you left \
+off. With `--deep` the global config folder and every registered repository's \
+`.devprune.json` go too; that asks for confirmation, and refuses outright with no \
+terminal to ask on unless `-y` is passed. Exits 1 if anything could not be removed, \
+naming each leftover.";
+
+pub const UNINSTALL_EXAMPLES: &str = "\
+EXAMPLES:
+  devp uninstall                  Remove the program; keep config for a reinstall
+  devp uninstall --deep           Also wipe config and per-repo .devprune.json (asks)
+  devp uninstall --deep -y        Non-interactive; also confirms the stray-copy sweep";

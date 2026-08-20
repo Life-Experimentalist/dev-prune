@@ -1,15 +1,15 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! Handler for `dev-prune stats`.
-//!
-//! `devp status` answers "what could I reclaim right now"; this answers "what has this
-//! thing actually done for me". They are different questions, and folding the second into
-//! the dashboard would have meant a screen of history above the list people open it for.
-//!
-//! Two of the three sections here are only recorded from 1.1.0 onward, because the
-//! per-repository total and the pass history did not exist before it. The report says so
-//! rather than letting an upgraded machine look like it has never pruned anything.
+// Handler for `dev-prune stats`.
+//
+// `devp status` answers "what could I reclaim right now"; this answers "what has this
+// thing actually done for me". They are different questions, and folding the second into
+// the dashboard would have meant a screen of history above the list people open it for.
+//
+// Two of the three sections here are only recorded from 1.1.0 onward, because the
+// per-repository total and the pass history did not exist before it. The report says so
+// rather than letting an upgraded machine look like it has never pruned anything.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -35,7 +35,7 @@ pub fn run(json_output: bool) -> Result<()> {
     output::print_header("Lifetime");
     output::print_info(&format!(
         "Space reclaimed:   {}",
-        output::format_bytes(registry.total_freed_bytes)
+        output::format_bytes_styled(registry.total_freed_bytes)
     ));
     output::print_info(&format!(
         "Prune passes:      {}",
@@ -69,7 +69,7 @@ fn print_last_pass(registry: &Registry) {
         "{} ({}) — {} from {} {}",
         last.at.format("%Y-%m-%d %H:%M UTC"),
         describe_age(last.at),
-        output::format_bytes(bytes),
+        output::format_bytes_styled(bytes),
         last.dirs.len(),
         output::plural(last.dirs.len(), "directory", "directories"),
     ));
@@ -83,10 +83,13 @@ fn print_recent_passes(registry: &Registry) {
 
     output::print_header("Recent passes");
     for summary in registry.prune_history.iter().rev().take(PASSES_SHOWN) {
+        use colored::Colorize;
+        // Pad before coloring: a `{:>10}` applied to a string carrying ANSI escapes
+        // counts the escapes as width and the column drifts.
         println!(
-            "  {}   {:>10}   {} {} across {} {}",
+            "  {}   {}   {} {} across {} {}",
             summary.at.format("%Y-%m-%d %H:%M"),
-            output::format_bytes(summary.bytes_freed),
+            format!("{:>10}", output::format_bytes(summary.bytes_freed)).green(),
             summary.dirs_removed,
             output::plural(summary.dirs_removed, "directory", "directories"),
             summary.repos_touched,
@@ -128,14 +131,15 @@ fn print_biggest_repositories(registry: &Registry) {
     });
 
     for (path, entry) in ranked.iter().take(REPOS_SHOWN) {
+        use colored::Colorize;
         let last = entry
             .last_pruned_at
             .map(|at| format!("last pruned {}", describe_age(at)))
             .unwrap_or_else(|| "never pruned by this install".to_string());
         println!(
-            "  {:>10}   {}   ({last})",
-            output::format_bytes(entry.total_freed_bytes),
-            output::clean_path(path),
+            "  {}   {}   ({last})",
+            format!("{:>10}", output::format_bytes(entry.total_freed_bytes)).green(),
+            output::styled_path(path),
         );
     }
 

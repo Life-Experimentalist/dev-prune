@@ -1,28 +1,28 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! File-manager icon registration for `.devprune.json`.
-//!
-//! The target here is the OS file manager, not the editor. What is actually achievable
-//! differs per platform, and this module is deliberate about saying so rather than
-//! implying more than it does:
-//!
-//! - **Linux** — a real, complete registration. A `shared-mime-info` package declares
-//!   the glob `*.devprune.json` as `application/x-devprune`, and matching icons go into
-//!   the hicolor theme. Nautilus, Dolphin, Thunar, Nemo and PCManFM all honour this.
-//! - **Windows** — Explorer resolves a file's icon from the last extension only, so
-//!   `*.devprune.json` is indistinguishable from any other `.json` to it. Claiming the
-//!   icon would mean claiming *every* JSON file on the machine, which is not ours to
-//!   take. The config folder gets its own icon via `desktop.ini`; individual files keep
-//!   the system JSON icon.
-//! - **macOS** — a UTI has to be exported by an application bundle's `Info.plist`, and
-//!   a single CLI binary is not a bundle. Not supported.
-//!
-//! Editors are handled by printing a snippet the user can paste; nothing here edits an
-//! editor's settings file.
-//!
-//! Everything written lands in either dev-prune's own config directory or the user's XDG
-//! data directory. PATH, shell startup files and the binary are untouched.
+// File-manager icon registration for `.devprune.json`.
+//
+// The target here is the OS file manager, not the editor. What is actually achievable
+// differs per platform, and this module is deliberate about saying so rather than
+// implying more than it does:
+//
+// - **Linux** — a real, complete registration. A `shared-mime-info` package declares
+//   the glob `*.devprune.json` as `application/x-devprune`, and matching icons go into
+//   the hicolor theme. Nautilus, Dolphin, Thunar, Nemo and PCManFM all honour this.
+// - **Windows** — Explorer resolves a file's icon from the last extension only, so
+//   `*.devprune.json` is indistinguishable from any other `.json` to it. Claiming the
+//   icon would mean claiming *every* JSON file on the machine, which is not ours to
+//   take. The config folder gets its own icon via `desktop.ini`; individual files keep
+//   the system JSON icon.
+// - **macOS** — a UTI has to be exported by an application bundle's `Info.plist`, and
+//   a single CLI binary is not a bundle. Not supported.
+//
+// Editors are handled by printing a snippet the user can paste; nothing here edits an
+// editor's settings file.
+//
+// Everything written lands in either dev-prune's own config directory or the user's XDG
+// data directory. PATH, shell startup files and the binary are untouched.
 
 use anyhow::Result;
 use std::fs;

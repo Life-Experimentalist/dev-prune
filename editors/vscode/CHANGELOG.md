@@ -1,20 +1,41 @@
 # Changelog
 
-## 1.2.0 - 2026-08-20
+## 0.2.0 - 2026-08-20
 
 - **The schema is now bundled inside the extension.** Validation, autocomplete and
   hover docs for hand-written `.devprune.json` files work offline and immediately —
   no network fetch, nothing to go stale in VS Code's remote-schema cache. Files the
   CLI writes carry a `$schema` link and keep tracking the hosted schema, which always
   matches the latest CLI.
+- **A status bar item shows what you could reclaim.** A trash icon with the
+  reclaimable size from `devp status --json`, with repository and candidate counts
+  in the tooltip. Clicking it opens a small menu: refresh, dry-run in a terminal,
+  open the dashboard, install the AI agent skill, open the CLI reference. Reading
+  is all the extension ever does on its own — anything that deletes runs as a
+  visible `devp` command in a terminal you can read before it acts.
+- **Command palette commands.** *dev-prune: Show Reclaimable Space & Actions*,
+  *Dry Run in Terminal*, *Install AI Agent Skill* and *Open CLI Reference* — the
+  same read-only set the status bar menu offers.
 - **A missing CLI is called out instead of staying silent.** When a workspace
-  contains `.devprune.json` (or `ignore.devprune.json`) but `devp` is not on PATH,
-  the extension shows a one-time notification with install instructions — a
-  config file nothing acts on otherwise looks exactly like a working setup.
-  "Don't show again" is remembered permanently.
+  contains `.devprune.json` (or `ignore.devprune.json`) but `devp` cannot be found,
+  the status bar shows a persistent warning state and one notification appears at
+  most once per session — a config file nothing acts on otherwise looks exactly
+  like a working setup. The popup is about installing and nothing more: *Install
+  devp* opens the website, *I installed it* rechecks immediately, and "Don't show
+  again" silences it permanently; the status bar keeps quietly telling the truth.
+  The recheck also probes devp's own install directories directly, because VS Code
+  keeps the PATH it was launched with — so a CLI installed a minute ago is found
+  without restarting anything, and only when it truly isn't there does the
+  extension offer to reload the window.
+- **All popups can be turned off.** A single setting, `devprune.notifications`
+  (on by default), disables both the install prompt and the skill offer. The
+  status bar is unaffected — it informs without interrupting.
+- **A one-time offer to teach your AI agent.** If an agent skills directory
+  (`~/.claude/skills/`) exists without the dev-prune skill in it, one notification
+  offers to run `devp skill`. Shown once ever, never re-asked.
 - **Works in Restricted Mode and virtual workspaces.** Schema validation works
-  everywhere; the CLI check is the only code and it runs solely in trusted
-  workspaces, so there is nothing for Restricted Mode to restrict.
+  everywhere; everything that invokes the CLI runs solely in trusted workspaces,
+  so there is nothing for Restricted Mode to restrict.
 
 ## 0.1.0 - 2026-08-19
 

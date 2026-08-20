@@ -11,7 +11,7 @@ maintainer checklist for publishing each piece. Written in the same spirit as
 
 `.dev-prune.json` was considered and rejected. The filename shipped in 1.0.0 and is
 part of the backwards-compatibility contract: it is written into users' repositories
-and their `.gitignore` files, `ignore.devprune.json` derives from it, the Linux MIME
+and their git exclude files, `ignore.devprune.json` derives from it, the Linux MIME
 type is `application/x-devprune`, and the freedesktop icon names
 (`application-x-devprune.png`) encode it. Every integration below must use
 `.devprune.json` exactly.

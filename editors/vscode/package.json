@@ -1,8 +1,8 @@
 {
 	"name": "dev-prune",
 	"displayName": "dev-prune",
-	"description": "Validation, autocomplete and hover docs for .devprune.json — the per-repository configuration of dev-prune, the lockfile-verified workspace cleaner.",
-	"version": "1.2.0",
+	"description": "Validation, autocomplete and hover docs for .devprune.json, plus a status bar showing reclaimable disk space — for dev-prune (devp), the lockfile-verified cleaner that reclaims disk space from node_modules, .venv, target, vendor and other rebuildable dependency folders in idle Git repositories.",
+	"version": "0.2.0",
 	"publisher": "VKrishna04",
 	"license": "Apache-2.0",
 	"icon": "icons/devprune-128.png",
@@ -22,7 +22,7 @@
 		"virtualWorkspaces": true,
 		"untrustedWorkspaces": {
 			"supported": "limited",
-			"description": "Schema validation works everywhere. The check that devp is installed only runs once the workspace is trusted."
+			"description": "Schema validation works everywhere. The status bar, the palette commands and the check that devp is installed only run once the workspace is trusted, because they invoke the devp CLI."
 		}
 	},
 	"scripts": {
@@ -38,8 +38,31 @@
 		"devp",
 		"node_modules",
 		"disk space",
+		"disk usage",
 		"cleanup",
-		"json schema"
+		"clean",
+		"prune",
+		"json schema",
+		"validation",
+		"intellisense",
+		"autocomplete",
+		"storage",
+		"dependencies",
+		"lockfile",
+		"node",
+		"npm",
+		"pnpm",
+		"yarn",
+		"bun",
+		"python",
+		"venv",
+		"virtualenv",
+		"uv",
+		"rust",
+		"cargo",
+		"monorepo",
+		"cache",
+		"devtools"
 	],
 	"repository": {
 		"type": "git",
@@ -51,6 +74,28 @@
 		"url": "https://github.com/Life-Experimentalist/dev-prune/issues"
 	},
 	"contributes": {
+		"commands": [
+			{
+				"command": "devprune.showStatus",
+				"category": "dev-prune",
+				"title": "Show Reclaimable Space & Actions"
+			},
+			{
+				"command": "devprune.dryRun",
+				"category": "dev-prune",
+				"title": "Dry Run in Terminal (devp run --dry-run)"
+			},
+			{
+				"command": "devprune.installSkill",
+				"category": "dev-prune",
+				"title": "Install AI Agent Skill (devp skill)"
+			},
+			{
+				"command": "devprune.openDocs",
+				"category": "dev-prune",
+				"title": "Open CLI Reference"
+			}
+		],
 		"jsonValidation": [
 			{
 				"fileMatch": [
@@ -59,6 +104,16 @@
 				],
 				"url": "./schemas/devprune.schema.json"
 			}
-		]
+		],
+		"configuration": {
+			"title": "dev-prune",
+			"properties": {
+				"devprune.notifications": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show notification popups: the one-time install prompt when a workspace has a .devprune.json but the devp CLI is missing, and the one-time AI agent skill offer. The status bar item is not affected."
+				}
+			}
+		}
 	}
 }

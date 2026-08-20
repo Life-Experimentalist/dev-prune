@@ -399,7 +399,15 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
     ])
     .height(1)
     .bottom_margin(1)
-    .style(Style::default().bg(Color::Rgb(20, 25, 40)));
+    // The bar's background is a fixed dark navy, so the foreground must be fixed
+    // too: on a light-theme terminal the default foreground is near-black and
+    // vanishes into it.
+    .style(Style::default().bg(Color::Rgb(20, 25, 40)).fg(Color::White));
+
+    // Rows sitting on one of the fixed dark backgrounds (selection green, highlight
+    // blue) need explicitly light text; everywhere else the terminal's own default
+    // foreground is the only colour guaranteed readable on both light and dark themes.
+    let highlighted_row = app.table_state.selected();
 
     let rows: Vec<Row> = app
         .repos
@@ -457,14 +465,26 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
                 Style::default()
             };
 
+            let on_dark_bg = is_selected || highlighted_row == Some(i);
+            let path_style = if on_dark_bg {
+                Style::default().fg(Color::White)
+            } else {
+                Style::default()
+            };
+            let date_color = if on_dark_bg {
+                Color::Gray
+            } else {
+                Color::DarkGray
+            };
+
             Row::new(vec![
                 sel_cell,
-                Cell::from(path_str).style(Style::default().fg(Color::White)),
+                Cell::from(path_str).style(path_style),
                 Cell::from(reason_str).style(Style::default().fg(color)),
                 Cell::from(adapters_str).style(Style::default().fg(Color::Magenta)),
                 Cell::from(bloat_str).style(Style::default().fg(Color::Cyan)),
-                Cell::from(activity_str).style(Style::default().fg(Color::Gray)),
-                Cell::from(pruned_str).style(Style::default().fg(Color::Gray)),
+                Cell::from(activity_str).style(Style::default().fg(date_color)),
+                Cell::from(pruned_str).style(Style::default().fg(date_color)),
             ])
             .style(row_style)
         })
@@ -487,7 +507,7 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
         Block::default()
             .title(" Registered Repositories ")
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Gray)),
+            .border_style(Style::default().fg(Color::DarkGray)),
     )
     .row_highlight_style(
         Style::default()
@@ -502,7 +522,7 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
     let mut footer_lines = if is_prune_mode {
         vec![
             Line::from(vec![
-                Span::styled("Selected: ", Style::default().fg(Color::Gray)),
+                Span::styled("Selected: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     format!(
                         "{} of {} candidates  ({})",
@@ -582,7 +602,7 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    "toggles `ignore` in `.devprune.json` and updates `.gitignore` — refreshes instantly.",
+                    "toggles `ignore` in `.devprune.json` (kept out of `git status` via `.git/info/exclude`) — refreshes instantly.",
                     Style::default().fg(Color::DarkGray),
                 ),
             ]),

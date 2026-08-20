@@ -1,27 +1,27 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! Handler for `dev-prune doctor`.
-//!
-//! One command that answers "why is this not doing what I expect". Without a path it
-//! checks the installation — binary, alias, PATH, config, integrations, package managers,
-//! registry, release check. With a path it checks that one repository and ends by naming
-//! the reason it would or would not be pruned right now.
-//!
-//! The plain doctor is read-only. A diagnostic that repairs things as it goes cannot be
-//! run twice to see whether the first run helped, so diagnosis and treatment are two
-//! separate invocations: the report names every finding it could repair, and `--fix` is
-//! the explicit second step that repairs them. `--fix` only mends what is already
-//! installed but broken — a missing or stale twin binary, hooks or a scheduler
-//! registered against a binary that no longer exists, a drifted hook chain, a missing
-//! `SKILL.md` export, registry entries whose repository is gone. It never installs an
-//! integration for the first time (`devp setup` and the individual commands are the
-//! opt-in for that), and it never touches an unreadable `registry.json`, because
-//! guessing at a config it cannot read is exactly what dev-prune refuses to do.
-//!
-//! Nothing here runs a package manager either: `enforce_lockfile` invokes `npm`,
-//! `cargo` and friends, which is minutes of work and, for the opted-in adapters, writes
-//! to tracked files. The doctor reports what it can see.
+// Handler for `dev-prune doctor`.
+//
+// One command that answers "why is this not doing what I expect". Without a path it
+// checks the installation — binary, alias, PATH, config, integrations, package managers,
+// registry, release check. With a path it checks that one repository and ends by naming
+// the reason it would or would not be pruned right now.
+//
+// The plain doctor is read-only. A diagnostic that repairs things as it goes cannot be
+// run twice to see whether the first run helped, so diagnosis and treatment are two
+// separate invocations: the report names every finding it could repair, and `--fix` is
+// the explicit second step that repairs them. `--fix` only mends what is already
+// installed but broken — a missing or stale twin binary, hooks or a scheduler
+// registered against a binary that no longer exists, a drifted hook chain, a missing
+// `SKILL.md` export, registry entries whose repository is gone. It never installs an
+// integration for the first time (`devp setup` and the individual commands are the
+// opt-in for that), and it never touches an unreadable `registry.json`, because
+// guessing at a config it cannot read is exactly what dev-prune refuses to do.
+//
+// Nothing here runs a package manager either: `enforce_lockfile` invokes `npm`,
+// `cargo` and friends, which is minutes of work and, for the opted-in adapters, writes
+// to tracked files. The doctor reports what it can see.
 
 use std::path::{Path, PathBuf};
 

@@ -1,11 +1,11 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end coverage for repositories that host more than one package manager.
-//!
-//! A single repository may put uv, npm and cargo side by side in its root, spread them
-//! across `frontend/`, `services/api/` and `tools/cli/`, or mix both. These tests drive
-//! the real binary over each of those layouts.
+// End-to-end coverage for repositories that host more than one package manager.
+//
+// A single repository may put uv, npm and cargo side by side in its root, spread them
+// across `frontend/`, `services/api/` and `tools/cli/`, or mix both. These tests drive
+// the real binary over each of those layouts.
 
 use std::fs;
 use std::path::Path;

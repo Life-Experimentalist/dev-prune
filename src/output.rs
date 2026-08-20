@@ -47,9 +47,36 @@ pub fn create_spinner(msg: &'static str) -> ProgressBar {
     pb
 }
 
+/// Color the contents of `backtick` spans — commands, flags, filenames — so the part
+/// the user is meant to type or look for stands out from the prose around it.
+///
+/// Pairs only: an odd trailing backtick is left exactly as typed. The backticks
+/// themselves are kept, because the `colored` crate emits no escape codes when stdout
+/// is not a terminal (or `NO_COLOR` is set), and in that plain rendering the backticks
+/// are what marks the span.
+fn highlight_code_spans(msg: &str) -> String {
+    if !msg.contains('`') {
+        return msg.to_string();
+    }
+    let mut out = String::with_capacity(msg.len() + 16);
+    let mut rest = msg;
+    while let Some(start) = rest.find('`') {
+        let Some(len) = rest[start + 1..].find('`') else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        out.push('`');
+        out.push_str(&rest[start + 1..start + 1 + len].cyan().to_string());
+        out.push('`');
+        rest = &rest[start + len + 2..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Print a success message (green checkmark)
 pub fn print_success(msg: &str) {
-    println!("{} {}", "✓".green().bold(), msg);
+    println!("{} {}", "✓".green().bold(), highlight_code_spans(msg));
 }
 
 /// Print a warning message (yellow exclamation)
@@ -58,17 +85,17 @@ pub fn print_success(msg: &str) {
 /// `--json` document (adapter drift notices, the criterion note), and a warning printed
 /// into that stream is either invisible or a parse error.
 pub fn print_warning(msg: &str) {
-    eprintln!("{} {}", "⚠".yellow().bold(), msg);
+    eprintln!("{} {}", "⚠".yellow().bold(), highlight_code_spans(msg));
 }
 
 /// Print an error message (red X)
 pub fn print_error(msg: &str) {
-    eprintln!("{} {}", "✗".red().bold(), msg);
+    eprintln!("{} {}", "✗".red().bold(), highlight_code_spans(msg));
 }
 
 /// Print an info message (blue arrow)
 pub fn print_info(msg: &str) {
-    println!("{} {}", "→".blue().bold(), msg);
+    println!("{} {}", "→".blue().bold(), highlight_code_spans(msg));
 }
 
 /// Print a notice to stderr.
@@ -78,12 +105,22 @@ pub fn print_info(msg: &str) {
 /// one JSON document and nothing else, and a friendly note printed above it is the
 /// difference between a parseable contract and a parse error.
 pub fn print_notice(msg: &str) {
-    eprintln!("{} {}", "→".blue().bold(), msg);
+    eprintln!("{} {}", "→".blue().bold(), highlight_code_spans(msg));
 }
 
 /// Print a section header
 pub fn print_header(msg: &str) {
-    println!("\n{}", msg.bold().underline());
+    println!("\n{}", msg.cyan().bold().underline());
+}
+
+/// A byte figure styled as "space you got back" — the number this tool exists for.
+pub fn format_bytes_styled(bytes: u64) -> String {
+    format_bytes(bytes).green().bold().to_string()
+}
+
+/// A filesystem path, styled. One place to change if cyan-on-cyan ever clashes.
+pub fn styled_path<P: AsRef<Path>>(path: P) -> String {
+    clean_path(path).cyan().to_string()
 }
 
 /// Print the dev-prune ASCII art banner
@@ -158,6 +195,28 @@ mod tests {
         assert_eq!(format_bytes(1024), "1 KiB");
         assert_eq!(format_bytes(1024 * 1024), "1 MiB");
         assert_eq!(format_bytes(1024 * 1024 * 1024), "1 GiB");
+    }
+
+    #[test]
+    fn code_spans_survive_highlighting_verbatim_when_color_is_off() {
+        // The test harness has no TTY, so `colored` emits nothing — which is itself the
+        // property under test: piped output must be byte-identical to the input,
+        // including the backticks and any odd trailing one.
+        colored::control::set_override(false);
+        assert_eq!(
+            highlight_code_spans("run `devp setup` again"),
+            "run `devp setup` again"
+        );
+        assert_eq!(highlight_code_spans("no spans here"), "no spans here");
+        assert_eq!(
+            highlight_code_spans("odd `tick remains"),
+            "odd `tick remains"
+        );
+        assert_eq!(
+            highlight_code_spans("`a` and `b`, plus `stray"),
+            "`a` and `b`, plus `stray"
+        );
+        colored::control::unset_override();
     }
 
     #[test]

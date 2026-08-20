@@ -1,5 +1,3 @@
-<div align="center">
-
 ```text
  ___    _____ __     __    ____  ____  _   _ _   _ _____
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
@@ -8,14 +6,16 @@
 |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.1.0
 ```
 
+<div align="center">
+
 # `dev-prune` &nbsp;·&nbsp; `devp` &nbsp;—&nbsp; by [VKrishna04](https://github.com/VKrishna04)
 
->**Reclaim the disk space your idle repositories are sitting on — without ever deleting
-something a lockfile cannot put back.**
+>**Reclaim the disk space your idle repositories are sitting on — without ever deleting**
+**something a lockfile cannot put back.**
 
-[![crates.io](https://img.shields.io/crates/v/dev-prune.svg?logo=rust)](https://crates.io/crates/dev-prune) | [![PyPI](https://img.shields.io/pypi/v/dev-prune.svg?logo=pypi&logoColor=white)](https://pypi.org/project/dev-prune/) | [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md) | [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) | [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/RELEASES_AND_MANUAL_INSTALL.md)
+[![crates.io](https://img.shields.io/crates/v/dev-prune.svg?logo=rust)](https://crates.io/crates/dev-prune) [![PyPI](https://img.shields.io/pypi/v/dev-prune.svg?logo=pypi&logoColor=white)](https://pypi.org/project/dev-prune/) [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md) [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/RELEASES_AND_MANUAL_INSTALL.md)
 
-[![CI](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml/badge.svg)](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml) | [![Pages](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/pages.yml/badge.svg)](https://devprune.vkrishna04.me/)
+[![CI](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml/badge.svg)](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml) [![Pages](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/pages.yml/badge.svg)](https://devprune.vkrishna04.me/)
 
 <!-- The npm badge goes back in the row above the moment `dev-prune` is published to
      npm; until then shields.io renders it as a red "not found", which is worse than
@@ -49,12 +49,11 @@ a single Rust binary, installs its own background schedule, and answers to two n
 ---
 
 ## Contents
+<div align="center">
 
-[Install](#install) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like) ·
-[Why it is safe](#why-it-is-safe) · [Features](#features) · [Commands](#commands) ·
-[Ecosystems](#supported-ecosystems) · [Monorepos](#repositories-with-more-than-one-ecosystem) ·
-[Configuration](#configuration) · [Automation](#background-automation) ·
-[Comparison](#how-it-compares) · [Architecture](#architecture) · [Docs](#documentation)
+[Install](#install) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like) · [Why it is safe](#why-it-is-safe) · [Features](#features) · [Commands](#commands) · [Ecosystems](#supported-ecosystems) · [Monorepos](#repositories-with-more-than-one-ecosystem) · [Configuration](#configuration) · [Automation](#background-automation) · [Comparison](#how-it-compares) · [Architecture](#architecture) · [Docs](#documentation)
+
+</div>
 
 ---
 
@@ -334,25 +333,25 @@ process that leaves a dirty working tree is a surprise.
 
 ## Commands
 
-| Command                | Also                                                                | What it does                                                                                                        |
-| :--------------------- | :------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------ |
-| `devp init [PATHS]`    | `scan`, `onboard`                                                   | Crawls directory trees for Git repositories and registers them, then runs the `setup` integration pass              |
-| `devp link [PATH]`     |                                                                     | Registers one repository                                                                                            |
-| `devp unlink [PATH]`   | `--missing`                                                         | Unregisters one; `--missing` drops every entry whose directory is gone, in one pass                                 |
-| `devp undo`            |                                                                     | Reverts the most recent `init` or `link`                                                                            |
-| `devp run [PATH]`      | `--dry-run`, `--only`, `--skip`, `--except`, `--min-size`, `--json` | Prunes every registered repository, or one target                                                                   |
-| `devp status`          | `--top N`, `--drift`, `--json`                                      | Interactive dashboard; a plain table when there is no TTY. `--top N` shows only the N biggest repositories; `--drift` lists every environment holding packages its lockfile never recorded |
-| `devp stats`           | `--json`                                                            | What has already been reclaimed: lifetime total, prune passes, the last pass, and the biggest contributors          |
-| `devp completions`     | `bash`, `zsh`, `fish`, `powershell`, `elvish`                       | Prints a shell completion script to stdout, generated from the same argument definitions the binary parses with     |
-| `devp caches`          | `--json`                                                            | Sizes every package manager cache on the machine and prints the command that clears each. **Deletes nothing**       |
-| `devp restore [PATH]`  | `--last-run`                                                        | Reinstalls dependencies for every project in a tree; `--last-run` undoes the last prune pass                        |
+| Command                | Also                                                                | What it does                                                                                                                                                                                    |
+| :--------------------- | :------------------------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `devp init [PATHS]`    | `scan`, `onboard`                                                   | Crawls directory trees for Git repositories and registers them, then runs the `setup` integration pass                                                                                          |
+| `devp link [PATH]`     |                                                                     | Registers one repository                                                                                                                                                                        |
+| `devp unlink [PATH]`   | `--missing`                                                         | Unregisters one; `--missing` drops every entry whose directory is gone, in one pass                                                                                                             |
+| `devp undo`            |                                                                     | Reverts the most recent `init` or `link`                                                                                                                                                        |
+| `devp run [PATH]`      | `--dry-run`, `--only`, `--skip`, `--except`, `--min-size`, `--json` | Prunes every registered repository, or one target                                                                                                                                               |
+| `devp status`          | `--top N`, `--drift`, `--json`                                      | Interactive dashboard; a plain table when there is no TTY. `--top N` shows only the N biggest repositories; `--drift` lists every environment holding packages its lockfile never recorded      |
+| `devp stats`           | `--json`                                                            | What has already been reclaimed: lifetime total, prune passes, the last pass, and the biggest contributors                                                                                      |
+| `devp completions`     | `bash`, `zsh`, `fish`, `powershell`, `elvish`                       | Prints a shell completion script to stdout, generated from the same argument definitions the binary parses with                                                                                 |
+| `devp caches`          | `--json`                                                            | Sizes every package manager cache on the machine and prints the command that clears each. **Deletes nothing**                                                                                   |
+| `devp restore [PATH]`  | `--last-run`                                                        | Reinstalls dependencies for every project in a tree; `--last-run` undoes the last prune pass                                                                                                    |
 | `devp doctor [PATH]`   | `--fix`                                                             | Diagnoses the installation, or one repository — ending with the single reason a pass would or would not touch it. `--fix` repairs what the checks found; it never performs a first-time install |
-| `devp config [ACTION]` | `get`, `set`, `show`, `wizard`, `project`, `daemon`, `hook`, `icon` | Global settings, per-repository `.devprune.json`, scheduler, Git hooks, file manager icons                          |
-| `devp setup`           | `--status`                                                          | Installs any missing integration; `--status` only reports                                                           |
-| `devp update`          | `--offline`                                                         | Prints the installed version, checks GitHub for a newer release, shows the upgrade command for your install channel |
-| `devp skill`           |                                                                     | Exports `SKILL.md` and prints AI agent onboarding prompts                                                           |
-| `devp uninstall`       | `--deep`                                                            | Removes the scheduler, hooks and the `devp` link; `--deep` also clears configuration                                |
-| `devp -V`              |                                                                     | Version plus an environment audit: OS, architecture, config path, PATH activation                                   |
+| `devp config [ACTION]` | `get`, `set`, `show`, `wizard`, `project`, `daemon`, `hook`, `icon` | Global settings, per-repository `.devprune.json`, scheduler, Git hooks, file manager icons                                                                                                      |
+| `devp setup`           | `--status`                                                          | Installs any missing integration; `--status` only reports                                                                                                                                       |
+| `devp update`          | `--offline`                                                         | Prints the installed version, checks GitHub for a newer release, shows the upgrade command for your install channel                                                                             |
+| `devp skill`           |                                                                     | Exports `SKILL.md` and prints AI agent onboarding prompts                                                                                                                                       |
+| `devp uninstall`       | `--deep`                                                            | Removes the scheduler, hooks and the `devp` link; `--deep` also clears configuration                                                                                                            |
+| `devp -V`              |                                                                     | Version plus an environment audit: OS, architecture, config path, PATH activation                                                                                                               |
 
 `devp hook`, `devp daemon` and `devp icon` are shorthands for the `config` subcommands of
 the same name, and `install` / `uninstall` / `on` / `off` work wherever `enable` /

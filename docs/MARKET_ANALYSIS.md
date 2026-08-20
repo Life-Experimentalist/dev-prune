@@ -31,7 +31,7 @@ Software developers, polyglot engineering teams, and DevOps practitioners accumu
 | **Cross-Platform Background Daemon** | **✓ (Task Scheduler / systemd)** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **Non-Blocking Git Hook Subsystem** | **✓ (post-commit/checkout/merge)** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **0ms Fast-Path Ignore File** | **✓ (`ignore.devprune.json`)** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| **Per-Repo Structured Config** | **✓ (`.devprune.json` + auto `.gitignore`)** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Per-Repo Structured Config** | **✓ (`.devprune.json`, kept out of `git status` automatically)** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **Universal AI Agent Skill Integration** | **✓ (`SKILL.md` for AI agents)** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | **Dual Binary & Auto-Alias** | **✓ (`dev-prune` & `devp`)** | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 
@@ -54,8 +54,8 @@ Unlike `npkill` or `git clean` which execute unrecoverable deletions, `dev-prune
 ### 4b. 🧩 Any Number of Ecosystems per Repository
 Competing tools assume one repository is one project. `dev-prune` discovers every package-manager project inside a repository — uv, npm and cargo side by side in the root, or spread across `frontend/`, `services/api/` and `tools/cli/` — and verifies, prunes and restores each on its own terms. Where several managers claim the same directory (npm/pnpm/yarn/bun over `node_modules`), it picks the one that actually built the tree on disk rather than guessing.
 
-### 5. 📁 Structured Per-Repo Config (`.devprune.json`) & Auto `.gitignore`
-Allows per-repository overrides (`ignore: true`, `disable_daemon`, `disable_hooks`, and the three tuning knobs `override_idle_days`, `min_size_mb`, `scan_depth`). Automatically adds both per-repo files to `.gitignore` whenever `.devprune.json` is written. The file holds inert data only — no key in it names a command to run, deliberately, because it arrives with a `git clone`.
+### 5. 📁 Structured Per-Repo Config (`.devprune.json`) That Never Dirties `git status`
+Allows per-repository overrides (`ignore: true`, `disable_daemon`, `disable_hooks`, and the three tuning knobs `override_idle_days`, `min_size_mb`, `scan_depth`). Whenever `.devprune.json` is written, both per-repo files are recorded in the repository's `.git/info/exclude` — the config is one machine's preference, so it stays invisible to `git status` without dev-prune ever appending to the shared, tracked `.gitignore`. The file holds inert data only — no key in it names a command to run, deliberately, because it arrives with a `git clone`.
 
 ### 6. 🖼️ OS File Manager Icon Integration
 `devp config icon` registers `*.devprune.json` with the operating system's own file manager — Explorer, Finder, Nautilus and friends — so the files are recognisable where you actually browse them, and writes the JSON Schema next to the icon so editors get validation and completion from the `$schema` link. It does not edit any editor's settings file; for editors it prints a snippet to paste, leaving that file yours.

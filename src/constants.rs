@@ -192,3 +192,16 @@ pub const PER_REPO_CONFIG_FILE: &str = ".devprune.json";
 
 /// Public URL for the JSON Schema used by IDEs for .devprune.json IntelliSense.
 pub const JSON_SCHEMA_URL: &str = "https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json";
+
+/// Directory under the user's home that marks a Claude Code installation.
+///
+/// Its presence is how the setup pass decides the machine has an agent to install the
+/// skill for; the directory itself is only ever created by Claude Code.
+pub const CLAUDE_HOME_DIR: &str = ".claude";
+
+/// Subdirectory of an agent's home where Agent Skills live, one directory per skill.
+pub const AGENT_SKILLS_SUBDIR: &str = "skills";
+
+/// Marketplace identifier (`publisher.name`) of the VS Code extension, as understood
+/// by `code --install-extension`.
+pub const VSCODE_EXTENSION_ID: &str = "VKrishna04.dev-prune";

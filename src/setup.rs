@@ -1,18 +1,20 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! Idempotent installation of dev-prune's integrations.
-//!
-//! dev-prune is only really installed once the parts that let it work without being
-//! thought about are in place: the `devp` alias, the exported `SKILL.md` that AI
-//! assistants read, the Git hooks that keep the registry current, and the OS scheduler
-//! that runs the passes. Each one here is created **only when it is missing**, which is
-//! what makes it safe to run on every install, reinstall and upgrade — and it does run
-//! on each of those, through the version stamp written at the end of a completed pass.
-//!
-//! Nothing in here is fatal. A machine without `git`, a `core.hooksPath` that belongs to
-//! husky, a locked-down scheduler: each is reported and stepped over, because none of
-//! them should stop `devp init` from registering repositories.
+// Idempotent installation of dev-prune's integrations.
+//
+// dev-prune is only really installed once the parts that let it work without being
+// thought about are in place: the `devp` alias, the managed pair on the user's PATH,
+// the exported `SKILL.md` that AI assistants read (installed into the agent's own
+// skills directory where one exists), the Git hooks that keep the registry current,
+// and the OS scheduler that runs the passes. Each one here is created **only when it
+// is missing**, which is
+// what makes it safe to run on every install, reinstall and upgrade — and it does run
+// on each of those, through the version stamp written at the end of a completed pass.
+//
+// Nothing in here is fatal. A machine without `git`, a `core.hooksPath` that belongs to
+// husky, a locked-down scheduler: each is reported and stepped over, because none of
+// them should stop `devp init` from registering repositories.
 
 use std::fs;
 use std::path::PathBuf;
@@ -110,13 +112,20 @@ impl SetupReport {
 }
 
 /// Where the installers put the binary, and the one directory nothing else owns.
+///
+/// Public because it is also what the PATH step registers and what `uninstall` must
+/// take back out again.
+pub fn managed_bin_dir() -> Result<PathBuf> {
+    Ok(Registry::config_dir()?.join("bin"))
+}
+
 fn managed_exe_path() -> Result<PathBuf> {
     let name = if cfg!(windows) {
         "dev-prune.exe"
     } else {
         "dev-prune"
     };
-    Ok(Registry::config_dir()?.join("bin").join(name))
+    Ok(managed_bin_dir()?.join(name))
 }
 
 /// Absolute path to a copy of this binary that will still be there next week.
@@ -408,6 +417,85 @@ fn ensure_skill_file_in(config_dir: &std::path::Path) -> Outcome {
     }
 }
 
+/// The per-skill directories of AI coding agents that are installed under `home`.
+///
+/// Detection only — an agent's home directory is created by the agent, never by this
+/// pass. Today that is Claude Code, whose Agent Skills live at
+/// `~/.claude/skills/<name>/SKILL.md`. Assistants without an on-disk skill format get
+/// the onboarding prompt from `devp skill` instead.
+fn agent_skill_roots_under(home: &std::path::Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let claude = home.join(constants::CLAUDE_HOME_DIR);
+    if claude.is_dir() {
+        roots.push(
+            claude
+                .join(constants::AGENT_SKILLS_SUBDIR)
+                .join(constants::APP_NAME),
+        );
+    }
+    roots
+}
+
+/// The agent skill directories on this machine. Empty when no agent is installed.
+pub fn agent_skill_roots() -> Vec<PathBuf> {
+    dirs::home_dir()
+        .map(|home| agent_skill_roots_under(&home))
+        .unwrap_or_default()
+}
+
+/// Install the skill into every detected agent's skills directory.
+pub fn ensure_agent_skills() -> Outcome {
+    ensure_agent_skills_at(&agent_skill_roots())
+}
+
+fn ensure_agent_skills_at(roots: &[PathBuf]) -> Outcome {
+    if roots.is_empty() {
+        return Outcome::Skipped(
+            "no AI agent skills directory was found — `devp skill` prints import prompts instead"
+                .to_string(),
+        );
+    }
+    let mut installed = false;
+    for root in roots {
+        match ensure_skill_file_in(root) {
+            Outcome::Installed => installed = true,
+            Outcome::AlreadyPresent => {}
+            other => return other,
+        }
+    }
+    if installed {
+        Outcome::Installed
+    } else {
+        Outcome::AlreadyPresent
+    }
+}
+
+/// Make the managed pair reachable from a fresh shell.
+///
+/// This is the step that lets `pip install dev-prune` in a virtualenv survive the
+/// virtualenv: the binaries pip placed vanish with the environment, but the managed
+/// copy under `<config>/bin` does not, and after this step it is the one a new
+/// terminal finds. See [`crate::pathenv`] for what "reachable" means per platform.
+pub fn ensure_command_on_path() -> Outcome {
+    let managed = stable_exe_path();
+    let is_managed_copy =
+        managed_exe_path().is_ok_and(|expected| expected == managed) && managed.is_file();
+    if !is_managed_copy {
+        // No managed copy exists and none could be created — under `cargo test` the
+        // running executable is the harness, and cloning that would be wrong. There is
+        // nothing durable to put on PATH.
+        return Outcome::Skipped("no managed copy of the binary exists to put on PATH".to_string());
+    }
+    let Some(bin_dir) = managed.parent() else {
+        return Outcome::Failed("the managed binary has no parent directory".to_string());
+    };
+    // `devp` has to sit beside it, or the PATH entry only ever finds `dev-prune`.
+    if let Outcome::Failed(why) = ensure_twin_of(&managed, bin_dir) {
+        return Outcome::Failed(why);
+    }
+    crate::pathenv::ensure_reachable(bin_dir)
+}
+
 /// Write the icon assets and register `*.devprune.json` with the OS file manager.
 ///
 /// Part of the automatic pass rather than a separate errand, because "the config file has
@@ -589,7 +677,13 @@ pub fn ensure_integrations(registry: &Registry) -> SetupReport {
     let mut report = SetupReport::default();
 
     report.push("dev-prune/devp pair", ensure_alias());
+    report.push("Command on PATH", ensure_command_on_path());
     report.push("SKILL.md", ensure_skill_file());
+    // Only reported when an agent is actually installed: a machine without one would
+    // otherwise see a "skipped" warning about software it never had, on every install.
+    if !agent_skill_roots().is_empty() {
+        report.push("AI agent skills", ensure_agent_skills());
+    }
     report.push("File icons", ensure_icons());
 
     if registry.settings.auto_hooks {
@@ -619,6 +713,228 @@ pub fn ensure_integrations(registry: &Registry) -> SetupReport {
     }
 
     report
+}
+
+// ── VS Code extension ────────────────────────────────────────────────────────
+
+/// Marker recording that the extension question was asked (or found already answered by
+/// an existing install). One file, no content: the offer is made once ever, whatever
+/// the answer was — a declined install must not be re-litigated on every upgrade.
+const VSCODE_OFFER_STAMP: &str = "vscode-ext-offered";
+
+/// A VS Code-compatible editor found on PATH.
+struct EditorCli {
+    /// The command to invoke — on Windows the `.cmd` launcher, because the entry on
+    /// PATH is a batch file, not an `.exe`, and `Command::new("code")` would miss it.
+    cli: String,
+    /// The editor's name as a person knows it, for the prompt and per-editor results.
+    label: &'static str,
+}
+
+/// Every VS Code-compatible editor on PATH, in the order listed here.
+///
+/// All of these forks keep the upstream CLI protocol (`--version`, `--list-extensions`,
+/// `--install-extension`), so one code path drives them all. What differs is the
+/// registry each one resolves an extension ID against: VS Code uses the Microsoft
+/// Marketplace, VSCodium/Windsurf/Positron/Kiro use OpenVSX, Cursor runs its own
+/// mirror. An ID install can therefore fail on a fork whose registry does not carry
+/// the extension yet — which is why the installer falls back to the `.vsix` from the
+/// GitHub release, the artifact every registry copy is built from.
+fn detect_vscode_editors() -> Vec<EditorCli> {
+    const CANDIDATES: &[(&str, &str)] = &[
+        ("code", "VS Code"),
+        ("code-insiders", "VS Code Insiders"),
+        ("codium", "VSCodium"),
+        ("codium-insiders", "VSCodium Insiders"),
+        ("cursor", "Cursor"),
+        ("windsurf", "Windsurf"),
+        ("positron", "Positron"),
+        ("kiro", "Kiro"),
+    ];
+    CANDIDATES
+        .iter()
+        .filter_map(|(name, label)| {
+            let cli = if cfg!(windows) {
+                format!("{name}.cmd")
+            } else {
+                (*name).to_string()
+            };
+            let responds = std::process::Command::new(&cli)
+                .arg("--version")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            responds.then_some(EditorCli { cli, label })
+        })
+        .collect()
+}
+
+fn vscode_extension_installed(cli: &str) -> bool {
+    std::process::Command::new(cli)
+        .arg("--list-extensions")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout).lines().any(|line| {
+                line.trim()
+                    .eq_ignore_ascii_case(constants::VSCODE_EXTENSION_ID)
+            })
+        })
+        .unwrap_or(false)
+}
+
+/// Download the `.vsix` attached to the latest GitHub release into the temp directory.
+///
+/// The release asset is the source of truth for the extension — the Marketplace and
+/// OpenVSX listings are built from it — so when an editor's registry cannot resolve the
+/// ID (a fork whose registry does not carry the extension), installing the release file
+/// directly gets the same bits through a channel every fork supports. Editors update a
+/// `.vsix`-installed extension from their registry once a newer listed version appears,
+/// so this install self-heals into the normal update flow.
+fn download_release_vsix() -> Option<std::path::PathBuf> {
+    use std::time::Duration;
+
+    let fetch = |url: &str| {
+        ureq::get(url)
+            .header("User-Agent", &format!("dev-prune/{}", constants::VERSION))
+            .header("Accept", "application/vnd.github+json")
+            .config()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .build()
+            .call()
+    };
+
+    let body = fetch(constants::LATEST_RELEASE_API_URL)
+        .ok()?
+        .body_mut()
+        .read_to_string()
+        .ok()?;
+    let json: serde_json::Value = serde_json::from_str(&body).ok()?;
+    let asset = json.get("assets")?.as_array()?.iter().find_map(|asset| {
+        let name = asset.get("name")?.as_str()?;
+        if !name.ends_with(".vsix") {
+            return None;
+        }
+        let url = asset.get("browser_download_url")?.as_str()?;
+        Some((name.to_string(), url.to_string()))
+    })?;
+
+    let bytes = fetch(&asset.1).ok()?.body_mut().read_to_vec().ok()?;
+    let path = std::env::temp_dir().join(&asset.0);
+    fs::write(&path, bytes).ok()?;
+    Some(path)
+}
+
+/// `<cli> --install-extension <arg>`, surfacing the editor's own output.
+fn run_install(cli: &str, arg: &str) -> bool {
+    std::process::Command::new(cli)
+        .args(["--install-extension", arg])
+        .stdin(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Offer to install the editor extension, once ever, when a VS Code-family editor is
+/// present.
+///
+/// This asks rather than installs because the editor is not dev-prune's territory the
+/// way its own config directory is. Every gate below is a way of making sure a person
+/// is actually there to answer: no marker yet, not a CI runner or container, both ends
+/// of the terminal attached. When no editor is found nothing is written, so installing
+/// one later and re-running `devp setup` still gets the one offer.
+pub fn offer_vscode_extension() {
+    use std::io::{IsTerminal, Write};
+
+    let Ok(config_dir) = Registry::config_dir() else {
+        return;
+    };
+    if config_dir.join(VSCODE_OFFER_STAMP).exists() {
+        return;
+    }
+    if no_auto_setup_requested()
+        || unattended_environment().is_some()
+        || !std::io::stdin().is_terminal()
+        || !std::io::stdout().is_terminal()
+    {
+        return;
+    }
+    let editors = detect_vscode_editors();
+    if editors.is_empty() {
+        return;
+    }
+
+    let write_marker = || {
+        let _ = fs::create_dir_all(&config_dir);
+        let _ = fs::write(config_dir.join(VSCODE_OFFER_STAMP), "");
+    };
+
+    let missing: Vec<&EditorCli> = editors
+        .iter()
+        .filter(|e| !vscode_extension_installed(&e.cli))
+        .collect();
+    if missing.is_empty() {
+        write_marker();
+        return;
+    }
+
+    let names = missing
+        .iter()
+        .map(|e| e.label)
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!();
+    print!(
+        "{names} detected — install the dev-prune extension? It validates .devprune.json and shows reclaimable space in the status bar. [Y/n] "
+    );
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return;
+    }
+    write_marker();
+
+    if matches!(answer.trim().to_lowercase().as_str(), "n" | "no") {
+        output::print_info(&format!(
+            "Skipped. Install it any time with `{} --install-extension {}`.",
+            missing[0].cli,
+            constants::VSCODE_EXTENSION_ID
+        ));
+        return;
+    }
+
+    // Fetched at most once, shared by every editor whose registry install fails.
+    let mut release_vsix: Option<Option<std::path::PathBuf>> = None;
+    for editor in &missing {
+        // The editor's own registry first: that install is the one the editor keeps
+        // up to date by itself.
+        if run_install(&editor.cli, constants::VSCODE_EXTENSION_ID) {
+            output::print_success(&format!("{}: extension installed.", editor.label));
+            continue;
+        }
+        // A fork whose registry does not carry the extension — install the `.vsix`
+        // from the GitHub release instead.
+        let vsix = release_vsix.get_or_insert_with(download_release_vsix);
+        match vsix {
+            Some(path) if run_install(&editor.cli, &path.to_string_lossy()) => {
+                output::print_success(&format!(
+                    "{}: extension installed from the GitHub release .vsix.",
+                    editor.label
+                ));
+            }
+            _ => {
+                output::print_warning(&format!(
+                    "{}: could not install it from here. Search the Extensions view for \"dev-prune\", or run `{} --install-extension {}` yourself.",
+                    editor.label,
+                    editor.cli,
+                    constants::VSCODE_EXTENSION_ID
+                ));
+            }
+        }
+    }
 }
 
 /// Record that a pass completed for this version.
@@ -710,6 +1026,9 @@ fn first_run_config_review() {
         output::print_warning(&format!("Could not run the first-run setup ({e:#})."));
         crate::commands::config::skip_config_review();
     }
+    // Same first run, same person already answering questions — the one moment the
+    // extension offer is a courtesy rather than an interruption.
+    offer_vscode_extension();
     println!();
 }
 
@@ -770,6 +1089,36 @@ mod tests {
         assert_eq!(ensure_skill_file_in(dir.path()), Outcome::Installed);
         let written = fs::read_to_string(dir.path().join("SKILL.md")).unwrap();
         assert_eq!(written, EMBEDDED_SKILL_MD);
+    }
+
+    #[test]
+    fn agent_skills_install_only_into_agent_homes_that_exist() {
+        let home = tempfile::TempDir::new().unwrap();
+        assert!(
+            agent_skill_roots_under(home.path()).is_empty(),
+            "a machine without an agent must detect nothing"
+        );
+
+        fs::create_dir_all(home.path().join(constants::CLAUDE_HOME_DIR)).unwrap();
+        let roots = agent_skill_roots_under(home.path());
+        assert_eq!(roots.len(), 1);
+
+        assert_eq!(ensure_agent_skills_at(&roots), Outcome::Installed);
+        let installed = home
+            .path()
+            .join(constants::CLAUDE_HOME_DIR)
+            .join(constants::AGENT_SKILLS_SUBDIR)
+            .join(constants::APP_NAME)
+            .join("SKILL.md");
+        assert_eq!(fs::read_to_string(&installed).unwrap(), EMBEDDED_SKILL_MD);
+
+        // A second pass finds it current and leaves it alone.
+        assert_eq!(ensure_agent_skills_at(&roots), Outcome::AlreadyPresent);
+    }
+
+    #[test]
+    fn no_detected_agent_is_a_skip_not_a_failure() {
+        assert!(matches!(ensure_agent_skills_at(&[]), Outcome::Skipped(_)));
     }
 
     #[test]

@@ -170,9 +170,9 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
         ),
         Span::styled(
             " Select Repositories to Prune ",
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD),
+            // Default foreground, not white: this sits on the terminal's own
+            // background, and white text vanishes on a light theme.
+            Style::default().add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("(v{})", crate::constants::VERSION),
@@ -187,9 +187,15 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
     frame.render_widget(header, chunks[0]);
 
     // 2. List items
+    // The highlighted row gets a fixed dark-blue background, so its path needs
+    // explicitly light text; every other row sits on the terminal's own background,
+    // where only the default foreground is readable on both light and dark themes.
+    let highlighted = list_state.selected();
+
     let list_items: Vec<ListItem> = items
         .iter()
-        .map(|item| {
+        .enumerate()
+        .map(|(i, item)| {
             let checkbox = if item.selected {
                 Span::styled(
                     "[x] ",
@@ -211,7 +217,11 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
                 checkbox,
                 Span::styled(
                     format!("{:<40}", repo_path),
-                    Style::default().fg(Color::White),
+                    if highlighted == Some(i) {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default()
+                    },
                 ),
                 Span::raw(" → "),
                 Span::styled(
@@ -237,7 +247,7 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
             Block::default()
                 .title(" Prune Candidates ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Gray)),
+                .border_style(Style::default().fg(Color::DarkGray)),
         )
         .highlight_style(
             Style::default()
@@ -258,7 +268,7 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
 
     let footer_text = vec![
         Line::from(vec![
-            Span::styled("Selected: ", Style::default().fg(Color::Gray)),
+            Span::styled("Selected: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 // Directories, not repositories: one monorepo contributes a row per
                 // ecosystem, so "3 of 5 repos" would be wrong on exactly the layout
@@ -269,7 +279,7 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw("  |  "),
-            Span::styled("Reclaimable Space: ", Style::default().fg(Color::Gray)),
+            Span::styled("Reclaimable Space: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 output::format_bytes(selected_bytes),
                 Style::default()

@@ -1,12 +1,12 @@
 // Copyright 2026 VKrishna04
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end coverage for the machine-readable and filtering surface of the CLI:
-//! `--json`, `--only` / `--skip`, `--min-size` / `min_size_mb`, and the release check.
-//!
-//! These drive the real binary. Every one of them points `DEV_PRUNE_CONFIG_DIR` at a
-//! temporary directory and sets `DEV_PRUNE_NO_AUTO_SETUP`, so the suite can neither read
-//! nor write the developer's own registry, scheduler or git hooks.
+// End-to-end coverage for the machine-readable and filtering surface of the CLI:
+// `--json`, `--only` / `--skip`, `--min-size` / `min_size_mb`, and the release check.
+//
+// These drive the real binary. Every one of them points `DEV_PRUNE_CONFIG_DIR` at a
+// temporary directory and sets `DEV_PRUNE_NO_AUTO_SETUP`, so the suite can neither read
+// nor write the developer's own registry, scheduler or git hooks.
 
 use std::fs;
 use std::path::Path;
