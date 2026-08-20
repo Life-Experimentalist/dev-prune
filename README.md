@@ -3,7 +3,7 @@
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.1.0
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.2.0
 ```
 
 <div align="center">
@@ -326,6 +326,7 @@ process that leaves a dirty working tree is a surprise.
 | ⚡ **0ms opt-out**                             | An `ignore.devprune.json` in a repository root is honoured by file presence alone — no read, no parse                                                                                                                                           |
 | 🔌 **`--json` on every reporting command**     | `run`, `status`, `stats` and `caches` each emit one versioned document on stdout, diagnostics on stderr. Built for scripts and agents                                                                                                           |
 | 🧠 **AI agent skill**                          | A token-lean `SKILL.md` embedded in the binary; `devp skill` exports it and prints onboarding prompts for Claude Code, Gemini Antigravity, Cursor, Windsurf, Copilot and OpenClaw                                                               |
+| 🧰 **Editor extension**                        | Validates `.devprune.json` as you type and shows the workspace's reclaimable size in the status bar. `devp setup` offers to install it — once, only at a terminal — into VS Code, VSCodium, Cursor, Windsurf, Positron or Kiro, each from its own registry with the release `.vsix` as fallback. [docs/IDE_INTEGRATION.md](docs/IDE_INTEGRATION.md)  |
 | 🖼️ **File manager icons**                      | `devp icon` registers `*.devprune.json` with the OS file manager — a real `shared-mime-info` type plus hicolor icons on Linux, a folder icon on Windows. It never edits your editor settings, `PATH` or shell startup files                     |
 | 🚫 **No telemetry**                            | One optional unauthenticated `GET` to GitHub's public releases endpoint, at most weekly, no body and no identifier. Nothing else leaves the machine                                                                                             |
 
@@ -350,13 +351,17 @@ process that leaves a dirty working tree is a surprise.
 | `devp setup`           | `--status`                                                          | Installs any missing integration; `--status` only reports                                                                                                                                       |
 | `devp update`          | `--offline`                                                         | Prints the installed version, checks GitHub for a newer release, shows the upgrade command for your install channel                                                                             |
 | `devp skill`           |                                                                     | Exports `SKILL.md` and prints AI agent onboarding prompts                                                                                                                                       |
-| `devp uninstall`       | `--deep`                                                            | Removes the scheduler, hooks and the `devp` link; `--deep` also clears configuration                                                                                                            |
+| `devp uninstall`       | `--deep`                                                            | Removes the scheduler, hooks, both binaries and every other installed copy it can find on the machine; `--deep` also clears configuration                                                       |
 | `devp -V`              |                                                                     | Version plus an environment audit: OS, architecture, config path, PATH activation                                                                                                               |
 
 `devp hook`, `devp daemon` and `devp icon` are shorthands for the `config` subcommands of
 the same name, and `install` / `uninstall` / `on` / `off` work wherever `enable` /
 `disable` do — so `devp hook install` and `devp config hook enable` are the same command.
 A misspelled action is rejected rather than quietly reported as status.
+
+`--help` is the manual: every command and every `config` subcommand carries long-form
+help with worked examples — `devp run --help`, `devp config hook --help`, and so on at
+every level — while `-h` keeps the short version.
 
 Exit codes are a contract: `0` success, `1` failure, `2` unusable arguments. Full flag
 list, every setting and the `--json` schema: **[docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md)**.
@@ -565,6 +570,7 @@ Deeper: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
 | [Safety invariants](docs/SAFETY_INVARIANTS.md)                                                           | The seven guarantees, and why each exists                     |
 | [Architecture](docs/ARCHITECTURE.md) · [HLD](docs/architecture/HLD.md) · [LLD](docs/architecture/LLD.md) | How it is built                                               |
 | [Background automation](docs/BACKGROUND_AUTOMATION.md)                                                   | Schedulers, hooks, chaining, and turning it all off           |
+| [IDE & editor integration](docs/IDE_INTEGRATION.md)                                                      | The extension, schema IntelliSense, and every editor it works in |
 | [Adding an adapter](docs/ADDING_ADAPTERS.md)                                                             | End-to-end tutorial for a new ecosystem                       |
 | [Releases & manual install](docs/RELEASES_AND_MANUAL_INSTALL.md) · [Distribution](docs/DISTRIBUTION.md)  | Every install channel, and building from source               |
 | [Troubleshooting](docs/troubleshooting/README.md)                                                        | Symptom-first, with the fix for each                          |

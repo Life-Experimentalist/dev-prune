@@ -295,9 +295,7 @@ fn run_status_loop(
                         if matches!(app.mode, ViewMode::PruneSelect) {
                             // Exit prune-select mode, go back to browse
                             app.mode = ViewMode::Browse;
-                            for s in &mut app.selected {
-                                *s = false;
-                            }
+                            app.selected.fill(false);
                         } else {
                             return Ok(());
                         }
