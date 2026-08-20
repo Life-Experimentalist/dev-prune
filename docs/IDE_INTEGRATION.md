@@ -101,7 +101,13 @@ comes from icon themes, and the way real config files get one is upstream PRs:
   add a `.devprune.json` file association (this is the icon most VS Code users see).
 - [vscode-icons](https://github.com/vscode-icons/vscode-icons) — same.
 
-Both need a maintainer-submitted PR with an SVG icon.
+Both PRs are submitted (2026-08-20) and await maintainer review:
+[material-icon-theme#3567](https://github.com/material-extensions/vscode-material-icon-theme/pull/3567)
+(leaf logo recolored to the Material palette, green A400 → cyan A400, as their
+guidelines require) and
+[vscode-icons#4223](https://github.com/vscode-icons/vscode-icons/pull/4223)
+(brand gradient kept, filed against
+[icon request #4222](https://github.com/vscode-icons/vscode-icons/issues/4222)).
 
 **Status: published on both** (2026-08-19) —
 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune)
@@ -153,7 +159,7 @@ replaced could not).
 The `assets/favicon/*.svg` files are still the 1024×1024 raster wrapped in an `<svg>`
 tag — fine for favicons, but anything new should start from `assets/devprune.svg`.
 
-**Remaining gap:** the material-icon-theme and vscode-icons PRs (the only way
-`.devprune.json` gets its own icon in VS Code file trees, since icon themes always win
-over extension contributions) have not been submitted yet. The vector they require now
-exists, so they are unblocked.
+The material-icon-theme and vscode-icons PRs (the only way `.devprune.json` gets its
+own icon in VS Code file trees, since icon themes always win over extension
+contributions) are submitted and awaiting review — see the links in the VS Code
+section above.
