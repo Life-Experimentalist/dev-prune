@@ -13,7 +13,7 @@
 >**Reclaim the disk space your idle repositories are sitting on — without ever deleting**
 **something a lockfile cannot put back.**
 
-[![crates.io](https://img.shields.io/crates/v/dev-prune.svg?logo=rust)](https://crates.io/crates/dev-prune) [![PyPI](https://img.shields.io/pypi/v/dev-prune.svg?logo=pypi&logoColor=white)](https://pypi.org/project/dev-prune/) [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md) [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/RELEASES_AND_MANUAL_INSTALL.md)
+[![crates.io](https://img.shields.io/crates/v/dev-prune.svg?logo=rust)](https://crates.io/crates/dev-prune) [![PyPI](https://img.shields.io/pypi/v/dev-prune.svg?logo=pypi&logoColor=white)](https://pypi.org/project/dev-prune/) [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE.md) [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/) [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](docs/RELEASES_AND_MANUAL_INSTALL.md)
 
 [![CI](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml/badge.svg)](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/ci.yml) [![Pages](https://github.com/Life-Experimentalist/dev-prune/actions/workflows/pages.yml/badge.svg)](https://devprune.vkrishna04.me/)
 
@@ -100,7 +100,7 @@ uv tool install dev-prune     # or: uvx dev-prune status
 pipx install dev-prune
 pip install dev-prune
 cargo binstall dev-prune      # fetches the prebuilt release archive
-cargo install dev-prune       # builds from source, needs Rust 1.85+
+cargo install dev-prune       # builds from source, needs Rust 1.88+
 ```
 
 The PyPI packages **contain the binary** — there is no download step at install time,
@@ -126,7 +126,53 @@ one file per architecture runs on every distribution including Alpine.
 
 Manual install and build-from-source:
 [docs/RELEASES_AND_MANUAL_INSTALL.md](docs/RELEASES_AND_MANUAL_INSTALL.md).
-Every channel in detail: [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
+
+### Let an AI assistant do it
+
+Copy the prompt below and paste it to Claude Code, Cursor, GitHub Copilot, Windsurf, or
+any terminal-capable agent — it installs, verifies, and registers your projects for you.
+[More detail and per-tool notes.](docs/AI_SETUP_PROMPT.md)
+
+````text
+Install and set up `dev-prune` (binary name `devp`), a lockfile-safe workspace cleaner,
+on this machine. Follow these steps exactly and do not improvise beyond them.
+
+1. Detect the OS and run the matching official installer, nothing else:
+   - macOS or Linux:
+       curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
+   - Windows (PowerShell):
+       iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
+   - If a Rust toolchain is already present and you cannot reach the network, you may
+     instead run:  cargo install dev-prune
+   Do NOT download binaries from anywhere other than devprune.vkrishna04.me or the
+   project's GitHub releases, and do NOT edit PATH, the registry, or any OS scheduler by
+   hand — the installer and `devp setup` do all of that themselves.
+
+2. Open a NEW terminal (so the updated PATH is in effect) and verify:
+       devp --version
+       devp doctor
+   `devp doctor` must exit 0. If it prints warnings, read them out to me; do not try to
+   "fix" the scheduler or hooks yourself — they are self-installing.
+
+3. Ask me which project directories to keep clean, then register each one:
+       devp init <path>
+   Do not register directories I did not name. `devp init` only records a directory; it
+   never deletes anything on its own.
+
+4. Show me the result and stop:
+       devp status
+
+Notes you should rely on, not work around:
+- Installation already registered a background pass (every 2 days) and, on Windows, a
+  windowless task that never flashes a console window. You do not need to configure any
+  of this.
+- Nothing is ever deleted unless a lockfile can rebuild it, the repo has been idle past
+  the threshold, and (interactively) I confirm. Run `devp run --dry-run` if I want a
+  preview.
+- To undo the whole thing later: `devp uninstall`.
+````
+
+Every install channel in detail: [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
 > [!TIP]
 > **`devp` is a real executable, not a shell alias.** Installation puts a second binary

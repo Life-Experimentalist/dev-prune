@@ -6,7 +6,7 @@
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.1.0. Written by VKrishna04.
+Version 1.2.1. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
@@ -52,7 +52,7 @@ cache cannot be proven recoverable by any one lockfile and it is what makes rest
 - Python tooling: `uv tool install dev-prune`, `uvx dev-prune status`,
   `pipx install dev-prune`, `pip install dev-prune`
 - Cargo, prebuilt: `cargo binstall dev-prune`
-- Cargo, from source: `cargo install dev-prune` (Rust 1.85+)
+- Cargo, from source: `cargo install dev-prune` (Rust 1.88+)
 
 The PyPI packages contain the prebuilt binary rather than downloading one at install
 time, so they install correctly behind a registry mirror and with no network access.
@@ -118,7 +118,7 @@ Arch, NixOS and Alpine.
 - `devp setup [--status]` — install any missing integration; `--status` only reports
 - `devp skill` — export `SKILL.md` and install it into a detected agent skills directory
   (`~/.claude/skills/dev-prune/`); prints onboarding prompts for agents without one
-- `devp update [--offline]` — print the installed version, check GitHub for a newer release, and show the upgrade command
+- `devp update [--offline]` — print the installed version, check GitHub for a newer release, and show the upgrade command. `DEV_PRUNE_OFFLINE=1` in the environment keeps the process off the network entirely, regardless of any setting
 - `devp uninstall [--deep]` — remove the program: scheduler, hooks, agent skill, PATH
   entry and the binaries themselves, then a sweep over PATH and the well-known install
   dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) removes every other
@@ -238,10 +238,10 @@ itself `allow_manifest_rewrite`. Both files hold inert data only.
 ## Machine-readable output (for tools and AI agents)
 
 Add `--json` to `run`, `status`, `stats` or `caches` for a versioned JSON document
-(`schema_version` 1, additive changes only within a major version). Highlights:
+(`schema` 1, additive changes only within a major version). Highlights:
 
 - `devp status --json` — per-repository totals, per-directory sizes, and status
-  (candidate / active / ignored / no-bloat / path-missing / config-error).
+  (candidate / active / ignored / no_bloat / path_missing / config_error).
 - `devp run --json` — one result per repository × directory with the action taken or
   the refusal reason; refusals include the exact fix command where one exists
   (e.g. the lockfile-repair command for that ecosystem). `size_freed` counts only bytes

@@ -4,7 +4,10 @@ dev-prune collects no analytics, no diagnostics and no usage data — not locall
 remotely, not in aggregate, not anonymised. There is no opt-out to configure, because
 there is nothing to opt out of.
 
-It does make exactly one network request: asking GitHub what the latest release is.
+It does make exactly one network request on its own initiative: asking GitHub what the
+latest release is. One other request exists — downloading the VS Code extension's
+`.vsix` from GitHub Releases — and it only ever happens after you explicitly say yes to
+the one-time editor-extension offer. Both are described below.
 
 ---
 
@@ -39,7 +42,9 @@ who never find the flag. So it is opt-**out**, and it is a single line to turn o
 devp config set update_check false
 ```
 
-`devp update --offline` skips it for one invocation without changing the setting.
+`devp update --offline` skips it for one invocation without changing the setting, and
+setting the environment variable `DEV_PRUNE_OFFLINE=1` keeps the process off the network
+entirely — this check and the `.vsix` fallback below alike — regardless of any setting.
 
 ### Why there is no auto-update
 
@@ -48,6 +53,20 @@ install channel. It does not download or replace its own binary. Doing that woul
 writing to a directory on `PATH` with whatever privileges the user happened to have, and
 fetching an executable over a channel with no signature verification of its own. Your
 package manager already does this correctly; dev-prune defers to it.
+
+---
+
+## The extension install, if you say yes
+
+When `devp setup` finds a VS Code-family editor, it asks — once, ever, and only
+interactively — whether to install the dev-prune editor extension. Saying yes runs the
+editor's own `--install-extension` command; any download that triggers is the editor's
+traffic against its own marketplace, not dev-prune's. If the editor's registry cannot
+resolve the extension (some forks' registries do not carry it), dev-prune itself
+downloads the `.vsix` attached to the latest GitHub release — the same
+`api.github.com/...releases` endpoint as the update check, same headers, no body — and
+hands that file to the editor. This never happens without the explicit confirmation,
+and a "no" is remembered: nothing asks twice.
 
 ---
 
@@ -87,6 +106,7 @@ grep -rn "https://" src/constants.rs
 grep -rln "ureq" src/
 ```
 
-`ureq` is the sole dependency in `Cargo.toml` capable of opening a socket, and
-`src/commands/update.rs` is the only file that calls it. Nothing else in the binary can
-reach the network.
+`ureq` is the sole dependency in `Cargo.toml` capable of opening a socket, and only two
+files call it: `src/commands/update.rs` (the release check) and `src/setup.rs` (the
+user-confirmed `.vsix` download above). Nothing else in the binary can reach the
+network.

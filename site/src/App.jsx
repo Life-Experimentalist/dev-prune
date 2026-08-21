@@ -26,7 +26,7 @@ import {
 
 const REPO = "https://github.com/Life-Experimentalist/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.1.0";
+const VERSION = "1.2.1";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -437,7 +437,7 @@ export default function App() {
     },
     cargo: {
       label: "Cargo",
-      note: "crates.io stores source, not binaries, so cargo install always compiles (Rust 1.85+). cargo binstall downloads the same prebuilt archive the installers use.",
+      note: "crates.io stores source, not binaries, so cargo install always compiles (Rust 1.88+). cargo binstall downloads the same prebuilt archive the installers use.",
       cmd: "cargo binstall dev-prune",
     },
     release: {
@@ -447,10 +447,56 @@ export default function App() {
     },
   };
 
+  // The same prompt as docs/AI_SETUP_PROMPT.md, kept copy-ready right in the install
+  // widget: hand it to any terminal-capable agent and it installs, verifies and registers
+  // repos for you. Uses devp (never devpw) so the agent can read command output.
+  const aiInstallPrompt = `Install and set up \`dev-prune\` (binary name \`devp\`), a lockfile-safe workspace cleaner, on this machine. Follow these steps exactly and do not improvise beyond them.
+
+1. Detect the OS and run the matching official installer, nothing else:
+   - macOS or Linux:
+       curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
+   - Windows (PowerShell):
+       iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
+   - If a Rust toolchain is already present and you cannot reach the network, you may
+     instead run:  cargo install dev-prune
+   Do NOT download binaries from anywhere other than devprune.vkrishna04.me or the
+   project's GitHub releases, and do NOT edit PATH, the registry, or any OS scheduler by
+   hand — the installer and \`devp setup\` do all of that themselves.
+
+2. Open a NEW terminal (so the updated PATH is in effect) and verify:
+       devp --version
+       devp doctor
+   \`devp doctor\` must exit 0. If it prints warnings, read them out to me; do not try to
+   "fix" the scheduler or hooks yourself — they are self-installing.
+
+3. Ask me which project directories to keep clean, then register each one:
+       devp init <path>
+   Do not register directories I did not name. \`devp init\` only records a directory; it
+   never deletes anything on its own.
+
+4. Show me the result and stop:
+       devp status
+
+Notes you should rely on, not work around:
+- Installation already registered a background pass (every 2 days) and, on Windows, a
+  windowless task that never flashes a console window. You do not need to configure any
+  of this.
+- Nothing is ever deleted unless a lockfile can rebuild it, the repo has been idle past
+  the threshold, and (interactively) I confirm. Run \`devp run --dry-run\` if I want a
+  preview.
+- To undo the whole thing later: \`devp uninstall\`.`;
+
   const handleCopy = (key, text) => {
-    if (navigator.clipboard) navigator.clipboard.writeText(text);
-    setCopiedKey(key);
-    setTimeout(() => setCopiedKey(null), 2000);
+    // "Copied" only after the write actually lands — an insecure context or a
+    // denied permission must not report success it never had.
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopiedKey(key);
+        setTimeout(() => setCopiedKey(null), 2000);
+      },
+      () => {},
+    );
   };
 
   return (
@@ -468,7 +514,7 @@ export default function App() {
           <a href="#top" className="brand">
             <div className="logo-box">
               <img
-                src="/assets/icon_transparent.png"
+                src="/assets/icon_small.png"
                 alt=""
                 width="32"
                 height="32"
@@ -531,14 +577,13 @@ export default function App() {
               <div className="install-widget" id="install">
                 <div
                   className="widget-tabs"
-                  role="tablist"
+                  role="group"
                   aria-label="Installation method"
                 >
                   {Object.entries(installCommands).map(([key, v]) => (
                     <button
                       key={key}
-                      role="tab"
-                      aria-selected={installTab === key}
+                      aria-pressed={installTab === key}
                       className={installTab === key ? "active" : ""}
                       onClick={() => setInstallTab(key)}
                     >
@@ -561,6 +606,30 @@ export default function App() {
                 <p className="install-note">
                   {installCommands[installTab].note}
                 </p>
+              </div>
+
+              <div className="ai-install" id="ai-setup">
+                <div className="ai-install-head">
+                  <span className="ai-install-title">
+                    Or let an AI assistant do it
+                  </span>
+                  <CopyButton
+                    id="ai-prompt"
+                    text={aiInstallPrompt}
+                    copied={copiedKey}
+                    onCopy={handleCopy}
+                  />
+                </div>
+                <p className="ai-install-note">
+                  Copy this prompt and paste it to Claude Code, Cursor, Copilot,
+                  Windsurf, or any terminal-capable agent — it installs, verifies
+                  and registers your repos for you.{" "}
+                  <a href="https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/AI_SETUP_PROMPT.md">
+                    Details
+                  </a>
+                  .
+                </p>
+                <pre className="ai-install-prompt">{aiInstallPrompt}</pre>
               </div>
 
               <div className="hero-stats">
@@ -589,7 +658,7 @@ export default function App() {
                 </div>
                 <div
                   className="t-cmd-tabs"
-                  role="tablist"
+                  role="group"
                   aria-label="Example command"
                 >
                   {[
@@ -602,8 +671,7 @@ export default function App() {
                   ].map(([key, label]) => (
                     <button
                       key={key}
-                      role="tab"
-                      aria-selected={termTab === key}
+                      aria-pressed={termTab === key}
                       className={termTab === key ? "active" : ""}
                       onClick={() => setTermTab(key)}
                     >
@@ -1778,7 +1846,7 @@ export default function App() {
               </div>
             </div>
             <p className="muted">
-              Apache-2.0 · no analytics · Windows, macOS and Linux · Rust 1.85
+              Apache-2.0 · no analytics · Windows, macOS and Linux · Rust 1.88
             </p>
           </div>
         </Reveal>
@@ -1788,7 +1856,7 @@ export default function App() {
         <div className="container footer-content">
           <div className="footer-brand">
             <img
-              src="/assets/icon_transparent.png"
+              src="/assets/icon_small.png"
               alt=""
               width="24"
               height="24"

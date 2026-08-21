@@ -25,8 +25,19 @@ pub trait PackageManager: Send + Sync {
     /// `command_timeout_secs`; hand it straight to `enforce_two_tier`.
     fn enforce_lockfile(&self, project_path: &Path, policy: EnforcePolicy) -> Result<()>;
 
-    /// Restore dependencies from lockfile (used by `devp restore`).
-    fn restore(&self, project_path: &Path) -> Result<()>;
+    /// Restore dependencies from lockfile (used by `devp restore`). `timeout` is the
+    /// user's `command_timeout_secs`, threaded explicitly.
+    fn restore(&self, project_path: &Path, timeout: std::time::Duration) -> Result<()>;
+
+    /// `restore`, told the name the pruned directory had. Has a default impl that
+    /// ignores the name and calls `restore`; override it only if your manager can
+    /// rebuild under more than one directory name (venv does — `venv`, `env`, ...).
+    fn restore_named(
+        &self,
+        project_path: &Path,
+        dir_name: &str,
+        timeout: std::time::Duration,
+    ) -> Result<()> { let _ = dir_name; self.restore(project_path, timeout) }
 
     /// Lockfiles that identify this manager. Only needed if your adapter can
     /// share a bloat directory with another one. Defaults to an empty slice.
@@ -55,7 +66,10 @@ Here is a complete, production-ready example for a Gradle adapter:
 
 use std::path::Path;
 use anyhow::Result;
-use super::{PackageManager, BloatDir, EnforcePolicy, dir_size, enforce_two_tier, run_command};
+use super::{
+    PackageManager, BloatDir, EnforcePolicy, dir_size, enforce_two_tier,
+    run_command_with_timeout,
+};
 
 /// Adapter for Gradle projects.
 pub struct Gradle;
@@ -110,8 +124,8 @@ impl PackageManager for Gradle {
         )
     }
 
-    fn restore(&self, project_path: &Path) -> Result<()> {
-        run_command("gradle", &["build", "-x", "test"], project_path)
+    fn restore(&self, project_path: &Path, timeout: std::time::Duration) -> Result<()> {
+        run_command_with_timeout("gradle", &["build", "-x", "test"], project_path, timeout)
     }
 }
 ```
@@ -134,8 +148,11 @@ impl PackageManager for Gradle {
 - **`lock_verify_or_generate(...)` / `lock_sync_or_verify_with_timeout(...)`**: the two
   shapes `enforce_two_tier` dispatches to. Call them directly only if your ecosystem
   genuinely does not fit — bun does, because it has no writing form to opt into.
-- **`run_command(program, args, cwd)`**: Executes external command with standard timeout (`command_timeout_secs`).
-- **`run_command_with_timeout(program, args, cwd, timeout)`**: Executes command with explicit timeout.
+- **`run_command_with_timeout(program, args, cwd, timeout)`**: Executes an external
+  command bounded by `timeout` — pass the `timeout` your `restore` was handed, or
+  `policy.timeout` inside `enforce_lockfile`.
+- **`capture_command_with_timeout(program, args, cwd, timeout)`**: Same, but returns the
+  command's stdout — for commands that answer a question instead of doing work.
 - **`try_run_command(program, args, cwd)`**: Executes command returning boolean `true`/`false`.
 - **`binary_available(program)`**: Whether `program` is on `PATH`.
 - **`dir_size(path)`**: Calculates directory size in bytes recursively.

@@ -381,6 +381,51 @@ body {
   color: var(--text-main);
 }
 
+/* AI-assistant install prompt, sitting under the install widget. */
+.ai-install {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  max-width: 650px;
+  width: 100%;
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+}
+
+.ai-install-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ai-install-title {
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.ai-install-note {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: 0.4rem 0 0.75rem;
+}
+
+.ai-install-prompt {
+  background: var(--term-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  max-height: 16rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* Terminal Window & Multi-Line Renderer */
 .terminal-container {
   background: var(--term-bg);

@@ -41,7 +41,7 @@ type is `application/x-devprune`, and the freedesktop icon names
   front.
 
 The gap the pieces below close: **hand-written** files (no `$schema` key) in editors
-that have not merged our SchemaStore entry, and the **icon inside IDE file trees**.
+that do not subscribe to SchemaStore, and the **icon inside IDE file trees**.
 
 ---
 
@@ -50,8 +50,10 @@ that have not merged our SchemaStore entry, and the **icon inside IDE file trees
 One merged PR to [SchemaStore](https://github.com/SchemaStore/schemastore) gives every
 subscribed editor schema-by-filename, no `$schema` key needed.
 
-**Status: submitted** — [SchemaStore/schemastore#6226](https://github.com/SchemaStore/schemastore/pull/6226)
-(2026-08-19). The steps below record what it contains, for the day it needs updating.
+**Status: live** — [SchemaStore/schemastore#6226](https://github.com/SchemaStore/schemastore/pull/6226)
+merged and published in the catalog, so every subscribed editor now resolves
+`.devprune.json` by filename with no `$schema` key. The steps below record what the entry
+contains, for the day it needs updating.
 
 1. Fork `SchemaStore/schemastore`.
 2. Add this entry to `src/api/json/catalog.json` (alphabetical by `name`):
@@ -79,7 +81,7 @@ subscribed editor schema-by-filename, no `$schema` key needed.
 `package.json` with a `jsonValidation` contribution mapping `.devprune.json` to a
 **bundled** copy of the schema, the marketplace icon, and one small `extension.js`
 whose sole job is a one-time "devp is not on PATH" notification when a workspace
-contains `.devprune.json` but the CLI is missing (trusted workspaces only). Bundling (added in extension 1.2.0) means
+contains `.devprune.json` but the CLI is missing (trusted workspaces only). Bundling (added in extension 0.2.0) means
 hand-written files validate offline, instantly, with nothing to go stale in VS Code's
 remote-schema cache; files the CLI writes carry an in-file `$schema` link, which VS
 Code prefers, so those keep tracking the hosted URL. The bundled copy cannot drift:
@@ -111,7 +113,7 @@ guidelines require) and
 (brand gradient kept, filed against
 [icon request #4222](https://github.com/vscode-icons/vscode-icons/issues/4222)).
 
-**Status: published on both** (2026-08-19) —
+**Status: published on both** (2026-08-19, current version 0.2.0) —
 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune)
 and [OpenVSX](https://open-vsx.org/extension/VKrishna04/dev-prune), publisher `VKrishna04`.
 

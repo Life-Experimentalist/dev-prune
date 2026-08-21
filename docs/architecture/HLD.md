@@ -1,6 +1,6 @@
 # High-Level Technical Design Specification (HLD): `dev-prune`
 
-This document defines the High-Level Design (HLD) specification for **`dev-prune`** (`devp`), a universal, lockfile-safe workspace maintenance CLI and background automation tool written in Rust 1.85+ (Edition 2024).
+This document defines the High-Level Design (HLD) specification for **`dev-prune`** (`devp`), a universal, lockfile-safe workspace maintenance CLI and background automation tool written in Rust (edition 2024).
 
 ---
 
@@ -54,7 +54,7 @@ graph TD
     Engine --> Workspace
     Workspace --> AdapterRegistry
     AdapterRegistry --> NPM & PNPM & Yarn & Bun & UV & Venv & Cargo & Go
-    OSDaemon -->|Triggers `devp run --daemon-pass`| Engine
+    OSDaemon -->|Triggers `devp run --yes --daemon`| Engine
     GitHooks -->|Registers repos| RegistryManager
 ```
 *Figure 1: High-Level System Architecture and Layer Interactions.*

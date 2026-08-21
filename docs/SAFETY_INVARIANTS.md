@@ -28,13 +28,15 @@ flowchart TD
     Inv3 -->|Yes| Walk
 
     Walk["Inv 7<br/>workspace::discover — every project,<br/>bounded walk, nested repos excluded"] --> PerAdapter["for each project × adapter:<br/>collect bloat dirs, dedupe claimed paths"]
-    PerAdapter --> Dry{"--dry-run?"}
+    PerAdapter --> Inv6{"Inv 6<br/>symlink or junction?"}
+    Inv6 -->|Yes| Abort6["SkippedSymlink<br/>refuse to delete linked storage"]
+    Inv6 -->|No| Inv7b{"Inv 7<br/>nested .git inside<br/>the candidate dir?"}
+    Inv7b -->|Yes| Abort7b["DeleteError<br/>refuse — no lockfile rebuilds<br/>somebody else's git history"]
+    Inv7b -->|No| Dry{"--dry-run?"}
     Dry -->|Yes| Report["SkippedDryRun<br/>sizes reported, nothing verified,<br/>nothing deleted"]
     Dry -->|No| Inv2{"Inv 2<br/>adapter.enforce_lockfile"}
     Inv2 -->|Err| Abort2["LockfileError<br/>every dir of this adapter kept"]
-    Inv2 -->|Ok| Inv6{"Inv 6<br/>symlink or junction?"}
-    Inv6 -->|Yes| Abort6["SkippedSymlink<br/>refuse to delete linked storage"]
-    Inv6 -->|No| Delete["remove_dir_all → Pruned"]
+    Inv2 -->|Ok| Delete["remove_dir_all → Pruned"]
     Delete --> Inv4["Inv 4<br/>registry saved via tmp file + rename"]
 ```
 
@@ -55,19 +57,24 @@ Two things this diagram makes explicit that prose tends to hide:
 ## 🛡️ Detailed Safety Invariants
 
 ### 1. Mandatory `.git` Directory Boundary Guard
-`dev-prune` **NEVER** processes or deletes files in any directory that does not contain a valid `.git` folder root:
+`dev-prune` **NEVER** processes or deletes files in any directory that does not contain a `.git` entry at its root:
 ```rust
 pub fn is_git_repo(path: &Path) -> bool {
-    path.join(".git").is_dir()
+    let dot_git = path.join(".git");
+    dot_git.is_dir() || dot_git.is_file()
 }
 ```
 If a folder lacks `.git`, it is completely ignored, protecting arbitrary user home directories, system folders, or downloads from accidental cleanup.
 
-The check requires a `.git` **directory**. A linked worktree (`git worktree add`) and a
-submodule checkout carry a `.git` *file* pointing at the real gitdir; dev-prune does not
-treat those as repositories, so they are never registered and never pruned. That is the
-conservative side of the boundary: refusing a worktree costs a manual clean-up, while
-guessing at its idle state — its history lives in another checkout — could cost work.
+`.git` is a **directory** in a normal clone but a **file** containing a `gitdir:`
+pointer in linked worktrees (`git worktree add`) and submodule checkouts. The check
+deliberately accepts both, so a worktree or submodule checkout can be registered and
+pruned **as a repository in its own right** — otherwise every worktree and submodule on
+the machine would be silently ignored. Nothing else is loosened for them: idleness is
+measured in that checkout (its commits and its source `mtime`s), lockfile
+pre-verification still has to pass, and only that checkout's own bloat directories are
+candidates. What the boundary guards against is unchanged — a directory with no `.git`
+entry at all is never touched.
 
 ---
 
@@ -177,16 +184,21 @@ If the activity timestamp is less than `idle_days` old (default 15 days), the pr
 ---
 
 ### 4. Atomic Registry State Persistence
-All mutations to `~/.config/dev-prune/registry.json` write to an atomic temporary file (`registry.json.tmp`) before calling OS filesystem rename:
+All mutations to `~/.config/dev-prune/registry.json` write to a temporary file named
+per-process (`registry.json.<pid>.tmp`) before calling OS filesystem rename:
 ```rust
-let tmp_path = path.with_extension("json.tmp");
-std::fs::write(&tmp_path, content)?;
-std::fs::rename(&tmp_path, &path)?;
+let tmp_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
+std::fs::write(&tmp_path, &contents)?;
+std::fs::rename(&tmp_path, path)?;
 ```
+The temp name carries the process id because a manual run and the scheduled daemon pass
+can save at the same moment — with one shared `registry.json.tmp`, one process could
+rename the other's half-written file into place as a torn, unparseable registry.
+
 The registry is therefore never edited in place. A write that is interrupted — crash,
 reboot, full disk — leaves the previous `registry.json` untouched, and at worst an
-orphaned `.tmp` file that the next save overwrites. That file is a partial write, not a
-backup; nothing reads it back.
+orphaned per-PID `.tmp` file. That file is a partial write, not a backup; nothing reads
+it back, and it is safe to delete.
 
 ---
 

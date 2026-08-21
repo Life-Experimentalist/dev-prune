@@ -1,12 +1,12 @@
 # 🏗️ `dev-prune` System Architecture
 
-Welcome to the technical architecture guide for **`dev-prune`** (`devp`), a cross-platform, multi-ecosystem workspace maintenance CLI and background automation tool written in Rust 1.85+ (Edition 2024).
+Welcome to the technical architecture guide for **`dev-prune`** (`devp`), a cross-platform, multi-ecosystem workspace maintenance CLI and background automation tool written in Rust (edition 2024).
 
 ---
 
 ## 🖼️ System Visual Overview
 
-![dev-prune Hero Banner](/assets/hero_banner.png)
+![dev-prune Hero Banner](../assets/hero_banner.png)
 
 ---
 

@@ -185,6 +185,14 @@ Even though background subsystems run automatically, developers have granular co
 ### Windows: Task Scheduler (`schtasks`)
 - **Task Name**: `DevPrune`
 - **Schedule**: Every 2 days
+- **No terminal window**: the task runs `devpw.exe`, a windowless build of the binary
+  generated locally beside the managed copy — the same relationship `pythonw.exe` has to
+  `python.exe`. It has no console for Windows to show, so nothing flashes at the
+  logged-in user, and because it still runs in your own session it keeps access to mapped
+  network drives and Dev Drives. If that build cannot be created, setup falls back to a
+  hidden password-less task (an S4U logon), then to a visible task, so the daemon is
+  never lost. Details and diagnostics in
+  [INSTALLATION_ISSUES.md §10](troubleshooting/INSTALLATION_ISSUES.md#10-a-terminal-window-flashes-briefly-after-logging-in-windows).
 - **PowerShell Verification**:
   ```powershell
   schtasks /Query /TN DevPrune
@@ -193,6 +201,9 @@ Even though background subsystems run automatically, developers have granular co
 ### macOS: LaunchAgent (`plist`)
 - **Location**: `~/Library/LaunchAgents/com.devprune.daemon.plist`
 - **Schedule**: Every 172,800 seconds (2 days)
+- **No terminal window**: launchd runs a LaunchAgent without attaching a terminal, so a
+  background pass is invisible by design — there is nothing to hide and nothing to
+  configure.
 - **Launchctl Verification**:
   ```bash
   launchctl list | grep devprune
@@ -202,6 +213,7 @@ Even though background subsystems run automatically, developers have granular co
 - **Service**: `$XDG_CONFIG_HOME/systemd/user/dev-prune.service` (default `~/.config/systemd/user/`)
 - **Timer**: `$XDG_CONFIG_HOME/systemd/user/dev-prune.timer`
 - **Trigger**: `OnBootSec=` plus `OnUnitActiveSec=`, so a machine that was switched off still gets its pass shortly after the next boot.
+- **No terminal window**: a systemd user timer runs its service without a controlling terminal, so the background pass never opens one.
 - **Systemctl Verification**:
   ```bash
   systemctl --user status dev-prune.timer

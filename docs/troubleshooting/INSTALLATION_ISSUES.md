@@ -15,6 +15,7 @@ This document addresses all potential issues related to installing **`dev-prune`
 7. [`dev-prune` works but `devp` does not](#7-dev-prune-works-but-devp-does-not)
 8. [Current working directory (CWD) determinism check](#8-current-working-directory-cwd-determinism-check)
 9. [`pip install` in a virtual environment — what happens when the venv goes away](#9-pip-install-in-a-virtual-environment--what-happens-when-the-venv-goes-away)
+10. [A terminal window flashes briefly after logging in (Windows)](#10-a-terminal-window-flashes-briefly-after-logging-in-windows)
 
 ---
 
@@ -124,8 +125,8 @@ Unblock-File "$env:APPDATA\dev-prune\bin\dev-prune.exe","$env:APPDATA\dev-prune\
 listed here for the hand-downloaded path — where unblocking the **archive before
 extracting** means nothing inside it is ever marked:
 ```powershell
-Unblock-File .\dev-prune-v1.1.0-windows-x64.zip
-Expand-Archive .\dev-prune-v1.1.0-windows-x64.zip -DestinationPath .
+Unblock-File .\dev-prune-v1.2.0-windows-x64.zip
+Expand-Archive .\dev-prune-v1.2.0-windows-x64.zip -DestinationPath .
 ```
 
 If you are standing in front of the dialog right now, you do not need any of the above:
@@ -386,3 +387,55 @@ pip uninstall dev-prune   # removes the venv's copy so pip's records stay consis
 command for you. Running only `pip uninstall` leaves the managed copy behind — which is
 by design (it is what keeps `devp` alive after the venv dies), but means `devp
 uninstall` is the half you must not skip.
+
+---
+
+### 10. A terminal window flashes briefly after logging in (Windows)
+
+#### Symptom
+A black console window appears for under a second — typically moments after opening the
+laptop — and closes before anything in it can be read.
+
+#### Cause
+The background task registered by dev-prune 1.2.0 and earlier ran with the *interactive*
+logon type, so Windows attached a visible console to it every time it fired. The window
+is the scheduled `devp run` doing its normal, silent work — nothing is wrong, but it
+looks alarming, and it should not be visible at all.
+
+Since 1.2.1 the task runs a **windowless build of the binary, `devpw.exe`** — the same
+relationship `pythonw.exe` has to `python.exe`. It is generated locally, beside the
+managed copy, by taking `dev-prune.exe` and setting one field in its header so Windows
+never gives it a console; nothing is downloaded and no second binary ships in any
+package. Because it runs in your own logged-on session, it also keeps full access to
+mapped network drives and Dev Drives. Upgrading re-registers the existing task
+automatically on the next setup pass, and refreshes `devpw.exe` after every dev-prune
+upgrade so the daemon never runs a stale build.
+
+If that windowless build cannot be created, setup falls back to a hidden password-less
+task (an S4U logon), and then to the old visible task, so the daemon is never lost.
+
+> **macOS and Linux never show this.** Their schedulers — launchd LaunchAgents and
+> systemd user timers — run background jobs without ever attaching a terminal, so there
+> is nothing to hide and nothing to configure.
+
+#### Diagnostic Check
+```powershell
+schtasks /Query /TN DevPrune /XML | Select-String -Pattern 'Command|LogonType'
+```
+A `<Command>` ending in `devpw.exe` is the windowless task — nothing will flash. A
+`Command` ending in `dev-prune.exe` with `LogonType` `S4U` is the hidden fallback (also
+no window). `InteractiveToken` on `dev-prune.exe` is the old visible task.
+
+#### Solution
+Upgrade to 1.2.1 or later and run any `devp` command once — the setup pass re-registers
+the task windowless. If the diagnostic still shows the interactive `dev-prune.exe` task
+afterwards, re-register once from an elevated PowerShell, which retries the preferred
+routes from the top:
+```powershell
+devp daemon on
+```
+
+One caveat applies **only to the S4U fallback**, not the default `devpw.exe` task: an
+S4U logon has no access to mapped network drives, so if a registered repository lives on
+one, that background pass skips it (everything fails closed) — prune those from a normal
+terminal instead. The `devpw.exe` task does not have this limitation.

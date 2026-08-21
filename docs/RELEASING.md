@@ -92,26 +92,27 @@ the one above:
    You want `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` in the first list, and
    `NPM_PUBLISH`, `CRATES_PUBLISH` and `PYPI_PUBLISH` in the second. Empty output means
    nothing is configured, and the release will reach the GitHub release page only.
-6. **Check the changelog date.** `CHANGELOG.md` dates the 1.1.0 section, and the date
-   should be the day it actually ships. Fix it in place if the calendar has moved on.
+6. **Check the changelog date.** `CHANGELOG.md` dates the section for the version being
+   released, and the date should be the day it actually ships. Fix it in place if the
+   calendar has moved on.
 7. **Read the release body before it becomes one.** This exact text is what appears on
    the GitHub release page:
 
    ```bash
-   sh scripts/changelog-section.sh 1.1.0
+   sh scripts/changelog-section.sh 1.2.0
    ```
 
    On Windows, `sh` is not on `PATH` but Git ships one, and running the real extractor
    beats reimplementing it — a second copy is a second thing to keep in step:
 
    ```powershell
-   & "$env:ProgramFiles\Git\bin\sh.exe" scripts/changelog-section.sh 1.1.0
+   & "$env:ProgramFiles\Git\bin\sh.exe" scripts/changelog-section.sh 1.2.0
    ```
 
 8. **Tag and push.**
 
    ```bash
-   git tag -a v1.1.0 -m "v1.1.0" && git push origin v1.1.0
+   git tag -a v1.2.0 -m "v1.2.0" && git push origin v1.2.0
    ```
 
    PowerShell has no `&&`; use `;` and check in between, or just run the two separately.
@@ -120,12 +121,14 @@ the one above:
    actually run, and running them is the only proof the packages resolve:
 
    ```bash
-   npx dev-prune@1.1.0 -V
-   uvx dev-prune@1.1.0 -V
-   cargo install dev-prune --version 1.1.0
-   cargo binstall dev-prune@1.1.0
+   uvx dev-prune@1.2.0 -V
+   cargo install dev-prune --version 1.2.0
+   cargo binstall dev-prune@1.2.0
    curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
    ```
+
+   `npx dev-prune@<version> -V` joins this list only once npm publishing is switched on
+   — `NPM_PUBLISH` is currently `false` and nothing has ever shipped to npm.
 
    `cargo binstall` is the one worth watching: it reads
    `[package.metadata.binstall]` from the published crate and downloads a release asset
@@ -141,9 +144,10 @@ the one above:
    iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
    ```
 
-Names are unclaimed on all three registries as of the check in
-[Name availability](#name-availability) — but "unclaimed" has a shelf life, and the only
-way to hold a name is to publish under it.
+The `dev-prune` name is now held on crates.io and PyPI, where 1.0.0 through 1.2.0 are
+published. On npm it is still unclaimed — see [Name availability](#name-availability) —
+and "unclaimed" has a shelf life, so switching `NPM_PUBLISH` on is also what secures the
+name there.
 
 ---
 
@@ -229,10 +233,10 @@ first version from a workstation, because an interactive `npm login` session ans
 2FA challenge itself:
 
 ```sh
-gh release download v1.1.0 --dir /tmp/rel
+gh release download v1.2.0 --dir /tmp/rel
 cd /tmp/rel && sha256sum -c ./*.sha256          # publish the CI binaries, not local ones
-sh scripts/npm-prepare.sh 1.1.0 /tmp/rel /tmp/npm-dist
-sh scripts/npm-publish.sh 1.1.0 /tmp/npm-dist latest --local
+sh scripts/npm-prepare.sh 1.2.0 /tmp/rel /tmp/npm-dist
+sh scripts/npm-publish.sh 1.2.0 /tmp/npm-dist latest --local
 ```
 
 `--local` drops `--provenance`, which is not a preference: the attestation is signed
@@ -258,7 +262,7 @@ configured *on a package*, and a package that has never been published does not 
 configure. PyPI solves this with pending publishers; npm has no equivalent. So the first
 publish of a new name must use a token, and every later one need not.
 
-Once 1.1.0 is on the registry, for **each of the seven packages**: npmjs.com → the
+Once a first version is on the registry, for **each of the seven packages**: npmjs.com → the
 package → Settings → Trusted Publisher → GitHub Actions → repository
 `Life-Experimentalist/dev-prune`, workflow `release.yml`. Then delete the `NPM_TOKEN`
 secret and drop the `NODE_AUTH_TOKEN` guard from `publish-npm`; OIDC replaces it, and
@@ -298,11 +302,13 @@ provenance is generated automatically rather than by the flag.
 
 ### Name availability
 
-Checked on 2026-08-12. All three names are unclaimed on all three registries:
+As of 2026-08-20, `dev-prune` is published (1.0.0 through 1.2.0) on PyPI and crates.io,
+which is what holds a name on those registries. Nothing has been published to npm —
+`NPM_PUBLISH` is `false` — so every name there is still unclaimed:
 
 | Name | npm | PyPI | crates.io |
 |---|---|---|---|
-| `dev-prune` | free | free | free |
+| `dev-prune` | free | **held (published)** | **held (published)** |
 | `devp` | free | free | free |
 | `devprune` | free | free | free |
 
@@ -333,8 +339,8 @@ Then:
 4. **Tag and push the tag:**
 
    ```bash
-   git tag -a v1.1.0 -m "v1.1.0"
-   git push origin v1.1.0
+   git tag -a v1.2.0 -m "v1.2.0"
+   git push origin v1.2.0
    ```
 
 That is the release. A tag matching `v*` triggers everything below.
@@ -349,7 +355,7 @@ finishes what the first attempt started rather than dying on a conflict.
 
 ```mermaid
 flowchart TD
-    tag["git push origin v1.1.0"] --> build["build (6 matrix jobs)"]
+    tag["git push origin v1.2.0"] --> build["build (6 matrix jobs)"]
 
     subgraph checks["Pre-flight, before any compilation"]
         v1["Cargo.toml version == tag"]
@@ -473,7 +479,8 @@ three registries used here, it does not.
 | **AUR** | **None.** | Anyone with an account can upload a PKGBUILD. |
 
 So: npm, PyPI and crates.io are effectively free-for-all — the only gate is owning the
-name, and [all three names are free](#name-availability). Publish early to hold them.
+name. `dev-prune` is already held on PyPI and crates.io by the published releases; on
+npm it is [still free](#name-availability) until `NPM_PUBLISH` is switched on.
 
 The flip side of "no review" is that **nothing is reversible**. crates.io versions are
 permanent; npm allows unpublishing only within 72 hours and only if nothing depends on
@@ -526,7 +533,7 @@ What this buys, concretely:
 uv tool install dev-prune     # persistent install, no Python project needed
 uvx dev-prune status          # run once, nothing left behind
 pipx run dev-prune status     # same, via pipx
-npx dev-prune status          # same, via npm
+npx dev-prune status          # same, via npm — once NPM_PUBLISH is switched on
 ```
 
 ---

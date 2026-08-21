@@ -1,6 +1,6 @@
 # `dev-prune` (`devp`) Multi-Ecosystem Distribution & Packaging Manual
 
-Every way to install **`dev-prune`** (`devp`) v1.1.0, what each channel actually ships, and the security guarantees behind them. For the maintainer's side — credentials, registry policies, what to do when a release fails — see [RELEASING.md](RELEASING.md).
+Every way to install **`dev-prune`** (`devp`) v1.2.1, what each channel actually ships, and the security guarantees behind them. For the maintainer's side — credentials, registry policies, what to do when a release fails — see [RELEASING.md](RELEASING.md).
 
 ---
 
@@ -57,12 +57,12 @@ Six single-binary archives are built automatically for every tagged release and 
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.1.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.1.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.1.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.1.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.1.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.1.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.2.1-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.2.1-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.2.1-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.2.1-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.2.1-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.2.1-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
@@ -96,9 +96,13 @@ pip install dev-prune
 cargo binstall dev-prune   # downloads the release archive
 cargo install dev-prune    # compiles from source
 ```
-crates.io hosts source, not binaries — there is no executable on the registry for `cargo install` to fetch, so it always builds, and it is the only channel that does. Requires Rust 1.85+ (edition 2024) and the release profile below.
+crates.io hosts source, not binaries — there is no executable on the registry for `cargo install` to fetch, so it always builds, and it is the only channel that does. Requires Rust 1.88+ (edition 2024) and the release profile below.
 
-[`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes that gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target — the same six archives listed above — so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
+**Does `cargo install` produce a faster binary tuned to your machine?** No, and it does not need to. It compiles for your host target triple with the same `[profile.release]` settings the prebuilt archives use (`lto`, `codegen-units = 1`, `opt-level = 3`), but with a *generic* CPU baseline — it does **not** pass `-C target-cpu=native`, so it does not emit instructions specific to your exact processor. The result is byte-for-byte equivalent in optimization level to the prebuilt binaries and performs the same. dev-prune spends its time waiting on the filesystem and on package-manager subprocesses, not in hot numeric loops, so a `target-cpu=native` build would not be measurably faster anyway. The practical differences from `cargo install` are only that it needs a Rust toolchain and takes minutes instead of seconds. **The prebuilt channels above already cover every supported platform; there is nothing `cargo install` reaches that they miss.**
+
+Every channel — including `cargo install` and a bare unzipped archive — is complete on its own. On Windows the windowless scheduler binary (`devpw.exe`, see [Background Automation](BACKGROUND_AUTOMATION.md)) is generated locally beside the installed binary on first setup, so no channel has to package a second executable for it.
+
+[`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes the from-source gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target — the same six archives listed above — so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
 
 ---
 
@@ -113,7 +117,7 @@ All published binaries are built with `lto = true`, `codegen-units = 1`, `strip 
 A release is one `git push` of one tag. Nothing is built, archived, uploaded or published by hand:
 
 ```bash
-git tag -a v1.1.0 -m "v1.1.0" && git push origin v1.1.0
+git tag -a v1.2.1 -m "v1.2.1" && git push origin v1.2.1
 ```
 
 `.github/workflows/release.yml` then builds all six targets, verifies the tag matches `Cargo.toml` and that `CHANGELOG.md` documents it, publishes a GitHub Release whose body is that changelog section, and pushes to PyPI and crates.io (the npm job is gated off — see section 4).

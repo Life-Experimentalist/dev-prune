@@ -1,6 +1,6 @@
 # 📚 `dev-prune` Documentation Hub
 
-Welcome to the central documentation index for **`dev-prune`** (`devp`), a universal, lockfile-safe workspace maintenance CLI and background dependency cleaner built in Rust 1.85+ (Edition 2024).
+Welcome to the central documentation index for **`dev-prune`** (`devp`), a universal, lockfile-safe workspace maintenance CLI and background dependency cleaner built in Rust (edition 2024).
 
 This documentation hub is structured according to the **Diataxis Framework** (Tutorials, How-To Guides, Technical Reference, and Explanations) to provide clear navigation for users, contributors, system administrators, and AI pair programming agents.
 
@@ -25,6 +25,8 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
   Low-level technical specification detailing crate module map (`src/`), data schemas (`registry.json`, `.devprune.json`), the `PackageManager` trait contract, multi-adapter conflict resolution, intra-repository project discovery, the atomic state file swap algorithm, binary aliasing, and CWD determinism.
 - **[Safety Invariants & Risk Mitigation](SAFETY_INVARIANTS.md)**
   In-depth guide to the seven core safety invariants: `.git` boundary guards, two-tier lockfile pre-verification, hybrid activity solver (`git log` + source `mtime`), atomic state writes, 0ms fast-path ignore checks, symlink and junction refusal, and the nested repository boundary.
+- **[Privacy & Network Policy](PRIVACY.md)**
+  What dev-prune sends over the network (almost nothing), the single update-check request, the user-confirmed `.vsix` download, and how to verify the claims yourself.
 
 ### 🛠️ How-To & Automation Guides
 - **[GitHub Releases, DIY Manual Install & Source Build Guide](RELEASES_AND_MANUAL_INSTALL.md)**
@@ -62,3 +64,6 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 `dev-prune` includes a token-efficient AI Skill definition located at [`.agents/skills/dev-prune/SKILL.md`](../.agents/skills/dev-prune/SKILL.md).
 
 AI coding assistants (Gemini Antigravity, Claude Code, Cursor, Windsurf, Copilot, OpenClaw) can execute `devp skill` to inspect ready-to-copy AI onboarding prompts or run `devp` commands natively.
+
+- **[Set up dev-prune with an AI assistant](AI_SETUP_PROMPT.md)**
+  A copy-paste prompt that installs, verifies, and configures `dev-prune` end to end — hand it to Claude Code, Cursor, Copilot, Windsurf, or any terminal-capable agent.

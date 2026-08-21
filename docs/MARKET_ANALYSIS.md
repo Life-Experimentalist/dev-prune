@@ -6,7 +6,7 @@ This document details the market landscape, competitive matrix, unique selling p
 
 ## 🌐 Executive Summary
 
-Software developers, polyglot engineering teams, and DevOps practitioners accumulate tens to hundreds of gigabytes of heavy build artifacts (`node_modules`, `.venv`, `venv`, `target`, `vendor`, `build`, `.next`) over time across dozens of inactive Git repositories. Existing tools fall into 4 main categories:
+Software developers, polyglot engineering teams, and DevOps practitioners accumulate tens to hundreds of gigabytes of heavy dependency and cache directories (`node_modules`, `.venv`, `venv`, `target`, `vendor`) over time across dozens of inactive Git repositories — every one rebuildable from a lockfile. (Build *outputs* like `dist/` or `.next/` are deliberately outside dev-prune's scope: it only deletes what a lockfile can prove restorable.) Existing tools fall into 4 main categories:
 
 1. **Single-Ecosystem Interactors** (`npkill` for Node.js, `cargo-clean-all` / `cargo-sweep` for Rust, `pyclean` for Python): Excellent within their single-language niche, but require managing separate CLI tools per ecosystem.
 2. **Naive Directory Cleaners** (`git clean -fdx`, raw shell scripts): Delete files destructively without verifying lockfile integrity or protecting uncommitted work.
@@ -21,7 +21,7 @@ Software developers, polyglot engineering teams, and DevOps practitioners accumu
 
 | Feature / Capability | `dev-prune` (`devp`) | `npkill` | `cargo-clean-all` | `pyclean` / `pyprune` | `git clean` | `dust` / `ncdu` | `BleachBit` |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Language Runtime** | **Rust (1.85+)** | Node.js | Rust | Python | C / C++ | Rust / C | Python / C |
+| **Language Runtime** | **Rust** | Node.js | Rust | Python | C / C++ | Rust / C | Python / C |
 | **Multi-Ecosystem Coverage** | **✓ (JS/TS, Python, Rust, Go)** | ✗ (Node only) | ✗ (Rust only) | ✗ (Python only) | ✗ (All untracked) | ✗ (Generic FS) | ✗ (OS Caches) |
 | **Many Projects per Repository** | **✓ (monorepo-aware discovery)** | ✗ | ✗ | ✗ | n/a | n/a | ✗ |
 | **Git Repository Safety Boundary** | **✓ (`.git` enforced)** | ✗ | ✓ | ✗ | ✓ | ✗ | ✗ |

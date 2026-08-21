@@ -104,6 +104,26 @@ pub struct Settings {
     /// Whether dev-prune asks GitHub for the latest release. On by default, opt-out.
     #[serde(default = "default_update_check")]
     pub update_check: bool,
+    /// How many directory levels below a repository root discovery descends.
+    /// Six by default; clamped to `constants::MAX_SCAN_DEPTH_LIMIT`.
+    #[serde(default = "default_scan_depth")]
+    pub scan_depth: usize,
+    /// Whether cargo and go may run the sync command that rewrites tracked
+    /// manifests. Off by default.
+    #[serde(default = "default_allow_manifest_rewrite")]
+    pub allow_manifest_rewrite: bool,
+    /// Days between automatic release checks (default 7). Only the automatic
+    /// check honours this; `devp update` always asks.
+    #[serde(default = "default_update_check_interval_days")]
+    pub update_check_interval_days: i64,
+    /// How long the release check waits for GitHub before giving up (default 5s).
+    #[serde(default = "default_update_check_timeout_secs")]
+    pub update_check_timeout_secs: u64,
+    /// Whether the setup pass may install the Git hooks in front of another
+    /// tool's `core.hooksPath`, forwarding to the displaced directory. Off by
+    /// default; same thing as `devp hook install --chain`.
+    #[serde(default = "default_auto_hooks_chain")]
+    pub auto_hooks_chain: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,8 +183,19 @@ pub trait PackageManager: Send + Sync {
     /// ABORTED. `policy` carries `allow_manifest_rewrite` and `command_timeout_secs`.
     fn enforce_lockfile(&self, project_path: &Path, policy: EnforcePolicy) -> Result<()>;
 
-    /// Restore dependencies from lockfile (used by `devp restore`).
-    fn restore(&self, project_path: &Path) -> Result<()>;
+    /// Restore dependencies from lockfile (used by `devp restore`). `timeout` is
+    /// the user's `command_timeout_secs`, threaded explicitly.
+    fn restore(&self, project_path: &Path, timeout: std::time::Duration) -> Result<()>;
+
+    /// `restore`, told the name the pruned directory had. Default impl ignores the
+    /// name and calls `restore`; venv overrides it to rebuild under the original
+    /// directory name instead of always `.venv`.
+    fn restore_named(
+        &self,
+        project_path: &Path,
+        dir_name: &str,
+        timeout: std::time::Duration,
+    ) -> Result<()> { let _ = dir_name; self.restore(project_path, timeout) }
 
     /// Lockfiles that identify this manager. Used only to break ties between
     /// adapters that share a bloat directory; defaults to an empty slice.
