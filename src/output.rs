@@ -9,6 +9,55 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::Path;
 use std::time::Duration;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// Truncate `s` to at most `cells` terminal columns, marking the cut with an ellipsis.
+///
+/// Returns a string exactly `cells` columns wide whenever it truncates. A wide
+/// character straddling the boundary is dropped rather than split, which can leave the
+/// result one column short — the trailing space closes that gap, so callers can rely on
+/// the width being exact.
+pub fn truncate_display(s: &str, cells: usize) -> String {
+    if UnicodeWidthStr::width(s) <= cells {
+        return s.to_string();
+    }
+    if cells == 0 {
+        return String::new();
+    }
+    // One column is reserved for the ellipsis itself.
+    let budget = cells - 1;
+    let mut out = String::new();
+    let mut used = 0usize;
+    for c in s.chars() {
+        let w = UnicodeWidthChar::width(c).unwrap_or(0);
+        if used + w > budget {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    out.push('…');
+    used += 1;
+    out.extend(std::iter::repeat_n(' ', cells.saturating_sub(used)));
+    out
+}
+
+/// Left-align `s` in a column exactly `cells` terminal columns wide.
+///
+/// This is `{:<width$}` corrected for the fact that Rust pads to a count of `char`s and
+/// a terminal draws in columns. A CJK or emoji character occupies two of them, so a
+/// path whose name is eight Chinese characters measures 8 and draws 16 — and under
+/// `{:<35}` every column to its right shifts by eight. Anything wider than the column
+/// is truncated rather than allowed to push its neighbours off the edge.
+pub fn pad_display(s: &str, cells: usize) -> String {
+    let width = UnicodeWidthStr::width(s);
+    if width > cells {
+        return truncate_display(s, cells);
+    }
+    let mut out = s.to_string();
+    out.extend(std::iter::repeat_n(' ', cells - width));
+    out
+}
 
 /// Helper to strip Windows UNC `\\?\` prefix, macOS `/private/` prefix, and collapse double slashes.
 pub fn clean_path<P: AsRef<Path>>(path: P) -> String {
@@ -134,6 +183,12 @@ pub fn styled_path<P: AsRef<Path>>(path: P) -> String {
     clean_path(path).cyan().to_string()
 }
 
+/// A package-manager name, styled — one colour everywhere an adapter is named, so
+/// "cargo" reads as the same thing in a candidate line, a summary and an error.
+pub fn styled_adapter(name: &str) -> String {
+    name.magenta().to_string()
+}
+
 /// Print the dev-prune ASCII art banner
 pub fn print_banner() {
     let art = format!(
@@ -228,6 +283,53 @@ mod tests {
             "`a` and `b`, plus `stray"
         );
         colored::control::unset_override();
+    }
+
+    #[test]
+    fn a_wide_name_is_padded_to_columns_not_to_char_count() {
+        // Eight Chinese characters: eight `char`s, sixteen columns. `{:<20}` would add
+        // twelve spaces and draw twenty-eight columns wide; this adds four.
+        let cjk = "项目目录名称测试";
+        assert_eq!(cjk.chars().count(), 8);
+        assert_eq!(UnicodeWidthStr::width(cjk), 16);
+        let padded = pad_display(cjk, 20);
+        assert_eq!(UnicodeWidthStr::width(padded.as_str()), 20);
+        assert!(padded.ends_with("    "));
+    }
+
+    #[test]
+    fn ascii_padding_still_matches_the_format_specifier_it_replaces() {
+        assert_eq!(pad_display("repo", 10), format!("{:<10}", "repo"));
+        assert_eq!(pad_display("", 3), "   ");
+    }
+
+    #[test]
+    fn an_overlong_name_is_truncated_rather_than_pushing_the_next_column() {
+        let long = "a".repeat(50);
+        let out = pad_display(&long, 10);
+        assert_eq!(UnicodeWidthStr::width(out.as_str()), 10);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn a_wide_char_straddling_the_cut_is_dropped_and_the_gap_is_closed() {
+        // Budget after the ellipsis is 4 columns; the third character would need
+        // columns 5–6, so it is dropped and a space keeps the width exact.
+        let out = truncate_display("测试字符", 5);
+        assert_eq!(UnicodeWidthStr::width(out.as_str()), 5);
+        assert!(out.starts_with("测试"));
+    }
+
+    #[test]
+    fn an_emoji_path_component_counts_as_two_columns() {
+        let s = "🚀repo";
+        assert_eq!(UnicodeWidthStr::width(s), 6);
+        assert_eq!(UnicodeWidthStr::width(pad_display(s, 12).as_str()), 12);
+    }
+
+    #[test]
+    fn a_zero_width_column_produces_nothing() {
+        assert_eq!(truncate_display("anything", 0), "");
     }
 
     #[test]

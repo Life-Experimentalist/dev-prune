@@ -36,7 +36,7 @@ fn venv_is_uv_managed(path: &Path) -> bool {
 /// plain name scan is enough; no dependency graph needed. `None` when no names could be
 /// read at all, in which case the caller skips the drift comparison rather than refusing
 /// on a lockfile format this scan does not understand.
-fn lockfile_package_names(lockfile: &Path) -> Option<HashSet<String>> {
+pub(super) fn lockfile_package_names(lockfile: &Path) -> Option<HashSet<String>> {
     let content = fs::read_to_string(lockfile).ok()?;
     let mut names = HashSet::new();
     let mut in_package = false;
@@ -67,7 +67,7 @@ fn lockfile_package_names(lockfile: &Path) -> Option<HashSet<String>> {
 ///
 /// Those were installed ad hoc (`uv pip install …`) and `uv sync` after deletion would
 /// not bring them back — exactly what this tool promises never to lose.
-fn unlocked_packages(path: &Path, locked: &HashSet<String>) -> Vec<String> {
+pub(super) fn unlocked_packages(path: &Path, locked: &HashSet<String>) -> Vec<String> {
     let Some(installed) = installed_distributions(&path.join(".venv")) else {
         return Vec::new();
     };

@@ -98,6 +98,8 @@ Being honest about the environment variable: by the time you can type `DEV_PRUNE
 
 `devp uninstall` removes the scheduler, the hooks and the `devp` copy, and stamps the current version so the next command does not put them straight back. The next *upgrade* will, unless you also set `auto_setup false`.
 
+The variable is symmetric: with `DEV_PRUNE_NO_AUTO_SETUP=1` set, `devp uninstall` is hands-off about the same integrations it never would have installed — it leaves the scheduler and the agent skills alone (saying so in its output), and its stray-copy sweep searches only the directories on `PATH` rather than guessing extra install locations from the home folder. Managing the integrations by hand includes removing them by hand.
+
 `devp setup --status` reports what is installed, what is not, and why, without changing anything.
 
 ---

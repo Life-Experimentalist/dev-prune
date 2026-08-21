@@ -66,12 +66,37 @@ pub fn run_link(path_str: &str, quiet: bool) -> Result<()> {
         registry.save()?;
         if !quiet {
             output::print_success(&format!("Linked: {}", output::clean_path(&path)));
+            if registry.settings.auto_config {
+                ensure_default_repo_config(&path);
+            }
         }
     } else if !quiet {
         output::print_info(&format!("Already linked: {}", output::clean_path(&path)));
     }
 
     Ok(())
+}
+
+/// Write a default `.devprune.json` into a newly registered repository, when
+/// `auto_config` asks for it.
+///
+/// Never over an existing file — broken or not, it is the user's — and a write failure
+/// is a note rather than a failed registration: the repository is tracked either way,
+/// the config was only ever a convenience.
+pub(crate) fn ensure_default_repo_config(path: &Path) {
+    if path.join(crate::constants::PER_REPO_CONFIG_FILE).exists() {
+        return;
+    }
+    match PerRepoConfig::default().save_to_repo(path) {
+        Ok(()) => output::print_info(&format!(
+            "auto_config: wrote a default `.devprune.json` in {}",
+            output::clean_path(path)
+        )),
+        Err(e) => output::print_warning(&format!(
+            "auto_config: could not write `.devprune.json` in {}: {e}",
+            output::clean_path(path)
+        )),
+    }
 }
 
 /// Is `path` inside the OS temporary directory?

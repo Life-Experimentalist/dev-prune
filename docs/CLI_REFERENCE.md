@@ -102,7 +102,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 
 ### 1. `devp init [PATHS...]`
 - **Aliases**: `scan`, `onboard`
-- **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#11-devp-setup---status), installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#10-devp-update---offline) does.
+- **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#11-devp-setup---status), installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#10-devp-update---offline---install) does.
 - **Examples**:
   ```bash
   devp init ~/Code
@@ -164,10 +164,34 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   | `--except <REPOS>` | Prune every registered repository *except* these (comma-separated) |
   | `--daemon` | Mark this as the scheduled background pass; repositories that set `disable_daemon` are skipped. Set by the installed scheduler |
   | `--json` | Emit one machine-readable document instead of the human report |
+  | `--explain` | Explain every decision instead of pruning: each repository and directory with the reason it would or would not be touched. Read-only |
 
-  Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `cargo`, `go`. An
-  unrecognised name is an error listing the valid ones rather than a silently empty pass,
-  and `--only` and `--skip` cannot be combined.
+  `--explain` reports the states a normal pass keeps quiet about — a repository still
+  active (with how many days ago the last activity was, against the threshold), one
+  opted out, a directory under the size floor — alongside what would be pruned. It
+  verifies nothing and deletes nothing, always exits `0` when the analysis itself ran,
+  and cannot be combined with `--json` (whose `--dry-run` document already carries every
+  status). It composes with a target path and with `--only`/`--skip`/`--min-size`/
+  `--except`/`--ignore-idle`, so "why did that repo not prune?" is answerable one flag
+  at a time.
+
+  Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `poetry`, `cargo`,
+  `go` — plus `gradle` and `maven`, which are opt-in (see below). An unrecognised name
+  is an error listing the valid ones rather than a silently empty pass, and `--only`
+  and `--skip` cannot be combined.
+
+  **Gradle and Maven are opt-in adapters.** `devp config set enable_gradle true` /
+  `enable_maven true` turns each on; until then the adapter is invisible everywhere —
+  `status`, `run`, `--only gradle` all behave as if it did not exist. They are off by
+  default because what they delete (`build/`, `.gradle/`, `target/`) comes back by
+  *recompiling from the sources in the repository* rather than by re-downloading, and
+  a large JVM build can take real time to rebuild. For the same reason they answer to
+  their own idle threshold: `build_idle_days` (60 by default) is applied as
+  `max(build_idle_days, idle_days)`, so a repository must be idle much longer before
+  its build directories go than before its dependency directories do. Recoverability
+  is proved by the build manifest (`pom.xml`, `build.gradle`/`settings.gradle`) being
+  present and readable — no network command runs. User-home caches (`~/.m2`,
+  `~/.gradle`) are never touched; those belong to `devp caches`.
 
   `--except` is the safe spelling of "clean up but keep the API project". Each entry
   matches a registered repository by full path, by directory name, or case-insensitively
@@ -187,6 +211,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   devp run --only cargo,uv --dry-run
   devp run --skip venv --min-size 50
   devp run --json --dry-run
+  devp run --explain
   ```
 
 Directories are reported by their path relative to the repository root, so a monorepo
@@ -285,7 +310,7 @@ reads unambiguously:
 
   Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. Two probes that resolve to the same directory are counted once.
 
-  This is also where the Java, .NET and C/C++ ecosystems live in dev-prune, and why they are *not* adapters: a Maven `target/`, a Gradle `build/`, a .NET `bin/`+`obj/` and a CMake `build/` are compiler **outputs** — no lockfile can prove a deleted one comes back byte-for-byte, so deleting them is out of scope by design. Their *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports.
+  This is also where the .NET and C/C++ ecosystems live in dev-prune, and why they are *not* adapters: a .NET `bin/`+`obj/` and a CMake `build/` are compiler **outputs** — no lockfile can prove a deleted one comes back byte-for-byte, so deleting them is out of scope by design. Their *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports. Maven `target/` and Gradle `build/`+`.gradle/` are the deliberate exception: they have [opt-in adapters](#5-devp-run) whose recoverability claim is rebuild-from-source (`pom.xml`/`build.gradle` plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the table.
 - **Examples**:
@@ -314,9 +339,14 @@ reads unambiguously:
     | `check_interval_days` | `2` | How often the OS scheduler runs a pass |
     | `auto_hooks` | `true` | Whether that pass may install the global Git hooks |
     | `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds, forwarding every hook on to it |
-    | `update_check` | `true` | Whether the periodic release check runs (see [`devp update`](#10-devp-update---offline)) |
+    | `update_check` | `true` | Whether the periodic release check runs (see [`devp update`](#10-devp-update---offline---install)) |
     | `update_check_interval_days` | `7` | Minimum gap between two release checks |
     | `update_check_timeout_secs` | `5` | How long that one request may hang before it is abandoned |
+    | `auto_config` | `true` | Whether `devp init` / `devp link` write a default `.devprune.json` into newly registered repositories |
+    | `enable_gradle` | `false` | Turn on the opt-in Gradle adapter (`build/`, `.gradle/` — they come back by recompiling) |
+    | `enable_maven` | `false` | Turn on the opt-in Maven adapter (`target/`) |
+    | `build_idle_days` | `60` | Extra idle threshold for the opt-in build adapters, applied as `max(build_idle_days, idle_days)` |
+    | `auto_update` | `false` | Run `devp update --install` by itself at the end of a prune pass when a newer release is known |
 
     Three of these have a per-repository form in that repository's `.devprune.json`,
     where they win for that tree only: `idle_days` (spelled `override_idle_days` there),
@@ -420,7 +450,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.2.1",
+  "version": "1.3.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -467,7 +497,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.2.1",
+  "version": "1.3.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -507,7 +537,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.2.1",
+  "version": "1.3.0",
   "command": "status --drift",
   "drift": [
     {
@@ -535,7 +565,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.2.1",
+  "version": "1.3.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -567,7 +597,7 @@ an upgraded machine they start from zero while the lifetime figures do not — w
 ```jsonc
 {
   "schema": 1,
-  "version": "1.2.1",
+  "version": "1.3.0",
   "command": "caches",
   "caches": [
     {
@@ -608,15 +638,18 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 
 ---
 
-### 10. `devp update [--offline]`
-- **Description**: Prints the installed version, asks GitHub's public API for the latest release, and shows the upgrade command for how you installed it. It never downloads or replaces its own binary — upgrade with `cargo binstall dev-prune --force`, `cargo install dev-prune --force`, or by re-running the installer script.
+### 10. `devp update [--offline | --install]`
+- **Description**: Prints the installed version, asks GitHub's public API for the latest release, and shows the upgrade command for how you installed it. By default it never downloads or replaces its own binary — upgrade with `cargo binstall dev-prune --force`, `cargo install dev-prune --force`, or by re-running the installer script.
 - **Flags**:
   - `--offline` — skip the release check for this run without changing the setting.
+  - `--install` — actually perform the upgrade, through the package manager that owns the running binary. The channel is detected from where the binary lives: the managed `bin` directory means the installer script, `.cargo` means cargo (`cargo binstall` when available, `cargo install` otherwise), a `node_modules` tree means npm, uv's tool directory means `uv tool upgrade`, a `pipx` venv means `pipx upgrade`. One channel owns one binary — a copy installed through uv is upgraded through uv, never through npm, because two managers writing the same `PATH` entry would fight over it forever. An unrecognised location changes nothing and prints every channel's command instead. It refuses under `DEV_PRUNE_OFFLINE`, cannot be combined with `--offline`, and does nothing when the installed build is already the latest.
+- **`auto_update`** (`false` by default): `devp config set auto_update true` runs `--install` by itself at the end of a prune pass when the release check already knows a newer version exists. A failed upgrade warns and never fails the pass. **An upgrade never interrupts the scheduled pass**: the scheduler runs the managed copy under the config `bin` directory, package managers replace binaries by atomic rename (a running pass keeps its loaded image), and the managed copy and hidden `devpw` twin refresh themselves from the new binary on their next healthy run.
 - **The check is opt-out, not opt-in.** It also runs quietly from `devp run` and `devp status`, at most once every 7 days, and prints one line only when a newer version exists. Disable it permanently with `devp config set update_check false`. It sends no body, no identifier and no usage data — see [PRIVACY.md](PRIVACY.md).
 - **`DEV_PRUNE_OFFLINE=1`** keeps the process off the network entirely — the release check and the extension-download fallback alike — regardless of any setting. For air-gapped machines and test suites; the durable per-user switch remains `devp config set update_check false`.
 - **Examples**:
   ```bash
   devp update
+  devp update --install
   devp update --offline
   ```
 
@@ -657,17 +690,31 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 13. `devp skill`
+### 13. `devp skill [--agent <EDITOR>]`
 - **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory, installs it into any detected on-disk agent skills directory (`~/.claude/skills/dev-prune/` — the same install `devp setup` performs automatically), and displays ready-to-copy AI Agent onboarding prompts for assistants without a skills directory (Gemini Antigravity, Cursor, Windsurf, Copilot, OpenClaw).
+- **`--agent <EDITOR>`**: instead writes per-repository rules into the current repository (it must be a Git repository root), in the file that editor's agent actually reads:
+
+  | Editor | File written |
+  |---|---|
+  | `cursor` | `.cursor/rules/dev-prune.mdc` (with Cursor's rule frontmatter) |
+  | `windsurf` | `.windsurf/rules/dev-prune.md` |
+  | `antigravity` | `.agent/rules/dev-prune.md` (Gemini Antigravity) |
+  | `cline` | `.clinerules/dev-prune.md` |
+  | `copilot` | `.github/copilot-instructions.md` — as a marked block |
+  | `agents-md` | `AGENTS.md` — as a marked block; the cross-tool convention Codex, Jules, Amp, OpenCode and others read |
+
+  The two shared files (`copilot`, `agents-md`) are edited inside dev-prune's `<!-- dev-prune:rules:start -->`…`<!-- dev-prune:rules:end -->` markers only: a re-run replaces the block, and every byte outside the markers is left exactly as found. The rules file is inert data and safe to commit if the whole team's agents should have it. Claude Code is deliberately not in the list — its skill installs globally, so there is nothing to write per repository.
 - **Examples**:
   ```bash
   devp skill
+  devp skill --agent cursor
+  devp skill --agent agents-md
   ```
 
 ---
 
 ### 14. `devp uninstall [--deep]`
-- **Description**: Removes dev-prune from the machine: the OS daemon scheduler, the global `core.hooksPath` (only if it still points at dev-prune), the installed agent skill, the `PATH` entry (or `~/.local/bin` symlinks), and the binaries themselves — both the managed pair and the copy you invoked. On Windows, where a running executable cannot delete itself, a detached helper removes the last files a few seconds after the command exits; nothing needs a reboot or a closed terminal. Without `--deep` the configuration survives, so a reinstall picks up where you left off. With `--deep`, also wipes the global configuration folder (`~/.config/dev-prune/`) and every registered repository's `.devprune.json`; `--deep` asks for confirmation, and refuses outright with no terminal to ask on unless `-y` is passed. Exits `1` if anything could not be removed, naming each leftover.
+- **Description**: Removes dev-prune from the machine: the OS daemon scheduler, the global `core.hooksPath` (only if it still points at dev-prune), the installed agent skill, the `PATH` entry (or `~/.local/bin` symlinks), and the binaries themselves — both the managed pair and the copy you invoked. On Windows, where a running executable cannot delete itself, a detached helper removes the last files a few seconds after the command exits; nothing needs a reboot or a closed terminal. Without `--deep` the configuration survives, so a reinstall picks up where you left off. With `--deep`, also wipes the global configuration folder (`~/.config/dev-prune/`) and every registered repository's `.devprune.json`; `--deep` asks for confirmation, and refuses outright with no terminal to ask on unless `-y` is passed. Exits `1` if anything could not be removed, naming each leftover. With `DEV_PRUNE_NO_AUTO_SETUP=1` set, the uninstall is hands-off about the integrations that variable told setup never to install: the scheduler and agent skills are left alone (with a note), and the sweep searches only `PATH` instead of also guessing install directories from the home folder.
 - **The stray-copy sweep**: installing from pip, npm, cargo and uv over time leaves copies of `devp` in `~/.cargo/bin`, `~/.local/bin`, npm's global directory and one `Scripts` folder per virtualenv — some on PATH, some not, and any one of them keeps the command resolving after an "uninstall". Both modes therefore end by scanning every directory on your PATH plus the well-known install locations for other copies of `dev-prune`/`devp` (matched by name only; nothing else in those directories is ever touched, and dev builds under a `target/` folder are skipped). What it finds is listed — each copy annotated with the package manager that owns it — and removed after **one confirmation**: `[y/N]` interactively — a bare Enter declines, `--yes` auto-confirms, and with no terminal and no `--yes` the copies are left in place with a note, without failing the uninstall. For each manager-owned copy the manager's own line (`pip uninstall dev-prune`, `npm uninstall -g dev-prune`, `cargo uninstall dev-prune`, `uv tool uninstall dev-prune`, `pipx uninstall dev-prune`) is printed at the end so its records get cleared too.
 - **Examples**:
   ```bash
@@ -717,6 +764,17 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
+### 17. `devp man [--dir <DIR>]`
+- **Description**: Renders the manual as man pages, generated from the same clap definitions `--help` prints — so the manual cannot describe a flag the program does not have. With no arguments the main `devp(1)` page goes to stdout, ready to pipe into `man -l -`. With `--dir` the full set is written into a directory: `devp.1`, `dev-prune.1`, and one `devp-<command>.1` per subcommand, ready to copy onto `manpath`.
+- **Examples**:
+  ```bash
+  devp man | man -l -             # read the main page now (Linux/macOS)
+  devp man --dir ./man            # write the full set into ./man
+  sudo cp man/*.1 /usr/local/share/man/man1/
+  ```
+
+---
+
 ## 🔍 Rich Environment Audit (`devp -V` / `devp --version`)
 
 Executing `devp -V` prints detailed diagnostic information:
@@ -725,9 +783,9 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.2.1
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.3.0
 
-dev-prune (devp) v1.2.1
+dev-prune (devp) v1.3.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune

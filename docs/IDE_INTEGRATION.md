@@ -135,6 +135,46 @@ schema — only files with their own `$schema` link still fetch remotely.
 
 ---
 
+## AI-agent rules: `devp skill --agent <editor>`
+
+Editors whose agents read per-repository rule files get theirs written by the CLI, not
+by an extension. `devp skill --agent <editor>` writes the embedded rules
+(`.agents/rules/dev-prune.rules.md`, compiled into the binary) into the file that
+editor's agent actually reads:
+
+| Editor | File |
+|---|---|
+| `cursor` | `.cursor/rules/dev-prune.mdc` (with Cursor's rule frontmatter) |
+| `windsurf` | `.windsurf/rules/dev-prune.md` |
+| `antigravity` | `.agent/rules/dev-prune.md` (Gemini Antigravity) |
+| `cline` | `.clinerules/dev-prune.md` |
+| `copilot` | `.github/copilot-instructions.md` — a marked block |
+| `agents-md` | `AGENTS.md` — a marked block; read by Codex, Jules, Amp, OpenCode and others |
+
+Claude Code is deliberately absent: its skill installs globally (`devp skill`,
+`devp setup`), so there is nothing to write per repository.
+
+**Contributing a new editor** is four small changes in
+[`src/commands/skill.rs`](../src/commands/skill.rs) and
+[`src/constants.rs`](../src/constants.rs):
+
+1. Find where that editor's agent looks for project rules (its docs will name one
+   file or directory — that fact is the whole contribution).
+2. Add the path as a constant in `src/constants.rs`.
+3. Add a variant to `AgentEditor` in `src/commands/skill.rs` with a doc comment naming
+   the file (clap turns the variant into the `--agent` value), and a match arm that
+   writes `EMBEDDED_RULES_MD` there. If the editor shares a file other tools also own
+   (as Copilot and `AGENTS.md` do), write through `upsert_marked_block` so only
+   dev-prune's marked block is ever touched.
+4. Mention the new value in `SKILL_LONG` in `src/help.rs` and in
+   [`docs/CLI_REFERENCE.md`](CLI_REFERENCE.md) §13 — plus `site/public/llms.txt` and
+   the skill's own `SKILL.md`, which restate the list.
+
+If the editor instead reads the cross-tool `AGENTS.md` convention, no code is needed —
+it is already covered by `--agent agents-md`.
+
+---
+
 ## JetBrains IDEs
 
 SchemaStore delivers the IntelliSense; [`editors/jetbrains/`](../editors/jetbrains/) is

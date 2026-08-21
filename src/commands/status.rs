@@ -110,7 +110,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     ));
     output::print_info(&format!(
         "Historical Space Saved: {} across {} prune {}",
-        output::format_bytes(registry.total_freed_bytes),
+        output::format_bytes_styled(registry.total_freed_bytes),
         registry.total_pruned_count,
         output::plural(registry.total_pruned_count as usize, "pass", "passes")
     ));
@@ -179,6 +179,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                     scan_depth: registry.settings.scan_depth,
                     allow_manifest_rewrite: registry.settings.allow_manifest_rewrite,
                     command_timeout_secs: registry.settings.command_timeout_secs,
+                    build_idle_days: registry.settings.build_idle_days,
                 };
 
                 for path in &candidates {

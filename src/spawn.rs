@@ -14,6 +14,19 @@
 use std::ffi::OsStr;
 use std::process::Command;
 
+/// Absolute path to an executable under `System32`.
+///
+/// By name alone these resolve through `PATH` — and some callers run exactly while
+/// `PATH` is being edited (the uninstaller's tail, the user-PATH registry writes).
+/// `SystemRoot` is set by the kernel for every process on every Windows, so it is the
+/// one thing in the environment here that cannot have been rearranged by the work
+/// just done.
+#[cfg(windows)]
+pub fn system32(relative: &str) -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| String::from(r"C:\Windows"));
+    format!("{root}\\System32\\{relative}")
+}
+
 /// A `Command` that will not flash a console window when this process has none.
 ///
 /// Every child the CLI spawns goes through here. The one deliberate exception is the

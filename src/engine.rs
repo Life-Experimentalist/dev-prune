@@ -221,6 +221,12 @@ pub struct PruneOptions {
     /// The user's `command_timeout_secs`. It was settable, displayed by `devp status`
     /// and named in the timeout message long before anything actually read it here.
     pub command_timeout_secs: u64,
+    /// Idle days required before *build-tool* directories (gradle, maven) are touched.
+    ///
+    /// Applied as `max(build_idle_days, idle_days)`, only to adapters that answer
+    /// [`crate::adapters::PackageManager::opt_in`] — a recompile costs more than a
+    /// reinstall, so those directories wait longer.
+    pub build_idle_days: u64,
 }
 
 impl Default for PruneOptions {
@@ -235,6 +241,7 @@ impl Default for PruneOptions {
             scan_depth: crate::constants::DEFAULT_SCAN_DEPTH,
             allow_manifest_rewrite: crate::constants::DEFAULT_ALLOW_MANIFEST_REWRITE,
             command_timeout_secs: crate::constants::DEFAULT_COMMAND_TIMEOUT_SECS,
+            build_idle_days: crate::constants::DEFAULT_BUILD_IDLE_DAYS,
         }
     }
 }
@@ -456,10 +463,27 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
     // guard the size is counted twice and the second delete fails with "not found".
     let mut claimed: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
+    // Computed once per repository, and only if a build-tool adapter actually shows up
+    // — it is a second `git log` walk.
+    let mut build_idle: Option<bool> = None;
+
     for project in &projects {
         for adapter in &project.adapters {
             if !opts.adapters.allows(adapter.name()) {
                 continue;
+            }
+
+            // Build-tool directories come back by recompiling, so they wait for the
+            // longer window. `force` bypasses this exactly as it bypasses the normal
+            // idle check; verification still applies.
+            if adapter.opt_in() && !force {
+                let threshold = opts.build_idle_days.max(effective_idle_days);
+                let idle_enough = *build_idle.get_or_insert_with(|| {
+                    git::is_repo_idle(repo_path, threshold).unwrap_or(false)
+                });
+                if !idle_enough {
+                    continue;
+                }
             }
 
             // Labels are repo-relative (`node_modules`, `frontend/node_modules`) so that
@@ -509,6 +533,27 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             "`{}` is a symlink to storage dev-prune does not own — \
                              left alone. Remove the link yourself if you really want \
                              it gone.",
+                            bd.path.display()
+                        )),
+                    });
+                    continue;
+                }
+
+                // A mount point is the same problem wearing different clothes: the
+                // name is inside the repository but the storage is somebody else's,
+                // and here there is no link to remove — unmounting is the only way
+                // out, which is a decision for whoever mounted it.
+                if is_mount_point(&bd.path) {
+                    results.push(PruneResult {
+                        repo_path: repo_path.to_path_buf(),
+                        adapter_name: adapter.name().to_string(),
+                        bloat_dir: label,
+                        size_freed: 0,
+                        shared_bytes: 0,
+                        status: PruneStatus::SkippedSymlink(format!(
+                            "`{}` is a mount point — it is on a different filesystem \
+                             than the repository around it, so its contents are shared \
+                             with whatever mounted it. Left alone.",
                             bd.path.display()
                         )),
                     });
@@ -661,6 +706,35 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
     results
 }
 
+/// Does `path` sit on a different filesystem from the directory that holds it?
+///
+/// Nothing inside a repository should: `node_modules` is an ordinary directory on the
+/// same volume as its parent. A mismatch means something was *mounted* there — a
+/// container's `-v shared_modules:/app/node_modules`, an NFS export, a bind mount
+/// pointing two checkouts at one cache — and what lives under it belongs to whoever
+/// set that up, not to this repository. A lockfile can rebuild this checkout's copy;
+/// it cannot rebuild the other consumers' copy, because there is only one copy.
+///
+/// Windows expresses the same idea as a reparse point, which the symlink refusal
+/// already catches, so this is a Unix-only check.
+#[cfg(unix)]
+fn is_mount_point(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    match (fs::symlink_metadata(path), fs::symlink_metadata(parent)) {
+        (Ok(here), Ok(above)) => here.dev() != above.dev(),
+        // Unreadable is not evidence of a mount; the delete will fail on its own terms.
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn is_mount_point(_path: &Path) -> bool {
+    false
+}
+
 /// The first git repository found anywhere inside `dir`, if there is one.
 ///
 /// `.git` as a directory is a full repository; as a file it is a submodule or worktree
@@ -700,7 +774,7 @@ fn collect_bloat(
                 if bd.size_bytes < min_size_bytes {
                     continue;
                 }
-                // The same two refusals the prune pass applies, for the same reason
+                // The same three refusals the prune pass applies, for the same reason
                 // the size floor is applied here: what `devp status` reports as
                 // reclaimable must be what `devp run` would actually delete. A
                 // junctioned `node_modules` even sizes somebody else's storage, so
@@ -708,6 +782,7 @@ fn collect_bloat(
                 if fs::symlink_metadata(&bd.path)
                     .map(|m| m.file_type().is_symlink())
                     .unwrap_or(false)
+                    || is_mount_point(&bd.path)
                     || find_nested_git(&bd.path).is_some()
                 {
                     continue;
@@ -1191,6 +1266,24 @@ mod tests {
     /// Restore in these tests either fails before running anything or runs against an
     /// empty project; none of them should ever sit anywhere near this long.
     const TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+    #[test]
+    fn an_ordinary_directory_is_not_a_mount_point() {
+        // The check has to be silent on the only case that ever really happens; a real
+        // mount cannot be created in a test without root, so this pins the negative.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("node_modules");
+        fs::create_dir_all(&dir).unwrap();
+        assert!(!is_mount_point(&dir));
+    }
+
+    #[test]
+    fn a_filesystem_root_is_not_reported_as_a_mount_point() {
+        // `/` has no parent, so the comparison has nothing to compare against. It must
+        // answer "no" rather than panic on the `None`.
+        let root = Path::new(std::path::MAIN_SEPARATOR_STR);
+        assert!(!is_mount_point(root));
+    }
 
     fn create_git_repo_with_commit(path: &Path) {
         fs::create_dir_all(path).unwrap();

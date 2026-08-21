@@ -73,6 +73,14 @@ pub const HISTORY_STARTS_AT: &str = "1.1.0";
 /// Default idle threshold in days before a repository is eligible for pruning.
 pub const DEFAULT_IDLE_DAYS: u64 = 15;
 
+/// Default idle threshold for *build-tool* directories (gradle, maven), in days.
+///
+/// Deliberately much longer than [`DEFAULT_IDLE_DAYS`]: those directories come back
+/// by recompiling the whole project, not by re-downloading a dependency tree, so the
+/// bar for "nobody will miss this" sits higher. The engine applies
+/// `max(build_idle_days, idle_days)`.
+pub const DEFAULT_BUILD_IDLE_DAYS: u64 = 60;
+
 /// Default interval in days between background daemon prune runs.
 pub const DEFAULT_CHECK_INTERVAL_DAYS: u64 = 2;
 
@@ -95,7 +103,21 @@ pub const DEFAULT_AUTO_HOOKS: bool = true;
 /// On. The pass runs once per installed version — on first run, and again after an
 /// upgrade — and only creates what is absent. Set to `false`, or export
 /// `DEV_PRUNE_NO_AUTO_SETUP`, to manage the integrations entirely by hand.
+///
+/// The environment variable is symmetric: with it set, `devp uninstall` leaves those
+/// same hand-managed integrations — the scheduler, the agent skills, the install
+/// directories guessed from the home folder — alone too, and says so. "Entirely by
+/// hand" has to include the removal, or the variable's promise only holds until the
+/// day you uninstall.
 pub const DEFAULT_AUTO_SETUP: bool = true;
+
+/// Default for whether `link` and `init` write a `.devprune.json` into repositories
+/// they register.
+///
+/// Off: most repositories are fine on the defaults, and a config file dropped into
+/// every repo is litter. The setting exists for people who tune repositories
+/// individually often enough that creating the file by hand every time is the chore.
+pub const DEFAULT_AUTO_CONFIG: bool = false;
 
 /// Default setting for requiring interactive confirmation before pruning.
 pub const DEFAULT_REQUIRE_CONFIRMATION: bool = true;
@@ -142,6 +164,13 @@ pub const DEFAULT_AUTO_HOOKS_CHAIN: bool = false;
 
 /// GitHub releases page, shown whenever an upgrade is relevant.
 pub const RELEASES_URL: &str = "https://github.com/Life-Experimentalist/dev-prune/releases";
+
+/// The shell installer, printed as an upgrade command and re-run by `devp update
+/// --install` when the running binary came from it.
+pub const INSTALL_SH_URL: &str = "https://devprune.vkrishna04.me/install.sh";
+
+/// The PowerShell installer — same two callers as [`INSTALL_SH_URL`].
+pub const INSTALL_PS1_URL: &str = "https://devprune.vkrishna04.me/install.ps1";
 
 /// GitHub API endpoint for the latest published release.
 ///
@@ -225,6 +254,16 @@ pub const AGENT_SKILLS_SUBDIR: &str = "skills";
 /// by `code --install-extension`.
 pub const VSCODE_EXTENSION_ID: &str = "VKrishna04.dev-prune";
 
+/// Where a person can read about the extension before installing it.
+///
+/// The offer prints all three. The two registries carry the same build — the release
+/// `.vsix` — but a machine that trusts one may not have the other, and someone who
+/// wants to read the source before letting anything into their editor needs neither.
+pub const VSCODE_MARKETPLACE_URL: &str =
+    "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
+/// The Open VSX listing, which is what VSCodium, Cursor and Windsurf resolve against.
+pub const OPENVSX_URL: &str = "https://open-vsx.org/extension/VKrishna04/dev-prune";
+
 /// Name of the Windows Task Scheduler task the daemon registers.
 pub const WINDOWS_TASK_NAME: &str = "DevPrune";
 /// File name of the windowless scheduler binary — `dev-prune.exe` with its PE subsystem
@@ -238,3 +277,29 @@ pub const SCHEDULER_HIDDEN_REFUSED_MARKER: &str = "scheduler-hidden-refused";
 
 /// Label of the macOS LaunchAgent the daemon registers (also names its plist file).
 pub const MACOS_LAUNCHD_LABEL: &str = "com.devprune.daemon";
+
+/// Where `devp skill --agent cursor` writes the per-repository rules.
+pub const CURSOR_RULES_FILE: &str = ".cursor/rules/dev-prune.mdc";
+
+/// Where `devp skill --agent windsurf` writes the per-repository rules.
+pub const WINDSURF_RULES_FILE: &str = ".windsurf/rules/dev-prune.md";
+
+/// Where `devp skill --agent antigravity` writes the per-repository rules —
+/// Antigravity (Google) reads workspace rules from `.agent/rules/`.
+pub const ANTIGRAVITY_RULES_FILE: &str = ".agent/rules/dev-prune.md";
+
+/// Where `devp skill --agent cline` writes its rules (Cline reads every file in the
+/// `.clinerules/` directory).
+pub const CLINE_RULES_FILE: &str = ".clinerules/dev-prune.md";
+
+/// Where `devp skill --agent agents-md` writes its marked block — the cross-tool
+/// convention read by Codex, Jules, Amp, Antigravity and others.
+pub const AGENTS_MD_FILE: &str = "AGENTS.md";
+
+/// The shared file `devp skill --agent copilot` owns a marked block inside.
+pub const COPILOT_INSTRUCTIONS_FILE: &str = ".github/copilot-instructions.md";
+
+/// Markers around the block in [`COPILOT_INSTRUCTIONS_FILE`] that dev-prune manages.
+/// Everything outside them belongs to the user and is never touched.
+pub const RULES_BLOCK_START: &str = "<!-- dev-prune:rules:start -->";
+pub const RULES_BLOCK_END: &str = "<!-- dev-prune:rules:end -->";

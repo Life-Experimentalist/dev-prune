@@ -19,8 +19,11 @@
 pub mod bun;
 pub mod cargo_adapter;
 pub mod go;
+pub mod gradle;
+pub mod maven;
 pub mod npm;
 pub mod pnpm;
+pub mod poetry;
 pub mod uv;
 pub mod venv;
 pub mod yarn;
@@ -143,6 +146,16 @@ pub trait PackageManager: Send + Sync {
         let _ = project_path;
         Vec::new()
     }
+
+    /// Whether this adapter is inert until the user enables it in settings.
+    ///
+    /// Build-tool adapters (gradle, maven) answer `true`: their directories come back
+    /// by recompiling the project, which costs far more than a dependency reinstall,
+    /// so nobody should find them deleted without having asked. The engine also holds
+    /// them to the longer `build_idle_days` idle window.
+    fn opt_in(&self) -> bool {
+        false
+    }
 }
 
 /// Adapters that all manage `node_modules` and therefore cannot coexist.
@@ -171,10 +184,38 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(yarn::Yarn),
         Box::new(bun::Bun),
         Box::new(uv::Uv),
+        Box::new(poetry::Poetry),
         Box::new(venv::Venv),
         Box::new(cargo_adapter::Cargo),
         Box::new(go::Go),
+        Box::new(gradle::Gradle),
+        Box::new(maven::Maven),
     ]
+}
+
+/// The names of the opt-in adapters the user has switched on, resolved once per
+/// process from the registry settings.
+///
+/// Resolved here rather than threaded through every caller because `detect_adapters`
+/// is the single funnel every command discovers projects through — gating detection
+/// makes a disabled adapter invisible everywhere at once (status, stats, run, doctor),
+/// instead of visible in one view and inert in another.
+fn opt_in_enabled() -> &'static [String] {
+    static ENABLED: OnceLock<Vec<String>> = OnceLock::new();
+    ENABLED.get_or_init(|| {
+        crate::config::Registry::load()
+            .map(|r| {
+                let mut names = Vec::new();
+                if r.settings.enable_gradle {
+                    names.push("gradle".to_string());
+                }
+                if r.settings.enable_maven {
+                    names.push("maven".to_string());
+                }
+                names
+            })
+            .unwrap_or_default()
+    })
 }
 
 /// Detect which adapters apply to a given project directory.
@@ -186,6 +227,7 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
 pub fn detect_adapters(project_path: &Path) -> Vec<Box<dyn PackageManager>> {
     let mut detected: Vec<Box<dyn PackageManager>> = get_all_adapters()
         .into_iter()
+        .filter(|adapter| !adapter.opt_in() || opt_in_enabled().iter().any(|n| n == adapter.name()))
         .filter(|adapter| adapter.detect(project_path))
         .collect();
     resolve_conflicts(project_path, &mut detected);
@@ -195,7 +237,7 @@ pub fn detect_adapters(project_path: &Path) -> Vec<Box<dyn PackageManager>> {
 /// Reduce every set of adapters that shares a bloat directory down to a single owner.
 fn resolve_conflicts(project_path: &Path, detected: &mut Vec<Box<dyn PackageManager>>) {
     resolve_js_conflict(project_path, detected);
-    resolve_python_conflict(detected);
+    resolve_python_conflict(project_path, detected);
 }
 
 /// Reduce several JavaScript managers claiming the same `node_modules` down to one.
@@ -235,9 +277,24 @@ fn resolve_js_conflict(project_path: &Path, detected: &mut Vec<Box<dyn PackageMa
 /// uv is the more capable of the two — it has a real lockfile and can rebuild the
 /// environment exactly — so it takes the project whenever it recognises one, and the
 /// `requirements.txt` + `pyvenv.cfg` adapter picks up everything else.
-fn resolve_python_conflict(detected: &mut Vec<Box<dyn PackageManager>>) {
+fn resolve_python_conflict(project_path: &Path, detected: &mut Vec<Box<dyn PackageManager>>) {
     if detected.iter().any(|a| a.name() == "uv") {
         detected.retain(|a| a.name() != "venv");
+    }
+    // uv and poetry both claim `.venv`. When both detect — usually a half-finished
+    // migration — the one whose lockfile actually exists is the one that built the tree;
+    // with both or neither on disk, uv keeps the tie by `get_all_adapters()` order.
+    let uv_detected = detected.iter().any(|a| a.name() == "uv");
+    let poetry_detected = detected.iter().any(|a| a.name() == "poetry");
+    if uv_detected && poetry_detected {
+        let loser = if !project_path.join("uv.lock").exists()
+            && project_path.join("poetry.lock").exists()
+        {
+            "uv"
+        } else {
+            "poetry"
+        };
+        detected.retain(|a| a.name() != loser);
     }
 }
 
@@ -835,7 +892,9 @@ pub struct BinaryCheckStatus {
 pub fn scan_required_binaries(adapter_names: &[String]) -> Vec<BinaryCheckStatus> {
     let mut unique: Vec<String> = adapter_names
         .iter()
-        .filter(|&n| n != "-" && n != "venv")
+        // venv restores through python, and the build-tool adapters restore by the
+        // next compile — none of them has a binary named after the adapter to probe.
+        .filter(|&n| n != "-" && n != "venv" && n != "gradle" && n != "maven")
         .cloned()
         .collect();
     unique.sort();

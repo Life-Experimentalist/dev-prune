@@ -28,7 +28,7 @@ flowchart TD
     Inv3 -->|Yes| Walk
 
     Walk["Inv 7<br/>workspace::discover — every project,<br/>bounded walk, nested repos excluded"] --> PerAdapter["for each project × adapter:<br/>collect bloat dirs, dedupe claimed paths"]
-    PerAdapter --> Inv6{"Inv 6<br/>symlink or junction?"}
+    PerAdapter --> Inv6{"Inv 6<br/>symlink, junction<br/>or mount point?"}
     Inv6 -->|Yes| Abort6["SkippedSymlink<br/>refuse to delete linked storage"]
     Inv6 -->|No| Inv7b{"Inv 7<br/>nested .git inside<br/>the candidate dir?"}
     Inv7b -->|Yes| Abort7b["DeleteError<br/>refuse — no lockfile rebuilds<br/>somebody else's git history"]
@@ -218,7 +218,7 @@ must not be a way to execute anything.
 
 ---
 
-### 6. Symlink and Junction Refusal
+### 6. Symlink, Junction and Mount-Point Refusal
 A bloat directory that is a symlink or a Windows junction points at storage the
 repository does not own — in a monorepo it is typically the workspace root's real
 `node_modules`. Deleting it recursively would reach outside the repository, so
@@ -229,6 +229,14 @@ if fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(fal
     // reported as SkippedSymlink, never removed
 }
 ```
+
+The same refusal covers **mount points**, which are the case a link check alone misses.
+A container's `-v shared_modules:/app/node_modules`, an NFS export, or a bind mount
+aiming two checkouts at one cache all leave an ordinary-looking directory whose storage
+is shared with somebody else — and, unlike a link, there is nothing to remove but the
+mount itself. On Unix the directory's device id is compared with its parent's; a
+mismatch means something is mounted there and it is left alone. Windows expresses the
+same thing as a reparse point, which the check above already catches.
 
 The directory walk itself also runs with `follow_links(false)`, so no linked tree is
 ever traversed, sized, or counted.

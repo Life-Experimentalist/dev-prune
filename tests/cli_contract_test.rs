@@ -471,6 +471,261 @@ fn a_dry_run_records_nothing_to_restore() {
     );
 }
 
+#[test]
+fn explain_conflicts_with_json_as_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["run", "--explain", "--json"])
+        .output()
+        .unwrap();
+    // A clap conflict, so the usage exit code — the two flags describe two different
+    // output contracts and picking one silently would betray the other.
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+}
+
+#[test]
+fn explain_reports_the_active_state_and_deletes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let (config, repo) = fixture(&tmp);
+
+    // The fixture commit is seconds old, so the repository is active — the state a
+    // normal pass swallows and `--explain` exists to surface.
+    let out = devp(&config).args(["run", "--explain"]).output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    let text = combined(&out);
+    assert!(text.contains("active"), "{text}");
+    assert!(text.contains("--ignore-idle"), "{text}");
+    assert!(
+        repo.join("api/.venv").exists(),
+        "--explain deleted something"
+    );
+}
+
+#[test]
+fn explain_lists_candidates_without_touching_them() {
+    let tmp = TempDir::new().unwrap();
+    let (config, repo) = fixture(&tmp);
+
+    let out = devp(&config)
+        .args(["--ignore-idle", "run", "--explain"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(combined(&out).contains("would prune"), "{}", combined(&out));
+    assert!(
+        repo.join("api/.venv").exists() && repo.join("cli/target").exists(),
+        "--explain deleted something"
+    );
+}
+
+#[test]
+fn explain_names_a_directory_under_the_size_floor() {
+    let tmp = TempDir::new().unwrap();
+    let (config, repo) = fixture(&tmp);
+
+    // The fixture directories hold a few KiB, so a 1 MiB floor puts them under it —
+    // and unlike a normal pass, `--explain` says so instead of listing nothing.
+    let out = devp(&config)
+        .args(["--ignore-idle", "run", "--explain", "--min-size", "1"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(combined(&out).contains("size floor"), "{}", combined(&out));
+    assert!(
+        repo.join("api/.venv").exists(),
+        "--explain deleted something"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// skill --agent
+// ---------------------------------------------------------------------------
+
+#[test]
+fn skill_agent_writes_cursor_rules_into_the_repo() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+
+    let out = devp(&config)
+        .args(["skill", "--agent", "cursor"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+
+    let written = fs::read_to_string(repo.join(".cursor/rules/dev-prune.mdc")).unwrap();
+    assert!(
+        written.starts_with(
+            "---
+"
+        ),
+        "mdc frontmatter missing"
+    );
+    assert!(written.contains("devp run --dry-run"), "{written}");
+}
+
+#[test]
+fn skill_agent_copilot_owns_a_block_and_never_the_rest_of_the_file() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+    let target = repo.join(".github").join("copilot-instructions.md");
+    fs::create_dir_all(target.parent().unwrap()).unwrap();
+    fs::write(
+        &target,
+        "# Our own instructions
+
+Keep these.
+",
+    )
+    .unwrap();
+
+    let run = || {
+        devp(&config)
+            .args(["skill", "--agent", "copilot"])
+            .current_dir(&repo)
+            .output()
+            .unwrap()
+    };
+    assert!(run().status.success());
+    // A second run replaces the block instead of stacking another copy.
+    assert!(run().status.success());
+
+    let written = fs::read_to_string(&target).unwrap();
+    assert!(written.starts_with("# Our own instructions"), "{written}");
+    assert!(written.contains("Keep these."), "{written}");
+    assert_eq!(written.matches("<!-- dev-prune:rules:start -->").count(), 1);
+    assert_eq!(written.matches("<!-- dev-prune:rules:end -->").count(), 1);
+}
+
+#[test]
+fn skill_agent_outside_a_repository_is_an_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let not_a_repo = tmp.path().join("plain");
+    fs::create_dir_all(&not_a_repo).unwrap();
+
+    let out = devp(&config)
+        .args(["skill", "--agent", "windsurf"])
+        .current_dir(&not_a_repo)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(!not_a_repo.join(".windsurf").exists());
+}
+
+#[test]
+fn skill_agent_with_an_unknown_editor_is_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let out = devp(&config)
+        .args(["skill", "--agent", "emacs"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    assert!(combined(&out).contains("cursor"), "{}", combined(&out));
+}
+
+// ---------------------------------------------------------------------------
+// auto_config and doctor --fix on repo configs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn auto_config_writes_a_default_config_on_link() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+
+    // Off by default: linking writes nothing into the repository.
+    devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!repo.join(".devprune.json").exists());
+
+    devp(&config)
+        .args(["config", "set", "auto_config", "true"])
+        .output()
+        .unwrap();
+    devp(&config)
+        .args(["unlink", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let out = devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+
+    let written = fs::read_to_string(repo.join(".devprune.json")).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
+    assert!(parsed.get("$schema").is_some());
+}
+
+#[test]
+fn auto_config_never_overwrites_an_existing_config() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+    fs::write(repo.join(".devprune.json"), "{ this is not json").unwrap();
+
+    devp(&config)
+        .args(["config", "set", "auto_config", "true"])
+        .output()
+        .unwrap();
+    devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(repo.join(".devprune.json")).unwrap(),
+        "{ this is not json"
+    );
+}
+
+#[test]
+fn doctor_fix_replaces_a_broken_repo_config_and_keeps_the_original() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+    devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    fs::write(repo.join(".devprune.json"), "{ not json at all").unwrap();
+
+    // The report names the breakage and offers --fix, without touching the file.
+    let report = devp(&config).arg("doctor").output().unwrap();
+    let text = combined(&report);
+    assert!(text.contains("Unreadable config"), "{text}");
+    assert!(text.contains("--fix"), "{text}");
+    assert_eq!(
+        fs::read_to_string(repo.join(".devprune.json")).unwrap(),
+        "{ not json at all"
+    );
+
+    let out = devp(&config).args(["doctor", "--fix"]).output().unwrap();
+    let text = combined(&out);
+    assert!(text.contains(".devprune.json.broken"), "{text}");
+
+    // Defaults written, the broken original preserved beside them verbatim.
+    let healed = fs::read_to_string(repo.join(".devprune.json")).unwrap();
+    assert!(serde_json::from_str::<serde_json::Value>(&healed).is_ok());
+    assert_eq!(
+        fs::read_to_string(repo.join(".devprune.json.broken")).unwrap(),
+        "{ not json at all"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // doctor
 // ---------------------------------------------------------------------------

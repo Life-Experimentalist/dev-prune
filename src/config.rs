@@ -35,6 +35,10 @@ pub struct Settings {
     /// Whether dev-prune installs its own missing integrations. On by default.
     #[serde(default = "default_auto_setup")]
     pub auto_setup: bool,
+    /// Whether `link` and `init` write a default `.devprune.json` into repositories
+    /// they register. Off by default; see [`constants::DEFAULT_AUTO_CONFIG`].
+    #[serde(default = "default_auto_config")]
+    pub auto_config: bool,
     /// Whether interactive confirmation is required before pruning.
     #[serde(default = "default_require_confirmation")]
     pub require_confirmation: bool,
@@ -89,6 +93,31 @@ pub struct Settings {
     /// asked for rather than assumed. Same thing as `devp hook install --chain`.
     #[serde(default = "default_auto_hooks_chain")]
     pub auto_hooks_chain: bool,
+    /// Whether the opt-in Gradle build-tool adapter is active. Off by default:
+    /// `build/` comes back by recompiling the project, so nobody should find it
+    /// deleted without having asked. See [`crate::adapters::gradle`].
+    #[serde(default)]
+    pub enable_gradle: bool,
+    /// Whether the opt-in Maven build-tool adapter is active. Off by default, for the
+    /// same reason as `enable_gradle`. See [`crate::adapters::maven`].
+    #[serde(default)]
+    pub enable_maven: bool,
+    /// Idle days required before *build-tool* directories (gradle, maven) are pruned.
+    ///
+    /// Separate from `idle_days` because the cost of being wrong is different: a
+    /// deleted `node_modules` is one `npm ci` away, a deleted Android `build/` is a
+    /// long recompile. Applied as `max(build_idle_days, idle_days)`.
+    #[serde(default = "default_build_idle_days")]
+    pub build_idle_days: u64,
+    /// Whether `devp update --install` runs by itself at the end of a prune pass when
+    /// a newer release is known. Off by default: replacing the binary is visible,
+    /// channel-specific behaviour the user opts into.
+    #[serde(default)]
+    pub auto_update: bool,
+}
+
+fn default_build_idle_days() -> u64 {
+    constants::DEFAULT_BUILD_IDLE_DAYS
 }
 
 fn default_require_confirmation() -> bool {
@@ -105,6 +134,10 @@ fn default_auto_hooks() -> bool {
 
 fn default_auto_setup() -> bool {
     constants::DEFAULT_AUTO_SETUP
+}
+
+fn default_auto_config() -> bool {
+    constants::DEFAULT_AUTO_CONFIG
 }
 
 fn default_update_check() -> bool {
@@ -143,6 +176,7 @@ impl Default for Settings {
             auto_daemon: constants::DEFAULT_AUTO_DAEMON,
             auto_hooks: constants::DEFAULT_AUTO_HOOKS,
             auto_setup: constants::DEFAULT_AUTO_SETUP,
+            auto_config: constants::DEFAULT_AUTO_CONFIG,
             require_confirmation: constants::DEFAULT_REQUIRE_CONFIRMATION,
             command_timeout_secs: constants::DEFAULT_COMMAND_TIMEOUT_SECS,
             min_size_mb: constants::DEFAULT_MIN_SIZE_MB,
@@ -152,6 +186,10 @@ impl Default for Settings {
             update_check_interval_days: constants::UPDATE_CHECK_INTERVAL_DAYS,
             update_check_timeout_secs: constants::UPDATE_CHECK_TIMEOUT_SECS,
             auto_hooks_chain: constants::DEFAULT_AUTO_HOOKS_CHAIN,
+            enable_gradle: false,
+            enable_maven: false,
+            build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
+            auto_update: false,
         }
     }
 }

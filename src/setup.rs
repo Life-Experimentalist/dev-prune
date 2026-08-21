@@ -121,7 +121,7 @@ pub fn managed_bin_dir() -> Result<PathBuf> {
     Ok(Registry::config_dir()?.join("bin"))
 }
 
-fn managed_exe_path() -> Result<PathBuf> {
+pub(crate) fn managed_exe_path() -> Result<PathBuf> {
     let name = if cfg!(windows) {
         "dev-prune.exe"
     } else {
@@ -803,7 +803,7 @@ fn vscode_extension_installed(cli: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Download the `.vsix` attached to the latest GitHub release into the temp directory.
+/// Download the `.vsix` attached to the latest GitHub release into the config directory.
 ///
 /// The release asset is the source of truth for the extension — the Marketplace and
 /// OpenVSX listings are built from it — so when an editor's registry cannot resolve the
@@ -913,9 +913,16 @@ pub fn offer_vscode_extension() {
         .collect::<Vec<_>>()
         .join(", ");
     println!();
-    print!(
-        "{names} detected — install the dev-prune extension? It validates .devprune.json and shows reclaimable space in the status bar. [y/N] "
-    );
+    println!("{names} detected — install the dev-prune extension?");
+    println!("  It validates .devprune.json and shows reclaimable space in the status bar.");
+    // The listings and the source, before the question rather than after it. This is
+    // the one prompt that defaults to yes, so the material someone would need in order
+    // to say no has to be on screen at the moment they answer — not in a doc they would
+    // have to go and look for.
+    println!("    Marketplace: {}", constants::VSCODE_MARKETPLACE_URL);
+    println!("    Open VSX:    {}", constants::OPENVSX_URL);
+    println!("    Source:      {}", constants::REPO_URL);
+    print!("  Install it? [Y/n] ");
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
     if std::io::stdin().read_line(&mut answer).is_err() {
@@ -923,13 +930,15 @@ pub fn offer_vscode_extension() {
     }
     write_marker();
 
-    // Installing into someone's editor is the most visible thing this tool ever does
-    // uninvited, so a bare Enter declines. Only an explicit yes installs.
-    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
+    // A bare Enter accepts. Unlike the uninstall sweep — which deletes — the worst case
+    // here is an extension the person removes in two clicks, and the gates above have
+    // already established that a human with a VS Code-family editor is watching.
+    if !matches!(answer.trim().to_lowercase().as_str(), "" | "y" | "yes") {
         output::print_info(&format!(
-            "Skipped. Install it any time with `{} --install-extension {}`.",
+            "Skipped. Install it any time with `{} --install-extension {}`, or from {}.",
             missing[0].cli,
-            constants::VSCODE_EXTENSION_ID
+            constants::VSCODE_EXTENSION_ID,
+            constants::VSCODE_MARKETPLACE_URL
         ));
         return;
     }

@@ -395,8 +395,9 @@ process that leaves a dirty working tree is a surprise.
 | `devp doctor [PATH]`   | `--fix`                                                             | Diagnoses the installation, or one repository — ending with the single reason a pass would or would not touch it. `--fix` repairs what the checks found; it never performs a first-time install |
 | `devp config [ACTION]` | `get`, `set`, `show`, `wizard`, `project`, `daemon`, `hook`, `icon` | Global settings, per-repository `.devprune.json`, scheduler, Git hooks, file manager icons                                                                                                      |
 | `devp setup`           | `--status`                                                          | Installs any missing integration; `--status` only reports                                                                                                                                       |
-| `devp update`          | `--offline`                                                         | Prints the installed version, checks GitHub for a newer release, shows the upgrade command for your install channel                                                                             |
-| `devp skill`           |                                                                     | Exports `SKILL.md` and prints AI agent onboarding prompts                                                                                                                                       |
+| `devp update`          | `--offline`, `--install`                                            | Prints the installed version, checks GitHub for a newer release, shows the upgrade command for your install channel; `--install` runs that upgrade through the channel that owns this copy      |
+| `devp skill`           | `--agent <editor>`                                                  | Exports `SKILL.md` and prints AI agent onboarding prompts; `--agent` writes per-repository rules for Cursor, Windsurf, Antigravity, Cline, Copilot or `AGENTS.md`                                |
+| `devp man`             | `--dir <dir>`                                                       | The manual as man pages, generated from the same argument definitions `--help` prints; alone it emits `devp(1)` to stdout, `--dir` writes the full set                                          |
 | `devp uninstall`       | `--deep`                                                            | Removes the scheduler, hooks, both binaries and every other installed copy it can find on the machine; `--deep` also clears configuration                                                       |
 | `devp -V`              |                                                                     | Version plus an environment audit: OS, architecture, config path, PATH activation                                                                                                               |
 
@@ -425,12 +426,21 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **Yarn**          | `yarn.lock`                                              | `node_modules`                          | `yarn install --immutable --mode update-lockfile` (Berry); on Classic an existing `yarn.lock` is itself the proof | `yarn install --immutable`                                |
 | **Bun**           | `bun.lockb`, `bun.lock`                                  | `node_modules`                          | `bun install --frozen-lockfile --dry-run --ignore-scripts`                                                        | `bun install --frozen-lockfile`                           |
 | **uv** (Python)   | `uv.lock`, `[tool.uv]` in `pyproject.toml`               | `.venv`                                 | `uv lock --locked`                                                                                                | `uv sync`                                                 |
+| **Poetry** (Python) | `poetry.lock`, `[tool.poetry]` in `pyproject.toml`     | `.venv`                                 | `poetry check --lock`, plus no installed package the lockfile never recorded                                      | `poetry install`                                          |
 | **venv** (Python) | `requirements.txt` + a directory containing `pyvenv.cfg` | every directory containing `pyvenv.cfg` | `requirements.txt` must exist and list at least one package                                                       | `python -m venv .venv && pip install -r requirements.txt` |
 | **Cargo** (Rust)  | `Cargo.toml`                                             | `target`                                | `cargo metadata --locked`                                                                                         | *(rebuilt by the next `cargo build`)*                     |
 | **Go**            | `go.mod`                                                 | `vendor`                                | `go mod download`                                                                                                 | `go mod vendor`                                           |
+| **Gradle** *(opt-in)* | `build.gradle[.kts]`, `settings.gradle[.kts]`        | `build`, `.gradle`                      | manifest present and readable — the rebuild-from-source proof                                                     | *(rebuilt by the next `./gradlew build`)*                 |
+| **Maven** *(opt-in)*  | `pom.xml`                                            | `target`                                | `pom.xml` parses as a Maven manifest                                                                              | *(rebuilt by the next `mvn package`)*                     |
 
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
+
+The two build tools ship **disabled**, because a build tree is regenerated by
+recompiling, not downloading — it costs more to get back. `devp config set
+enable_gradle true` / `enable_maven true` switches them on, and their candidates wait
+for `build_idle_days` (60 by default), applied as the *maximum* of it and `idle_days`
+— the build-tool gate only ever makes pruning later, never earlier.
 
 > [!TIP]
 > Adding an ecosystem is documented end to end in
@@ -476,7 +486,8 @@ strongest signal first:
    `.yarn-state.yml`, `.package-lock.json`) — whoever built what is actually on disk,
 3. the most recently written lockfile.
 
-For Python, uv takes the environment whenever it recognises the project; the
+For Python, uv or Poetry takes the environment whenever it recognises the project —
+between the two, whichever one's lockfile is actually on disk wins — and the
 `requirements.txt` adapter handles everything else.
 
 ---

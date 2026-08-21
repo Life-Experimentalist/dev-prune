@@ -2,7 +2,7 @@
 	"name": "dev-prune",
 	"displayName": "dev-prune",
 	"description": "Validation, autocomplete and hover docs for .devprune.json, plus a status bar showing reclaimable disk space — for dev-prune (devp), the lockfile-verified cleaner that reclaims disk space from node_modules, .venv, target, vendor and other rebuildable dependency folders in idle Git repositories.",
-	"version": "0.2.1",
+	"version": "0.3.0",
 	"publisher": "VKrishna04",
 	"license": "Apache-2.0",
 	"icon": "icons/devprune-128.png",
@@ -15,8 +15,7 @@
 	},
 	"main": "./extension.js",
 	"activationEvents": [
-		"workspaceContains:**/.devprune.json",
-		"workspaceContains:**/ignore.devprune.json"
+		"onStartupFinished"
 	],
 	"capabilities": {
 		"virtualWorkspaces": {
@@ -87,6 +86,31 @@
 				"command": "devprune.openDocs",
 				"category": "dev-prune",
 				"title": "Open CLI Reference"
+			},
+			{
+				"command": "devprune.refresh",
+				"category": "dev-prune",
+				"title": "Refresh Status Bar"
+			},
+			{
+				"command": "devprune.gitInit",
+				"category": "dev-prune",
+				"title": "Initialize Git Repository (git init)"
+			},
+			{
+				"command": "devprune.linkRepo",
+				"category": "dev-prune",
+				"title": "Register This Repository (devp link .)"
+			},
+			{
+				"command": "devprune.createConfig",
+				"category": "dev-prune",
+				"title": "Create .devprune.json"
+			},
+			{
+				"command": "devprune.ignoreRepo",
+				"category": "dev-prune",
+				"title": "Ignore This Repository (never prune)"
 			}
 		],
 		"jsonValidation": [

@@ -78,10 +78,13 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         // `bun.lock`, and unlike the others it also populates `node_modules`.
         "bun" => "bun install",
         "uv" => "uv lock",
+        "poetry" => "poetry lock",
         "cargo" => "cargo generate-lockfile",
         "go" => "go mod tidy",
         // venv has no lockfile to regenerate — the fix is to write `requirements.txt`,
-        // which is authoring work, not a command we can hand over.
+        // which is authoring work, not a command we can hand over. gradle and maven
+        // verify manifest presence, not lockfile sync — a missing manifest has no
+        // mechanical fix either.
         _ => return None,
     })
 }
@@ -188,6 +191,7 @@ fn repo_value(entry: &RepoStatusEntry) -> Value {
         "idle_days": entry.idle_days,
         "last_activity": entry.last_activity.map(|t| t.to_rfc3339()),
         "last_pruned_at": entry.entry.last_pruned_at.map(|t| t.to_rfc3339()),
+        "bytes_freed": entry.entry.total_freed_bytes,
         "added_at": entry.entry.added_at.to_rfc3339(),
         "adapters": entry.adapters,
         "reclaimable_bytes": entry.reclaimable_bytes,
@@ -631,7 +635,9 @@ mod tests {
     #[test]
     fn every_adapter_with_a_lockfile_has_a_fix_command() {
         for adapter in crate::adapters::get_all_adapters() {
-            if adapter.name() == "venv" {
+            // venv, gradle and maven verify without a lockfile-sync step — see
+            // `lockfile_fix_command` for why each has nothing mechanical to hand over.
+            if matches!(adapter.name(), "venv" | "gradle" | "maven") {
                 continue;
             }
             assert!(

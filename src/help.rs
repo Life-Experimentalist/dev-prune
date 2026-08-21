@@ -103,13 +103,20 @@ and a directory is deleted only when every check passes:
 Interactively, a selection TUI shows what would be deleted before anything is; `-y` \
 skips the confirmation, and `--dry-run` reports what a pass would do without deleting \
 anything at all. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
-venv, cargo, go — an unknown name is an error listing the valid ones, not a silently \
-empty pass.
+venv, poetry, cargo, go, gradle, maven — an unknown name is an error listing the \
+valid ones, not a silently empty pass. gradle and maven are opt-in (`devp config set \
+enable_gradle true`) and idle-gated separately by `build_idle_days`, because a build \
+directory takes far longer to get back than a dependency directory.
 
 `--except` is the safe spelling of \"clean up but keep the API project\": the named \
 repositories are never verified, never deleted and never restored, which beats \
 pruning them and downloading everything back. Entries match by full path or by \
-directory name, case-insensitively, `~` expanded.";
+directory name, case-insensitively, `~` expanded.
+
+`--explain` answers \"why was that repository not pruned?\": every repository and \
+directory is listed with its verdict, including the states a normal pass keeps quiet \
+about — still active (with the actual age), opted out, under the size floor. It is \
+read-only and cannot be combined with `--json`.";
 
 pub const RUN_EXAMPLES: &str = "\
 EXAMPLES:
@@ -126,6 +133,7 @@ EXAMPLES:
   devp run --skip venv --min-size 50
                                   Skip venvs; ignore directories under 50 MiB
   devp run --json --dry-run       One JSON document on stdout (schema in CLI_REFERENCE)
+  devp run --explain              Why each repository would or would not be pruned
 
 Run interactively with a terminal, `--json` also copies the document to the clipboard.
 A run in which any repository failed exits 1, even if others succeeded.";
@@ -180,6 +188,19 @@ EXAMPLES:
                                   Lifetime bytes as a number
 
 Run interactively with a terminal, `--json` also copies the document to the clipboard.";
+
+pub const MAN_LONG: &str = "\
+Render the manual as man pages, from the same clap definitions `--help` prints, so the \
+manual cannot describe a flag the program does not have. With no arguments the main \
+`devp(1)` page goes to stdout, ready to pipe into `man -l -`; `--dir` writes the full \
+set (`devp.1`, `dev-prune.1`, and one `devp-<command>.1` per subcommand) into a \
+directory, ready to copy onto `manpath`.";
+
+pub const MAN_EXAMPLES: &str = "\
+EXAMPLES:
+  devp man | man -l -             Read the main page now (Linux/macOS)
+  devp man --dir ./man            Write the full set into ./man
+  sudo cp man/*.1 /usr/local/share/man/man1/   Install them system-wide";
 
 pub const COMPLETIONS_LONG: &str = "\
 Print a shell completion script to stdout — the script and nothing else, because the \
@@ -405,8 +426,13 @@ EXAMPLES:
 
 pub const UPDATE_LONG: &str = "\
 Print the installed version, ask GitHub's public API for the latest release, and \
-show the upgrade command for how this copy was installed. It never downloads or \
-replaces its own binary.
+show the upgrade command for how this copy was installed. By default it never \
+downloads or replaces its own binary; `--install` runs the upgrade through the \
+package manager that owns this copy (cargo, npm, uv, pipx, or the installer \
+script), and `devp config set auto_update true` runs that by itself at the end of \
+a prune pass when a newer release is known. An upgrade never interrupts the \
+scheduler: the scheduled pass runs a managed copy that refreshes itself from the \
+new binary on its next run.
 
 The same check also runs quietly from `devp run` and `devp status`, at most once \
 every `update_check_interval_days` (7 by default), printing one line only when a \
@@ -418,6 +444,7 @@ setting.";
 pub const UPDATE_EXAMPLES: &str = "\
 EXAMPLES:
   devp update                     Version, latest release, upgrade command
+  devp update --install           Upgrade now, through the owning channel
   devp update --offline           No network this run";
 
 pub const SKILL_LONG: &str = "\
@@ -426,11 +453,22 @@ every command, the JSON contracts, the safety invariants, the troubleshooting tr
 into the config directory, installs it into any detected agent skills directory \
 (`~/.claude/skills/dev-prune/`, the same install `devp setup` performs), and prints \
 ready-to-copy onboarding prompts for assistants without one (Gemini Antigravity, \
-Cursor, Windsurf, Copilot, OpenClaw).";
+Cursor, Windsurf, Copilot, OpenClaw).
+
+`--agent <EDITOR>` instead writes per-repository rules into the current repository, \
+in the file that editor's agent reads: cursor (`.cursor/rules/dev-prune.mdc`), \
+windsurf (`.windsurf/rules/dev-prune.md`), antigravity (`.agent/rules/dev-prune.md`), \
+cline (`.clinerules/dev-prune.md`), copilot (`.github/copilot-instructions.md`, as a \
+marked block) and agents-md (`AGENTS.md`, as a marked block — the cross-tool \
+convention Codex, Jules, Amp, OpenCode and others read). The two shared files are \
+edited inside dev-prune's markers only; every byte outside them is left as found. \
+Claude Code needs no per-repository file — its skill installs globally.";
 
 pub const SKILL_EXAMPLES: &str = "\
 EXAMPLES:
-  devp skill";
+  devp skill                      Export SKILL.md, print onboarding prompts
+  devp skill --agent cursor       Write .cursor/rules/dev-prune.mdc here
+  devp skill --agent agents-md    Upsert the marked block in AGENTS.md";
 
 pub const SETUP_LONG: &str = "\
 Install whatever integration is missing and leave the rest alone: the `devp` alias, \

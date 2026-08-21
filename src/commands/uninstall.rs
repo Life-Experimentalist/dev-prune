@@ -19,8 +19,9 @@
 // resolving everywhere, not just in the managed directory.
 //
 // On Windows a running executable cannot delete itself, so whatever is still in use is
-// handed to a detached `cmd.exe` that waits for this process to exit and then deletes
-// it. That is scheduled work, not failure — the command reports it and exits `0`.
+// handed to a detached PowerShell (or `cmd.exe`) helper that waits for this process to
+// exit and then deletes it. That is scheduled work, not failure — the command
+// reports it and exits `0`.
 
 use anyhow::Result;
 use std::collections::HashSet;
@@ -75,11 +76,26 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
     let mut pending_files: Vec<PathBuf> = Vec::new();
     let mut pending_dirs: Vec<PathBuf> = Vec::new();
 
+    // `DEV_PRUNE_NO_AUTO_SETUP` means "dev-prune manages nothing on this machine" — and
+    // that has to cut both ways. If the variable stopped setup from registering a
+    // scheduler or writing into agent skill directories, then uninstall must not reach
+    // for them either: whatever is there was put there by hand (or by another install
+    // this process knows nothing about), and hands-off means hands-off. It is also what
+    // lets the test suite run this command against a real machine.
+    let hands_off = setup::no_auto_setup_requested();
+
     // 1. Background scheduler.
-    output::print_info("Removing background daemon scheduler...");
-    if let Err(e) = crate::daemon::uninstall_daemon() {
-        output::print_error(&format!("Background scheduler: {e:#}"));
-        left_behind.push("the background scheduler".to_string());
+    if hands_off {
+        output::print_info(&format!(
+            "{} is set — leaving the scheduler and agent skills alone.",
+            setup::ENV_NO_AUTO_SETUP
+        ));
+    } else {
+        output::print_info("Removing background daemon scheduler...");
+        if let Err(e) = crate::daemon::uninstall_daemon() {
+            output::print_error(&format!("Background scheduler: {e:#}"));
+            left_behind.push("the background scheduler".to_string());
+        }
     }
 
     // 2. Global Git hooks.
@@ -93,8 +109,14 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
     crate::commands::icon::unregister_file_type();
 
     // 4. The skill installed into AI agents' own directories. Only directories named
-    // for this tool are touched — `~/.claude/skills/dev-prune/`, never a sibling.
-    for root in setup::agent_skill_roots() {
+    // for this tool are touched — `~/.claude/skills/dev-prune/`, never a sibling — and
+    // none at all under hands-off, for the same reason as the scheduler above.
+    let skill_roots = if hands_off {
+        Vec::new()
+    } else {
+        setup::agent_skill_roots()
+    };
+    for root in skill_roots {
         if !root.exists() {
             continue;
         }
@@ -197,33 +219,21 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
         setup::suppress_next_auto_setup();
     }
 
-    // 8. One detached helper for everything that is in use right now. `cmd.exe`
-    // expands `%VAR%` even inside double quotes and a `/C` command line has no way to
-    // escape a literal `%`, so a path carrying one can never be handed over safely —
-    // it is reported honestly instead.
-    for path in pending_files
-        .iter()
-        .chain(pending_dirs.iter())
-        .filter(|p| p.to_string_lossy().contains('%'))
-    {
-        output::print_error(&format!(
-            "Could not schedule {} for removal: its path contains `%`, which cmd.exe \
-             would expand. Delete it by hand after this command exits.",
-            output::clean_path(path)
-        ));
-        left_behind.push("an in-use file".to_string());
-    }
-    pending_files.retain(|p| !p.to_string_lossy().contains('%'));
-    pending_dirs.retain(|p| !p.to_string_lossy().contains('%'));
-    let scheduled = !pending_files.is_empty() || !pending_dirs.is_empty();
-    if scheduled {
-        if spawn_deletion_helper(&pending_files, &pending_dirs) {
+    // 8. One detached helper for everything that is in use right now. PowerShell is
+    // preferred: its single-quoted string literals are fully literal, so a path
+    // carrying `%` survives, where `cmd.exe` would expand it and a `/C` command line
+    // has no way to escape one. `cmd.exe` remains the fallback for a machine without
+    // PowerShell, and whatever neither could take is listed for manual removal.
+    let leftover = spawn_deletion_helper(&pending_files, &pending_dirs);
+    if !pending_files.is_empty() || !pending_dirs.is_empty() {
+        if leftover.len() < pending_files.len() + pending_dirs.len() {
             output::print_info(
                 "The running binary cannot delete itself — the rest is removed \
                  automatically a few seconds after this command exits.",
             );
-        } else {
-            output::print_error("Could not schedule removal of the running binary.");
+        }
+        if !leftover.is_empty() {
+            report_manual_removal(&leftover);
             left_behind.push("the binaries".to_string());
         }
     }
@@ -500,6 +510,19 @@ fn sweep_dirs() -> Vec<PathBuf> {
     if let Some(path_var) = std::env::var_os("PATH") {
         dirs.extend(std::env::split_paths(&path_var));
     }
+    // Under hands-off the sweep stays inside directories the caller's own environment
+    // names. `PATH` is the caller's to shape; the home-derived extras below are this
+    // code guessing at install locations, which is exactly the reaching-around that
+    // `DEV_PRUNE_NO_AUTO_SETUP` turns off — and what keeps the test suite out of the
+    // developer's real `~/.cargo/bin`.
+    if setup::no_auto_setup_requested() {
+        if let Ok(exe) = std::env::current_exe()
+            && let Some(parent) = exe.parent()
+        {
+            dirs.push(parent.to_path_buf());
+        }
+        return dirs;
+    }
     if let Some(home) = dirs::home_dir() {
         dirs.push(home.join(".cargo").join("bin"));
         dirs.push(home.join(".local").join("bin"));
@@ -629,11 +652,157 @@ fn reinstall_hint() -> &'static str {
     }
 }
 
-/// Hand the in-use files to a detached `cmd.exe` that deletes them after this process
-/// exits. The two-second `ping` is the canonical batch-file sleep — `timeout` refuses
-/// to run without a console, and this helper deliberately has none.
+/// List what could not be scheduled, with enough detail to act on, plus the command
+/// that removes it.
+///
+/// The stray-copy sweep lists every path before it deletes anything; this is the same
+/// courtesy for the residue. "Some files could not be removed" leaves someone hunting
+/// through Program Files for a name they were never told, so each line carries the
+/// name, the directory it sits in, what kind of thing it is and how big it is.
+fn report_manual_removal(paths: &[PathBuf]) {
+    output::print_error(&format!(
+        "{} item(s) are still in use and could not be scheduled for removal.",
+        paths.len()
+    ));
+    for path in paths {
+        let meta = fs::symlink_metadata(path).ok();
+        let kind = match meta.as_ref() {
+            Some(m) if m.is_dir() => "directory".to_string(),
+            Some(m) => format!("file, {}", output::format_bytes(m.len())),
+            None => "already gone".to_string(),
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| output::clean_path(path));
+        let parent = path
+            .parent()
+            .map(output::clean_path)
+            .unwrap_or_else(|| "—".to_string());
+        println!("    {name}  ({kind})");
+        println!("      in {parent}");
+    }
+    println!("\n  Remove them yourself with:");
+    for path in paths {
+        // `-LiteralPath` and single quotes, because these are exactly the paths whose
+        // `%` the fallback could not survive — the command printed here has to be one
+        // that can be pasted verbatim.
+        println!(
+            "    Remove-Item -LiteralPath '{}' -Recurse -Force",
+            path.display().to_string().replace('\'', "''")
+        );
+    }
+}
+
+/// Quote a path as a PowerShell single-quoted string literal.
+///
+/// Inside single quotes PowerShell expands nothing at all — not `$var`, not a backtick
+/// escape, and crucially not `%VAR%`. The only character with meaning is the closing
+/// quote, and doubling it is the documented way to write a literal one. That makes this
+/// a complete escape rule for an arbitrary path, which is exactly what `cmd /C` could
+/// not offer.
 #[cfg(windows)]
-fn spawn_deletion_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
+fn ps_quote(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "''"))
+}
+
+/// Schedule the in-use files for deletion after this process exits.
+///
+/// Returns the paths that could not be handed over, which is empty in the normal case.
+///
+/// PowerShell rather than `cmd.exe`, because `cmd` expands `%VAR%` even inside double
+/// quotes and a `/C` command line has no escape for a literal `%`. A path carrying one
+/// therefore could not be passed at all: it used to be reported and left on disk. The
+/// `cmd` route survives only as the fallback for a machine where PowerShell cannot be
+/// launched, and there the old restriction still applies.
+#[cfg(windows)]
+fn spawn_deletion_helper(files: &[PathBuf], dirs: &[PathBuf]) -> Vec<PathBuf> {
+    if files.is_empty() && dirs.is_empty() {
+        return Vec::new();
+    }
+    if spawn_powershell_helper(files, dirs) {
+        return Vec::new();
+    }
+
+    // Fallback. `cmd` cannot be given a literal `%`, so those paths stay behind and are
+    // returned for the caller to report.
+    let has_percent = |p: &&PathBuf| p.to_string_lossy().contains('%');
+    let left_behind: Vec<PathBuf> = files
+        .iter()
+        .chain(dirs.iter())
+        .filter(has_percent)
+        .cloned()
+        .collect();
+    let safe_files: Vec<PathBuf> = files.iter().filter(|p| !has_percent(p)).cloned().collect();
+    let safe_dirs: Vec<PathBuf> = dirs.iter().filter(|p| !has_percent(p)).cloned().collect();
+
+    if (safe_files.is_empty() && safe_dirs.is_empty()) || spawn_cmd_helper(&safe_files, &safe_dirs)
+    {
+        left_behind
+    } else {
+        files.iter().chain(dirs.iter()).cloned().collect()
+    }
+}
+
+/// The PowerShell form of the retry loop. `true` if the helper was launched.
+#[cfg(windows)]
+fn spawn_powershell_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let mut attempt = String::new();
+    for file in files {
+        attempt.push_str(&format!(
+            "Remove-Item -LiteralPath {} -Force -ErrorAction SilentlyContinue; ",
+            ps_quote(file)
+        ));
+    }
+    for dir in dirs {
+        attempt.push_str(&format!(
+            "Remove-Item -LiteralPath {} -Recurse -Force -ErrorAction SilentlyContinue; ",
+            ps_quote(dir)
+        ));
+    }
+
+    // Three attempts, two seconds apart — the same reasoning as the `cmd` loop below.
+    let mut script = String::new();
+    for _ in 0..3 {
+        script.push_str("Start-Sleep -Seconds 2; ");
+        script.push_str(&attempt);
+    }
+
+    // Windows PowerShell 5.1 ships with every supported Windows and lives at a fixed
+    // place, so it is tried by absolute path first. The rest cover the machines where
+    // it does not answer — Nano Server, an image built without the Windows PowerShell
+    // feature, or a policy that blocks the inbox copy while permitting PowerShell 7 —
+    // and those are found through `PATH`, because 7.x installs beside its own major
+    // version rather than into `System32`.
+    for program in [
+        crate::spawn::system32(r"WindowsPowerShell\v1.0\powershell.exe"),
+        String::from("pwsh.exe"),
+        String::from("pwsh-preview.exe"),
+        String::from("powershell.exe"),
+    ] {
+        let spawned = std::process::Command::new(&program)
+            .args(["-NoProfile", "-NonInteractive", "-Command"])
+            .arg(&script)
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .is_ok();
+        if spawned {
+            return true;
+        }
+    }
+    false
+}
+
+/// The original `cmd.exe` form, kept as the fallback. Callers must have filtered out
+/// any path containing `%` before calling this.
+#[cfg(windows)]
+fn spawn_cmd_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
     use std::os::windows::process::CommandExt;
     // Not in windows-sys's prelude of imported constants anywhere else in this crate;
     // documented value of CREATE_NO_WINDOW.
@@ -659,7 +828,7 @@ fn spawn_deletion_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
     }
     script.push_str("exit");
 
-    std::process::Command::new("cmd")
+    std::process::Command::new(crate::spawn::system32("cmd.exe"))
         // `raw_arg`, because std's quoting would wrap the whole script in quotes and
         // `cmd /C` would then treat it as one file name rather than a command line.
         .raw_arg(format!("/C {script}"))
@@ -674,6 +843,6 @@ fn spawn_deletion_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
 /// On Unix an open file can be unlinked, so nothing ever needs scheduling; this exists
 /// so the call site compiles unconditionally and is unreachable in practice.
 #[cfg(not(windows))]
-fn spawn_deletion_helper(_files: &[PathBuf], _dirs: &[PathBuf]) -> bool {
-    false
+fn spawn_deletion_helper(_files: &[PathBuf], _dirs: &[PathBuf]) -> Vec<PathBuf> {
+    Vec::new()
 }

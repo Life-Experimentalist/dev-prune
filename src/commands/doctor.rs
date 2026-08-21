@@ -53,6 +53,8 @@ enum Repair {
     Scheduler,
     /// Registered paths that no longer exist on disk.
     UnlinkMissing,
+    /// Registered repositories whose `.devprune.json` cannot be parsed.
+    RepoConfigs,
 }
 
 /// Tally of everything the report flagged, so the verdict is derived from the same
@@ -279,6 +281,25 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
                 }
                 continue;
             }
+            Repair::RepoConfigs => {
+                match heal_repo_configs() {
+                    Ok(healed) => {
+                        ok(
+                            "Repo configs",
+                            &format!(
+                                "{healed} unreadable `.devprune.json` {} replaced with                                  defaults — the broken originals are kept beside them                                  as `.devprune.json.broken`",
+                                output::plural(healed, "file", "files")
+                            ),
+                        );
+                        repaired += 1;
+                    }
+                    Err(e) => {
+                        failed_line("Repo configs", &format!("{e:#}"));
+                        failures += 1;
+                    }
+                }
+                continue;
+            }
         };
         // These three write outside the config directory, which is precisely what the
         // variable exists to forbid.
@@ -298,7 +319,7 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
             Repair::SkillFile => setup::ensure_skill_file(),
             Repair::Hooks => setup::ensure_hooks(chain),
             Repair::Scheduler => setup::ensure_daemon(interval),
-            Repair::UnlinkMissing => unreachable!("handled above"),
+            Repair::UnlinkMissing | Repair::RepoConfigs => unreachable!("handled above"),
         };
         match outcome {
             setup::Outcome::Installed => {
@@ -851,6 +872,7 @@ fn check_registry_health(f: &mut Findings, registry: Option<&Registry>) {
                 "Unreadable config",
                 &format!("{}: {e}", output::clean_path(&entry.path)),
             );
+            f.fixable_problem(Repair::RepoConfigs);
         }
     }
 }
@@ -1282,6 +1304,54 @@ fn describe_overrides(cfg: &PerRepoConfig) -> String {
 /// parse the registry at <path>" — which the report has already said.
 fn root_cause(e: &anyhow::Error) -> String {
     e.chain().last().map(|c| c.to_string()).unwrap_or_default()
+}
+
+/// Replace every registered repository's unreadable `.devprune.json` with a default.
+///
+/// The broken file is never destroyed: it is renamed to `.devprune.json.broken`
+/// (numbered if that name is taken) beside the fresh one, because it may hold overrides
+/// the user meant — an `"ignore": true` with a trailing comma is still a decision, and
+/// the person who typed it is the only one who can retype it. The rename-then-write
+/// order means a failure between the two leaves the repository with no config at all —
+/// which is defaults, the same thing the fresh file says.
+fn heal_repo_configs() -> Result<usize> {
+    let registry = Registry::load()?;
+    let mut healed = 0usize;
+    for repo in registry.repositories.keys() {
+        if !repo.exists() || PerRepoConfig::load_with_diagnostics(repo).is_ok() {
+            continue;
+        }
+        let file = repo.join(constants::PER_REPO_CONFIG_FILE);
+        let mut backup_name = format!("{}.broken", constants::PER_REPO_CONFIG_FILE);
+        let mut n = 1;
+        while repo.join(&backup_name).exists() {
+            n += 1;
+            backup_name = format!("{}.broken-{n}", constants::PER_REPO_CONFIG_FILE);
+        }
+        let backup = repo.join(&backup_name);
+        std::fs::rename(&file, &backup).with_context(|| {
+            format!(
+                "could not move the broken config aside: {}",
+                output::clean_path(&file)
+            )
+        })?;
+        PerRepoConfig::default()
+            .save_to_repo(repo)
+            .with_context(|| {
+                format!(
+                    "could not write a default config in {}",
+                    output::clean_path(repo)
+                )
+            })?;
+        let _ = crate::config::ensure_in_git_exclude(repo, &backup_name);
+        output::print_info(&format!(
+            "{}: broken config kept as `{}`, defaults written",
+            output::clean_path(repo),
+            backup_name
+        ));
+        healed += 1;
+    }
+    Ok(healed)
 }
 
 #[cfg(test)]

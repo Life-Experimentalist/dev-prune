@@ -6,17 +6,28 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # `direct` is the default, and it is the wrong default for a binary crate that
+    # commits `Cargo.lock` and builds releases with `--locked`. What ships is the
+    # lockfile's resolution, transitive crates included, and Dependabot never touched
+    # those: the lock drifted twenty-odd crates behind — `rustls-webpki` among them —
+    # while every manifest constraint was current and every Dependabot run was green.
+    # `all` covers the dependencies of direct dependencies too, so the file that
+    # decides the shipped binary is the file being kept fresh.
+    allow:
+      - dependency-type: all
     groups:
       cargo-minor-and-patch:
         update-types: ["minor", "patch"]
     commit-message:
       prefix: "deps"
 
-  # The landing site.
+  # The landing site. Weekly, not monthly: grouping already collapses a routine month
+  # into one PR, so the slower schedule bought no quiet — it only meant the site sat on
+  # known-old direct dependencies for up to four weeks at a time.
   - package-ecosystem: npm
     directory: "/site"
     schedule:
-      interval: monthly
+      interval: weekly
     open-pull-requests-limit: 3
     groups:
       site-minor-and-patch:

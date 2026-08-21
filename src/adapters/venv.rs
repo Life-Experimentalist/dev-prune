@@ -19,12 +19,12 @@ use std::path::{Path, PathBuf};
 /// The canonical file inside every Python virtual environment.
 const PYVENV_CFG: &str = "pyvenv.cfg";
 
-/// Lockfiles owned by Python managers this tool has no adapter for.
+/// Lockfiles owned by other Python managers.
 ///
 /// A poetry, pipenv or pdm project often carries an exported `requirements.txt` as well —
 /// usually stale. Rebuilding the environment from that export instead of the real
-/// lockfile would silently install the wrong versions, so those projects are left to
-/// their own tools rather than claimed here.
+/// lockfile would silently install the wrong versions, so those projects are never
+/// claimed here: poetry has its own adapter, and pipenv/pdm are left to their own tools.
 const FOREIGN_PYTHON_LOCKFILES: [&str; 3] = ["poetry.lock", "Pipfile.lock", "pdm.lock"];
 
 /// Distributions present in effectively every virtual environment without ever being

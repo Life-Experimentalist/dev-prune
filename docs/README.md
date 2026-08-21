@@ -16,7 +16,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 
 ### 📑 Technical Reference & Specifications
 - **[CLI Command Reference](CLI_REFERENCE.md)**
-  Complete reference for all 16 subcommands (`init`, `link`, `unlink`, `undo`, `run`, `status`, `stats`, `caches`, `config`, `restore`, `update`, `skill`, `completions`, `setup`, `doctor`, `uninstall`), global flags (`--dry-run`, `--ignore-idle`, `-y`, `-v`, `-V`), status shortcuts, and aliases.
+  Complete reference for all 17 subcommands (`init`, `link`, `unlink`, `undo`, `run`, `status`, `stats`, `caches`, `config`, `restore`, `update`, `skill`, `completions`, `setup`, `doctor`, `uninstall`, `man`), global flags (`--dry-run`, `--ignore-idle`, `-y`, `-v`, `-V`), status shortcuts, and aliases.
 - **[System Architecture Entry Point](ARCHITECTURE.md)**
   High-level system architecture overview linking directly to HLD and LLD specifications.
 - **[High-Level Design Specification (HLD)](architecture/HLD.md)**
@@ -56,6 +56,8 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 ### 📊 Market Analysis & Positioning
 - **[Market Analysis & Competitive Matrix](MARKET_ANALYSIS.md)**
   Detailed comparison of `dev-prune` against existing developer tools (`npkill`, `cargo-clean-all`, `pyclean`, `git clean`, `dust`/`ncdu`, `BleachBit`) and breakdown of Unique Selling Propositions (USPs).
+- **[Future Possibilities](FUTURE.md)**
+  The one place parked ideas live: gated distribution channels (WinGet, Scoop, Homebrew core), adapter candidates, editor-integration follow-ups, and the CLI ideas considered and deferred — so a parked idea is never mistaken for a shipped feature.
 
 ---
 

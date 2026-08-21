@@ -1,6 +1,6 @@
 [package]
 name = "dev-prune"
-version = "1.2.1"
+version = "1.3.0"
 edition = "2024"
 authors = ["VKrishna04"]
 description = "Universal, lockfile-safe workspace pruner and background dependency cleaner"
@@ -110,6 +110,8 @@ clap = { version = "4", features = ["derive", "color", "suggestions"] }
 # Shell completion scripts for `devp completions`. Generated from the same clap
 # definition the binary parses with, so a new flag cannot be missing from them.
 clap_complete = "4"
+# Man pages for `devp man`. Same clap definition again, same reason.
+clap_mangen = "0.2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -136,6 +138,15 @@ walkdir = "2"
 ratatui = "0.30"
 crossterm = "0.29"
 indicatif = "0.18"
+
+# Terminal column widths for the plain-text tables.
+#
+# Not a new dependency: ratatui-core, indicatif and console all already pull this in,
+# so it is compiled into the binary either way. Naming it directly costs nothing and
+# buys correct alignment for CJK and emoji paths, where one `char` occupies two
+# columns and `{:<35}` — which counts `char`s — overshoots by the number of wide
+# characters in the name.
+unicode-width = "0.2"
 
 # Colored terminal output
 colored = "3"

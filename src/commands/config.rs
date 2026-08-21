@@ -124,6 +124,15 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "auto_config",
+        help: "Write a default .devprune.json into repositories that link/init register.",
+        get: |s| s.auto_config.to_string(),
+        set: |s, v| {
+            s.auto_config = parse_bool("auto_config", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "auto_daemon",
         help: "Register the OS scheduler so passes run without being remembered.",
         get: |s| s.auto_daemon.to_string(),
@@ -202,6 +211,45 @@ const SETTINGS: &[Setting] = &[
                 bail!("update_check_timeout_secs must be at least 1.");
             }
             s.update_check_timeout_secs = secs;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_gradle",
+        help: "Turn on the opt-in Gradle adapter (build/ and .gradle/ come back by recompiling).",
+        get: |s| s.enable_gradle.to_string(),
+        set: |s, v| {
+            s.enable_gradle = parse_bool("enable_gradle", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_maven",
+        help: "Turn on the opt-in Maven adapter (target/ comes back by recompiling).",
+        get: |s| s.enable_maven.to_string(),
+        set: |s, v| {
+            s.enable_maven = parse_bool("enable_maven", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "build_idle_days",
+        help: "Idle days before gradle/maven build trees are pruned. Applied as max(this, idle_days).",
+        get: |s| s.build_idle_days.to_string(),
+        set: |s, v| {
+            let days: u64 = v
+                .parse()
+                .map_err(|_| anyhow::anyhow!("build_idle_days must be a non-negative integer"))?;
+            s.build_idle_days = days;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "auto_update",
+        help: "Run `devp update --install` by itself after a prune pass when a newer release exists.",
+        get: |s| s.auto_update.to_string(),
+        set: |s, v| {
+            s.auto_update = parse_bool("auto_update", v)?;
             Ok(())
         },
     },

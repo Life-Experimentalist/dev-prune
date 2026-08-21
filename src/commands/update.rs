@@ -13,9 +13,15 @@
 // only thing the server learns is that some copy of dev-prune asked what the latest
 // version is. Nothing else in the binary opens a socket. See `docs/PRIVACY.md`.
 //
-// The command deliberately does not download or install anything. Replacing a running
-// binary is the package manager's job, and doing it ourselves would mean writing to a
-// PATH directory with whatever privileges the user happened to have.
+// By default the command does not download or install anything: replacing a binary is
+// the package manager's job, and doing it ourselves would mean writing to a PATH
+// directory with whatever privileges the user happened to have. `--install` keeps that
+// division of labour — it works out which package manager owns the running binary and
+// runs *that manager's* own upgrade command, rather than writing files itself. The
+// scheduled pass is never interrupted by an upgrade: it runs the managed copy under
+// `<config>/bin`, which is replaced by atomic rename and refreshed from the new binary
+// on the next healthy run (`setup::stable_exe_path`), so a pass already in flight keeps
+// its loaded image and the next pass picks up the new one.
 
 use std::cmp::Ordering;
 use std::time::Duration;
@@ -27,7 +33,10 @@ use crate::config::Registry;
 use crate::constants;
 use crate::output;
 
-pub fn run(offline: bool) -> Result<()> {
+pub fn run(offline: bool, install: bool) -> Result<()> {
+    if install {
+        return run_install();
+    }
     output::print_header("dev-prune version & upgrade");
 
     output::print_info(&format!("Installed version: v{}", constants::VERSION));
@@ -93,8 +102,197 @@ fn print_upgrade_commands() {
     println!("  Upgrade with whichever channel you installed from:");
     println!("    cargo binstall dev-prune --force");
     println!("    cargo install dev-prune --force");
-    println!("    curl -fsSL https://devprune.vkrishna04.me/install.sh | sh");
-    println!("    iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex");
+    println!("    npm install -g dev-prune@latest");
+    println!("    uv tool upgrade dev-prune  /  pipx upgrade dev-prune");
+    println!("    curl -fsSL {} | sh", constants::INSTALL_SH_URL);
+    println!("    iwr -useb {} | iex", constants::INSTALL_PS1_URL);
+}
+
+/// The package manager that owns the running binary — the one whose upgrade command
+/// `--install` runs. One channel owns one binary: a copy installed through uv is
+/// upgraded through uv, never through npm, because two managers writing the same PATH
+/// entry would fight over it forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Channel {
+    /// `install.sh` / `install.ps1` put it under the managed `<config>/bin`.
+    Installer,
+    /// `cargo install` / `cargo binstall` put it under `~/.cargo/bin`.
+    Cargo,
+    /// `npm install -g` — the binary lives under a `node_modules` tree.
+    Npm,
+    /// `uv tool install` — under uv's tool environments.
+    UvTool,
+    /// `pipx install` — under a `pipx` venv.
+    Pipx,
+    /// Anywhere else: a dev build, a hand-copied binary, a distro package.
+    Unknown,
+}
+
+/// Classify where `exe` came from by the directories in its path.
+///
+/// Purely lexical on purpose: this must not touch the network or spawn anything, and
+/// each channel's layout is stable enough that its marker directory is a reliable
+/// fingerprint. `managed` is passed in (rather than resolved here) so tests can probe
+/// the classification without a config directory on disk.
+fn detect_channel(exe: &std::path::Path, managed: Option<&std::path::Path>) -> Channel {
+    if let Some(managed) = managed
+        && exe == managed
+    {
+        return Channel::Installer;
+    }
+    let has_dir = |name: &str| {
+        exe.components()
+            .any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case(name))
+    };
+    if has_dir(".cargo") {
+        Channel::Cargo
+    } else if has_dir("node_modules") {
+        Channel::Npm
+    } else if has_dir("uv") || has_dir("uv-tool") {
+        Channel::UvTool
+    } else if has_dir("pipx") {
+        Channel::Pipx
+    } else {
+        Channel::Unknown
+    }
+}
+
+/// `devp update --install`: upgrade this binary through the channel that installed it.
+fn run_install() -> Result<()> {
+    output::print_header("dev-prune self-update");
+
+    if crate::setup::offline_requested() {
+        anyhow::bail!(
+            "{} is set — an install needs the network by definition.",
+            constants::ENV_OFFLINE
+        );
+    }
+
+    // Know before downloading whether there is anything to download. A failed check is
+    // fatal here (unlike `devp update`): running an installer blind would "upgrade" to
+    // the version already installed.
+    let mut registry = Registry::load()?;
+    let latest = refresh_latest(&mut registry)?;
+    let _ = registry.save();
+    if compare_versions(constants::VERSION, &latest) != Some(Ordering::Less) {
+        output::print_success(&format!(
+            "v{} is already the latest release — nothing to install.",
+            constants::VERSION
+        ));
+        return Ok(());
+    }
+    output::print_info(&format!("Upgrading v{} -> v{latest} …", constants::VERSION));
+
+    let exe = std::env::current_exe().context("could not locate the running binary")?;
+    let managed = crate::setup::managed_exe_path().ok();
+    let channel = detect_channel(&exe, managed.as_deref());
+
+    // On Windows a running executable's file is locked against replacement but not
+    // against rename. Moving it aside first lets the channel write a fresh file at the
+    // real path; the `.old` left behind is swept up by the *next* run, when nothing is
+    // executing it any more.
+    #[cfg(windows)]
+    let aside = {
+        let aside = exe.with_extension("exe.old");
+        let _ = std::fs::remove_file(&aside);
+        std::fs::rename(&exe, &aside).ok().map(|_| aside)
+    };
+
+    let result = spawn_channel_upgrade(channel);
+
+    #[cfg(windows)]
+    if let Some(aside) = aside {
+        if result.is_ok() {
+            // Best effort: the file is still our running image, so Windows may refuse
+            // the delete. The sweep at the top of the next `--install` gets it then.
+            let _ = std::fs::remove_file(&aside);
+        } else if !exe.exists() {
+            // The upgrade never wrote a new binary — put the old one back so the
+            // command the user has on PATH still exists.
+            let _ = std::fs::rename(&aside, &exe);
+        }
+    }
+    result?;
+
+    output::print_success(&format!("dev-prune v{latest} installed."));
+    output::print_info(
+        "The scheduled pass was not interrupted: it runs the managed copy, which \
+         refreshes itself from the new binary on its next run.",
+    );
+    Ok(())
+}
+
+/// Run one channel's own upgrade command, wired to the terminal so its progress and
+/// prompts reach the user directly.
+fn spawn_channel_upgrade(channel: Channel) -> Result<()> {
+    let install_ps1 = format!("iwr -useb {} | iex", constants::INSTALL_PS1_URL);
+    let install_sh = format!("curl -fsSL {} | sh", constants::INSTALL_SH_URL);
+    let argv: Vec<&str> = match channel {
+        Channel::Cargo => {
+            // binstall pulls the prebuilt release; plain `cargo install` compiles for
+            // minutes. Prefer the fast one when it exists.
+            if crate::adapters::binary_available("cargo-binstall") {
+                vec!["cargo", "binstall", "dev-prune", "--force", "-y"]
+            } else {
+                vec!["cargo", "install", "dev-prune", "--force"]
+            }
+        }
+        Channel::Npm => vec!["npm", "install", "-g", "dev-prune@latest"],
+        Channel::UvTool => vec!["uv", "tool", "upgrade", "dev-prune"],
+        Channel::Pipx => vec!["pipx", "upgrade", "dev-prune"],
+        Channel::Installer => {
+            if cfg!(windows) {
+                vec!["powershell", "-NoProfile", "-Command", &install_ps1]
+            } else {
+                vec!["sh", "-c", &install_sh]
+            }
+        }
+        Channel::Unknown => {
+            output::print_warning(
+                "Could not tell which channel installed this binary, so nothing was \
+                 changed. Upgrade it yourself with one of:",
+            );
+            print_upgrade_commands();
+            anyhow::bail!("unrecognised install channel");
+        }
+    };
+
+    output::print_info(&format!("Running: {}", argv.join(" ")));
+    let status = crate::spawn::command(crate::adapters::resolve_program(argv[0]))
+        .args(&argv[1..])
+        .status()
+        .with_context(|| format!("could not start `{}`", argv[0]))?;
+    if !status.success() {
+        anyhow::bail!("`{}` exited with {status}", argv.join(" "));
+    }
+    Ok(())
+}
+
+/// The end-of-run hook behind `auto_update`: when the setting is on and the last release
+/// check already knows a newer version exists, run the self-update without being asked.
+///
+/// Warn-never-fail, like everything else that runs as a side effect of `devp run` — a
+/// broken upgrade path must not turn a successful prune into a failed command.
+pub fn maybe_auto_update(registry: &Registry) {
+    if !registry.settings.auto_update
+        || crate::setup::offline_requested()
+        || crate::setup::no_auto_setup_requested()
+    {
+        return;
+    }
+    let Some(latest) = registry.latest_known_version.as_deref() else {
+        return;
+    };
+    if compare_versions(constants::VERSION, latest) != Some(Ordering::Less) {
+        return;
+    }
+    println!();
+    if let Err(e) = run_install() {
+        output::print_warning(&format!(
+            "Automatic update failed ({e}). Run `devp update --install` yourself, or \
+             `devp config set auto_update false` to stop trying."
+        ));
+    }
 }
 
 /// Quietly keep the release check current and print a one-line notice when the installed
@@ -271,6 +469,46 @@ mod tests {
         registry.settings.update_check = false;
         assert!(!notify_if_outdated(&mut registry));
         assert!(registry.last_update_check.is_none());
+    }
+
+    #[test]
+    fn each_channel_is_recognised_by_its_marker_directory() {
+        use std::path::Path;
+        let cases: &[(&str, Channel)] = &[
+            ("/home/k/.cargo/bin/dev-prune", Channel::Cargo),
+            (
+                "/usr/lib/node_modules/dev-prune/bin/dev-prune",
+                Channel::Npm,
+            ),
+            (
+                "/home/k/.local/share/uv/tools/dev-prune/bin/dev-prune",
+                Channel::UvTool,
+            ),
+            (
+                "/home/k/.local/pipx/venvs/dev-prune/bin/dev-prune",
+                Channel::Pipx,
+            ),
+            ("/opt/somewhere/dev-prune", Channel::Unknown),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(detect_channel(Path::new(path), None), *expected, "{path}");
+        }
+    }
+
+    #[test]
+    fn the_managed_copy_wins_over_every_path_heuristic() {
+        use std::path::Path;
+        // Even a managed dir that happens to live under `.cargo` is the installer's.
+        let managed = Path::new("/home/k/.cargo/odd/dev-prune/bin/dev-prune");
+        assert_eq!(detect_channel(managed, Some(managed)), Channel::Installer);
+    }
+
+    #[test]
+    fn auto_update_is_off_by_default_and_silent_when_off() {
+        let registry = Registry::default();
+        assert!(!registry.settings.auto_update);
+        // Must return without touching the network or the terminal.
+        maybe_auto_update(&registry);
     }
 
     #[test]

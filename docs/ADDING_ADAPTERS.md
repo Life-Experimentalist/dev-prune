@@ -1,6 +1,6 @@
 # How to Add a New Package Manager Adapter to `dev-prune`
 
-`dev-prune` (`devp`) is designed to be highly modular and contribution-friendly. Adding support for a new package manager or ecosystem (e.g. Maven, Gradle, Composer, Mix, Swift SPM, etc.) takes only a few minutes.
+`dev-prune` (`devp`) is designed to be highly modular and contribution-friendly. Adding support for a new package manager or ecosystem (e.g. Composer, Bundler, CocoaPods, Mix, Swift SPM, etc.) takes only a few minutes.
 
 ---
 
@@ -42,6 +42,16 @@ pub trait PackageManager: Send + Sync {
     /// Lockfiles that identify this manager. Only needed if your adapter can
     /// share a bloat directory with another one. Defaults to an empty slice.
     fn lockfiles(&self) -> &'static [&'static str] { &[] }
+
+    /// Whether this adapter must be switched on explicitly before it detects
+    /// anything. Defaults to `false`. Return `true` when what you delete is a
+    /// build tree that has to be *recompiled* back rather than re-downloaded —
+    /// gradle and maven do — and add a matching `enable_<name>` setting in
+    /// `src/commands/config.rs`. While the setting is off, the adapter is
+    /// invisible: not detected, not listed, and `--only <name>` prunes nothing.
+    /// Opt-in adapters are also idle-gated by `build_idle_days`, applied as
+    /// `max(build_idle_days, idle_days)`.
+    fn opt_in(&self) -> bool { false }
 }
 ```
 
@@ -53,6 +63,10 @@ each owning a different bloat directory. Only adapters that would fight over the
 ---
 
 ## 🛠️ Step-by-Step Implementation Tutorial
+
+> The worked example below is Gradle — which has since shipped as a real (opt-in)
+> adapter, built by following exactly these steps. The finished version is
+> [`src/adapters/gradle.rs`](../src/adapters/gradle.rs); compare against it as you go.
 
 ### Step 1: Create a new module file
 Create a new Rust file in `src/adapters/` named after your package manager, e.g. `src/adapters/gradle.rs`.
@@ -240,10 +254,12 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(yarn::Yarn),
         Box::new(bun::Bun),
         Box::new(uv::Uv),
+        Box::new(poetry::Poetry),
         Box::new(venv::Venv),
         Box::new(cargo_adapter::Cargo),
         Box::new(go::Go),
         Box::new(gradle::Gradle),
+        Box::new(maven::Maven),
     ]
 }
 ```
@@ -261,8 +277,9 @@ family. The existing rules are the model:
 - **JavaScript** picks a winner from the `packageManager` field in `package.json`, then
   from the bookkeeping files the installer left inside `node_modules`, then from the
   newest lockfile mtime.
-- **Python** gives uv priority over the plain-venv adapter, because uv has a real
-  lockfile and can reproduce the environment exactly.
+- **Python** gives uv and poetry priority over the plain-venv adapter, because they
+  have a real lockfile and can reproduce the environment exactly; between uv and
+  poetry, whichever one's lockfile is actually on disk owns the environment.
 
 The principle in both: prefer whatever evidence describes the tree **actually on disk**
 over evidence about what the project once used.

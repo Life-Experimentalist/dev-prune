@@ -45,6 +45,8 @@ pub struct RunArgs<'a> {
     pub except: Option<&'a str>,
     /// Emit one JSON document instead of the human report.
     pub json: bool,
+    /// Explain every decision and touch nothing.
+    pub explain: bool,
 }
 
 /// Run the `run` command — prune all registered repos or a specific target directory (`devp run .`).
@@ -69,6 +71,10 @@ pub fn run(args: RunArgs<'_>) -> Result<()> {
         if args.force {
             print_ignore_idle_notice();
         }
+    }
+
+    if args.explain {
+        return run_explain(&args, &filter);
     }
 
     if let Some(target_str) = args.target_path {
@@ -147,6 +153,7 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
         scan_depth: resolve_scan_depth(registry.as_ref()),
         allow_manifest_rewrite: resolve_manifest_rewrite(registry.as_ref()),
         command_timeout_secs: resolve_command_timeout(registry.as_ref()),
+        build_idle_days: resolve_build_idle_days(registry.as_ref()),
     };
 
     let results = engine::prune_repo_with(&path, &opts);
@@ -362,6 +369,12 @@ fn resolve_scan_depth(registry: Option<&Registry>) -> usize {
 }
 
 /// The ceiling on any one package-manager command, in seconds.
+fn resolve_build_idle_days(registry: Option<&Registry>) -> u64 {
+    registry
+        .map(|r| r.settings.build_idle_days)
+        .unwrap_or(constants::DEFAULT_BUILD_IDLE_DAYS)
+}
+
 fn resolve_command_timeout(registry: Option<&Registry>) -> u64 {
     registry
         .map(|r| r.settings.command_timeout_secs)
@@ -439,6 +452,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         scan_depth: resolve_scan_depth(Some(&registry)),
         allow_manifest_rewrite: resolve_manifest_rewrite(Some(&registry)),
         command_timeout_secs: resolve_command_timeout(Some(&registry)),
+        build_idle_days: resolve_build_idle_days(Some(&registry)),
     };
 
     if !args.json {
@@ -573,7 +587,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         report_candidates(&candidates);
         output::print_info(&format!(
             "Total Reclaimable Space: {}",
-            output::format_bytes(total_reclaimable)
+            output::format_bytes_styled(total_reclaimable)
         ));
         report_blocked(&blocked);
         report_linked(&linked);
@@ -701,6 +715,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                 scan_depth: analysis.scan_depth,
                 allow_manifest_rewrite: analysis.allow_manifest_rewrite,
                 command_timeout_secs: analysis.command_timeout_secs,
+                build_idle_days: analysis.build_idle_days,
             },
         );
         for result in single_results {
@@ -818,7 +833,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     output::print_header("Summary");
     output::print_success(&format!(
         "Freed: {} across {pruned_count} directories",
-        output::format_bytes(total_freed)
+        output::format_bytes_styled(total_freed)
     ));
 
     if error_count > 0 {
@@ -843,6 +858,10 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         // Exit non-zero so a scheduled or scripted run surfaces the failure.
         anyhow::bail!("{error_count} repositories could not be pruned.");
     }
+
+    // After the pass, never before it: an upgrade mid-run would swap the binary out
+    // from under the work the user actually asked for.
+    crate::commands::update::maybe_auto_update(&registry);
 
     Ok(())
 }
@@ -954,10 +973,10 @@ fn report_candidates(candidates: &[PruneResult]) {
     for candidate in candidates {
         output::print_info(&format!(
             "  • {} → {} ({}) [{}]{}",
-            output::clean_path(&candidate.repo_path),
+            output::styled_path(&candidate.repo_path),
             candidate.bloat_dir,
-            output::format_bytes(candidate.size_freed),
-            candidate.adapter_name,
+            output::format_bytes_styled(candidate.size_freed),
+            output::styled_adapter(&candidate.adapter_name),
             output::shared_note(candidate.shared_bytes, &candidate.adapter_name)
         ));
     }
@@ -984,4 +1003,185 @@ fn report_lockfile_failure(result: &PruneResult, error: &str) {
         "  Troubleshooting:   {}",
         constants::TROUBLESHOOTING_URL
     ));
+}
+
+/// `devp run --explain` — the decision for every repository and directory, with
+/// nothing done.
+///
+/// The prune pass keeps quiet about the states that are not its job to fix — a
+/// repository still active, one opted out, a directory under the size floor — which is
+/// exactly what someone staring at "no candidates found" needs to hear about. This mode
+/// runs the same analysis and reports every verdict instead of only the actionable
+/// ones. Read-only by construction: the engine runs in dry-run mode, and the size floor
+/// is applied here in the report rather than in the engine, so a too-small directory is
+/// named as too small instead of silently missing.
+fn run_explain(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
+    output::print_header("Why each repository would or would not be pruned");
+    if let Some(desc) = filter.describe() {
+        output::print_info(&format!("Adapter filter: {desc}"));
+    }
+
+    if let Some(target_str) = args.target_path {
+        let raw = Path::new(target_str);
+        let path = if raw.exists() {
+            raw.canonicalize().unwrap_or_else(|_| raw.to_path_buf())
+        } else {
+            raw.to_path_buf()
+        };
+        if !crate::scanner::is_git_repo(&path) {
+            anyhow::bail!(
+                "{} is not a Git repository — dev-prune only prunes Git repos.",
+                output::clean_path(&path)
+            );
+        }
+        let registry = Registry::load().ok();
+        let idle_days = registry
+            .as_ref()
+            .map(|r| {
+                r.repositories
+                    .get(&path)
+                    .and_then(|e| e.override_idle_days)
+                    .unwrap_or(r.settings.idle_days)
+            })
+            .unwrap_or(constants::DEFAULT_IDLE_DAYS);
+        let floor = resolve_min_size(args, registry.as_ref());
+        let results = engine::prune_repo_with(
+            &path,
+            &PruneOptions {
+                idle_days,
+                dry_run: true,
+                force: args.force,
+                only_dirs: None,
+                adapters: filter.clone(),
+                min_size_bytes: 0,
+                scan_depth: resolve_scan_depth(registry.as_ref()),
+                allow_manifest_rewrite: resolve_manifest_rewrite(registry.as_ref()),
+                command_timeout_secs: resolve_command_timeout(registry.as_ref()),
+                build_idle_days: resolve_build_idle_days(registry.as_ref()),
+            },
+        );
+        let refs: Vec<&PruneResult> = results.iter().collect();
+        explain_repo(&path, &refs, floor, idle_days);
+        print_explain_footer();
+        return Ok(());
+    }
+
+    let mut registry = Registry::load()?;
+    if registry.repo_count() == 0 {
+        output::print_warning("No repositories registered. Run `dev-prune init` first.");
+        return Ok(());
+    }
+
+    let except = parse_except(args.except);
+    let global_floor = resolve_min_size(args, Some(&registry));
+    let analysis = PruneOptions {
+        idle_days: 0, // replaced per repository from the registry
+        dry_run: true,
+        force: args.force,
+        only_dirs: None,
+        adapters: filter.clone(),
+        min_size_bytes: 0,
+        scan_depth: resolve_scan_depth(Some(&registry)),
+        allow_manifest_rewrite: resolve_manifest_rewrite(Some(&registry)),
+        command_timeout_secs: resolve_command_timeout(Some(&registry)),
+        build_idle_days: resolve_build_idle_days(Some(&registry)),
+    };
+    let results = engine::prune_all_with(&mut registry, &analysis);
+
+    let mut by_repo: std::collections::HashMap<&Path, Vec<&PruneResult>> =
+        std::collections::HashMap::new();
+    for r in &results {
+        by_repo.entry(r.repo_path.as_path()).or_default().push(r);
+    }
+
+    let mut repos: Vec<&std::path::PathBuf> = registry.repositories.keys().collect();
+    repos.sort();
+    for path in repos {
+        if is_excepted(path, &except) {
+            println!();
+            output::print_info(&output::clean_path(path));
+            println!("  • left completely alone this pass (`--except`)");
+            continue;
+        }
+        let idle_days = registry
+            .repositories
+            .get(path)
+            .and_then(|e| e.override_idle_days)
+            .unwrap_or(registry.settings.idle_days);
+        let empty = Vec::new();
+        let repo_results = by_repo.get(path.as_path()).unwrap_or(&empty);
+        explain_repo(path, repo_results, global_floor, idle_days);
+    }
+    print_explain_footer();
+    Ok(())
+}
+
+/// One repository's verdicts, one line per decision.
+fn explain_repo(path: &Path, results: &[&PruneResult], floor: u64, idle_days: u64) {
+    println!();
+    output::print_info(&output::clean_path(path));
+
+    if results.is_empty() {
+        println!(
+            "  • idle, but no known bloat directories were found. A project deeper than \
+             `scan_depth` is not examined — `devp status` shows what dev-prune can see."
+        );
+        return;
+    }
+
+    for r in results {
+        match &r.status {
+            PruneStatus::SkippedDryRun => {
+                if r.size_freed >= floor {
+                    output::print_success(&format!(
+                        "would prune {} ({}) [{}]{}",
+                        r.bloat_dir,
+                        output::format_bytes(r.size_freed),
+                        r.adapter_name,
+                        output::shared_note(r.shared_bytes, &r.adapter_name)
+                    ));
+                } else {
+                    println!(
+                        "  • {} ({}) is under the size floor of {} — the reinstall would \
+                         cost more than the space is worth. `--min-size 0` includes it.",
+                        r.bloat_dir,
+                        output::format_bytes(r.size_freed),
+                        output::format_bytes(floor)
+                    );
+                }
+            }
+            PruneStatus::SkippedActive => {
+                let age = crate::scanner::git::get_last_activity(path)
+                    .ok()
+                    .flatten()
+                    .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+                    .map(|d| d.as_secs() / 86_400);
+                match age {
+                    Some(0) => println!(
+                        "  • active — there was activity today, and the idle \
+                         threshold is {idle_days} days. `--ignore-idle` overrides."
+                    ),
+                    Some(days) => println!(
+                        "  • active — last activity {days} day{} ago, and the idle \
+                         threshold is {idle_days} days. `--ignore-idle` overrides.",
+                        if days == 1 { "" } else { "s" }
+                    ),
+                    None => println!(
+                        "  • active (not idle for {idle_days} days yet). \
+                         `--ignore-idle` overrides."
+                    ),
+                }
+            }
+            other => println!("  • {other}"),
+        }
+    }
+}
+
+/// The one-line contract of `--explain`, printed after the verdicts.
+fn print_explain_footer() {
+    println!();
+    output::print_info(
+        "Nothing was verified or deleted. `devp run --dry-run` verifies candidates; \
+         `devp run` prunes.",
+    );
 }

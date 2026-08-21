@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.3.0 - 2026-08-21
+
+- **The status bar now walks your workspace through dev-prune's whole lifecycle**,
+  instead of only showing a machine-wide total. One glance tells you where this
+  repository stands, in order: devp not installed (click to install it) → not a
+  Git repository (click to `git init`) → not registered (click to `devp link .`)
+  → active (how much space dependency and build folders occupy, and which package
+  managers are in use — npm, uv, cargo and so on) → idle candidate (the
+  reclaimable size, with a "why so low?" explanation when pnpm or bun hardlink
+  most of the bytes into their store) → cleaned (how much dev-prune has saved
+  here). The warning background is reserved for the missing-CLI state.
+- **Clicking the status bar opens a state-aware menu.** The action that fits the
+  current state comes first — initialize Git, register the repo, prune it, or
+  restore what was pruned — followed by the standing set: refresh, dry run,
+  dashboard, create a `.devprune.json`, ignore this repository, install the AI
+  agent skill, open the CLI reference.
+- **New palette commands**: *Create .devprune.json* (writes a skeleton with the
+  `$schema` line so validation lights up immediately), *Ignore This Repository*
+  (sets `"ignore": true` so dev-prune never prunes it), *Register This
+  Repository*, *Initialize Git Repository* and *Refresh Status Bar*.
+- **The extension activates in every workspace**, not only ones that already have
+  a `.devprune.json` — the lifecycle states before "configured" are the ones a
+  new user actually sees. Everything that runs the CLI still waits for workspace
+  trust, and anything that deletes still runs as a visible terminal command.
+
 ## 0.2.1 - 2026-08-21
 
 - **Terminal commands run the CLI the extension actually found.** The dry run and

@@ -77,7 +77,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched |
 | "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan) and prints the command that clears each. It deletes nothing; the user runs the clear command |
 | "did I install anything my lockfiles don't know about?" | `devp status --drift` — every environment holding packages its lockfile never recorded, with the one command that records them. A pure read; this is what a prune would refuse on |
-| "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it |
+| "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it. Across every repository at once: `devp run --explain` — read-only, every verdict listed including the quiet ones (still active with the actual age, opted out, under the size floor). Conflicts with `--json`; the `--json --dry-run` document already carries every status |
 | "is anything wrong with my install?" | `devp doctor` |
 | "fix whatever's broken" | `devp doctor --fix` — repairs installed-but-broken integrations (stale twin, dead-target hooks/scheduler, drifted chain, missing SKILL.md, dead registry entries); never a first-time install |
 | "track my projects folder" | `devp init ~/Code` |
@@ -92,6 +92,11 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "set it all up" | `devp setup` |
 | "turn the automation off" | `devp config set auto_setup false` |
 | "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed (add `--deep` to wipe config — confirm first) |
+| "is there a newer version?" | `devp update` — prints the installed and latest versions plus the right upgrade command; never installs anything by itself |
+| "upgrade it" | `devp update --install` — upgrades through the package manager that owns this copy (cargo/binstall, npm, uv, pipx, or the installer script); `devp config set auto_update true` makes it happen by itself after a pass |
+| "clean my Java/Gradle/Maven builds too" | `devp config set enable_gradle true` / `enable_maven true` — opt-in adapters, idle-gated separately by `build_idle_days` (60) |
+| "give my editor's agent the rules" | `devp skill --agent <cursor\|windsurf\|antigravity\|cline\|copilot\|agents-md>` — writes the per-repository rules file that editor reads; `agents-md` upserts a marked block in `AGENTS.md` (Codex, Jules, Amp, OpenCode) |
+| "man pages" | `devp man \| man -l -` to read now, `devp man --dir ./man` to write the full set |
 | "what version?" | `devp -V` (also prints OS, arch, config path, PATH audit) |
 | you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats` or `caches` — see below |
 
@@ -209,8 +214,19 @@ over plain venv when `uv.lock` or `[tool.uv]` is present.
 | bun | `bun.lockb`, `bun.lock` | `node_modules` | `bun install --frozen-lockfile --dry-run --ignore-scripts` | `bun install --frozen-lockfile` |
 | uv | `uv.lock`, `[tool.uv]` | `.venv` | `uv lock --locked` | `uv sync` |
 | venv | `requirements.txt` + `pyvenv.cfg` | every dir holding `pyvenv.cfg` | `requirements.txt` lists ≥1 package and accounts for every installed package | `python -m venv .venv && pip install -r requirements.txt` |
+| poetry | `poetry.lock`, `[tool.poetry]` | `.venv` | `poetry check --lock`, plus no installed package missing from the lockfile | `poetry install` |
 | cargo | `Cargo.toml` | `target` | `cargo metadata --locked` | next `cargo build` |
 | go | `go.mod` | `vendor` | `go mod download` | `go mod vendor` |
+| gradle *(opt-in)* | `build.gradle[.kts]` / `settings.gradle[.kts]` | `build`, `.gradle` | manifest present and readable (rebuild-from-source proof) | next `./gradlew build` |
+| maven *(opt-in)* | `pom.xml` | `target` | `pom.xml` present and looks like a Maven manifest | next `mvn package` |
+
+gradle and maven ship **disabled** — a build directory takes far longer to regenerate
+than a dependency directory (a full recompile, not a download). Enable them with
+`devp config set enable_gradle true` / `enable_maven true`; while disabled they are
+invisible (not detected, not listed, `--only gradle` prunes nothing). Their candidates
+also wait for `build_idle_days` (60 by default), applied as the **maximum** of it and the
+repository's effective `idle_days` — the build-tool gate can only ever make pruning
+later, never earlier.
 
 Every verification command is **read-only**. A lockfile that has drifted from its
 manifest is a refusal, not something to quietly fix — a prune pass can be started by the
@@ -240,6 +256,11 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `update_check` | `true` | Whether to ask GitHub for the latest release. Sends nothing but the request itself |
 | `update_check_interval_days` | `7` | Days between automatic release checks; `devp update` always asks |
 | `update_check_timeout_secs` | `5` | How long the release check waits for GitHub before giving up |
+| `auto_update` | `false` | Run `devp update --install` by itself at the end of a prune pass when a newer release is already known; a failed upgrade warns and never fails the pass |
+| `auto_config` | `true` | Whether `link`/`init` write a default `.devprune.json` into repositories they register |
+| `enable_gradle` | `false` | Turn the opt-in Gradle adapter on |
+| `enable_maven` | `false` | Turn the opt-in Maven adapter on |
+| `build_idle_days` | `60` | Extra idle gate for the build-tool adapters (gradle, maven); applied as `max(build_idle_days, idle_days)` |
 
 **Per repository:**
 - `ignore.devprune.json` in the root — instant skip, checked before anything is parsed.

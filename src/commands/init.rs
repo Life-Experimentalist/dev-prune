@@ -93,6 +93,12 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
         }
         crate::setup::suppress_next_auto_setup();
 
+        if registry.settings.auto_config {
+            for repo in &newly_added_repos {
+                crate::commands::link::ensure_default_repo_config(repo);
+            }
+        }
+
         // Validate (do NOT rewrite) existing per-repo configs.
         //
         // The previous behaviour re-serialised `unwrap_or_default()` into every repo,

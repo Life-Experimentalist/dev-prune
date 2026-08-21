@@ -13,6 +13,7 @@ pub mod hook;
 pub mod icon;
 pub mod init;
 pub mod link;
+pub mod man;
 pub mod restore;
 pub mod run;
 pub mod setup;

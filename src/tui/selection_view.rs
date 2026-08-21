@@ -216,7 +216,7 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
             let content = Line::from(vec![
                 checkbox,
                 Span::styled(
-                    format!("{:<40}", repo_path),
+                    output::pad_display(&repo_path, 40),
                     if highlighted == Some(i) {
                         Style::default().fg(Color::White)
                     } else {
@@ -225,7 +225,7 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
                 ),
                 Span::raw(" → "),
                 Span::styled(
-                    format!("{:<15}", item.candidate.bloat_dir),
+                    output::pad_display(&item.candidate.bloat_dir, 15),
                     Style::default().fg(Color::Yellow),
                 ),
                 Span::styled(

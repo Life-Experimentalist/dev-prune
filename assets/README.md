@@ -12,6 +12,7 @@ This directory contains all official brand graphics, visual banners, executable 
 | **`banner.png`** | PNG | Diagnostics banner used in [`docs/README.md`](../docs/README.md) and [`docs/troubleshooting/README.md`](../docs/troubleshooting/README.md). |
 | **`banner.jpg`** | JPG | Compressed web version of visual banner for external sites and social preview graphs. |
 | **`icon.png`** | PNG | High-resolution square application logo. |
+| **`icon_light.png`** | PNG | The same logo on a white ground, with the mark darkened so the cyan end of the gradient survives on paper-white backgrounds. Use where a page is known to be light; `icon.png` is the dark-ground equivalent. |
 | **`icon_transparent.png`** | PNG | Transparent 1536×1536 master. Every `mimetype/` size is downscaled from this file. |
 | **`icon.ico`** | ICO | 6-layer multi-resolution Windows executable icon embedded directly into Windows release binaries via `winres` in [`build.rs`](../build.rs). Also embedded in the binary itself and written to the config directory by `devp config icon`. |
 | **`icon.icns`** | ICNS | macOS application icon bundle for macOS distribution archives. |

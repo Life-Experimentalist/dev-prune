@@ -231,6 +231,13 @@ pub enum Commands {
         /// Emit one JSON document instead of the human report. Implies non-interactive.
         #[arg(long)]
         json: bool,
+
+        /// Explain every decision instead of pruning: each repository and directory,
+        /// with the reason it would or would not be touched — including the states a
+        /// normal pass keeps quiet about (still active, opted out, under the size
+        /// floor). Read-only; nothing is verified or deleted.
+        #[arg(long, conflicts_with = "json")]
+        explain: bool,
     },
 
     /// View system dashboard: registered repos, background daemon, Git hooks & space metrics.
@@ -276,6 +283,15 @@ pub enum Commands {
         shell: clap_complete::Shell,
     },
 
+    /// Print or write man pages, generated from the same definitions `--help` prints.
+    #[command(long_about = help::MAN_LONG, after_long_help = help::MAN_EXAMPLES)]
+    Man {
+        /// Write `devp.1` plus one `devp-<command>.1` per subcommand into this
+        /// directory, instead of printing the main page to stdout.
+        #[arg(long, value_name = "DIR")]
+        dir: Option<String>,
+    },
+
     /// Report the size of every package manager cache on this machine (read-only, deletes nothing).
     #[command(long_about = help::CACHES_LONG, after_long_help = help::CACHES_EXAMPLES)]
     Caches {
@@ -311,11 +327,27 @@ pub enum Commands {
         /// it off for good.
         #[arg(long)]
         offline: bool,
+
+        /// Download and install the newer release, through whichever package manager
+        /// installed this copy (cargo, npm, uv, pipx, or the installer script). Needs
+        /// the network, so it cannot be combined with `--offline`.
+        #[arg(long, conflicts_with = "offline")]
+        install: bool,
     },
 
     /// Export SKILL.md and display ready-to-copy AI Agent onboarding & skill import prompts.
     #[command(long_about = help::SKILL_LONG, after_long_help = help::SKILL_EXAMPLES)]
-    Skill,
+    Skill {
+        /// Write rules for one editor's agent into the current repository instead:
+        /// `cursor` (.cursor/rules/), `windsurf` (.windsurf/rules/), `antigravity`
+        /// (.agent/rules/), `cline` (.clinerules/), `copilot`
+        /// (.github/copilot-instructions.md, as a marked block) or `agents-md`
+        /// (AGENTS.md, as a marked block — the cross-tool convention Codex, Jules,
+        /// Amp, OpenCode and others read). Claude Code needs no per-repo file —
+        /// plain `devp skill` installs its skill globally.
+        #[arg(long, value_enum, value_name = "EDITOR")]
+        agent: Option<commands::skill::AgentEditor>,
+    },
 
     /// Install whatever dev-prune integration is missing: alias, SKILL.md, Git hooks, scheduler.
     #[command(long_about = help::SETUP_LONG, after_long_help = help::SETUP_EXAMPLES)]
@@ -364,7 +396,7 @@ impl Commands {
     /// downstream depends on it having been printed.
     fn suppresses_attribution(&self) -> bool {
         match self {
-            Commands::Completions { .. } => true,
+            Commands::Completions { .. } | Commands::Man { .. } => true,
             Commands::Run { json, .. }
             | Commands::Status { json, .. }
             | Commands::Stats { json }
@@ -678,6 +710,7 @@ pub fn run_cli() {
             min_size,
             except,
             json,
+            explain,
         } => {
             let target_path = target_path.map(|p| config::expand_tilde(&p));
             commands::run::run(commands::run::RunArgs {
@@ -691,6 +724,7 @@ pub fn run_cli() {
                 min_size_mb: min_size,
                 except: except.as_deref(),
                 json,
+                explain,
             })
         }
         Commands::Status { top, drift, json } => {
@@ -698,6 +732,7 @@ pub fn run_cli() {
         }
         Commands::Stats { json } => commands::stats::run(json),
         Commands::Completions { shell } => commands::completions::run(shell),
+        Commands::Man { dir } => commands::man::run(dir.as_deref()),
         Commands::Caches { json } => commands::caches::run(json),
         Commands::Config { action } => match action {
             Some(ConfigAction::Get { key }) => commands::config::run_get(&key),
@@ -747,8 +782,8 @@ pub fn run_cli() {
                 commands::restore::run(&config::expand_tilde(path.as_deref().unwrap_or(".")))
             }
         }
-        Commands::Update { offline } => commands::update::run(offline),
-        Commands::Skill => commands::skill::run(),
+        Commands::Update { offline, install } => commands::update::run(offline, install),
+        Commands::Skill { agent } => commands::skill::run(agent),
         Commands::Setup { status } => commands::setup::run(status),
         Commands::Doctor { path, fix } => {
             let path = path.map(|p| config::expand_tilde(&p));

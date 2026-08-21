@@ -643,13 +643,24 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
 /// Plain text fallback rendering for non-TUI environments.
 pub fn render_status_plain(repos: &[RepoStatusEntry]) {
     use crate::output;
+    use colored::Colorize;
 
     output::print_header("dev-prune status");
+    // The repository column is padded in terminal columns, not `char`s: it is the only
+    // column whose contents a user names, so it is the only one that can hold wide
+    // characters. The rule spans the whole row — 3+35+22+12+12+13+13 plus six 2-space
+    // gaps — which is 122, not the 118 it used to draw.
     println!(
-        "\n  {:>3}  {:<35}  {:<22}  {:<12}  {:<12}  {:<13}  {:<13}",
-        "#", "Repository", "Status / Reason", "Adapters", "Bloat", "Last Activity", "Last Pruned"
+        "\n  {:>3}  {}  {:<22}  {:<12}  {:<12}  {:<13}  {:<13}",
+        "#",
+        output::pad_display("Repository", 35),
+        "Status / Reason",
+        "Adapters",
+        "Bloat",
+        "Last Activity",
+        "Last Pruned"
     );
-    println!("  {}", "─".repeat(118));
+    println!("  {}", "─".repeat(122));
 
     let all_paths: Vec<_> = repos.iter().map(|r| r.path.clone()).collect();
     for (i, repo) in repos.iter().enumerate() {
@@ -675,18 +686,36 @@ pub fn render_status_plain(repos: &[RepoStatusEntry]) {
             .map(|d| d.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| "Never".to_string());
 
+        // Padded *before* colouring: ANSI escapes count toward `{:<22}`-style format
+        // widths, so colouring inside the format string would shear every column that
+        // follows. `colored` emits nothing when stdout is a pipe, so the plain widths
+        // survive redirection untouched.
+        let reason_cell = format!("{reason:<22}");
+        let reason_cell = match &repo.reason {
+            SkipReason::Candidate => reason_cell.green().to_string(),
+            SkipReason::Active => reason_cell.cyan().to_string(),
+            SkipReason::Ignored => reason_cell.dimmed().to_string(),
+            SkipReason::NoBloat => reason_cell.blue().to_string(),
+            SkipReason::PathMissing => reason_cell.red().to_string(),
+            SkipReason::ConfigError(_) => reason_cell.yellow().to_string(),
+        };
+        let bloat_cell = if repo.reclaimable_bytes > 0 {
+            format!("{bloat:<12}").green().bold().to_string()
+        } else {
+            format!("{bloat:<12}")
+        };
         println!(
-            "  {:>3}  {:<35}  {:<22}  {:<12}  {:<12}  {:<13}  {:<13}",
+            "  {:>3}  {}  {}  {}  {}  {:<13}  {:<13}",
             i + 1,
-            path_str,
-            reason,
-            adapters,
-            bloat,
+            output::pad_display(&path_str, 35),
+            reason_cell,
+            format!("{adapters:<12}").magenta(),
+            bloat_cell,
             activity,
             pruned
         );
     }
-    println!("  {}", "─".repeat(118));
+    println!("  {}", "─".repeat(122));
 
     let total: u64 = repos.iter().map(|r| r.reclaimable_bytes).sum();
     let candidates = repos

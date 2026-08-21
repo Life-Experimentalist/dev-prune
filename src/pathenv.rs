@@ -104,7 +104,17 @@ mod imp {
     }
 
     fn powershell(script: &str) -> Command {
-        let mut cmd = crate::spawn::command("powershell");
+        // Absolute first: these registry edits are what runs while the user PATH is
+        // in flux, so resolving the interpreter *through* `PATH` is the one thing
+        // this function must not do. Windows PowerShell has lived at this path since
+        // Vista; if it is somehow gone, fall back to whatever lookup finds.
+        let exe = crate::spawn::system32(r"WindowsPowerShell\v1.0\powershell.exe");
+        let program = if std::path::Path::new(&exe).exists() {
+            exe
+        } else {
+            String::from("powershell")
+        };
+        let mut cmd = crate::spawn::command(program);
         cmd.args([
             "-NoProfile",
             "-NonInteractive",
