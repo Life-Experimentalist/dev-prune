@@ -111,7 +111,7 @@ clap = { version = "4", features = ["derive", "color", "suggestions"] }
 # definition the binary parses with, so a new flag cannot be missing from them.
 clap_complete = "4"
 # Man pages for `devp man`. Same clap definition again, same reason.
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
