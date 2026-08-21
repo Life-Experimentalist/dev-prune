@@ -458,7 +458,7 @@ pub fn binary_available(program: &str) -> bool {
 
 /// The actual `<program> --version` spawn behind [`binary_available`].
 fn probe_binary(program: &str) -> bool {
-    std::process::Command::new(resolve_program(program))
+    crate::spawn::command(resolve_program(program))
         .arg("--version")
         .stdin(std::process::Stdio::null())
         .output()
@@ -486,12 +486,12 @@ fn spawn_capture(
     timeout: std::time::Duration,
 ) -> Result<CommandOutput> {
     use std::io::Read;
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     use std::thread;
     use std::time::Instant;
 
     let resolved = resolve_program(program);
-    let mut child = Command::new(&resolved)
+    let mut child = crate::spawn::command(&resolved)
         .args(args)
         .current_dir(cwd)
         .stdin(Stdio::null())
@@ -605,7 +605,7 @@ pub fn capture_command_with_timeout(
 
 /// Helper: attempt a command but return `true`/`false` instead of `Err`.
 pub fn try_run_command(program: &str, args: &[&str], cwd: &Path) -> bool {
-    std::process::Command::new(resolve_program(program))
+    crate::spawn::command(resolve_program(program))
         .args(args)
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
@@ -648,16 +648,16 @@ fn refuse_if_manifest_newer(lockfile: &Path, program: &str, cwd: &Path) -> Resul
     else {
         return Ok(());
     };
-    if let (Ok(manifest_mtime), Ok(lock_mtime)) = (manifest_meta.modified(), lock_meta.modified()) {
-        if manifest_mtime > lock_mtime + MANIFEST_MTIME_TOLERANCE {
-            anyhow::bail!(
-                "`{program}` is not available, and `{manifest_name}` has been edited more \
+    if let (Ok(manifest_mtime), Ok(lock_mtime)) = (manifest_meta.modified(), lock_meta.modified())
+        && manifest_mtime > lock_mtime + MANIFEST_MTIME_TOLERANCE
+    {
+        anyhow::bail!(
+            "`{program}` is not available, and `{manifest_name}` has been edited more \
                  recently than `{}` — the lockfile may no longer record the current \
                  dependencies, and without `{program}` that cannot be verified. Install \
                  {program} and run its lockfile sync, then prune again.",
-                lockfile.display()
-            );
-        }
+            lockfile.display()
+        );
     }
     Ok(())
 }
@@ -844,7 +844,7 @@ pub fn scan_required_binaries(adapter_names: &[String]) -> Vec<BinaryCheckStatus
     unique
         .into_iter()
         .map(|name| {
-            let output = std::process::Command::new(resolve_program(&name))
+            let output = crate::spawn::command(resolve_program(&name))
                 .arg("--version")
                 .stdin(std::process::Stdio::null())
                 .output();

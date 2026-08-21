@@ -264,6 +264,41 @@ pub fn canonical_key(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Resolve `.` and `..` segments and anchor a relative path to the working directory,
+/// without touching the filesystem — for paths that no longer exist and so cannot be
+/// canonicalised.
+fn lexical_absolute(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = if path.is_absolute() {
+        PathBuf::new()
+    } else {
+        std::env::current_dir().unwrap_or_default()
+    };
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Whether two paths name the same directory, tolerating the differences
+/// canonicalisation normally absorbs: the Windows `\\?\` prefix, separator style,
+/// trailing separators, and case on Windows.
+fn loose_path_eq(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| {
+        let s = p.to_string_lossy().replace('\\', "/");
+        let s = s.strip_prefix("//?/").unwrap_or(&s);
+        let s = s.trim_end_matches('/').to_string();
+        if cfg!(windows) { s.to_lowercase() } else { s }
+    };
+    norm(a) == norm(b)
+}
+
 /// Expand a leading `~` to the user's home directory.
 ///
 /// POSIX shells do this before the argument ever reaches a program, so on Linux and
@@ -604,10 +639,43 @@ impl Registry {
         let tmp_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
         let contents =
             serde_json::to_string_pretty(self).context("Failed to serialize registry")?;
-        fs::write(&tmp_path, &contents)
-            .with_context(|| format!("Failed to write temp registry {}", tmp_path.display()))?;
+        {
+            // `sync_all` before the rename, or the atomicity is only apparent: after a
+            // power cut the rename can survive while the data does not, leaving the
+            // registry as zero bytes — the one outcome this dance exists to prevent.
+            use std::io::Write;
+            let mut file = fs::File::create(&tmp_path)
+                .with_context(|| format!("Failed to write temp registry {}", tmp_path.display()))?;
+            file.write_all(contents.as_bytes())
+                .with_context(|| format!("Failed to write temp registry {}", tmp_path.display()))?;
+            file.sync_all()
+                .with_context(|| format!("Failed to flush temp registry {}", tmp_path.display()))?;
+        }
         fs::rename(&tmp_path, path)
             .with_context(|| format!("Failed to rename temp registry to {}", path.display()))?;
+
+        // A crash between write and rename strands that process's `.<pid>.tmp` forever.
+        // Sweep siblings old enough that no live save can still own them.
+        if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+            let prefix = format!("{}.", name.to_string_lossy());
+            if let Ok(entries) = fs::read_dir(parent) {
+                for entry in entries.flatten() {
+                    let file_name = entry.file_name();
+                    let file_name = file_name.to_string_lossy();
+                    if file_name.starts_with(&prefix)
+                        && file_name.ends_with(".tmp")
+                        && entry
+                            .metadata()
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.elapsed().ok())
+                            .is_some_and(|age| age.as_secs() > 3600)
+                    {
+                        let _ = fs::remove_file(entry.path());
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -624,8 +692,31 @@ impl Registry {
     }
 
     /// Removes a repository from the registry. Returns `true` if it was present.
+    ///
+    /// A repository that has been deleted from disk cannot be canonicalised any more,
+    /// so `canonical_key` falls back to the path as typed — which never equals the
+    /// canonical key it was registered under (on Windows those carry the `\\?\`
+    /// prefix). Unlinking a deleted repository is the most ordinary reason to unlink
+    /// at all, so a direct miss falls back to a lexical comparison.
     pub fn remove_repo(&mut self, path: &Path) -> bool {
-        self.repositories.remove(&canonical_key(path)).is_some()
+        let target = lexical_absolute(path);
+        let removed = if self.repositories.remove(&canonical_key(path)).is_some() {
+            true
+        } else {
+            let found = self
+                .repositories
+                .keys()
+                .find(|k| loose_path_eq(k, &target))
+                .cloned();
+            found.is_some_and(|k| self.repositories.remove(&k).is_some())
+        };
+        if removed {
+            // The undo list stores the canonical `\\?\`-prefixed spelling, while a
+            // deleted directory can only be named lexically — strict equality misses,
+            // and the next `devp undo` "reverts" by removing nothing.
+            self.last_added_repos.retain(|p| !loose_path_eq(p, &target));
+        }
+        removed
     }
 
     // Removed: `repo_paths` and `effective_idle_days`.

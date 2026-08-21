@@ -9,10 +9,11 @@ on:
 permissions:
   contents: read
 
-# A new push to the same PR supersedes the previous run.
+# A new push to the same PR supersedes the previous run. Pushes to main are
+# never cancelled — every commit on the default branch keeps its full result.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,22 +52,31 @@ jobs:
       # `--all-targets` also lints tests and benches. Without it, warnings in test
       # code pass CI and only surface locally.
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
       - name: Test
-        run: cargo test --all --all-features
+        run: cargo test --locked --all --all-features
 
   msrv:
-    name: MSRV (1.85)
+    name: MSRV
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.85.0
+      # The toolchain under test is whatever `rust-version` in Cargo.toml says, read
+      # here rather than pinned, so bumping the MSRV is a one-line change and this job
+      # follows. That field is the single source of truth; the docs that restate it are
+      # checked against it below in the docs job.
+      - name: Read rust-version from Cargo.toml
+        id: msrv
+        run: echo "msrv=$(sed -n 's/^rust-version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.msrv }}
       - uses: Swatinem/rust-cache@v2
-      # Cargo.toml advertises rust-version = "1.85"; nothing enforced it, so a stable-only
-      # API could land and silently break every user pinned to the MSRV.
+      # Cargo.toml advertises the MSRV; nothing enforced it, so a stable-only API could
+      # land and silently break every user pinned to it.
       - name: Build against the declared MSRV
-        run: cargo check --all-targets --all-features
+        run: cargo check --locked --all-targets --all-features
 
   # Five of the six release targets are native builds on their own runner, and the test
   # matrix already proves those compile. aarch64-pc-windows-msvc is the exception: it is
@@ -110,8 +120,15 @@ jobs:
 
       # crates.io rejects anything over 10 MiB. Catching that here beats finding out
       # during the release job, after the git tag already exists.
-      - name: Report the packaged size
-        run: ls -lh target/package/*.crate
+      - name: Assert the packaged crate fits under the crates.io limit
+        run: |
+          crate="$(ls target/package/*.crate)"
+          size="$(stat -c %s "$crate")"
+          echo "$crate is $size bytes"
+          if [ "$size" -gt 10485760 ]; then
+            echo "::error::$crate is $size bytes, over the 10 MiB (10485760) crates.io limit."
+            exit 1
+          fi
 
   changelog:
     name: Changelog entry
@@ -233,6 +250,8 @@ jobs:
         run: shellcheck --shell=sh scripts/install.sh
       - name: shellcheck changelog-section.sh
         run: shellcheck --shell=sh scripts/changelog-section.sh
+      - name: shellcheck check-msrv.sh
+        run: shellcheck --shell=sh scripts/check-msrv.sh
       - name: shellcheck npm-prepare.sh
         run: shellcheck --shell=sh scripts/npm-prepare.sh
       - name: shellcheck npm-publish.sh
@@ -259,7 +278,11 @@ jobs:
         run: |
           npm install --no-save --no-package-lock mermaid@11 jsdom
           node scripts/check-mermaid.mjs README.md docs/*.md docs/*/*.md \
-            .agents/skills/dev-prune/SKILL.md
+            wiki/*.md .agents/skills/dev-prune/SKILL.md
+      # Markdown cannot read Cargo.toml, so the docs that restate the MSRV are checked
+      # against `rust-version` instead of trusted to keep up with it.
+      - name: Docs agree with Cargo.toml's rust-version
+        run: sh scripts/check-msrv.sh
 
   site:
     name: Site build

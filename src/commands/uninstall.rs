@@ -53,8 +53,10 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
         if !std::io::stdin().is_terminal() {
             anyhow::bail!("Refusing to deep-uninstall without confirmation. Re-run with `--yes`.");
         }
-        print!("Continue? [y/N]: ");
-        std::io::stdout().flush()?;
+        // stderr, like every other confirmation: with stdout piped the question would
+        // vanish into the pipe and the command would appear to hang.
+        eprint!("Continue? [y/N]: ");
+        std::io::stderr().flush()?;
         let mut input = String::new();
         std::io::stdin().read_line(&mut input)?;
         if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
@@ -164,26 +166,26 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
             }
         }
 
-        if let Ok(config_dir) = Registry::config_dir() {
-            if config_dir.exists() {
-                match fs::remove_dir_all(&config_dir) {
-                    Ok(()) => output::print_info("Removed global configuration directory."),
-                    Err(e) => {
-                        // Routine on Windows: the managed copy under `<config>/bin` is
-                        // often the very binary running this command, and a running
-                        // executable cannot be deleted. That case is finished by the
-                        // helper; anything else really is left behind.
-                        let running_inside =
-                            std::env::current_exe().is_ok_and(|exe| exe.starts_with(&config_dir));
-                        if cfg!(windows) && running_inside {
-                            pending_dirs.push(config_dir);
-                        } else {
-                            output::print_error(&format!(
-                                "Could not remove {}: {e}",
-                                output::clean_path(&config_dir)
-                            ));
-                            left_behind.push("the global configuration directory".to_string());
-                        }
+        if let Ok(config_dir) = Registry::config_dir()
+            && config_dir.exists()
+        {
+            match fs::remove_dir_all(&config_dir) {
+                Ok(()) => output::print_info("Removed global configuration directory."),
+                Err(e) => {
+                    // Routine on Windows: the managed copy under `<config>/bin` is
+                    // often the very binary running this command, and a running
+                    // executable cannot be deleted. That case is finished by the
+                    // helper; anything else really is left behind.
+                    let running_inside =
+                        std::env::current_exe().is_ok_and(|exe| exe.starts_with(&config_dir));
+                    if cfg!(windows) && running_inside {
+                        pending_dirs.push(config_dir);
+                    } else {
+                        output::print_error(&format!(
+                            "Could not remove {}: {e}",
+                            output::clean_path(&config_dir)
+                        ));
+                        left_behind.push("the global configuration directory".to_string());
                     }
                 }
             }
@@ -195,7 +197,24 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
         setup::suppress_next_auto_setup();
     }
 
-    // 8. One detached helper for everything that is in use right now.
+    // 8. One detached helper for everything that is in use right now. `cmd.exe`
+    // expands `%VAR%` even inside double quotes and a `/C` command line has no way to
+    // escape a literal `%`, so a path carrying one can never be handed over safely —
+    // it is reported honestly instead.
+    for path in pending_files
+        .iter()
+        .chain(pending_dirs.iter())
+        .filter(|p| p.to_string_lossy().contains('%'))
+    {
+        output::print_error(&format!(
+            "Could not schedule {} for removal: its path contains `%`, which cmd.exe \
+             would expand. Delete it by hand after this command exits.",
+            output::clean_path(path)
+        ));
+        left_behind.push("an in-use file".to_string());
+    }
+    pending_files.retain(|p| !p.to_string_lossy().contains('%'));
+    pending_dirs.retain(|p| !p.to_string_lossy().contains('%'));
     let scheduled = !pending_files.is_empty() || !pending_dirs.is_empty();
     if scheduled {
         if spawn_deletion_helper(&pending_files, &pending_dirs) {
@@ -256,6 +275,10 @@ fn remove_binaries(
         for stem in ["dev-prune", "devp"] {
             candidates.push(bin_dir.join(exe_name(stem)));
         }
+        // The windowless scheduler twin, generated beside the managed binary on Windows
+        // and nowhere else. `WINDOWS_HIDDEN_BIN` already carries its `.exe`.
+        #[cfg(windows)]
+        candidates.push(bin_dir.join(crate::constants::WINDOWS_HIDDEN_BIN));
     }
 
     if let Ok(current) = std::env::current_exe() {
@@ -283,7 +306,7 @@ fn remove_binaries(
         match fs::remove_file(&exe) {
             Ok(()) => removed_any = true,
             Err(e) => {
-                if cfg!(windows) {
+                if cfg!(windows) && is_in_use_error(&e) {
                     pending_files.push(exe);
                 } else {
                     output::print_error(&format!(
@@ -302,12 +325,13 @@ fn remove_binaries(
     // The managed `bin` directory should not outlive its contents. On a deep uninstall
     // the whole config directory goes anyway; on a light one, remove it once empty, or
     // let the helper do it after the pending deletions.
-    if !deep {
-        if let Some(bin_dir) = managed_bin_dir {
-            if bin_dir.is_dir() && fs::remove_dir(&bin_dir).is_err() && !pending_files.is_empty() {
-                pending_dirs.push(bin_dir);
-            }
-        }
+    if !deep
+        && let Some(bin_dir) = managed_bin_dir
+        && bin_dir.is_dir()
+        && fs::remove_dir(&bin_dir).is_err()
+        && !pending_files.is_empty()
+    {
+        pending_dirs.push(bin_dir);
     }
 }
 
@@ -372,17 +396,17 @@ fn sweep_stray_copies(
 
     let mut removed = 0usize;
     for stray in strays {
-        if let Some(hint) = stray.manager {
-            if !manager_hints.iter().any(|(name, _)| *name == hint.0) {
-                manager_hints.push(hint);
-            }
+        if let Some(hint) = stray.manager
+            && !manager_hints.iter().any(|(name, _)| *name == hint.0)
+        {
+            manager_hints.push(hint);
         }
         match fs::remove_file(&stray.path) {
             Ok(()) => removed += 1,
             Err(e) => {
                 // The running executable itself is often in this list. Windows keeps
                 // it locked; the detached helper finishes the job.
-                if cfg!(windows) {
+                if cfg!(windows) && is_in_use_error(&e) {
                     pending_files.push(stray.path);
                 } else {
                     output::print_error(&format!(
@@ -413,15 +437,18 @@ fn confirm_sweep(yes: bool) -> bool {
         output::print_info("Not running in a terminal — pass `--yes` to remove these too.");
         return false;
     }
-    print!("Remove them all? [Y/n]: ");
-    if std::io::stdout().flush().is_err() {
+    // Default no, like every other deletion prompt in this tool: these files live in
+    // directories dev-prune does not manage, and a reflexive Enter should never be
+    // what deletes them. The question goes to stderr so a piped stdout cannot eat it.
+    eprint!("Remove them all? [y/N]: ");
+    if std::io::stderr().flush().is_err() {
         return false;
     }
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_err() {
         return false;
     }
-    matches!(input.trim().to_lowercase().as_str(), "" | "y" | "yes")
+    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 /// Every dev-prune/devp file in the sweep directories, except the managed pair (the
@@ -495,10 +522,10 @@ fn sweep_dirs() -> Vec<PathBuf> {
             }
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            dirs.push(parent.to_path_buf());
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        dirs.push(parent.to_path_buf());
     }
     dirs
 }
@@ -540,6 +567,14 @@ fn exe_name(stem: &str) -> String {
     } else {
         stem.to_string()
     }
+}
+
+/// Whether a deletion failure means "in use right now" — the one case the detached
+/// helper can finish. 5 is ERROR_ACCESS_DENIED, which is what deleting the running
+/// image reports; 32 is ERROR_SHARING_VIOLATION. Anything else (read-only media, a
+/// policy block) the helper would only inherit, so it is reported instead of queued.
+fn is_in_use_error(e: &std::io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(5) | Some(32))
 }
 
 /// Whether this executable is running out of a Cargo build directory.

@@ -136,7 +136,9 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     // after the totals above, which are deliberately computed over all of them.
     let repos = engine::take_top(&engine::get_full_status(&registry), top);
 
-    if io::stdout().is_terminal() {
+    // Both ends: the dashboard draws on stdout but reads keys from stdin, and with
+    // stdin redirected it would open on a screen no keypress can ever leave.
+    if io::stdout().is_terminal() && io::stdin().is_terminal() {
         // Interactive TUI — pass a loader closure so the TUI can reload after
         // the user toggles ignore config in .devprune.json or presence of ignore.devprune.json on any repo.
         // It applies the same trim, so the indices it hands back still address `repos`.

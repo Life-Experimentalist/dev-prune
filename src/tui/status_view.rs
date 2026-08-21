@@ -189,120 +189,125 @@ fn run_status_loop(
     loop {
         terminal.draw(|frame| render_ui(frame, app))?;
 
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Release {
-                    continue;
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            // Raw mode delivers Ctrl-C as a key event rather than a signal, so
+            // without this the one key everybody reaches for to escape does nothing.
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+            {
+                return Ok(());
+            }
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => app.move_up(),
+                KeyCode::Down | KeyCode::Char('j') => app.move_down(),
+                KeyCode::Home | KeyCode::Char('g') => app.table_state.select(Some(0)),
+                KeyCode::End | KeyCode::Char('G') => {
+                    app.table_state
+                        .select(Some(app.repos.len().saturating_sub(1)));
                 }
-                // Raw mode delivers Ctrl-C as a key event rather than a signal, so
-                // without this the one key everybody reaches for to escape does nothing.
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
-                {
-                    return Ok(());
+                KeyCode::PageUp => {
+                    let i = app.table_state.selected().unwrap_or(0).saturating_sub(10);
+                    app.table_state.select(Some(i));
                 }
-                match key.code {
-                    KeyCode::Up | KeyCode::Char('k') => app.move_up(),
-                    KeyCode::Down | KeyCode::Char('j') => app.move_down(),
-                    KeyCode::Home | KeyCode::Char('g') => app.table_state.select(Some(0)),
-                    KeyCode::End | KeyCode::Char('G') => {
-                        app.table_state
-                            .select(Some(app.repos.len().saturating_sub(1)));
+                KeyCode::PageDown => {
+                    let i = (app.table_state.selected().unwrap_or(0) + 10)
+                        .min(app.repos.len().saturating_sub(1));
+                    app.table_state.select(Some(i));
+                }
+                KeyCode::Char(' ') => {
+                    if matches!(app.mode, ViewMode::PruneSelect) {
+                        app.toggle_current();
                     }
-                    KeyCode::PageUp => {
-                        let i = app.table_state.selected().unwrap_or(0).saturating_sub(10);
-                        app.table_state.select(Some(i));
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    if matches!(app.mode, ViewMode::PruneSelect) {
+                        app.toggle_all_candidates();
                     }
-                    KeyCode::PageDown => {
-                        let i = (app.table_state.selected().unwrap_or(0) + 10)
-                            .min(app.repos.len().saturating_sub(1));
-                        app.table_state.select(Some(i));
-                    }
-                    KeyCode::Char(' ') => {
-                        if matches!(app.mode, ViewMode::PruneSelect) {
-                            app.toggle_current();
+                }
+                KeyCode::Char('p') | KeyCode::Char('P') => {
+                    app.mode = ViewMode::PruneSelect;
+                    // Auto-select all candidates
+                    for (i, repo) in app.repos.iter().enumerate() {
+                        if matches!(repo.reason, SkipReason::Candidate) {
+                            app.selected[i] = true;
                         }
                     }
-                    KeyCode::Char('a') | KeyCode::Char('A') => {
-                        if matches!(app.mode, ViewMode::PruneSelect) {
-                            app.toggle_all_candidates();
+                }
+                KeyCode::Char('i') | KeyCode::Char('I') => {
+                    // Toggle ignore in .devprune.json on the current repo
+                    if let Some(idx) = app.table_state.selected() {
+                        let repo = &app.repos[idx];
+                        // A missing repository has no directory to write the config
+                        // into; propagating that write error would tear the whole TUI
+                        // down over a row that says "Path Missing" right on it.
+                        if matches!(repo.reason, SkipReason::PathMissing) {
+                            continue;
                         }
-                    }
-                    KeyCode::Char('p') | KeyCode::Char('P') => {
-                        app.mode = ViewMode::PruneSelect;
-                        // Auto-select all candidates
-                        for (i, repo) in app.repos.iter().enumerate() {
-                            if matches!(repo.reason, SkipReason::Candidate) {
-                                app.selected[i] = true;
-                            }
-                        }
-                    }
-                    KeyCode::Char('i') | KeyCode::Char('I') => {
-                        // Toggle ignore in .devprune.json on the current repo
-                        if let Some(idx) = app.table_state.selected() {
-                            let repo = &app.repos[idx];
-                            // Refuses a config that does not parse. Starting from the
-                            // defaults would have written a fresh file over the broken
-                            // one, discarding every other override it held — and the
-                            // dashboard already shows such a repo as `config_error`.
-                            let mut per_repo =
-                                crate::config::PerRepoConfig::load_with_diagnostics(&repo.path)
-                                    .map_err(|e| anyhow::anyhow!(e))
-                                    .with_context(|| {
-                                        format!(
-                                            "Could not toggle ignore for {}",
-                                            crate::output::clean_path(&repo.path)
-                                        )
-                                    })?
-                                    .unwrap_or_default();
-                            per_repo.ignore = !per_repo.ignore;
-                            // Both writes are propagated rather than swallowed. A silent
-                            // failure here redraws the table unchanged, which reads as a
-                            // dead key; worse, a repository the user just un-ignored would
-                            // still be pruned on the next pass.
-                            per_repo.save_to_repo(&repo.path).with_context(|| {
+                        // Refuses a config that does not parse. Starting from the
+                        // defaults would have written a fresh file over the broken
+                        // one, discarding every other override it held — and the
+                        // dashboard already shows such a repo as `config_error`.
+                        let mut per_repo =
+                            crate::config::PerRepoConfig::load_with_diagnostics(&repo.path)
+                                .map_err(|e| anyhow::anyhow!(e))
+                                .with_context(|| {
+                                    format!(
+                                        "Could not toggle ignore for {}",
+                                        crate::output::clean_path(&repo.path)
+                                    )
+                                })?
+                                .unwrap_or_default();
+                        per_repo.ignore = !per_repo.ignore;
+                        // Both writes are propagated rather than swallowed. A silent
+                        // failure here redraws the table unchanged, which reads as a
+                        // dead key; worse, a repository the user just un-ignored would
+                        // still be pruned on the next pass.
+                        per_repo.save_to_repo(&repo.path).with_context(|| {
+                            format!(
+                                "Could not write the config for {}",
+                                crate::output::clean_path(&repo.path)
+                            )
+                        })?;
+
+                        // The legacy marker file still counts as "ignored", so it has
+                        // to go for the toggle to mean anything.
+                        let legacy_ignore = repo.path.join(crate::constants::DEVPRUNE_IGNORE_FILE);
+                        if legacy_ignore.exists() {
+                            std::fs::remove_file(&legacy_ignore).with_context(|| {
                                 format!(
-                                    "Could not write the config for {}",
-                                    crate::output::clean_path(&repo.path)
+                                    "Could not remove {}",
+                                    crate::output::clean_path(&legacy_ignore)
                                 )
                             })?;
+                        }
 
-                            // The legacy marker file still counts as "ignored", so it has
-                            // to go for the toggle to mean anything.
-                            let legacy_ignore =
-                                repo.path.join(crate::constants::DEVPRUNE_IGNORE_FILE);
-                            if legacy_ignore.exists() {
-                                std::fs::remove_file(&legacy_ignore).with_context(|| {
-                                    format!(
-                                        "Could not remove {}",
-                                        crate::output::clean_path(&legacy_ignore)
-                                    )
-                                })?;
-                            }
-
-                            // Signal caller to reload status
-                            app.should_reload = true;
-                            return Ok(());
-                        }
+                        // Signal caller to reload status
+                        app.should_reload = true;
+                        return Ok(());
                     }
-                    KeyCode::Enter => {
-                        if matches!(app.mode, ViewMode::PruneSelect) && app.selected_count() > 0 {
-                            app.confirm_prune();
-                            return Ok(());
-                        }
-                    }
-                    KeyCode::Esc => {
-                        if matches!(app.mode, ViewMode::PruneSelect) {
-                            // Exit prune-select mode, go back to browse
-                            app.mode = ViewMode::Browse;
-                            app.selected.fill(false);
-                        } else {
-                            return Ok(());
-                        }
-                    }
-                    KeyCode::Char('q') => return Ok(()),
-                    _ => {}
                 }
+                KeyCode::Enter => {
+                    if matches!(app.mode, ViewMode::PruneSelect) && app.selected_count() > 0 {
+                        app.confirm_prune();
+                        return Ok(());
+                    }
+                }
+                KeyCode::Esc => {
+                    if matches!(app.mode, ViewMode::PruneSelect) {
+                        // Exit prune-select mode, go back to browse
+                        app.mode = ViewMode::Browse;
+                        app.selected.fill(false);
+                    } else {
+                        return Ok(());
+                    }
+                }
+                KeyCode::Char('q') => return Ok(()),
+                _ => {}
             }
         }
     }
@@ -320,7 +325,7 @@ fn reason_color(reason: &SkipReason) -> Color {
     }
 }
 
-fn render_ui(frame: &mut Frame, app: &StatusApp) {
+fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
     let is_prune_mode = matches!(app.mode, ViewMode::PruneSelect);
 
     let outer = Layout::default()
@@ -407,6 +412,11 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
     // foreground is the only colour guaranteed readable on both light and dark themes.
     let highlighted_row = app.table_state.selected();
 
+    // Once per frame, not once per row — display names are relative to each other,
+    // so the row closure below needs the full list, but rebuilding it n times made
+    // every redraw O(n²) in path clones.
+    let all_paths: Vec<_> = app.repos.iter().map(|r| r.path.clone()).collect();
+
     let rows: Vec<Row> = app
         .repos
         .iter()
@@ -433,7 +443,6 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
                 Cell::from(format!("{}", i + 1)).style(Style::default().fg(Color::DarkGray))
             };
 
-            let all_paths: Vec<_> = app.repos.iter().map(|r| r.path.clone()).collect();
             let path_str = crate::engine::compute_display_name(&repo.path, &all_paths);
 
             let reason_str = repo.reason.to_string();
@@ -514,7 +523,10 @@ fn render_ui(frame: &mut Frame, app: &StatusApp) {
     )
     .highlight_symbol("▶ ");
 
-    frame.render_stateful_widget(table, outer[1], &mut app.table_state.clone());
+    // The real state, not a clone: ratatui stores the computed scroll offset back into
+    // it, and rendering into a throwaway copy pins the viewport to the top — the
+    // moment the selection moved below the visible rows it simply left the screen.
+    frame.render_stateful_widget(table, outer[1], &mut app.table_state);
 
     // ── Footer ────────────────────────────────────────────────────────────────
     let mut footer_lines = if is_prune_mode {

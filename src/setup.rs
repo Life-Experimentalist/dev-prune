@@ -33,11 +33,7 @@ use crate::output;
 /// install and an upgrade both self-heal exactly once.
 const STAMP_FILE: &str = "setup-stamp";
 
-/// Environment variable that suppresses the automatic pass entirely.
-///
-/// For images, CI and anyone who wants the binary and nothing else. `devp setup` still
-/// works when it is set — this only governs the unattended pass.
-pub const ENV_NO_AUTO_SETUP: &str = "DEV_PRUNE_NO_AUTO_SETUP";
+pub use crate::constants::ENV_NO_AUTO_SETUP;
 
 /// Whether the suppression variable is set — by presence, so `=1`, `=true` and even an
 /// empty value all count.
@@ -47,6 +43,12 @@ pub const ENV_NO_AUTO_SETUP: &str = "DEV_PRUNE_NO_AUTO_SETUP";
 /// anywhere saying so.
 pub fn no_auto_setup_requested() -> bool {
     std::env::var_os(ENV_NO_AUTO_SETUP).is_some()
+}
+
+/// Whether every network call is switched off for this process — same by-presence rule
+/// as [`no_auto_setup_requested`], and for the same reason.
+pub fn offline_requested() -> bool {
+    std::env::var_os(crate::constants::ENV_OFFLINE).is_some()
 }
 
 /// What one integration did during a pass.
@@ -235,10 +237,7 @@ fn refresh_managed_copy_if_stale(current: &std::path::Path, managed: &std::path:
 
 /// The `major.minor.patch` a binary reports for itself, if it can.
 fn binary_version(exe: &std::path::Path) -> Option<(u64, u64, u64)> {
-    let output = std::process::Command::new(exe)
-        .arg("--version")
-        .output()
-        .ok()?;
+    let output = crate::spawn::command(exe).arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -592,7 +591,25 @@ pub fn ensure_daemon(interval_days: u64) -> Outcome {
                 Err(e) => Outcome::Failed(format!("{e:#}")),
             }
         }
-        Ok(daemon::DaemonStatus::Installed) => Outcome::AlreadyPresent,
+        // A task registered by a version that only knew the interactive logon flashes a
+        // console window at whoever is logged in every time it fires — the single most
+        // trust-destroying thing a background tool can do. Re-register it hidden; a
+        // machine whose scheduler refuses the hidden logon remembers the refusal and is
+        // not asked again.
+        Ok(daemon::DaemonStatus::Installed) if daemon::wants_hidden_upgrade() => {
+            match daemon::install_daemon(interval_days) {
+                Ok(()) => Outcome::Installed,
+                Err(e) => Outcome::Failed(format!("{e:#}")),
+            }
+        }
+        // A settled, hidden task still needs its windowless twin kept current: the twin
+        // is a copy of the binary, so an upgrade that replaced the binary would otherwise
+        // leave the daemon firing the previous release. No-op on the other platforms, and
+        // when no twin is in use.
+        Ok(daemon::DaemonStatus::Installed) => {
+            daemon::refresh_hidden_twin();
+            Outcome::AlreadyPresent
+        }
         Ok(daemon::DaemonStatus::NotInstalled) => match daemon::install_daemon(interval_days) {
             Ok(()) => Outcome::Installed,
             Err(e) => Outcome::Failed(format!("{e:#}")),
@@ -759,7 +776,7 @@ fn detect_vscode_editors() -> Vec<EditorCli> {
             } else {
                 (*name).to_string()
             };
-            let responds = std::process::Command::new(&cli)
+            let responds = crate::spawn::command(&cli)
                 .arg("--version")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
@@ -773,7 +790,7 @@ fn detect_vscode_editors() -> Vec<EditorCli> {
 }
 
 fn vscode_extension_installed(cli: &str) -> bool {
-    std::process::Command::new(cli)
+    crate::spawn::command(cli)
         .arg("--list-extensions")
         .stdin(std::process::Stdio::null())
         .output()
@@ -796,6 +813,10 @@ fn vscode_extension_installed(cli: &str) -> bool {
 /// so this install self-heals into the normal update flow.
 fn download_release_vsix() -> Option<std::path::PathBuf> {
     use std::time::Duration;
+
+    if offline_requested() {
+        return None;
+    }
 
     let fetch = |url: &str| {
         ureq::get(url)
@@ -823,14 +844,19 @@ fn download_release_vsix() -> Option<std::path::PathBuf> {
     })?;
 
     let bytes = fetch(&asset.1).ok()?.body_mut().read_to_vec().ok()?;
-    let path = std::env::temp_dir().join(&asset.0);
+    // The config directory, not the shared system temp dir: on a multi-user machine
+    // `%TEMP%`-style paths are predictable and writable by others, and the editor is
+    // about to execute what this file contains. The caller deletes it after installing.
+    let dir = Registry::config_dir().ok()?;
+    fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(&asset.0);
     fs::write(&path, bytes).ok()?;
     Some(path)
 }
 
 /// `<cli> --install-extension <arg>`, surfacing the editor's own output.
 fn run_install(cli: &str, arg: &str) -> bool {
-    std::process::Command::new(cli)
+    crate::spawn::command(cli)
         .args(["--install-extension", arg])
         .stdin(std::process::Stdio::null())
         .status()
@@ -888,7 +914,7 @@ pub fn offer_vscode_extension() {
         .join(", ");
     println!();
     print!(
-        "{names} detected — install the dev-prune extension? It validates .devprune.json and shows reclaimable space in the status bar. [Y/n] "
+        "{names} detected — install the dev-prune extension? It validates .devprune.json and shows reclaimable space in the status bar. [y/N] "
     );
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
@@ -897,7 +923,9 @@ pub fn offer_vscode_extension() {
     }
     write_marker();
 
-    if matches!(answer.trim().to_lowercase().as_str(), "n" | "no") {
+    // Installing into someone's editor is the most visible thing this tool ever does
+    // uninvited, so a bare Enter declines. Only an explicit yes installs.
+    if !matches!(answer.trim().to_lowercase().as_str(), "y" | "yes") {
         output::print_info(&format!(
             "Skipped. Install it any time with `{} --install-extension {}`.",
             missing[0].cli,
@@ -934,6 +962,9 @@ pub fn offer_vscode_extension() {
                 ));
             }
         }
+    }
+    if let Some(Some(path)) = &release_vsix {
+        let _ = fs::remove_file(path);
     }
 }
 

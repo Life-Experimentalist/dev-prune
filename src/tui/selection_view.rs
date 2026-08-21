@@ -72,78 +72,78 @@ fn run_selection_loop(
             render_ui(frame, items, list_state);
         })?;
 
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                // Ignore KeyRelease events (common on Windows console)
-                if key.kind == KeyEventKind::Release {
-                    continue;
-                }
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            // Ignore KeyRelease events (common on Windows console)
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
 
-                // Raw mode delivers Ctrl-C as a key event rather than a signal, so
-                // without this the one key everybody reaches for to escape does nothing.
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
-                {
+            // Raw mode delivers Ctrl-C as a key event rather than a signal, so
+            // without this the one key everybody reaches for to escape does nothing.
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
+            {
+                return Ok(false);
+            }
+
+            let last = items.len().saturating_sub(1);
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    let i = match list_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                items.len() - 1
+                            } else {
+                                i - 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    list_state.select(Some(i));
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let i = match list_state.selected() {
+                        Some(i) => {
+                            if i >= items.len() - 1 {
+                                0
+                            } else {
+                                i + 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    list_state.select(Some(i));
+                }
+                KeyCode::Home | KeyCode::Char('g') => list_state.select(Some(0)),
+                KeyCode::End | KeyCode::Char('G') => list_state.select(Some(last)),
+                KeyCode::PageUp => {
+                    let i = list_state.selected().unwrap_or(0).saturating_sub(10);
+                    list_state.select(Some(i));
+                }
+                KeyCode::PageDown => {
+                    let i = (list_state.selected().unwrap_or(0) + 10).min(last);
+                    list_state.select(Some(i));
+                }
+                KeyCode::Char(' ') => {
+                    if let Some(i) = list_state.selected() {
+                        items[i].selected = !items[i].selected;
+                    }
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    let all_selected = items.iter().all(|item| item.selected);
+                    for item in items.iter_mut() {
+                        item.selected = !all_selected;
+                    }
+                }
+                KeyCode::Enter => {
+                    return Ok(true);
+                }
+                KeyCode::Esc | KeyCode::Char('q') => {
                     return Ok(false);
                 }
-
-                let last = items.len().saturating_sub(1);
-                match key.code {
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        let i = match list_state.selected() {
-                            Some(i) => {
-                                if i == 0 {
-                                    items.len() - 1
-                                } else {
-                                    i - 1
-                                }
-                            }
-                            None => 0,
-                        };
-                        list_state.select(Some(i));
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        let i = match list_state.selected() {
-                            Some(i) => {
-                                if i >= items.len() - 1 {
-                                    0
-                                } else {
-                                    i + 1
-                                }
-                            }
-                            None => 0,
-                        };
-                        list_state.select(Some(i));
-                    }
-                    KeyCode::Home | KeyCode::Char('g') => list_state.select(Some(0)),
-                    KeyCode::End | KeyCode::Char('G') => list_state.select(Some(last)),
-                    KeyCode::PageUp => {
-                        let i = list_state.selected().unwrap_or(0).saturating_sub(10);
-                        list_state.select(Some(i));
-                    }
-                    KeyCode::PageDown => {
-                        let i = (list_state.selected().unwrap_or(0) + 10).min(last);
-                        list_state.select(Some(i));
-                    }
-                    KeyCode::Char(' ') => {
-                        if let Some(i) = list_state.selected() {
-                            items[i].selected = !items[i].selected;
-                        }
-                    }
-                    KeyCode::Char('a') | KeyCode::Char('A') => {
-                        let all_selected = items.iter().all(|item| item.selected);
-                        for item in items.iter_mut() {
-                            item.selected = !all_selected;
-                        }
-                    }
-                    KeyCode::Enter => {
-                        return Ok(true);
-                    }
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        return Ok(false);
-                    }
-                    _ => {}
-                }
+                _ => {}
             }
         }
     }

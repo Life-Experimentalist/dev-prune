@@ -95,6 +95,23 @@ jobs:
         shell: bash
         run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > /dev/null
 
+      # The install scripts resolve the latest release dynamically, but each carries a
+      # pinned fallback for offline mirrors and rate-limited CI. A fallback left on the
+      # previous version ships silently — nothing else ever reads it until the dynamic
+      # resolution fails on some user's machine — so pin it to the tag here.
+      - name: Verify the install scripts' fallback versions match the tag
+        shell: bash
+        run: |
+          version="${{ steps.version.outputs.version }}"
+          sh_fallback="$(grep -o 'FALLBACK_VERSION="[^"]*"' scripts/install.sh | head -n 1 | sed 's/FALLBACK_VERSION="\(.*\)"/\1/')"
+          ps1_fallback="$(grep -o "^\\\$fallbackVersion = '[^']*'" scripts/install.ps1 | head -n 1 | sed "s/.*'\\(.*\\)'/\\1/")"
+          echo "install.sh fallback:  ${sh_fallback:-<not found>}"
+          echo "install.ps1 fallback: ${ps1_fallback:-<not found>}"
+          if [ "$sh_fallback" != "$version" ] || [ "$ps1_fallback" != "$version" ]; then
+            echo "::error::The tag is $version — bump FALLBACK_VERSION in scripts/install.sh and \$fallbackVersion in scripts/install.ps1 to the release version."
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -223,6 +240,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
+          # The MSRV comes from Cargo.toml's `rust-version` — the single source of
+          # truth — so this note can never disagree with what `cargo install` enforces.
+          MSRV="$(sed -n 's/^rust-version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml)"
           cat >> release-body.md <<EOF
 
           ---
@@ -240,7 +260,7 @@ jobs:
           | macOS / Linux | \`curl -fsSL https://devprune.vkrishna04.me/install.sh \| sh\` |
           | Python tooling | \`uv tool install dev-prune==${VERSION}\` / \`pipx install dev-prune==${VERSION}\` |
           | Rust, no compile | \`cargo binstall dev-prune@${VERSION}\` |
-          | Rust, from source | \`cargo install dev-prune --version ${VERSION}\` (needs Rust 1.85+) |
+          | Rust, from source | \`cargo install dev-prune --version ${VERSION}\` (needs Rust ${MSRV}+) |
 
           The PyPI packages contain these same binaries rather than downloading one
           afterwards, so they work behind a registry mirror and offline. \`cargo install\`

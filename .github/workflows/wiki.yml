@@ -57,4 +57,7 @@ jobs:
             exit 0
           fi
           git commit -m "Sync from wiki/ at ${{ github.sha }}"
-          git push
+          # Force, because this really is a mirror: a web-UI edit on the wiki
+          # side makes the wiki repository non-fast-forward, and the promise
+          # above is that the next sync overwrites it — not that it fails.
+          git push --force

@@ -49,15 +49,15 @@ fn lockfile_package_names(lockfile: &Path) -> Option<HashSet<String>> {
         if !in_package {
             continue;
         }
-        if let Some(rest) = line.strip_prefix("name") {
-            if let Some(value) = rest.trim_start().strip_prefix('=') {
-                let value = value.trim().trim_matches('"');
-                if !value.is_empty() {
-                    names.insert(normalize_package_name(value));
-                }
-                // Only the first `name` in each `[[package]]` entry is the package's own.
-                in_package = false;
+        if let Some(rest) = line.strip_prefix("name")
+            && let Some(value) = rest.trim_start().strip_prefix('=')
+        {
+            let value = value.trim().trim_matches('"');
+            if !value.is_empty() {
+                names.insert(normalize_package_name(value));
             }
+            // Only the first `name` in each `[[package]]` entry is the package's own.
+            in_package = false;
         }
     }
     (!names.is_empty()).then_some(names)
@@ -92,12 +92,11 @@ impl PackageManager for Uv {
         }
 
         let pyproject = path.join("pyproject.toml");
-        if pyproject.exists() {
-            if let Ok(content) = fs::read_to_string(&pyproject) {
-                if content.contains("[tool.uv]") {
-                    return true;
-                }
-            }
+        if pyproject.exists()
+            && let Ok(content) = fs::read_to_string(&pyproject)
+            && content.contains("[tool.uv]")
+        {
+            return true;
         }
 
         false

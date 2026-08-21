@@ -2,16 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // macOS LaunchAgent integration.
-#![allow(dead_code)]
 
+use crate::constants::MACOS_LAUNCHD_LABEL as LABEL;
 use crate::daemon::{DaemonStatus, get_exe_path};
 use anyhow::{Context, Result};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-
-const LABEL: &str = "com.devprune.daemon";
 
 /// Get the path to the LaunchAgent plist file.
 pub fn get_plist_path() -> Result<PathBuf> {

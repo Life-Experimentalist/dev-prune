@@ -304,20 +304,20 @@ fn query_dir() -> PathBuf {
 
 /// Resolve one probe to a directory that exists, or nothing.
 fn locate(probe: &Probe, from: &Path) -> Option<PathBuf> {
-    if let Some((program, args)) = probe.query {
-        if adapters::binary_available(program) {
-            let answered = adapters::capture_command_with_timeout(
-                program,
-                args,
-                from,
-                std::time::Duration::from_secs(constants::CACHE_QUERY_TIMEOUT_SECS),
-            )
-            .ok()
-            .and_then(|raw| path_from_output(&raw))
-            .filter(|p| p.is_dir());
-            if answered.is_some() {
-                return answered;
-            }
+    if let Some((program, args)) = probe.query
+        && adapters::binary_available(program)
+    {
+        let answered = adapters::capture_command_with_timeout(
+            program,
+            args,
+            from,
+            std::time::Duration::from_secs(constants::CACHE_QUERY_TIMEOUT_SECS),
+        )
+        .ok()
+        .and_then(|raw| path_from_output(&raw))
+        .filter(|p| p.is_dir());
+        if answered.is_some() {
+            return answered;
         }
     }
 

@@ -9,6 +9,11 @@
 /// Application crate version derived dynamically from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Minimum supported Rust version, derived dynamically from `rust-version` in
+/// `Cargo.toml` — which is the single source of truth for the MSRV. Only `cargo
+/// install` users ever meet it; every other channel ships a prebuilt binary.
+pub const MSRV: &str = env!("CARGO_PKG_RUST_VERSION");
+
 /// Application name.
 pub const APP_NAME: &str = "dev-prune";
 
@@ -140,8 +145,10 @@ pub const RELEASES_URL: &str = "https://github.com/Life-Experimentalist/dev-prun
 
 /// GitHub API endpoint for the latest published release.
 ///
-/// Contacted only by `devp update --check`, never on any other code path. See the
-/// network policy in `docs/PRIVACY.md`.
+/// Contacted by `devp update`, by the interval-gated check behind `run`/`status`/`init`
+/// (off via `update_check false` or `DEV_PRUNE_OFFLINE`), and by the one-time
+/// extension-install offer's `.vsix` fallback. See the network policy in
+/// `docs/PRIVACY.md`.
 pub const LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/Life-Experimentalist/dev-prune/releases/latest";
 
@@ -168,6 +175,18 @@ pub const CONFIG_DIR_NAME: &str = "dev-prune";
 
 /// Global environment variable name to override config directory location.
 pub const ENV_CONFIG_DIR_OVERRIDE: &str = "DEV_PRUNE_CONFIG_DIR";
+
+/// Environment variable that suppresses the automatic setup pass entirely.
+///
+/// For images, CI and anyone who wants the binary and nothing else. `devp setup` still
+/// works when it is set — this only governs the unattended pass.
+pub const ENV_NO_AUTO_SETUP: &str = "DEV_PRUNE_NO_AUTO_SETUP";
+
+/// Environment variable that keeps the process off the network entirely — the release
+/// check and the extension-download fallback alike. Set by the test suites, useful on
+/// air-gapped machines; the durable per-user switch is
+/// `devp config set update_check false`.
+pub const ENV_OFFLINE: &str = "DEV_PRUNE_OFFLINE";
 
 /// Filename that, when present in a repo root, causes dev-prune to skip that repo entirely.
 ///
@@ -205,3 +224,17 @@ pub const AGENT_SKILLS_SUBDIR: &str = "skills";
 /// Marketplace identifier (`publisher.name`) of the VS Code extension, as understood
 /// by `code --install-extension`.
 pub const VSCODE_EXTENSION_ID: &str = "VKrishna04.dev-prune";
+
+/// Name of the Windows Task Scheduler task the daemon registers.
+pub const WINDOWS_TASK_NAME: &str = "DevPrune";
+/// File name of the windowless scheduler binary — `dev-prune.exe` with its PE subsystem
+/// set to GUI, the same relationship `pythonw.exe` has to `python.exe`. Generated
+/// locally beside the managed binary; never shipped in any archive.
+pub const WINDOWS_HIDDEN_BIN: &str = "devpw.exe";
+/// Marker file (in the config directory) recording that this machine's Task Scheduler
+/// refused the hidden (S4U) task registration, so setup keeps the visible task instead
+/// of retrying the upgrade on every pass.
+pub const SCHEDULER_HIDDEN_REFUSED_MARKER: &str = "scheduler-hidden-refused";
+
+/// Label of the macOS LaunchAgent the daemon registers (also names its plist file).
+pub const MACOS_LAUNCHD_LABEL: &str = "com.devprune.daemon";

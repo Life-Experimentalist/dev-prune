@@ -34,10 +34,11 @@ for anything that isn't.
 4. **`--deep` on uninstall wipes configuration.** Confirm with the user before using it.
 5. **dev-prune never updates itself.** Its one network request is a release check against
    GitHub's public API (no body, no identifier, no usage data, at most weekly, disabled by
-   `devp config set update_check false`). It never downloads a binary — if a newer version
+   `devp config set update_check false`; `DEV_PRUNE_OFFLINE=1` keeps the whole process off
+   the network regardless of any setting). It never downloads a binary — if a newer version
    exists, tell the user the upgrade command for their install channel: re-run the
-   `install.sh`/`install.ps1` one-liner, `npm update -g dev-prune`, `uv tool upgrade
-   dev-prune`, `pipx upgrade dev-prune`, `cargo binstall dev-prune --force` (prebuilt), or
+   `install.sh`/`install.ps1` one-liner, `uv tool upgrade dev-prune`, `pipx upgrade
+   dev-prune`, `cargo binstall dev-prune --force` (prebuilt), or
    `cargo install dev-prune --force` (compiles).
 
 ## What it will never do

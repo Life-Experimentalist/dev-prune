@@ -58,9 +58,10 @@ pub fn run(args: RunArgs<'_>) -> Result<()> {
     // in, so deletion has to have been authorised on the command line. Failing loudly
     // beats either silently deleting or silently doing nothing.
     if args.json && !args.dry_run && !args.yes {
-        anyhow::bail!(
+        return Err(anyhow::Error::new(crate::UsageError(
             "`--json` cannot ask for confirmation. Pass `--dry-run` to analyse, or `--yes` to delete."
-        );
+                .to_string(),
+        )));
     }
 
     if !args.json {
@@ -586,7 +587,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         || !registry.settings.require_confirmation
     {
         candidates
-    } else if io::stdout().is_terminal() {
+    } else if io::stdout().is_terminal() && io::stdin().is_terminal() {
         eprintln!();
         eprintln!(
             "  Loading interactive selector... (↑↓ navigate, Space toggle, Enter confirm, q cancel)"

@@ -17,14 +17,16 @@ fn devp(config_dir: &Path) -> Command {
     let exe = Path::new(env!("CARGO_BIN_EXE_dev-prune"));
     let mut cmd = Command::new(exe);
     cmd.env("DEV_PRUNE_NO_AUTO_SETUP", "1");
+    // Each test gets a fresh config dir, so the interval-gated release check would be
+    // "due" on every invocation — and a test suite must not touch the network.
+    cmd.env("DEV_PRUNE_OFFLINE", "1");
     cmd.env("DEV_PRUNE_CONFIG_DIR", config_dir);
 
-    // `doctor` calls it breakage when the running executable's own directory is not on
-    // PATH, and it is right to: `devp` would not resolve in a new shell. The test binary
-    // lives in `target/debug`, which is on PATH only because cargo puts it there so
-    // Windows can find DLLs. Linux and macOS get `LD_LIBRARY_PATH`/`DYLD_*` instead, so
-    // the doctor tests were asserting a healthy installation on one platform and an
-    // unhealthy one on the other two — three failures that only CI ever saw.
+    // `doctor` warns when the running executable's own directory is not on PATH. The
+    // test binary lives in `target/debug`, which is on PATH only because cargo puts it
+    // there so Windows can find DLLs. Linux and macOS get `LD_LIBRARY_PATH`/`DYLD_*`
+    // instead, so without this the doctor tests would assert one report on one platform
+    // and a different one on the other two.
     if let Some(dir) = exe.parent() {
         let sep = if cfg!(windows) { ";" } else { ":" };
         let inherited = std::env::var("PATH").unwrap_or_default();
@@ -210,7 +212,9 @@ fn run_json_refuses_to_delete_without_an_explicit_go_ahead() {
     // No `--dry-run`, no `--yes`: there is no prompt and no TUI in JSON mode, so this
     // must fail loudly rather than delete silently or do nothing silently.
     let out = devp(&config).args(["run", "--json"]).output().unwrap();
-    assert!(!out.status.success());
+    // A missing flag combination is a usage error, not a runtime failure: scripts
+    // branch on the difference, so the exact code is pinned.
+    assert_eq!(out.status.code(), Some(2));
     assert!(
         combined(&out).contains("--dry-run"),
         "error did not say how to proceed:\n{}",
@@ -644,6 +648,76 @@ fn unlink_missing_removes_every_dead_entry_and_leaves_the_live_ones() {
         "the live repository must survive"
     );
     assert!(!registry.contains("dead"), "the dead entry must be gone");
+}
+
+/// Registry keys are canonicalized paths, and a deleted directory can no longer be
+/// canonicalized — so unregistering it by name has to fall back to a lexical match
+/// instead of telling the user the path they are looking at "is not registered".
+#[test]
+fn unlink_by_name_still_works_after_the_directory_is_deleted() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let repo = tmp.path().join("erased");
+    git_repo(&repo);
+    devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(&repo).unwrap();
+
+    let out = devp(&config)
+        .args(["unlink", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(combined(&out).contains("Unlinked:"), "{}", combined(&out));
+
+    let registry = fs::read_to_string(config.join("registry.json")).unwrap();
+    assert!(!registry.contains("erased"), "the entry must be gone");
+}
+
+/// A binary that demonstrably just ran is not broken; being off PATH is a warning with
+/// the command that fixes it, never an exit-1. The harness normally prepends the test
+/// binary's directory to PATH — this test strips it back out to simulate the off-PATH
+/// install.
+#[test]
+fn doctor_off_path_is_a_warning_not_a_failure() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let exe = Path::new(env!("CARGO_BIN_EXE_dev-prune"));
+    let exe_dir = exe.parent().unwrap();
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let matches_exe_dir = |entry: &str| {
+        let norm = |s: &str| {
+            let s = s.trim_end_matches(['/', '\\']).replace('\\', "/");
+            if cfg!(windows) { s.to_lowercase() } else { s }
+        };
+        norm(entry) == norm(&exe_dir.to_string_lossy())
+    };
+    let stripped: String = std::env::var("PATH")
+        .unwrap_or_default()
+        .split(sep)
+        .filter(|p| !matches_exe_dir(p))
+        .collect::<Vec<_>>()
+        .join(&sep.to_string());
+
+    let out = devp(&config)
+        .env("PATH", stripped)
+        .arg("doctor")
+        .output()
+        .unwrap();
+    let text = combined(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "off-PATH must warn, not fail\n{text}"
+    );
+    assert!(
+        text.contains("dev-prune setup"),
+        "the warning must name the command that fixes it\n{text}"
+    );
 }
 
 // ---------------------------------------------------------------------------

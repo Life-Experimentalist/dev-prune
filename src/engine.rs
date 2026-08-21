@@ -145,10 +145,10 @@ impl AdapterFilter {
             .transpose()?
             .unwrap_or_default();
 
-        if let Some(only) = &only {
-            if let Some(clash) = only.iter().find(|n| skip.contains(n)) {
-                anyhow::bail!("`{clash}` is in both --only and --skip; pick one.");
-            }
+        if let Some(only) = &only
+            && let Some(clash) = only.iter().find(|n| skip.contains(n))
+        {
+            anyhow::bail!("`{clash}` is in both --only and --skip; pick one.");
         }
 
         Ok(Self { only, skip })
@@ -335,8 +335,22 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
         return results;
     }
 
-    // Safety check: must be a git repo
+    // A registered path whose `.git` has gone (deleted by hand, or a worktree pruned
+    // by `git worktree prune`) must not vanish from the report the way it once did —
+    // same reasoning as the PathMissing line above: silence reads as "handled".
     if !scanner::is_git_repo(repo_path) {
+        results.push(PruneResult {
+            repo_path: repo_path.to_path_buf(),
+            adapter_name: "-".to_string(),
+            bloat_dir: "-".to_string(),
+            size_freed: 0,
+            shared_bytes: 0,
+            status: PruneStatus::ActivityCheckError(format!(
+                "`{}` is no longer a git repository — nothing was touched. \
+                 `devp unlink` removes it from the registry.",
+                repo_path.display()
+            )),
+        });
         return results;
     }
 
@@ -467,33 +481,20 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                 continue;
             }
 
-            // Enforce lockfile BEFORE any deletion (skipped in dry-run — analysis only)
-            if !dry_run {
-                let policy = crate::adapters::EnforcePolicy {
-                    allow_rewrite: opts.allow_manifest_rewrite,
-                    timeout: std::time::Duration::from_secs(opts.command_timeout_secs),
-                };
-                if let Err(e) = adapter.enforce_lockfile(&project.path, policy) {
-                    for (label, _) in &bloat_dirs {
-                        results.push(PruneResult {
-                            repo_path: repo_path.to_path_buf(),
-                            adapter_name: adapter.name().to_string(),
-                            bloat_dir: label.clone(),
-                            size_freed: 0,
-                            shared_bytes: 0,
-                            status: PruneStatus::LockfileError(e.to_string()),
-                        });
-                    }
-                    continue;
-                }
-            }
-
+            // Both refusals run before the dry-run branch AND before lockfile
+            // enforcement. Before dry-run, because an analysis that counted a
+            // symlinked or nested-git directory as reclaimable promised space the
+            // real pass then refused to touch. Before enforcement, because with
+            // `allow_manifest_rewrite` the enforcement step may rewrite a tracked
+            // lockfile — and rewriting one in service of directories that are then
+            // every one refused leaves a modified tracked file behind with nothing
+            // deleted, the exact background-pass surprise the config forbids.
+            let mut deletable: Vec<(String, BloatDir)> = Vec::new();
             for (label, bd) in bloat_dirs {
-                // A symlinked/junctioned bloat dir points at storage we do not own — in
-                // a monorepo it is usually the workspace root's real `node_modules`.
-                // Refuse rather than risk a recursive delete outside the repo. Checked
-                // before the dry-run branch, because an analysis that counted the link
-                // as reclaimable promised space the real pass then refused to touch.
+                // A symlinked/junctioned bloat dir points at storage we do not own —
+                // in a monorepo it is usually the workspace root's real
+                // `node_modules`. Refuse rather than risk a recursive delete outside
+                // the repo.
                 if fs::symlink_metadata(&bd.path)
                     .map(|m| m.file_type().is_symlink())
                     .unwrap_or(false)
@@ -510,18 +511,6 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                              it gone.",
                             bd.path.display()
                         )),
-                    });
-                    continue;
-                }
-
-                if dry_run {
-                    results.push(PruneResult {
-                        repo_path: repo_path.to_path_buf(),
-                        adapter_name: adapter.name().to_string(),
-                        bloat_dir: label,
-                        size_freed: bd.size_bytes,
-                        shared_bytes: bd.shared_bytes,
-                        status: PruneStatus::SkippedDryRun,
                     });
                     continue;
                 }
@@ -548,12 +537,58 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     continue;
                 }
 
+                deletable.push((label, bd));
+            }
+
+            if deletable.is_empty() {
+                continue;
+            }
+
+            // Enforce lockfile BEFORE any deletion (skipped in dry-run — analysis only)
+            if !dry_run {
+                let policy = crate::adapters::EnforcePolicy {
+                    allow_rewrite: opts.allow_manifest_rewrite,
+                    timeout: std::time::Duration::from_secs(opts.command_timeout_secs),
+                };
+                if let Err(e) = adapter.enforce_lockfile(&project.path, policy) {
+                    for (label, _) in &deletable {
+                        results.push(PruneResult {
+                            repo_path: repo_path.to_path_buf(),
+                            adapter_name: adapter.name().to_string(),
+                            bloat_dir: label.clone(),
+                            size_freed: 0,
+                            shared_bytes: 0,
+                            status: PruneStatus::LockfileError(e.to_string()),
+                        });
+                    }
+                    continue;
+                }
+            }
+
+            for (label, bd) in deletable {
+                if dry_run {
+                    results.push(PruneResult {
+                        repo_path: repo_path.to_path_buf(),
+                        adapter_name: adapter.name().to_string(),
+                        bloat_dir: label,
+                        size_freed: bd.size_bytes,
+                        shared_bytes: bd.shared_bytes,
+                        status: PruneStatus::SkippedDryRun,
+                    });
+                    continue;
+                }
+
                 let size = bd.size_bytes;
                 // `remove_dir_all` is not atomic: one locked file — an antivirus scan,
                 // an editor's file watcher — aborts it half-way, leaving a directory
-                // that is neither usable nor gone. Retry once, because such locks are
-                // usually released within moments of being hit.
-                let delete = fs::remove_dir_all(&bd.path).or_else(|_| fs::remove_dir_all(&bd.path));
+                // that is neither usable nor gone. Retry once after a beat, because
+                // such locks are usually released within moments of being hit — and a
+                // back-to-back retry lost the race to the very scanners it was meant
+                // to outwait.
+                let delete = fs::remove_dir_all(&bd.path).or_else(|_| {
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    fs::remove_dir_all(&bd.path)
+                });
                 match delete {
                     // "Not found" after a failed first attempt means the delete *did*
                     // complete — treat both the same.
@@ -663,6 +698,18 @@ fn collect_bloat(
             }
             for bd in adapter.bloat_dirs(&project.path) {
                 if bd.size_bytes < min_size_bytes {
+                    continue;
+                }
+                // The same two refusals the prune pass applies, for the same reason
+                // the size floor is applied here: what `devp status` reports as
+                // reclaimable must be what `devp run` would actually delete. A
+                // junctioned `node_modules` even sizes somebody else's storage, so
+                // counting it overstates the dashboard twice over.
+                if fs::symlink_metadata(&bd.path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false)
+                    || find_nested_git(&bd.path).is_some()
+                {
                     continue;
                 }
                 if claimed.insert(bd.path.clone()) {
@@ -1086,12 +1133,10 @@ pub fn compute_display_name(repo_path: &Path, all_paths: &[PathBuf]) -> String {
     if let Some(cfg) = crate::config::PerRepoConfig::load_with_diagnostics(repo_path)
         .ok()
         .flatten()
+        && let Some(custom) = cfg.project_name
+        && !custom.trim().is_empty()
     {
-        if let Some(custom) = cfg.project_name {
-            if !custom.trim().is_empty() {
-                return custom;
-            }
-        }
+        return custom;
     }
 
     let folder_name = repo_path
@@ -1110,12 +1155,11 @@ pub fn compute_display_name(repo_path: &Path, all_paths: &[PathBuf]) -> String {
         })
         .count();
 
-    if duplicate_count > 1 {
-        if let Some(parent) = repo_path.parent() {
-            if let Some(parent_name) = parent.file_name() {
-                return format!("{}/{}", parent_name.to_string_lossy(), folder_name);
-            }
-        }
+    if duplicate_count > 1
+        && let Some(parent) = repo_path.parent()
+        && let Some(parent_name) = parent.file_name()
+    {
+        return format!("{}/{}", parent_name.to_string_lossy(), folder_name);
     }
 
     folder_name
@@ -1230,9 +1274,15 @@ mod tests {
 
     #[test]
     fn test_prune_repo_non_git() {
+        // A directory that is not a git repository produces a visible error line, not
+        // silence — an empty result reads as "handled" in the run report.
         let tmp = TempDir::new().unwrap();
         let results = prune_repo(tmp.path(), 15, false, false);
-        assert!(results.is_empty());
+        assert_eq!(results.len(), 1);
+        assert!(matches!(
+            results[0].status,
+            PruneStatus::ActivityCheckError(_)
+        ));
     }
 
     #[test]

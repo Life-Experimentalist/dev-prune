@@ -106,10 +106,10 @@ impl Findings {
         if !self.problem_repairs.contains(&repair) {
             self.problem_repairs.push(repair);
         }
-        if let Some(last) = self.problems.len().checked_sub(1) {
-            if !self.fixable_problems.contains(&last) {
-                self.fixable_problems.push(last);
-            }
+        if let Some(last) = self.problems.len().checked_sub(1)
+            && !self.fixable_problems.contains(&last)
+        {
+            self.fixable_problems.push(last);
         }
     }
 
@@ -427,10 +427,14 @@ fn check_binary(f: &mut Findings) {
     if on_path {
         f.ok("PATH", &output::clean_path(dir));
     } else {
-        f.problem(
+        // A warning, not a problem: the binary demonstrably runs — doctor is it
+        // running. Off PATH is a convenience gap (portable installs, cargo target
+        // dirs), not breakage, and exit 1 here would fail CI on a healthy install.
+        f.warn(
             "PATH",
             &format!(
-                "{} is not on PATH — `devp` will not resolve in a new shell",
+                "{} is not on PATH — `devp` will not resolve in a new shell. \
+                 `dev-prune setup` adds it.",
                 output::clean_path(dir)
             ),
         );

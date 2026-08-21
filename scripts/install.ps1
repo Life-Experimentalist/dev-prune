@@ -74,11 +74,26 @@ The equivalent environment variables work with the plain `iwr ... | iex` one-lin
 
 # A parameter beats its environment variable: it is the more explicit of the two, and it
 # is the one the user typed on the command line they are looking at.
-$version = if ($Version) { $Version } elseif ($env:DEV_PRUNE_VERSION) { $env:DEV_PRUNE_VERSION } else { '1.1.0' }
-$version = $version.TrimStart('v')
+$version = if ($Version) { $Version } elseif ($env:DEV_PRUNE_VERSION) { $env:DEV_PRUNE_VERSION } else { '' }
 $noPath = $NoPath -or ($env:DEV_PRUNE_NO_PATH -eq '1')
 $noAutoSetup = $NoAutoSetup -or ($env:DEV_PRUNE_NO_AUTO_SETUP -eq '1')
 $repo = 'Life-Experimentalist/dev-prune'
+
+# With no version pinned, ask GitHub which release is newest. The /releases/latest
+# redirect carries the tag, so one HEAD request answers without parsing JSON.
+# $fallbackVersion exists for offline mirrors and rate-limited CI: it must always name
+# a published release, and the release workflow refuses to tag until it matches.
+$fallbackVersion = '1.2.0'
+if (-not $version) {
+    try {
+        $resp = Invoke-WebRequest -Uri "https://github.com/$repo/releases/latest" -Method Head -MaximumRedirection 5 -UseBasicParsing -ErrorAction Stop
+        $finalUrl = if ($resp.BaseResponse.ResponseUri) { $resp.BaseResponse.ResponseUri.AbsoluteUri } else { $resp.BaseResponse.RequestMessage.RequestUri.AbsoluteUri }
+        if ($finalUrl -match '/tag/v([^/]+)$') { $version = $Matches[1] } else { $version = $fallbackVersion }
+    } catch {
+        $version = $fallbackVersion
+    }
+}
+$version = $version.TrimStart('v')
 
 Write-Host ""
 Write-Host "-> Installing dev-prune v$version" -ForegroundColor Cyan
@@ -210,18 +225,41 @@ function Test-OnPath {
 }
 
 if (-not $noPath) {
-    # A profile that has never had a User-scoped Path returns $null here, and calling
-    # .TrimEnd() on $null is a terminating error.
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if ($null -eq $userPath) { $userPath = '' }
+    # Raw registry access, not [Environment]::GetEnvironmentVariable: that call hands
+    # back the *expanded* value, and writing it back would bake every %USERPROFILE%-
+    # style entry into a literal path for good. Reading with
+    # DoNotExpandEnvironmentNames and keeping the value's REG_EXPAND_SZ/REG_SZ kind
+    # leaves the user's own entries exactly as they spelled them.
+    $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    $userPath = ''
+    if ($null -ne $envKey) {
+        $userPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+    }
     if (-not (Test-OnPath $userPath $binDir)) {
         Write-Host "-> Adding $binDir to your User PATH" -ForegroundColor Cyan
         # Trim first: appending to an empty Path would leave a leading ';', and an
         # empty PATH entry on Windows means "search the current directory".
         $trimmed = $userPath.TrimEnd(';')
         $newPath = if ($trimmed) { $trimmed + ';' + $binDir } else { $binDir }
-        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        if ($null -ne $envKey) {
+            $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+            try { $kind = $envKey.GetValueKind('Path') } catch {}
+            if ($kind -ne [Microsoft.Win32.RegistryValueKind]::String) {
+                $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+            }
+            $envKey.SetValue('Path', $newPath, $kind)
+            # The raw write does not broadcast WM_SETTINGCHANGE the way the .NET
+            # environment API did; without it Explorer and new terminals keep the old
+            # PATH until the next sign-in.
+            $sig = '[DllImport("user32.dll",SetLastError=true,CharSet=CharSet.Auto)]public static extern IntPtr SendMessageTimeout(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);'
+            $broadcast = Add-Type -MemberDefinition $sig -Name 'NativeBroadcast' -Namespace DevPruneInstall -PassThru
+            $result = [UIntPtr]::Zero
+            [void]$broadcast::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+        } else {
+            [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        }
     }
+    if ($null -ne $envKey) { $envKey.Close() }
     # Make both names work in *this* session too, without waiting for a new terminal.
     #
     # `iwr ... | iex` runs inside the caller's own process, so this assignment is

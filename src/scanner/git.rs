@@ -25,19 +25,50 @@ const EXCLUDED_DIRS: &[&str] = &[".git", "node_modules", ".venv", "venv", "targe
 /// stall every status refresh.
 const MAX_MTIME_SCAN_DEPTH: usize = 8;
 
+/// A `git` command aimed at `repo_path` and nothing else.
+///
+/// `current_dir` alone does not win against an inherited absolute `GIT_DIR`: a user
+/// invoking dev-prune from inside a git hook, a `git rebase -x` step, or any wrapper
+/// that exports repository state would have every repository's history read from that
+/// one repo. Cleared, the question is always answered by the repository being asked
+/// about.
+pub fn git_in(repo_path: &Path) -> Command {
+    let mut cmd = crate::spawn::command("git");
+    cmd.env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .current_dir(repo_path);
+    cmd
+}
+
 /// Get the timestamp of the most recent commit in a repository.
 ///
-/// Returns `None` if the repo has no commits — `git log` on an unborn HEAD exits
-/// non-zero, so no separate `git rev-parse HEAD` probe is needed to find that out.
+/// Returns `None` if the repo has no commits. `git log` on an unborn HEAD exits
+/// non-zero — but so does git refusing the repository outright (dubious ownership,
+/// corruption), and "could not read the history" must not feed the idle check the
+/// same answer as "there is no history": the first is an error, the second makes an
+/// empty repo eligible. A `rev-parse` probe tells the two apart.
 pub fn get_last_commit_time(repo_path: &Path) -> Result<Option<SystemTime>> {
-    let output = Command::new("git")
+    let output = git_in(repo_path)
         .args(["log", "-1", "--format=%ct"])
-        .current_dir(repo_path)
         .output()
         .context("Failed to execute git log")?;
 
     if !output.status.success() {
-        return Ok(None);
+        let probe = git_in(repo_path)
+            .args(["rev-parse", "--git-dir"])
+            .output()
+            .context("Failed to execute git rev-parse")?;
+        if probe.status.success() {
+            return Ok(None);
+        }
+        anyhow::bail!(
+            "git could not read `{}`: {}",
+            repo_path.display(),
+            String::from_utf8_lossy(&probe.stderr).trim()
+        );
     }
 
     let timestamp_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -72,20 +103,19 @@ pub fn get_mtime_activity(repo_path: &Path) -> Result<Option<SystemTime>> {
         });
 
     for entry in walker.flatten() {
-        if entry.file_type().is_file() {
-            if let Ok(metadata) = entry.metadata() {
-                if let Ok(mtime) = metadata.modified() {
-                    // A future mtime — a skewed clock, an extracted archive — would make
-                    // the repository read as active forever. Clamped, it reads as
-                    // touched just now and ages out normally.
-                    let mtime = mtime.min(now);
-                    latest = Some(match latest {
-                        Some(current) if mtime > current => mtime,
-                        Some(current) => current,
-                        None => mtime,
-                    });
-                }
-            }
+        if entry.file_type().is_file()
+            && let Ok(metadata) = entry.metadata()
+            && let Ok(mtime) = metadata.modified()
+        {
+            // A future mtime — a skewed clock, an extracted archive — would make
+            // the repository read as active forever. Clamped, it reads as
+            // touched just now and ages out normally.
+            let mtime = mtime.min(now);
+            latest = Some(match latest {
+                Some(current) if mtime > current => mtime,
+                Some(current) => current,
+                None => mtime,
+            });
         }
     }
 

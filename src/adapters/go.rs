@@ -19,20 +19,24 @@ pub struct Go;
 /// regenerate the tree from the module cache without it. Untracked entries (`??`) are
 /// not counted: an untracked vendor tree is the ordinary gitignored-or-fresh case, and
 /// `vendor/modules.txt` already vouches for how it was built.
-fn vendor_has_uncommitted_changes(path: &Path) -> bool {
-    let Ok(output) = std::process::Command::new("git")
+/// This is the one refusal in this adapter that guards real data, so it fails
+/// closed: when git cannot answer (missing binary, dubious-ownership refusal), the
+/// answer is an error, not "no changes" — the old fail-open reading deleted a
+/// patched vendor tree precisely when git was least able to vouch for it.
+fn vendor_has_uncommitted_changes(path: &Path) -> Result<bool> {
+    let output = crate::scanner::git::git_in(path)
         .args(["status", "--porcelain", "--", "vendor"])
-        .current_dir(path)
         .output()
-    else {
-        return false;
-    };
+        .map_err(|e| anyhow!("could not run `git status` to check `vendor/`: {e}"))?;
     if !output.status.success() {
-        return false;
+        return Err(anyhow!(
+            "`git status` could not inspect `vendor/` for uncommitted changes: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-    String::from_utf8_lossy(&output.stdout)
+    Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
-        .any(|line| !line.trim().is_empty() && !line.starts_with("??"))
+        .any(|line| !line.trim().is_empty() && !line.starts_with("??")))
 }
 
 impl PackageManager for Go {
@@ -70,7 +74,7 @@ impl PackageManager for Go {
         // An in-place patch to a committed vendor tree exists nowhere but the worktree;
         // `go mod vendor` after deletion would rebuild the tree from the module cache
         // without it.
-        if path.join("vendor").exists() && vendor_has_uncommitted_changes(path) {
+        if path.join("vendor").exists() && vendor_has_uncommitted_changes(path)? {
             return Err(anyhow!(
                 "`vendor/` has uncommitted changes — deleting it would lose them, and \
                  `go mod vendor` would rebuild the tree without them. Commit or stash \
@@ -160,8 +164,9 @@ mod tests {
         fs::create_dir(&vendor).unwrap();
         fs::write(vendor.join("modules.txt"), "# github.com/x/y v1.0.0\n").unwrap();
 
-        // Outside a repo the check must stay quiet…
-        assert!(!vendor_has_uncommitted_changes(dir.path()));
+        // Outside a repo git cannot answer, and "cannot answer" is an error rather
+        // than a silent all-clear — the refusal fails closed…
+        assert!(vendor_has_uncommitted_changes(dir.path()).is_err());
 
         // …and inside one, a staged-but-uncommitted vendor entry is a refusal. Staging
         // is enough to move the entry past `??` without needing commit identity.
@@ -174,7 +179,7 @@ mod tests {
         };
         assert!(git(&["init", "-q"]).status.success());
         git(&["add", "vendor"]);
-        assert!(vendor_has_uncommitted_changes(dir.path()));
+        assert!(vendor_has_uncommitted_changes(dir.path()).unwrap());
     }
 
     #[test]

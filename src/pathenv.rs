@@ -9,8 +9,13 @@
 // and the git hooks are registered against it for exactly that reason); this module
 // closes the last gap by making the *user's own shell* find that copy too.
 //
-// On Windows that means one entry in the user PATH (`HKCU\Environment`), written
-// through the same .NET API `install.ps1` uses so the two writers behave identically.
+// On Windows that means one entry in the user PATH (`HKCU\Environment`), read and
+// written as raw registry data. The obvious .NET call —
+// `[Environment]::GetEnvironmentVariable('Path','User')` — hands back the *expanded*
+// value, and writing that back bakes `%USERPROFILE%`-style entries into literal paths
+// for good; going through the registry API with `DoNotExpandEnvironmentNames`, and
+// preserving the value's `REG_EXPAND_SZ`/`REG_SZ` kind, leaves every entry exactly as
+// its owner spelled it.
 // Everywhere else it means symlinks in `~/.local/bin`, the XDG-conventional user
 // executable directory — no shell profile is ever edited, because a profile has no
 // safe "remove exactly what I added" operation and an uninstall that leaves edits
@@ -25,7 +30,7 @@ use crate::setup::Outcome;
 ///
 /// Windows treats `C:\x\bin` and `C:\x\bin\` as the same entry and compares without
 /// case; Unix does neither. Trailing-separator trimming is safe on both.
-fn entries_equal(a: &str, b: &str) -> bool {
+pub(crate) fn entries_equal(a: &str, b: &str) -> bool {
     let a = a.trim().trim_end_matches(['\\', '/']);
     let b = b.trim().trim_end_matches(['\\', '/']);
     if cfg!(windows) {
@@ -67,35 +72,85 @@ mod imp {
     use super::*;
     use std::process::Command;
 
+    /// A PowerShell script as `-EncodedCommand` base64 (UTF-16LE). The encoded form
+    /// exists for two reasons: no quoting layer between here and the interpreter (the
+    /// scripts carry both quote styles), and no codepage — a console in an OEM
+    /// codepage would otherwise mangle every non-ASCII character in a PATH entry.
+    fn encoded_command(script: &str) -> String {
+        const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let bytes: Vec<u8> = script
+            .encode_utf16()
+            .flat_map(|u| u.to_le_bytes())
+            .collect();
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let n = (u32::from(chunk[0]) << 16)
+                | (u32::from(chunk.get(1).copied().unwrap_or(0)) << 8)
+                | u32::from(chunk.get(2).copied().unwrap_or(0));
+            out.push(TABLE[(n >> 18) as usize & 63] as char);
+            out.push(TABLE[(n >> 12) as usize & 63] as char);
+            out.push(if chunk.len() > 1 {
+                TABLE[(n >> 6) as usize & 63] as char
+            } else {
+                '='
+            });
+            out.push(if chunk.len() > 2 {
+                TABLE[n as usize & 63] as char
+            } else {
+                '='
+            });
+        }
+        out
+    }
+
+    fn powershell(script: &str) -> Command {
+        let mut cmd = crate::spawn::command("powershell");
+        cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            &encoded_command(script),
+        ]);
+        cmd
+    }
+
     /// Read the *user* PATH — the persisted value under `HKCU\Environment`, not this
-    /// process's inherited one, which also carries the machine PATH.
+    /// process's inherited one, which also carries the machine PATH. Read raw:
+    /// `DoNotExpandEnvironmentNames` keeps `%USERPROFILE%`-style entries as their
+    /// owner spelled them, so a later write cannot bake them into literal paths.
     fn read_user_path() -> Option<String> {
-        let out = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "[Environment]::GetEnvironmentVariable('Path','User')",
-            ])
-            .output()
-            .ok()?;
+        let script = "\
+            [Console]::OutputEncoding=[System.Text.Encoding]::UTF8\n\
+            $k=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')\n\
+            if($null -eq $k){exit 1}\n\
+            $v=$k.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)\n\
+            [Console]::Out.Write([string]$v)";
+        let out = powershell(script).output().ok()?;
         out.status
             .success()
             .then(|| String::from_utf8_lossy(&out.stdout).trim_end().to_string())
     }
 
-    /// Persist a new user PATH. Same API as `install.ps1`, so the broadcast that tells
-    /// Explorer and new shells about the change happens here too — .NET sends
-    /// `WM_SETTINGCHANGE` on the caller's behalf.
+    /// Persist a new user PATH, keeping the registry value's kind — flattening
+    /// `REG_EXPAND_SZ` to `REG_SZ` would stop every `%VAR%` entry expanding — and
+    /// broadcasting `WM_SETTINGCHANGE` so Explorer and new shells pick it up (the raw
+    /// registry write does not send it the way the .NET environment API did).
     fn write_user_path(value: &str) -> bool {
         let escaped = value.replace('\'', "''");
-        Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                &format!("[Environment]::SetEnvironmentVariable('Path','{escaped}','User')"),
-            ])
+        let script = format!(
+            "$v='{escaped}'\n\
+             $k=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment',$true)\n\
+             if($null -eq $k){{exit 1}}\n\
+             $kind=[Microsoft.Win32.RegistryValueKind]::ExpandString\n\
+             try{{$kind=$k.GetValueKind('Path')}}catch{{}}\n\
+             if($kind -ne [Microsoft.Win32.RegistryValueKind]::String){{$kind=[Microsoft.Win32.RegistryValueKind]::ExpandString}}\n\
+             $k.SetValue('Path',$v,$kind)\n\
+             $sig='[DllImport(\"user32.dll\",SetLastError=true,CharSet=CharSet.Auto)]public static extern IntPtr SendMessageTimeout(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);'\n\
+             $t=Add-Type -MemberDefinition $sig -Name 'NativeBroadcast' -Namespace DevPrune -PassThru\n\
+             $r=[UIntPtr]::Zero\n\
+             [void]$t::SendMessageTimeout([IntPtr]0xffff,0x1A,[UIntPtr]::Zero,'Environment',2,5000,[ref]$r)"
+        );
+        powershell(&script)
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
@@ -220,11 +275,11 @@ mod imp {
         let mut removed_any = false;
         for name in ["dev-prune", "devp"] {
             let link = local_bin.join(name);
-            if let Ok(target) = fs::read_link(&link) {
-                if target.starts_with(bin_dir) {
-                    fs::remove_file(&link)?;
-                    removed_any = true;
-                }
+            if let Ok(target) = fs::read_link(&link)
+                && target.starts_with(bin_dir)
+            {
+                fs::remove_file(&link)?;
+                removed_any = true;
             }
         }
         Ok(removed_any)

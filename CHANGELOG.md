@@ -5,6 +5,82 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-08-21
+
+A hardening release from a top-to-bottom audit of the codebase. No new behaviour except
+one environment variable; no change to pruning, verification or any of the seven safety
+invariants.
+
+### Added
+
+- **`DEV_PRUNE_OFFLINE=1`** keeps the process off the network entirely — the release
+  check and the editor-extension `.vsix` download fallback alike — regardless of any
+  stored setting. For air-gapped machines and CI images. The durable per-user switch is
+  still `devp config set update_check false`.
+
+### Fixed
+
+- **Windows: the background task no longer flashes a console window.** The scheduled
+  task used to run with the interactive logon, so every firing — typically moments after
+  opening the laptop — popped a black terminal window that vanished before it could be
+  read, which looks like malware to anyone watching their own screen. The task now runs a
+  windowless build of the binary, `devpw.exe`, generated locally beside the managed copy
+  the same way `pythonw.exe` relates to `python.exe`: it has no console to show, so
+  nothing flashes, and because it still runs in your own logged-on session, mapped
+  network drives and Dev Drives keep working. If that build cannot be created — a policy
+  or filesystem that forbids it — setup falls back to a hidden password-less task (an S4U
+  logon), and then to the old visible task, so the daemon itself is never lost. Existing
+  installations are upgraded automatically on the next setup pass. macOS and Linux never
+  had this problem: their schedulers (launchd and systemd user timers) never attach a
+  terminal to a background job.
+- **Windows: PATH edits no longer flatten other tools' registry entries.** Setup and the
+  PowerShell installer previously read the user `Path` through the environment API, which
+  expands entries like `%USERPROFILE%\bin` before handing them over — and writing the
+  result back froze those entries to their expanded text. Both now read the value raw,
+  preserve its registry type, and broadcast the change so new shells pick it up.
+- **`--json` stdout can no longer be polluted by first-run setup.** The automatic
+  integrations pass now waits when any `--json` flag is present, the same way it already
+  waited for `--quiet` and `--daemon`, so a script's very first `devp status --json` on a
+  fresh machine parses.
+- **The `devp status` dashboard scrolls.** The table previously discarded its scroll
+  state every frame, so on a list taller than the window the selection walked off-screen
+  and never came back. It also no longer rebuilds every repository's display name once
+  per row per frame, and pressing `i` on a "Path Missing" row no longer tears the whole
+  view down trying to write a config file into a directory that does not exist.
+- **TUIs no longer open with stdin redirected.** `devp status < /dev/null` used to draw
+  an interactive screen that could never receive a key; both interactive views now
+  require a terminal on stdin *and* stdout, and fall back to the plain output otherwise.
+- **A power cut during a save can no longer leave an empty registry.** The temporary
+  file is flushed to disk before the atomic rename; previously the rename could survive
+  a crash that the data did not. Stale temp files older than an hour are also swept.
+- **`devp unlink <path>` works after the directory is deleted.** Registry keys are
+  canonicalized paths and a deleted directory cannot be canonicalized, so unregistering
+  it by name used to report "not registered". It now falls back to a lexical match.
+- **`devp doctor` no longer calls an off-PATH binary breakage.** The binary demonstrably
+  runs — doctor *is* it running — so this is now a warning naming `dev-prune setup` as
+  the fix, and doctor exits `0`.
+- **`devp uninstall` is safer about what it deletes.** The stray-copy sweep and the
+  `--deep` confirmation prompt on stderr (so they survive redirected output), a bare
+  Enter now declines instead of confirming, Windows files that are merely *in use* are
+  correctly queued for the detached deletion helper instead of being reported as
+  permission errors, and a path containing `%` — which `cmd.exe` would corrupt — is
+  reported as left behind rather than handed to the helper.
+- **`devp skill` reports export failures.** A failed `SKILL.md` write used to be
+  swallowed and the command claimed success over a file that was not there.
+- **Windows: scheduler intervals above 365 days no longer fail.** `schtasks` rejects
+  `/MO` values outside 1–365; the interval is now clamped.
+- **The Go adapter fails closed on an unanswerable `vendor/` check.** When `git` cannot
+  say whether `vendor/` holds uncommitted changes, the directory is now skipped rather
+  than assumed clean.
+
+### Changed
+
+- **The editor-extension offer defaults to No.** The one-time "install the dev-prune
+  extension?" question is now `[y/N]` — a bare Enter declines. Installing software into
+  your editor is an explicit yes, not a missed Enter. The downloaded `.vsix` fallback is
+  also stored under the config directory (not a shared temp dir) and removed after
+  installation.
+
 ## [1.2.0] - 2026-08-20
 
 An uninstall that actually uninstalls, an install that survives the environment it was
@@ -567,9 +643,10 @@ absent and reports what it declined to touch.
   architecture runs on Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine alike, with
   no glibc version floor.
 - **Install it however you already install things.** The shell and PowerShell one-liners,
-  `npx dev-prune` / `npm install -g dev-prune`, `uv tool install dev-prune` / `uvx` /
-  `pipx` / `pip`, `cargo binstall dev-prune` / `cargo install dev-prune`, or a direct
-  download from GitHub Releases.
+  `uv tool install dev-prune` / `uvx` / `pipx` / `pip`, `cargo binstall dev-prune` /
+  `cargo install dev-prune`, or a direct download from GitHub Releases. (npm packaging
+  is built for every release but publishing to the npm registry is gated off, so
+  `npx dev-prune` / `npm install -g dev-prune` do not resolve yet.)
 - **`cargo binstall dev-prune` needs no Rust toolchain.** crates.io distributes source, so
   `cargo install` has no binary to fetch and always compiles — surprising if you expected
   a registry install to be instant. `Cargo.toml` now declares where each release archive
@@ -579,8 +656,8 @@ absent and reports what it declined to touch.
   anything, so they install correctly under `npm ci --ignore-scripts`, behind a corporate
   registry mirror, and with no network access at all — and a dependency install never
   turns into an outbound call to GitHub. npm gets six platform packages selected by
-  `os`/`cpu`; PyPI gets six platform wheels. Every npm tarball is published with
-  provenance, and every wheel through PyPI Trusted Publishing.
+  `os`/`cpu` (built, though not yet published — the npm channel is gated off); PyPI gets
+  six platform wheels, every one uploaded through PyPI Trusted Publishing.
 - **Apache-2.0, and provable.** Copyright 2026 VKrishna04. Every source file carries an
   `SPDX-License-Identifier`, so a licence scanner in your CI answers the same as the
   `LICENSE.md` in the repository, and every distributed artefact — the crate, all seven

@@ -1,6 +1,6 @@
 [package]
 name = "dev-prune"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 authors = ["VKrishna04"]
 description = "Universal, lockfile-safe workspace pruner and background dependency cleaner"
@@ -14,7 +14,7 @@ homepage = "https://devprune.vkrishna04.me"
 documentation = "https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/README.md"
 keywords = ["cli", "workspace", "cleanup", "node_modules", "venv"]
 categories = ["command-line-utilities", "development-tools"]
-rust-version = "1.85"
+rust-version = "1.88"
 
 # An allowlist, not an exclude list, and deliberately so.
 #
@@ -129,12 +129,12 @@ walkdir = "2"
 
 # Terminal UI & Spinners
 #
-# crossterm is held at 0.28 because ratatui 0.29 depends on it. Taking crossterm 0.29 on
-# its own puts two copies of the terminal's raw-mode state in one binary, and the ratatui
-# release that wants 0.29 is 0.30, whose MSRV is 1.88 — above the 1.85 this crate
-# advertises. Bump all three together, or none.
-ratatui = "0.29"
-crossterm = "0.28"
+# crossterm is held at 0.29 because ratatui 0.30's default `crossterm_0_29` feature
+# depends on it. Taking a different crossterm on its own puts two copies of the
+# terminal's raw-mode state in one binary, and ratatui's MSRV moves with it (0.30 is
+# what pushed `rust-version` to 1.88). Bump all three together, or none.
+ratatui = "0.30"
+crossterm = "0.29"
 indicatif = "0.18"
 
 # Colored terminal output
@@ -158,7 +158,12 @@ libc = "0.2"
 # (`GetFileInformationByHandle`) — std only exposes it on unstable. Already in the
 # dependency tree transitively, so this pins no new crate.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    # `GetConsoleWindow`, for the child-window policy in `src/spawn.rs`.
+    "Win32_System_Console",
+] }
 
 [dev-dependencies]
 # Mock filesystems for testing

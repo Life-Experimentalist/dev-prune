@@ -70,16 +70,26 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
         if dry_run { "would add" } else { "added" },
         newly_added_repos.len()
     ));
-    output::print_info(&format!("Total tracked: {}", registry.repo_count()));
+    // After a dry run the in-memory count includes repositories that were never
+    // written; "would be tracked" is the honest phrasing for it.
+    output::print_info(&format!(
+        "{}: {}",
+        if dry_run {
+            "Would be tracked"
+        } else {
+            "Total tracked"
+        },
+        registry.repo_count()
+    ));
 
     if !dry_run {
         // Install anything missing. Idempotent, and identical to what `devp setup` and
         // the post-upgrade pass do, so there is one code path and one set of rules.
-        if let Some(report) = crate::setup::ensure_integrations_if_enabled(&registry) {
-            if report.changed_anything() || report.needs_attention() {
-                output::print_header("Integrations");
-                report.print(false);
-            }
+        if let Some(report) = crate::setup::ensure_integrations_if_enabled(&registry)
+            && (report.changed_anything() || report.needs_attention())
+        {
+            output::print_header("Integrations");
+            report.print(false);
         }
         crate::setup::suppress_next_auto_setup();
 
@@ -129,12 +139,6 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
         output::plural(registry.repo_count(), "repository", "repositories")
     ));
 
-    // Icons stay opt-in. Unlike the other integrations they write into the desktop's
-    // shared MIME and icon directories rather than into dev-prune's own, and nothing
-    // about pruning depends on them.
-    output::print_info(
-        "Optional extra: `devp icon` gives .devprune.json its own icon in your file manager.",
-    );
     output::print_info("Review or undo the integrations with `devp setup --status`.");
 
     Ok(())

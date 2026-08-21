@@ -37,11 +37,14 @@ updates:
   # `python-version:` or the `runs-on:` labels — those are plain strings to it, so
   # the runtime pins need a human on a calendar rather than a bot.
   #
-  # `dtolnay/rust-toolchain@1.85.0` is the trap in between. It *looks* like a pinned
-  # action version and Dependabot treats it as one, but the version is the MSRV the
-  # job exists to prove, so "upgrading" it deletes the test rather than updating it.
-  # Dependabot opened exactly that PR (1.85.0 -> 1.100.0) within an hour of this file
-  # landing, which is why it is ignored below instead of trusted to be reviewed.
+  # `dtolnay/rust-toolchain` was the trap in between. The MSRV job used to pin it at
+  # `@1.85.0`, which *looks* like a pinned action version and Dependabot treated it as
+  # one — but the version was the MSRV the job exists to prove, so "upgrading" it
+  # deleted the test rather than updating it. Dependabot opened exactly that PR
+  # (1.85.0 -> 1.100.0) within an hour of this file landing. The job now reads the
+  # toolchain from Cargo.toml's `rust-version` instead of a pin, but the ignore below
+  # stays: the action's remaining refs (`@stable`, `@master`) are channels, not
+  # versions, and there is still nothing there a bot should be bumping.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

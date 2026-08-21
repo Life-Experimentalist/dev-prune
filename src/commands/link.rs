@@ -136,10 +136,6 @@ pub fn run_unlink(path_str: &str) -> Result<()> {
     let mut registry = Registry::load()?;
 
     if registry.remove_repo(&path) {
-        // The unlink already did what `undo` would do for this path. Left in the list,
-        // the next `devp undo` would "revert" the addition by removing nothing and
-        // reporting exactly that.
-        registry.last_added_repos.retain(|p| p != &path);
         registry.save()?;
         output::print_success(&format!("Unlinked: {}", output::clean_path(&path)));
     } else {

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Linux systemd user service and timer integration.
-#![allow(dead_code)]
 
 use crate::daemon::{DaemonStatus, get_exe_path};
 use anyhow::{Context, Result};

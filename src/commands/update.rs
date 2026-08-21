@@ -119,14 +119,14 @@ pub fn notify_if_outdated(registry: &mut Registry) -> bool {
         let _ = refresh_latest(registry);
     }
 
-    if let Some(latest) = registry.latest_known_version.as_deref() {
-        if compare_versions(constants::VERSION, latest) == Some(Ordering::Less) {
-            output::print_info(&format!(
-                "dev-prune v{latest} is out (you have v{}). `devp update` has the commands; \
+    if let Some(latest) = registry.latest_known_version.as_deref()
+        && compare_versions(constants::VERSION, latest) == Some(Ordering::Less)
+    {
+        output::print_info(&format!(
+            "dev-prune v{latest} is out (you have v{}). `devp update` has the commands; \
                  `devp config set update_check false` silences this.",
-                constants::VERSION
-            ));
-        }
+            constants::VERSION
+        ));
     }
 
     due
@@ -177,6 +177,9 @@ fn report_comparison(latest: &str) {
 /// Returns the version without any leading `v`, so it can be compared to
 /// `CARGO_PKG_VERSION` directly.
 fn latest_release(timeout_secs: u64) -> Result<String> {
+    if crate::setup::offline_requested() {
+        anyhow::bail!("{} is set", constants::ENV_OFFLINE);
+    }
     let body = ureq::get(constants::LATEST_RELEASE_API_URL)
         .header("User-Agent", &format!("dev-prune/{}", constants::VERSION))
         .header("Accept", "application/vnd.github+json")

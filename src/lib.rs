@@ -13,6 +13,7 @@ pub mod output;
 pub mod pathenv;
 pub mod scanner;
 pub mod setup;
+pub mod spawn;
 pub mod tui;
 pub mod workspace;
 
@@ -31,6 +32,23 @@ pub mod exit_code {
     /// The arguments were not usable. Emitted by clap, listed here so the set is complete.
     pub const USAGE: i32 = 2;
 }
+
+/// Marker for errors that are usage mistakes rather than runtime failures.
+///
+/// clap exits `USAGE` for conflicts it can see at parse time; combinations only the
+/// command logic can judge — `run --json` with neither `--dry-run` nor `--yes` — used
+/// to exit `FAILURE`, which told a script "the prune broke" when the truth was "the
+/// command line was incomplete". Raising this instead routes them to `USAGE`.
+#[derive(Debug)]
+pub struct UsageError(pub String);
+
+impl std::fmt::Display for UsageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for UsageError {}
 
 /// Restore the default disposition for `SIGPIPE`.
 ///
@@ -471,7 +489,10 @@ pub fn print_version_info() {
     );
     println!("  Target OS:       {}", std::env::consts::OS.yellow());
     println!("  Architecture:    {}", std::env::consts::ARCH.yellow());
-    println!("  Compiler:        Rust 1.85+ (edition 2024)");
+    println!(
+        "  Compiler:        Rust {}+ (edition 2024)",
+        constants::MSRV
+    );
     println!("  License:         Apache-2.0");
     println!();
     let reg_path = config::Registry::registry_path()
@@ -479,30 +500,33 @@ pub fn print_version_info() {
         .unwrap_or_else(|_| "unknown".to_string());
     println!("  Config Path:     {reg_path}");
 
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let exe_dir_str = output::clean_path(exe_dir);
-            let path_var = std::env::var("PATH").unwrap_or_default();
-            let is_in_path = path_var
-                .split(if cfg!(windows) { ';' } else { ':' })
-                .any(|p| std::path::Path::new(p) == exe_dir);
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(exe_dir) = exe.parent()
+    {
+        let exe_dir_str = output::clean_path(exe_dir);
+        // The same tolerant comparison the PATH writer uses — a trailing backslash or a
+        // case difference must not turn the audit line red on a healthy install.
+        let path_var = std::env::var("PATH").unwrap_or_default();
+        let exe_dir_entry = exe_dir.to_string_lossy();
+        let is_in_path = path_var
+            .split(if cfg!(windows) { ';' } else { ':' })
+            .any(|p| pathenv::entries_equal(p, &exe_dir_entry));
 
-            println!("  Binary Dir:      {}", exe_dir_str.cyan());
-            if is_in_path {
-                println!(
-                    "  PATH Audit:      {}",
-                    "✓ Executable directory is active in system PATH.".green()
-                );
-            } else {
-                println!(
-                    "  PATH Audit:      {}",
-                    "⚠ Executable directory is NOT in system PATH!".yellow()
-                );
-                println!(
-                    "                   Add `{}` to Environment Variables.",
-                    exe_dir_str.cyan()
-                );
-            }
+        println!("  Binary Dir:      {}", exe_dir_str.cyan());
+        if is_in_path {
+            println!(
+                "  PATH Audit:      {}",
+                "✓ Executable directory is active in system PATH.".green()
+            );
+        } else {
+            println!(
+                "  PATH Audit:      {}",
+                "⚠ Executable directory is NOT in system PATH!".yellow()
+            );
+            println!(
+                "                   Add `{}` to Environment Variables.",
+                exe_dir_str.cyan()
+            );
         }
     }
 }
@@ -599,8 +623,12 @@ fn normalize_args() -> Vec<String> {
 /// and `setup` because it is the pass, run deliberately.
 fn auto_setup_allowed(args: &[String]) -> bool {
     let subcommand = args.get(1).map(String::as_str).unwrap_or("");
+    // `--json` means a program is parsing stdout; the setup report and the first-run
+    // wizard would land inside the document. That invocation waits too.
     !matches!(subcommand, "uninstall" | "setup")
-        && !args.iter().any(|a| a == "--quiet" || a == "--daemon")
+        && !args
+            .iter()
+            .any(|a| a == "--quiet" || a == "--daemon" || a == "--json")
 }
 
 /// Run the CLI application.
@@ -734,6 +762,9 @@ pub fn run_cli() {
             std::process::exit(exit_code::OK);
         }
         output::print_error(&format!("{e:#}"));
+        if e.downcast_ref::<UsageError>().is_some() {
+            std::process::exit(exit_code::USAGE);
+        }
         std::process::exit(exit_code::FAILURE);
     }
 
@@ -741,5 +772,36 @@ pub fn run_cli() {
     // credit under it.
     if credit_the_author {
         output::print_attribution();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auto_setup_allowed;
+
+    fn args(rest: &[&str]) -> Vec<String> {
+        std::iter::once("devp")
+            .chain(rest.iter().copied())
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn ordinary_interactive_commands_may_auto_setup() {
+        assert!(auto_setup_allowed(&args(&["status"])));
+        assert!(auto_setup_allowed(&args(&["run", "--dry-run"])));
+        assert!(auto_setup_allowed(&args(&[])));
+    }
+
+    #[test]
+    fn unattended_and_machine_read_invocations_may_not() {
+        // The Git hook, the scheduler, and any `--json` consumer: a setup pass nobody
+        // can see is one nobody can refuse, and setup output inside a JSON document is
+        // a parse error.
+        assert!(!auto_setup_allowed(&args(&["link", ".", "--quiet"])));
+        assert!(!auto_setup_allowed(&args(&["run", "--daemon"])));
+        assert!(!auto_setup_allowed(&args(&["status", "--json"])));
+        assert!(!auto_setup_allowed(&args(&["uninstall"])));
+        assert!(!auto_setup_allowed(&args(&["setup"])));
     }
 }

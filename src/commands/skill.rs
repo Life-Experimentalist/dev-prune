@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// AI Agent Skill exporter & onboarding prompt generator.
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::fs;
 
 use crate::config::Registry;
@@ -14,15 +14,17 @@ pub const EMBEDDED_SKILL_MD: &str = include_str!("../../.agents/skills/dev-prune
 pub fn run() -> Result<()> {
     output::print_header("dev-prune AI Agent Skill Integration");
 
-    let skill_path = if let Ok(config_dir) = Registry::config_dir() {
-        if !config_dir.exists() {
-            let _ = fs::create_dir_all(&config_dir);
-        }
+    // The export is the command's one job — claiming success over a swallowed write
+    // error would leave the user pointing an agent at a file that is not there.
+    let skill_path = {
+        let config_dir =
+            Registry::config_dir().context("could not resolve the config directory")?;
+        fs::create_dir_all(&config_dir)
+            .with_context(|| format!("could not create {}", output::clean_path(&config_dir)))?;
         let target = config_dir.join("SKILL.md");
-        let _ = fs::write(&target, EMBEDDED_SKILL_MD);
+        fs::write(&target, EMBEDDED_SKILL_MD)
+            .with_context(|| format!("could not write {}", output::clean_path(&target)))?;
         output::clean_path(&target)
-    } else {
-        "~/.config/dev-prune/SKILL.md".to_string()
     };
 
     output::print_success(&format!("Bundled SKILL.md exported to `{skill_path}`"));

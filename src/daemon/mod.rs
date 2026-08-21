@@ -9,8 +9,14 @@
 // - macOS: LaunchAgent (.plist)
 // - Linux: systemd user timer
 
+// Each platform module is only compiled on its own OS. The alternative — compiling
+// all three everywhere under `#![allow(dead_code)]` — silences the lint for genuinely
+// dead items too, which is how orphaned helpers accumulate.
+#[cfg(target_os = "linux")]
 mod linux;
+#[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "windows")]
 mod windows;
 
 use anyhow::Result;
@@ -106,6 +112,34 @@ pub fn daemon_status() -> Result<DaemonStatus> {
 /// goes wrong when it does not.
 pub fn get_exe_path() -> std::path::PathBuf {
     crate::setup::stable_exe_path()
+}
+
+/// Whether the installed scheduler entry should be re-registered to stop it flashing a
+/// console window at the logged-in user. Only Windows attaches a console to a scheduled
+/// task; the other platforms' schedulers never open a terminal, so there the answer is
+/// always no.
+pub fn wants_hidden_upgrade() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows::wants_hidden_upgrade()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+/// Rebuild the windowless scheduler binary after an upgrade, when one is in use.
+///
+/// Windows-only: the twin (`devpw.exe`) is a patched copy of the managed binary, so
+/// replacing the binary without refreshing the twin would leave the daemon running the
+/// previous release. The other platforms register the real binary directly and have
+/// nothing to refresh.
+pub fn refresh_hidden_twin() {
+    #[cfg(target_os = "windows")]
+    {
+        windows::refresh_hidden_twin();
+    }
 }
 
 /// The binary the installed scheduler entry will actually run, when that can be read.

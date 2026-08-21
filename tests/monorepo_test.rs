@@ -20,6 +20,8 @@ use tempfile::TempDir;
 fn devp() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_dev-prune"));
     cmd.env("DEV_PRUNE_NO_AUTO_SETUP", "1");
+    // A fresh config dir makes the release check "due"; tests stay off the network.
+    cmd.env("DEV_PRUNE_OFFLINE", "1");
     cmd
 }
 

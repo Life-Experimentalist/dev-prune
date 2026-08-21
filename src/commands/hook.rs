@@ -9,7 +9,6 @@
 use anyhow::{Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use crate::config::Registry;
 use crate::output;
@@ -88,7 +87,7 @@ pub const GIT_MISSING_HELP: &str = "`git` was not found on your PATH.\n\
 /// Everything dev-prune does is scoped to Git repositories, so this is not a degraded
 /// mode to work around — it is a stop, with an instruction attached.
 pub fn git_available() -> bool {
-    Command::new("git")
+    crate::spawn::command("git")
         .arg("--version")
         .output()
         .map(|out| out.status.success())
@@ -164,7 +163,7 @@ fn hook_names_in(dir: &Path) -> Vec<String> {
 
 /// Read the current global `core.hooksPath`, if any.
 fn global_hooks_path() -> Option<String> {
-    let out = Command::new("git")
+    let out = crate::spawn::command("git")
         .args(["config", "--global", "core.hooksPath"])
         .output()
         .ok()?;
@@ -412,7 +411,7 @@ pub fn install_with(chain: bool) -> Result<()> {
     }
 
     // Set global git config core.hooksPath
-    let status = Command::new("git")
+    let status = crate::spawn::command("git")
         .args([
             "config",
             "--global",
@@ -462,32 +461,32 @@ pub fn run_uninstall() -> Result<()> {
     // A chained install borrowed the slot from another tool. Handing it back is the
     // whole reason the chain was allowed in the first place — unsetting would leave
     // that tool's hooks configured nowhere and silently dead.
-    if let Some(previous) = chain_target() {
-        if global_hooks_path().is_some_and(|c| Path::new(&c) == dir) {
-            let restored = Command::new("git")
-                .args([
-                    "config",
-                    "--global",
-                    "core.hooksPath",
-                    &previous.to_string_lossy(),
-                ])
-                .status();
-            match restored {
-                Ok(status) if status.success() => {
-                    remove_hook_files(&dir);
-                    output::print_success(&format!(
-                        "Restored `core.hooksPath` to `{}`.",
-                        output::clean_path(&previous)
-                    ));
-                    return Ok(());
-                }
-                Ok(status) => anyhow::bail!(
-                    "`git config --global core.hooksPath` exited with {status} while restoring \
-                     `{}`. Set it by hand to bring those hooks back.",
+    if let Some(previous) = chain_target()
+        && global_hooks_path().is_some_and(|c| Path::new(&c) == dir)
+    {
+        let restored = crate::spawn::command("git")
+            .args([
+                "config",
+                "--global",
+                "core.hooksPath",
+                &previous.to_string_lossy(),
+            ])
+            .status();
+        match restored {
+            Ok(status) if status.success() => {
+                remove_hook_files(&dir);
+                output::print_success(&format!(
+                    "Restored `core.hooksPath` to `{}`.",
                     output::clean_path(&previous)
-                ),
-                Err(e) => anyhow::bail!("Could not run `git config --global core.hooksPath`: {e}"),
+                ));
+                return Ok(());
             }
+            Ok(status) => anyhow::bail!(
+                "`git config --global core.hooksPath` exited with {status} while restoring \
+                     `{}`. Set it by hand to bring those hooks back.",
+                output::clean_path(&previous)
+            ),
+            Err(e) => anyhow::bail!("Could not run `git config --global core.hooksPath`: {e}"),
         }
     }
 
@@ -522,7 +521,7 @@ pub fn run_uninstall() -> Result<()> {
     // Reported honestly: a failed unset leaves `core.hooksPath` pointing at a directory
     // whose hook files may already be gone, which is the one state that silently breaks
     // Git hooks machine-wide. Saying "removed" when it was not would hide exactly that.
-    let unset = Command::new("git")
+    let unset = crate::spawn::command("git")
         .args(["config", "--global", "--unset", "core.hooksPath"])
         .status();
     match unset {

@@ -3,7 +3,7 @@
 Conventions for anyone — human or agent — working in this repository.
 
 `dev-prune` (second binary: `devp`) is a single-binary Rust CLI, edition 2024, MSRV
-1.85. It reclaims disk space from idle Git repositories by deleting dependency and build
+1.88. It reclaims disk space from idle Git repositories by deleting dependency and build
 directories that a lockfile can rebuild, and refuses to delete anything it cannot prove
 is recoverable.
 
@@ -139,6 +139,11 @@ Docs describe what the code does *now*. There is no "planned", "coming soon" or
   `src/`. The same facts also appear in `.agents/skills/dev-prune/SKILL.md`,
   `site/public/llms.txt` and `site/src/App.jsx` — changing one means changing all of
   them.
+- The MSRV has one source of truth: `rust-version` in `Cargo.toml`. The binary
+  (`constants::MSRV`), CI's msrv job and the release install table all read it from
+  there; the few docs that restate the number by hand are checked against it by
+  `scripts/check-msrv.sh` in CI. To bump the MSRV, change `rust-version` and let that
+  check list the files to touch.
 - `schemas/` holds the JSON schema for `.devprune.json`; a new config key goes there too.
 
 ---

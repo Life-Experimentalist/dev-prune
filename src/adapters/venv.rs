@@ -202,8 +202,22 @@ pub(super) fn installed_distributions(venv: &Path) -> Option<HashMap<String, Vec
             else {
                 continue;
             };
-            // `{name}-{version}` — the version never contains `-`.
-            let name = stem.rsplit_once('-').map(|(n, _)| n).unwrap_or(stem);
+            // `{escaped_name}-{version}`: the escaping turns `-` into `_`, so the
+            // name part never contains a hyphen — but setuptools may append `-pyX.Y`
+            // to an egg-info (which a last-hyphen split read as part of the name),
+            // and a legacy editable install writes a bare `{name}.egg-info` with no
+            // version at all. Versions always start with a digit, so the name is
+            // everything before the first `-<digit>`.
+            let name = stem
+                .match_indices('-')
+                .find(|(i, _)| {
+                    stem[i + 1..]
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_digit())
+                })
+                .map(|(i, _)| &stem[..i])
+                .unwrap_or(stem);
             installed.insert(
                 normalize_package_name(name),
                 declared_dependencies(&entry.path()),
@@ -228,10 +242,10 @@ fn declared_dependencies(dist_info: &Path) -> Vec<String> {
         if line.is_empty() {
             break;
         }
-        if let Some(spec) = line.strip_prefix("Requires-Dist:") {
-            if let Some(name) = requirement_name(spec.trim()) {
-                deps.push(name);
-            }
+        if let Some(spec) = line.strip_prefix("Requires-Dist:")
+            && let Some(name) = requirement_name(spec.trim())
+        {
+            deps.push(name);
         }
     }
     deps
@@ -255,7 +269,7 @@ fn venv_python_version(venv: &Path) -> Option<(u64, u64)> {
 /// The `major.minor` of whatever `python` is on PATH — the interpreter a restore would
 /// rebuild with. `None` when there is none or it cannot say.
 fn path_python_version() -> Option<(u64, u64)> {
-    let output = std::process::Command::new(super::resolve_program("python"))
+    let output = crate::spawn::command(super::resolve_program("python"))
         .arg("--version")
         .stdin(std::process::Stdio::null())
         .output()
@@ -289,32 +303,32 @@ fn warn_about_restore_surprises(path: &Path, venvs: &[PathBuf]) {
         ));
     } else if let Some(venv) = venvs.first() {
         let name = venv.file_name().map(|n| n.to_string_lossy().into_owned());
-        if let Some(name) = name {
-            if name != ".venv" {
-                crate::output::print_info(&format!(
-                    "The environment at `{}` is named `{name}` — `devp restore --last-run` \
+        if let Some(name) = name
+            && name != ".venv"
+        {
+            crate::output::print_info(&format!(
+                "The environment at `{}` is named `{name}` — `devp restore --last-run` \
                      recreates that name, but a restore with no record creates `.venv`.",
-                    venv.display()
-                ));
-            }
+                venv.display()
+            ));
         }
     }
 
     let on_path = path_python_version();
     for venv in venvs {
-        if let (Some(built_with), Some(available)) = (venv_python_version(venv), on_path) {
-            if built_with != available {
-                crate::output::print_warning(&format!(
-                    "`{}` was built with Python {}.{}, but `python` on PATH is {}.{} — a \
+        if let (Some(built_with), Some(available)) = (venv_python_version(venv), on_path)
+            && built_with != available
+        {
+            crate::output::print_warning(&format!(
+                "`{}` was built with Python {}.{}, but `python` on PATH is {}.{} — a \
                      restore would rebuild it on that interpreter instead, and pinned \
                      wheels may not exist for it.",
-                    venv.display(),
-                    built_with.0,
-                    built_with.1,
-                    available.0,
-                    available.1
-                ));
-            }
+                venv.display(),
+                built_with.0,
+                built_with.1,
+                available.0,
+                available.1
+            ));
         }
     }
 }

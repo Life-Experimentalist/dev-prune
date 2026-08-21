@@ -9,7 +9,7 @@ Thank you for your interest in contributing to **`dev-prune`** (`devp`)! We welc
 ## 🛠️ Prerequisites & Local Development Setup
 
 ### 1. Requirements
-- **Rust Toolchain**: 1.85 or newer (`rustup update stable`)
+- **Rust Toolchain**: 1.88 or newer (`rustup update stable`)
 - **Components**: `rustfmt`, `clippy` (`rustup component add rustfmt clippy`)
 - **Node.js** (optional, for web landing page under `site/`): 20+
 

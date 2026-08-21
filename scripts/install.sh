@@ -67,11 +67,24 @@ done
 
 # An option beats its environment variable: it is the more explicit of the two, and it is
 # the one the user typed on the command line they are looking at.
-[ -n "$VERSION" ] || VERSION="${DEV_PRUNE_VERSION:-1.1.0}"
-VERSION="${VERSION#v}"
+[ -n "$VERSION" ] || VERSION="${DEV_PRUNE_VERSION:-}"
 [ "$NO_PATH" = "1" ] || NO_PATH="${DEV_PRUNE_NO_PATH:-0}"
 [ "$NO_AUTO_SETUP" = "1" ] || NO_AUTO_SETUP="${DEV_PRUNE_NO_AUTO_SETUP:-0}"
 REPO="Life-Experimentalist/dev-prune"
+
+# With no version pinned, ask GitHub which release is newest. The redirect target of
+# /releases/latest carries the tag, so one HEAD request answers without parsing JSON.
+# FALLBACK_VERSION exists for offline mirrors and rate-limited CI: it must always name
+# a published release, and the release workflow refuses to tag until it matches.
+FALLBACK_VERSION="1.2.0"
+if [ -z "$VERSION" ]; then
+    LATEST_URL="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+    case "$LATEST_URL" in
+        */tag/v*) VERSION="${LATEST_URL##*/tag/v}" ;;
+        *) VERSION="$FALLBACK_VERSION" ;;
+    esac
+fi
+VERSION="${VERSION#v}"
 
 echo ""
 echo "-> Installing dev-prune v${VERSION}"

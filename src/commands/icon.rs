@@ -217,10 +217,10 @@ fn apply_folder_icon(config_dir: &Path, _ico_path: &Path, _png_path: &Path) {
 
         let clean_ini = output::clean_path(&ini_file);
         let clean_dir = output::clean_path(config_dir);
-        let _ = std::process::Command::new("attrib")
+        let _ = crate::spawn::command("attrib")
             .args(["+h", "+s", &clean_ini])
             .output();
-        let _ = std::process::Command::new("attrib")
+        let _ = crate::spawn::command("attrib")
             .args(["+s", &clean_dir])
             .output();
     }
@@ -267,10 +267,10 @@ pub fn mime_package_xml() -> String {
 #[cfg(any(target_os = "linux", test))]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn xdg_data_home() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("XDG_DATA_HOME") {
-        if !dir.is_empty() {
-            return Some(PathBuf::from(dir));
-        }
+    if let Ok(dir) = std::env::var("XDG_DATA_HOME")
+        && !dir.is_empty()
+    {
+        return Some(PathBuf::from(dir));
     }
     dirs::home_dir().map(|h| h.join(".local").join("share"))
 }

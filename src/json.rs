@@ -99,10 +99,10 @@ fn result_value(result: &PruneResult) -> Value {
     if let Some(message) = status_message(&result.status) {
         obj["message"] = json!(message);
     }
-    if matches!(result.status, PruneStatus::LockfileError(_)) {
-        if let Some(fix) = lockfile_fix_command(&result.adapter_name) {
-            obj["fix_command"] = json!(fix);
-        }
+    if matches!(result.status, PruneStatus::LockfileError(_))
+        && let Some(fix) = lockfile_fix_command(&result.adapter_name)
+    {
+        obj["fix_command"] = json!(fix);
     }
     obj
 }
@@ -411,15 +411,23 @@ fn copy_to_clipboard(text: &str) -> bool {
         text.as_bytes().to_vec()
     };
 
-    let tools: &[&[&str]] = if cfg!(windows) {
-        &[&["clip"]]
+    // On Windows the tool is named by full path: `CreateProcess` resolves a bare
+    // program name through the *current directory* before PATH, and dev-prune is
+    // routinely run from inside checkouts it has no reason to trust — a repository
+    // carrying its own `clip.exe` must not become the thing that executes. Unix PATH
+    // search never consults the current directory, so the bare names there are fine.
+    let windows_clip = std::env::var("SystemRoot")
+        .map(|root| format!("{root}\\System32\\clip.exe"))
+        .unwrap_or_else(|_| String::from("C:\\Windows\\System32\\clip.exe"));
+    let tools: Vec<Vec<&str>> = if cfg!(windows) {
+        vec![vec![windows_clip.as_str()]]
     } else if cfg!(target_os = "macos") {
-        &[&["pbcopy"]]
+        vec![vec!["pbcopy"]]
     } else {
-        &[
-            &["wl-copy"],
-            &["xclip", "-selection", "clipboard"],
-            &["xsel", "--clipboard", "--input"],
+        vec![
+            vec!["wl-copy"],
+            vec!["xclip", "-selection", "clipboard"],
+            vec!["xsel", "--clipboard", "--input"],
         ]
     };
     tools.iter().any(|tool| pipe_into(tool, &bytes))
@@ -428,8 +436,8 @@ fn copy_to_clipboard(text: &str) -> bool {
 /// Run `command`, feed `bytes` to its stdin, and report whether it exited cleanly.
 fn pipe_into(command: &[&str], bytes: &[u8]) -> bool {
     use std::io::Write;
-    use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new(command[0])
+    use std::process::Stdio;
+    let Ok(mut child) = crate::spawn::command(command[0])
         .args(&command[1..])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

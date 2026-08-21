@@ -30,7 +30,18 @@ pub fn clean_path<P: AsRef<Path>>(path: P) -> String {
     } else {
         s
     };
-    s.replace("//", "/")
+    // Collapse doubled separators left by path joins — but never a leading `//`:
+    // `//server/share` names a network share, and `/server/share` does not. A single
+    // `replace` also leaves `///` half-collapsed, so loop until settled.
+    let (head, tail) = match s.strip_prefix("//") {
+        Some(rest) => ("//", rest),
+        None => ("", s.as_str()),
+    };
+    let mut tail = tail.to_string();
+    while tail.contains("//") {
+        tail = tail.replace("//", "/");
+    }
+    format!("{head}{tail}")
 }
 
 /// Create an animated terminal loading spinner for long-running operations.
@@ -227,6 +238,9 @@ mod tests {
             r"\\server\share\repo"
         );
         assert_eq!(clean_path(r"/private/var/tmp/repo"), r"/var/tmp/repo");
-        assert_eq!(clean_path(r"//home//user//repo"), r"/home/user/repo");
+        // A leading `//` is a network-share spelling and survives; only the doubled
+        // separators inside the path collapse.
+        assert_eq!(clean_path(r"//server//share//repo"), r"//server/share/repo");
+        assert_eq!(clean_path(r"/home//user///repo"), r"/home/user/repo");
     }
 }
