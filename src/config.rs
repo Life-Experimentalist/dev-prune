@@ -265,8 +265,11 @@ pub fn canonical_key(path: &Path) -> PathBuf {
 }
 
 /// Resolve `.` and `..` segments and anchor a relative path to the working directory,
-/// without touching the filesystem — for paths that no longer exist and so cannot be
-/// canonicalised.
+/// for paths that no longer exist and so cannot be canonicalised whole. The deepest
+/// ancestor that still exists is canonicalised and the missing tail re-appended:
+/// registry keys are canonical, and a deleted repo named through a symlinked parent —
+/// macOS's `/var` → `/private/var` temp tree being the everyday case — would otherwise
+/// spell the same directory through a different root and never compare equal.
 fn lexical_absolute(path: &Path) -> PathBuf {
     use std::path::Component;
     let mut out = if path.is_absolute() {
@@ -281,6 +284,19 @@ fn lexical_absolute(path: &Path) -> PathBuf {
                 out.pop();
             }
             other => out.push(other.as_os_str()),
+        }
+    }
+    let mut prefix = out.as_path();
+    while !prefix.as_os_str().is_empty() {
+        if let Ok(real) = prefix.canonicalize() {
+            if let Ok(tail) = out.strip_prefix(prefix) {
+                return real.join(tail);
+            }
+            break;
+        }
+        match prefix.parent() {
+            Some(parent) => prefix = parent,
+            None => break,
         }
     }
     out
@@ -1000,6 +1016,30 @@ mod tests {
         registry.add_repo(PathBuf::from("/test/repo"));
         assert!(registry.remove_repo(Path::new("/test/repo")));
         assert!(!registry.remove_repo(Path::new("/test/repo")));
+        assert_eq!(registry.repo_count(), 0);
+    }
+
+    /// macOS puts temp trees behind `/var` → `/private/var`, so a repo registered
+    /// through the symlink is keyed under the real path — and once deleted, the
+    /// symlinked spelling cannot be canonicalised whole. The lexical fallback must
+    /// resolve the surviving parent, or unlink reports "not registered" for a
+    /// directory the user is looking at in their own prompt.
+    #[cfg(unix)]
+    #[test]
+    fn a_deleted_repo_named_through_a_symlinked_parent_still_unlinks() {
+        let tmp = TempDir::new().unwrap();
+        let real_parent = tmp.path().join("real");
+        std::fs::create_dir(&real_parent).unwrap();
+        let alias = tmp.path().join("alias");
+        std::os::unix::fs::symlink(&real_parent, &alias).unwrap();
+
+        let repo = real_parent.join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let mut registry = Registry::default();
+        registry.add_repo(alias.join("repo"));
+        std::fs::remove_dir(&repo).unwrap();
+
+        assert!(registry.remove_repo(&alias.join("repo")));
         assert_eq!(registry.repo_count(), 0);
     }
 

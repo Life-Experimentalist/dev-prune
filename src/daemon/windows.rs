@@ -306,10 +306,8 @@ pub fn status() -> Result<DaemonStatus> {
 /// answer rather than a visible failure.
 fn decode_schtasks_xml(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xFF, 0xFE]) {
-        let units: Vec<u16> = bytes[2..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
-            .collect();
+        let (pairs, _odd_tail) = bytes[2..].as_chunks::<2>();
+        let units: Vec<u16> = pairs.iter().map(|&pair| u16::from_le_bytes(pair)).collect();
         String::from_utf16_lossy(&units)
     } else {
         String::from_utf8_lossy(bytes).into_owned()
