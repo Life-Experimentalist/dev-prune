@@ -5,7 +5,7 @@ This document defines the High-Level Design (HLD) specification for **`dev-prune
 ---
 
 <p align="center">
-  <img src="../../assets/hero_banner.png" alt="dev-prune Hero Banner" width="800" />
+  <img src="../../assets/readme-banner.png" alt="dev-prune Hero Banner" width="800" />
 </p>
 
 ---

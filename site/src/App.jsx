@@ -26,7 +26,7 @@ import {
 
 const REPO = "https://github.com/Life-Experimentalist/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.3.0";
+const VERSION = "1.3.1";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */

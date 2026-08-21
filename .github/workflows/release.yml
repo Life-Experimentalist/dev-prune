@@ -95,22 +95,14 @@ jobs:
         shell: bash
         run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > /dev/null
 
-      # The install scripts resolve the latest release dynamically, but each carries a
-      # pinned fallback for offline mirrors and rate-limited CI. A fallback left on the
-      # previous version ships silently — nothing else ever reads it until the dynamic
-      # resolution fails on some user's machine — so pin it to the tag here.
-      - name: Verify the install scripts' fallback versions match the tag
+      # The install scripts resolve the latest release dynamically but each pins a
+      # fallback for offline mirrors and rate-limited CI, and the site prints the
+      # version in two places. All four are written by hand and none of them fails
+      # visibly when stale. The step above already established Cargo.toml == tag, so
+      # checking these against Cargo.toml checks them against the tag.
+      - name: Verify the install scripts and site name this version
         shell: bash
-        run: |
-          version="${{ steps.version.outputs.version }}"
-          sh_fallback="$(grep -o 'FALLBACK_VERSION="[^"]*"' scripts/install.sh | head -n 1 | sed 's/FALLBACK_VERSION="\(.*\)"/\1/')"
-          ps1_fallback="$(grep -o "^\\\$fallbackVersion = '[^']*'" scripts/install.ps1 | head -n 1 | sed "s/.*'\\(.*\\)'/\\1/")"
-          echo "install.sh fallback:  ${sh_fallback:-<not found>}"
-          echo "install.ps1 fallback: ${ps1_fallback:-<not found>}"
-          if [ "$sh_fallback" != "$version" ] || [ "$ps1_fallback" != "$version" ]; then
-            echo "::error::The tag is $version — bump FALLBACK_VERSION in scripts/install.sh and \$fallbackVersion in scripts/install.ps1 to the release version."
-            exit 1
-          fi
+        run: sh scripts/check-version.sh
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -205,6 +197,14 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+    # A job-level block replaces the workflow-level grant rather than adding to it, so
+    # `contents: write` has to be repeated here or the release upload loses it.
+    permissions:
+      contents: write
+      # Both are required by actions/attest-build-provenance: the OIDC token identifies
+      # this workflow to Sigstore, and the attestation is then written to the repository.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -223,6 +223,23 @@ jobs:
 
       - name: List assets
         run: ls -lh dist
+
+      # A `.sha256` sidecar proves an archive was not altered in transit. It cannot say
+      # where the archive came from — whoever produced the archive produced the sidecar,
+      # so a substituted pair verifies perfectly. This attestation is signed by GitHub's
+      # OIDC identity for this workflow and binds each file to this repository, this
+      # workflow file and this commit, which is what `gh attestation verify` checks. npm
+      # (`--provenance`) and PyPI (Trusted Publishing) already get the equivalent; the
+      # release archives had nothing, and they are what the install scripts download.
+      #
+      # Sidecars are deliberately not attested: they are a checksum of an attested file.
+      - name: Attest the release binaries
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.vsix
 
       # The release body is the changelog entry, not a generated commit list. The commit
       # list is still appended by `generate_release_notes` below, so nothing is lost —
@@ -286,6 +303,9 @@ jobs:
           Both Linux builds are statically linked against musl, so they run on any
           distribution including Alpine, with no glibc floor.
 
+          Every build is 64-bit. There is no 32-bit x86 or 32-bit ARM release on any
+          platform, and the install scripts refuse rather than guess when they meet one.
+
           The \`dev-prune-vscode-*.vsix\` is the VS Code extension (schema
           IntelliSense for \`.devprune.json\`), for editors that cannot reach the
           marketplace — side-load it with
@@ -323,6 +343,19 @@ jobs:
 
           \`\`\`powershell
           (Get-FileHash dev-prune-v${VERSION}-windows-x64.zip).Hash -eq (Get-Content dev-prune-v${VERSION}-windows-x64.zip.sha256).Split(' ')[0].ToUpper()
+          \`\`\`
+
+          That sidecar proves the file was not altered in transit. It does not prove
+          where it came from — the same hand that swaps an archive swaps its sidecar.
+          Every archive on this page is also signed by GitHub's build provenance, which
+          binds it to this repository, this workflow and the commit it was built from:
+
+          \`\`\`bash
+          gh attestation verify dev-prune-v${VERSION}-linux-x64.tar.gz --repo ${{ github.repository }}
+          \`\`\`
+
+          \`\`\`powershell
+          gh attestation verify dev-prune-v${VERSION}-windows-x64.zip --repo ${{ github.repository }}
           \`\`\`
           EOF
 

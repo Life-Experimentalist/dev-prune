@@ -6,7 +6,7 @@ Welcome to the exhaustive Troubleshooting Directory for **`dev-prune`** (`devp`)
 
 ## 🖼️ Visual Diagnostics Banner
 
-![dev-prune Visual Banner](../../assets/banner.png)
+![dev-prune Visual Banner](../../assets/readme-banner.png)
 
 ---
 

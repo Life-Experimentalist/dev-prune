@@ -153,9 +153,14 @@ pub fn print_error(msg: &str) {
     eprintln!("{} {}", "✗".red().bold(), highlight_code_spans(msg));
 }
 
-/// Print an info message (blue arrow)
+/// Print an info message (dimmed arrow)
+///
+/// Dimmed rather than coloured on purpose. Info lines are the most common thing this
+/// tool prints, and a bold blue marker on every one of them competes with the ✓ and ⚠
+/// that actually need to be noticed — blue is also the worst colour to bet on, being
+/// close to unreadable against the default background of several popular terminals.
 pub fn print_info(msg: &str) {
-    println!("{} {}", "→".blue().bold(), highlight_code_spans(msg));
+    println!("{} {}", "→".dimmed(), highlight_code_spans(msg));
 }
 
 /// Print a notice to stderr.
@@ -165,12 +170,17 @@ pub fn print_info(msg: &str) {
 /// one JSON document and nothing else, and a friendly note printed above it is the
 /// difference between a parseable contract and a parse error.
 pub fn print_notice(msg: &str) {
-    eprintln!("{} {}", "→".blue().bold(), highlight_code_spans(msg));
+    eprintln!("{} {}", "→".dimmed(), highlight_code_spans(msg));
 }
 
 /// Print a section header
+///
+/// Weight, not colour. A header is structure — the reader finds it by scanning down the
+/// left edge, which bold already serves. Colouring and underlining it as well spends
+/// two more signals on something that was already unambiguous, and leaves the palette
+/// with nothing distinct to say when a line genuinely means "this went wrong".
 pub fn print_header(msg: &str) {
-    println!("\n{}", msg.cyan().bold().underline());
+    println!("\n{}", msg.bold());
 }
 
 /// A byte figure styled as "space you got back" — the number this tool exists for.
@@ -183,10 +193,17 @@ pub fn styled_path<P: AsRef<Path>>(path: P) -> String {
     clean_path(path).cyan().to_string()
 }
 
-/// A package-manager name, styled — one colour everywhere an adapter is named, so
-/// "cargo" reads as the same thing in a candidate line, a summary and an error.
+/// A package-manager name, deliberately left in the terminal's default colour.
+///
+/// It used to be magenta, which put a fifth hue on a status row that already carried
+/// green, cyan and a state colour — and an adapter name is an identifier, not a status,
+/// so the colour was decorating rather than saying anything. Plain text is also what
+/// keeps a wall of coloured columns readable: something has to be the resting state.
+///
+/// Still a function, and still called everywhere an adapter is named, so this stays one
+/// decision in one place rather than a hundred call sites to revisit.
 pub fn styled_adapter(name: &str) -> String {
-    name.magenta().to_string()
+    name.to_string()
 }
 
 /// Print the dev-prune ASCII art banner
@@ -201,7 +218,10 @@ pub fn print_banner() {
 "#,
         crate::constants::VERSION
     );
-    println!("{}", art.truecolor(64, 224, 208).bold());
+    // Cyan, not a hard-coded RGB. `truecolor` degrades to nothing useful on a 16- or
+    // 256-colour terminal, and it ignored the palette the user picked for their own
+    // terminal — a named colour honours it and matches the cyan used everywhere else.
+    println!("{}", art.cyan().bold());
 }
 
 /// Print the one-line credit, if anything is going to read it.

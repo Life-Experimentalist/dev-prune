@@ -5,6 +5,73 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2026-08-22
+
+Every release archive can now be proved to have come from this repository, the Windows
+installer stops guessing on machines it has no build for, and the terminal output uses
+four colours instead of seven.
+
+### Added
+
+- **Build provenance on every release archive.** GitHub now signs a statement that each
+  `.tar.gz`, `.zip` and `.vsix` was built by this repository's release workflow, from a
+  named commit. Anyone can check it before unpacking, and a tampered or re-uploaded
+  archive fails:
+
+  ```bash
+  gh attestation verify dev-prune-v1.3.1-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+  ```
+
+  The `.sha256` sidecars are still published and still worth checking, but a checksum
+  only proves the file survived the download — whoever produced the archive also
+  produced the sidecar. Provenance is the part that says who that was.
+
+### Changed
+
+- **Terminal colour, dialled back.** `devp status`, the interactive views and
+  `devp --version` used seven colours, several of which marked nothing: adapter names
+  were magenta, repositories with nothing to reclaim were blue, the author line was a
+  hard-coded turquoise that ignored your terminal theme. Now green means "you can have
+  these bytes back", red and yellow mean something is wrong, cyan marks paths, links and
+  keys, and everything else is your terminal's own colour — so the columns that *are*
+  coloured are the ones worth looking at. `NO_COLOR` and piped output still disable it
+  entirely.
+
+### Fixed
+
+- **The Windows installer refuses 32-bit machines instead of installing a binary they
+  cannot run.** dev-prune publishes x64 and ARM64 Windows builds and no 32-bit build;
+  `install.ps1` used to fall through to the x64 archive for any architecture it did not
+  recognise, and the result was `is not a valid Win32 application` — an error that names
+  neither the cause nor the fix. It now says which architecture it saw, that only 64-bit
+  builds are published, and that `cargo install dev-prune` builds one from source. This
+  matches what `install.sh` already did on Linux and macOS.
+- Three documentation pages quoted release archive filenames from **1.2.0** in their
+  manual-download and troubleshooting steps, so following them downloaded a two-release-old
+  binary. They now name the current release, and a check keeps them there.
+- **`devp status` colours its table again.** In a non-interactive terminal — a CI log, a
+  pager, anything that is not a full-screen TUI — every row printed in plain white, so
+  the reclaimable-bytes column looked no different from the dates beside it. The table
+  had asked for colour since 1.0.0 and silently got none. Run `devp status` in a plain
+  terminal and the space you can reclaim is green, a missing repository is red, and a
+  broken `.devprune.json` is yellow.
+
+### For contributors
+
+- **`sh scripts/check-version.sh`** fails when any file that spells the release version
+  out by hand disagrees with `Cargo.toml`: both install scripts' offline fallbacks, the
+  site's version banner, `llms.txt`, and the three docs that quote whole asset filenames.
+  CI runs it on every push and the release workflow runs it one step after checking the
+  tag, so "agrees with `Cargo.toml`" and "agrees with the tag" become the same statement.
+- The README and documentation banners are regenerated: one 1280×640 image
+  (`assets/readme-banner.png`, also the correct size for GitHub's social preview) and one
+  1200×630 Open Graph card, both centre-crops of `assets/banner-master.png`. The old hero
+  was 5.8 MB of generated lettering that spelled `developements` and `READM.md`.
+- [`docs/FUTURE.md`](docs/FUTURE.md) is now a triaged roadmap — *in flight*, *next*,
+  *later*, *not planned* — so "we have not done that yet" and "we decided against that"
+  no longer read the same. 32-bit builds, deleting build outputs, and any bypass for the
+  seven safety invariants are recorded under *not planned*, with the reason attached.
+
 ## [1.3.0] - 2026-08-21
 
 Three new ecosystems (Poetry, and opt-in Gradle and Maven), a real upgrade command,

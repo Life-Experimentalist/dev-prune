@@ -44,7 +44,8 @@ the one above:
    ```
 
    The social preview has no API and has to be uploaded by hand: Settings → General →
-   Social preview → Upload `assets/banner.png`. It is the image every link to the
+   Social preview → Upload `assets/readme-banner.png`. It is already exactly the
+   1280×640 GitHub asks for, so nothing is rescaled. It is the image every link to the
    repository renders as on Twitter/X, Slack, Discord and Hacker News, and without it
    they render as a grey octocat.
 
@@ -331,7 +332,11 @@ tagging something that will fail.
 Then:
 
 1. **Bump the version** in `Cargo.toml`. Run `cargo build` so `Cargo.lock` picks it up —
-   the release builds with `--locked` and will fail on a stale lockfile.
+   the release builds with `--locked` and will fail on a stale lockfile. Then run
+   `sh scripts/check-version.sh`: it names every other file that spells the version out
+   by hand — the install scripts' offline fallback, the site's banner and `llms.txt`,
+   and the docs that quote a whole asset filename. CI runs it on every push and the
+   release runs it before building, so a missed one stops the tag rather than shipping.
 2. **Write the changelog entry.** See [the changelog contract](#-the-changelog-contract).
    CI fails if `CHANGELOG.md` has no section matching the version in `Cargo.toml`, so
    this is enforced, not merely encouraged.
@@ -389,6 +394,22 @@ Every asset gets a `.sha256` sidecar in `sha256sum` format. **The install script
 to install without it**, so the sidecars are a contract, not a courtesy — as are the
 asset names themselves, which `scripts/install.sh` and `scripts/install.ps1` construct
 by hand.
+
+The archives are also signed with [GitHub build provenance][attest]: the `publish` job
+runs `actions/attest-build-provenance`, which exchanges the job's OIDC token for a
+Sigstore signature binding each file to this repository, this workflow file and the
+commit it was built from. That is the part a checksum cannot do — a sidecar is produced
+by whoever produced the archive, so a substituted pair verifies perfectly. Anyone can
+check it with no secret and no key:
+
+```bash
+gh attestation verify dev-prune-v<ver>-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+```
+
+Only the archives and the `.vsix` are attested. A sidecar is a checksum of an attested
+file, so signing it adds nothing.
+
+[attest]: https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds
 
 Linux is musl and statically linked on purpose. A glibc build carries a floor: it
 refuses to start on any distribution older than the runner that produced it, and does

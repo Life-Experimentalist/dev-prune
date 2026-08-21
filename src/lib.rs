@@ -507,20 +507,21 @@ pub fn print_version_info() {
         "dev-prune".cyan(),
         "devp".cyan()
     );
-    println!(
-        "  Author:          {}",
-        constants::AUTHOR.truecolor(64, 224, 208)
-    );
+    // These lines are facts, not status, so most of them stay in the terminal's own
+    // colour. The author line was turquoise and the OS and architecture yellow, which
+    // marked nothing and put five hues on one short screen; yellow now only ever means a
+    // warning, and cyan is reserved for the two things worth clicking.
+    println!("  Author:          {}", constants::AUTHOR);
     println!(
         "  Repository:      {}",
-        constants::REPO_URL.bright_blue().underline()
+        constants::REPO_URL.cyan().underline()
     );
     println!(
         "  Homepage:        {}",
-        constants::HOMEPAGE_URL.bright_blue().underline()
+        constants::HOMEPAGE_URL.cyan().underline()
     );
-    println!("  Target OS:       {}", std::env::consts::OS.yellow());
-    println!("  Architecture:    {}", std::env::consts::ARCH.yellow());
+    println!("  Target OS:       {}", std::env::consts::OS);
+    println!("  Architecture:    {}", std::env::consts::ARCH);
     println!(
         "  Compiler:        Rust {}+ (edition 2024)",
         constants::MSRV

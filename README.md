@@ -25,7 +25,7 @@
 
 [**Website**](https://devprune.vkrishna04.me/) · [**Documentation**](docs/README.md) · [**CLI reference**](docs/CLI_REFERENCE.md) · [**Safety invariants**](docs/SAFETY_INVARIANTS.md) · [**Changelog**](CHANGELOG.md)
 
-<img src="assets/hero_banner.png" alt="dev-prune" width="820" />
+<img src="assets/readme-banner.png" alt="dev-prune — get the gigabytes back, lose nothing" width="820" />
 
 </div>
 

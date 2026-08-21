@@ -223,18 +223,23 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
                         Style::default()
                     },
                 ),
-                Span::raw(" → "),
+                // One meaning per colour, and the row reads left to right: cyan is
+                // the directory about to be deleted, green is the space it gives back,
+                // and the arrow and the adapter tag are furniture. Four hues on one
+                // line — yellow, cyan, magenta and white — made none of them mean
+                // anything.
+                Span::styled(" → ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     output::pad_display(&item.candidate.bloat_dir, 15),
-                    Style::default().fg(Color::Yellow),
-                ),
-                Span::styled(
-                    format!("({:>10}) ", size_str),
                     Style::default().fg(Color::Cyan),
                 ),
                 Span::styled(
+                    format!("({:>10}) ", size_str),
+                    Style::default().fg(Color::Green),
+                ),
+                Span::styled(
                     format!("[{}]", item.candidate.adapter_name),
-                    Style::default().fg(Color::Magenta),
+                    Style::default().fg(Color::DarkGray),
                 ),
             ]);
 
@@ -274,9 +279,7 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
                 // ecosystem, so "3 of 5 repos" would be wrong on exactly the layout
                 // this tool is built for.
                 format!("{} of {} directories", selected_count, items.len()),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().add_modifier(Modifier::BOLD),
             ),
             Span::raw("  |  "),
             Span::styled("Reclaimable Space: ", Style::default().fg(Color::DarkGray)),
@@ -304,7 +307,7 @@ fn render_ui(frame: &mut Frame, items: &[SelectableCandidate], list_state: &mut 
                     .add_modifier(Modifier::BOLD),
             ),
             Span::raw(" Prune Selected  "),
-            Span::styled("[q/Esc/Ctrl-C]", Style::default().fg(Color::Red)),
+            Span::styled("[q/Esc/Ctrl-C]", Style::default().fg(Color::Cyan)),
             Span::raw(" Cancel"),
         ]),
     ];

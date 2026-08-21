@@ -144,6 +144,10 @@ Docs describe what the code does *now*. There is no "planned", "coming soon" or
   there; the few docs that restate the number by hand are checked against it by
   `scripts/check-msrv.sh` in CI. To bump the MSRV, change `rust-version` and let that
   check list the files to touch.
+- **The release version works the same way**: `version` in `Cargo.toml` is the source of
+  truth, and `scripts/check-version.sh` checks every file that restates it — the install
+  scripts' offline fallback, the site banner, `llms.txt`, and the docs that quote a whole
+  asset filename. Never hard-code a version anywhere that check does not cover.
 - `schemas/` holds the JSON schema for `.devprune.json`; a new config key goes there too.
 
 ---

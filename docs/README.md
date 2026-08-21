@@ -7,7 +7,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 ---
 
 <p align="center">
-  <img src="../assets/banner.png" alt="dev-prune Banner" width="800" />
+  <img src="../assets/readme-banner.png" alt="dev-prune Banner" width="800" />
 </p>
 
 ---
@@ -57,7 +57,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 - **[Market Analysis & Competitive Matrix](MARKET_ANALYSIS.md)**
   Detailed comparison of `dev-prune` against existing developer tools (`npkill`, `cargo-clean-all`, `pyclean`, `git clean`, `dust`/`ncdu`, `BleachBit`) and breakdown of Unique Selling Propositions (USPs).
 - **[Future Possibilities](FUTURE.md)**
-  The one place parked ideas live: gated distribution channels (WinGet, Scoop, Homebrew core), adapter candidates, editor-integration follow-ups, and the CLI ideas considered and deferred — so a parked idea is never mistaken for a shipped feature.
+  Everything that is not built yet, sorted into four tiers — *in flight*, *next*, *later*, *not planned* — so "we haven't done that" and "we decided against that" never read the same. Distribution channels, adapter candidates, editor follow-ups, and the ideas that were declined with the reason attached.
 
 ---
 

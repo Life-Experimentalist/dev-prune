@@ -284,6 +284,11 @@ jobs:
       - name: Docs agree with Cargo.toml's rust-version
         run: sh scripts/check-msrv.sh
 
+      # Same problem, different number: the install scripts' offline fallback and the
+      # site's version banner are both written by hand and both fail silently.
+      - name: The install scripts and site agree with Cargo.toml's version
+        run: sh scripts/check-version.sh
+
   site:
     name: Site build
     runs-on: ubuntu-latest

@@ -313,12 +313,15 @@ fn run_status_loop(
     }
 }
 
+/// Three tiers, not six colours: green is actionable, red and yellow are broken, and
+/// everything that is merely normal is the terminal's own colour or grey. A distinct hue
+/// per variant looks like a legend the reader has to learn, and it spends the loud
+/// colours on rows that need nothing.
 fn reason_color(reason: &SkipReason) -> Color {
     match reason {
         SkipReason::Candidate => Color::Green,
-        SkipReason::Active => Color::Cyan,
-        SkipReason::Ignored => Color::DarkGray,
-        SkipReason::NoBloat => Color::Blue,
+        SkipReason::Active => Color::Reset,
+        SkipReason::Ignored | SkipReason::NoBloat => Color::DarkGray,
         SkipReason::PathMissing => Color::Red,
         // Actionable rather than broken: the repo is fine, its config file is not.
         SkipReason::ConfigError(_) => Color::Yellow,
@@ -456,6 +459,13 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
             } else {
                 "—".to_string()
             };
+            // Green means "you can have these bytes back" everywhere in this tool, so a
+            // dash — nothing to reclaim — must not borrow the same colour.
+            let bloat_color = if repo.reclaimable_bytes > 0 {
+                Color::Green
+            } else {
+                Color::DarkGray
+            };
             let activity_str = repo
                 .last_activity
                 .map(|d| d.format("%Y-%m-%d").to_string())
@@ -488,8 +498,8 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                 sel_cell,
                 Cell::from(path_str).style(path_style),
                 Cell::from(reason_str).style(Style::default().fg(color)),
-                Cell::from(adapters_str).style(Style::default().fg(Color::Magenta)),
-                Cell::from(bloat_str).style(Style::default().fg(Color::Cyan)),
+                Cell::from(adapters_str),
+                Cell::from(bloat_str).style(Style::default().fg(bloat_color)),
                 Cell::from(activity_str).style(Style::default().fg(date_color)),
                 Cell::from(pruned_str).style(Style::default().fg(date_color)),
             ])
@@ -533,15 +543,22 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
         vec![
             Line::from(vec![
                 Span::styled("Selected: ", Style::default().fg(Color::DarkGray)),
+                // Bold carries the count; green carries the bytes, the same as it does
+                // in every other view. The whole line used to be yellow, which is the
+                // colour this screen already uses for "you are in the destructive mode"
+                // — saying it twice made neither reading land.
                 Span::styled(
                     format!(
-                        "{} of {} candidates  ({})",
+                        "{} of {} candidates  ",
                         app.selected_count(),
-                        app.candidate_count(),
-                        format_bytes(app.selected_bytes())
+                        app.candidate_count()
                     ),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("({})", format_bytes(app.selected_bytes())),
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
                 ),
             ]),
@@ -561,9 +578,9 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" Prune Selected  "),
-                Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+                Span::styled("[Esc]", Style::default().fg(Color::Cyan)),
                 Span::raw(" Back to Browse  "),
-                Span::styled("[q]", Style::default().fg(Color::Red)),
+                Span::styled("[q]", Style::default().fg(Color::Cyan)),
                 Span::raw(" Quit"),
             ]),
             Line::from(vec![]),
@@ -574,11 +591,11 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                 Span::styled("Legend: ", Style::default().fg(Color::DarkGray)),
                 Span::styled("■ Candidate", Style::default().fg(Color::Green)),
                 Span::raw("  "),
-                Span::styled("■ Active", Style::default().fg(Color::Cyan)),
+                Span::styled("■ Active", Style::default().fg(Color::Reset)),
                 Span::raw("  "),
-                Span::styled("■ No Bloat", Style::default().fg(Color::Blue)),
-                Span::raw("  "),
-                Span::styled("■ Ignored", Style::default().fg(Color::DarkGray)),
+                // One swatch, because these two share a colour: neither needs anything
+                // from you, and a legend with two identical squares is worse than one.
+                Span::styled("■ Ignored / No Bloat", Style::default().fg(Color::DarkGray)),
                 Span::raw("  "),
                 Span::styled("■ Path Missing", Style::default().fg(Color::Red)),
             ]),
@@ -587,28 +604,32 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                 Span::raw(" Navigate  "),
                 Span::styled("[PgUp/PgDn/g/G]", Style::default().fg(Color::Cyan)),
                 Span::raw(" Jump  "),
+                // Every key is cyan; the two that change what the view does are also
+                // bold. They used to be yellow and magenta, which said "warning" and
+                // "nothing" respectively, and red is needed for real failures rather
+                // than for the key that closes a screen.
                 Span::styled(
                     "[p]",
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" Prune-Select Mode  "),
                 Span::styled(
                     "[i]",
                     Style::default()
-                        .fg(Color::Magenta)
+                        .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" Toggle Ignore  "),
-                Span::styled("[q/Esc/Ctrl-C]", Style::default().fg(Color::Red)),
+                Span::styled("[q/Esc/Ctrl-C]", Style::default().fg(Color::Cyan)),
                 Span::raw(" Quit"),
             ]),
             Line::from(vec![
                 Span::styled(
                     "[i] ",
                     Style::default()
-                        .fg(Color::Magenta)
+                        .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
@@ -690,26 +711,41 @@ pub fn render_status_plain(repos: &[RepoStatusEntry]) {
         // widths, so colouring inside the format string would shear every column that
         // follows. `colored` emits nothing when stdout is a pipe, so the plain widths
         // survive redirection untouched.
+        //
+        // `Colorize::` spelled out, not `cell.green()`: this module imports
+        // `ratatui::prelude::*`, which brings `ratatui::style::Stylize` into scope with a
+        // `green()` of its own that takes `self` by value. It wins the method probe over
+        // `colored`'s, which needs an autoref, so `cell.green()` silently built a ratatui
+        // `Span` and `.to_string()` handed back the text with no escapes at all. This
+        // table printed in plain white for every release up to 1.3.0 and nothing failed.
+        // Three tiers, not six colours. Green marks the rows you can act on, red and
+        // yellow the two that are actually broken, and everything that is merely normal
+        // — in use, nothing to reclaim, deliberately ignored — is default or dim. A
+        // colour per enum variant reads as decoration and leaves nothing louder to say
+        // when a repository really is misconfigured.
         let reason_cell = format!("{reason:<22}");
         let reason_cell = match &repo.reason {
-            SkipReason::Candidate => reason_cell.green().to_string(),
-            SkipReason::Active => reason_cell.cyan().to_string(),
-            SkipReason::Ignored => reason_cell.dimmed().to_string(),
-            SkipReason::NoBloat => reason_cell.blue().to_string(),
-            SkipReason::PathMissing => reason_cell.red().to_string(),
-            SkipReason::ConfigError(_) => reason_cell.yellow().to_string(),
+            SkipReason::Candidate => Colorize::green(reason_cell.as_str()).to_string(),
+            SkipReason::Active => reason_cell,
+            SkipReason::Ignored | SkipReason::NoBloat => {
+                Colorize::dimmed(reason_cell.as_str()).to_string()
+            }
+            SkipReason::PathMissing => Colorize::red(reason_cell.as_str()).to_string(),
+            SkipReason::ConfigError(_) => Colorize::yellow(reason_cell.as_str()).to_string(),
         };
+        // Green, not bold green: this figure repeats on every row, and bolding all of
+        // them means none of them stands out. The bold copy is the grand total below.
         let bloat_cell = if repo.reclaimable_bytes > 0 {
-            format!("{bloat:<12}").green().bold().to_string()
+            Colorize::green(format!("{bloat:<12}").as_str()).to_string()
         } else {
             format!("{bloat:<12}")
         };
         println!(
-            "  {:>3}  {}  {}  {}  {}  {:<13}  {:<13}",
+            "  {:>3}  {}  {}  {:<12}  {}  {:<13}  {:<13}",
             i + 1,
             output::pad_display(&path_str, 35),
             reason_cell,
-            format!("{adapters:<12}").magenta(),
+            adapters,
             bloat_cell,
             activity,
             pruned
@@ -722,11 +758,13 @@ pub fn render_status_plain(repos: &[RepoStatusEntry]) {
         .iter()
         .filter(|r| matches!(r.reason, SkipReason::Candidate))
         .count();
+    // The one bold figure on the screen. Each row's own bloat is plain green; bolding
+    // the grand total is what makes it the line the eye lands on.
     output::print_info(&format!(
         "Total: {} repos  |  {} candidates  |  {} reclaimable",
         repos.len(),
         candidates,
-        format_bytes(total)
+        output::format_bytes_styled(total)
     ));
 
     // Reclaimable is what a prune actually frees, which for pnpm and bun is less than
@@ -759,9 +797,13 @@ mod tests {
     #[test]
     fn test_row_style_logic() {
         assert_eq!(reason_color(&SkipReason::Candidate), Color::Green);
-        assert_eq!(reason_color(&SkipReason::Active), Color::Cyan);
+        assert_eq!(reason_color(&SkipReason::Active), Color::Reset);
         assert_eq!(reason_color(&SkipReason::Ignored), Color::DarkGray); // merged Disabled+Ignored
-        assert_eq!(reason_color(&SkipReason::NoBloat), Color::Blue);
+        assert_eq!(reason_color(&SkipReason::NoBloat), Color::DarkGray);
         assert_eq!(reason_color(&SkipReason::PathMissing), Color::Red);
+        assert_eq!(
+            reason_color(&SkipReason::ConfigError(String::new())),
+            Color::Yellow
+        );
     }
 }

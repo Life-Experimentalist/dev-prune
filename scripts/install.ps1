@@ -83,7 +83,7 @@ $repo = 'Life-Experimentalist/dev-prune'
 # redirect carries the tag, so one HEAD request answers without parsing JSON.
 # $fallbackVersion exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-$fallbackVersion = '1.3.0'
+$fallbackVersion = '1.3.1'
 if (-not $version) {
     try {
         $resp = Invoke-WebRequest -Uri "https://github.com/$repo/releases/latest" -Method Head -MaximumRedirection 5 -UseBasicParsing -ErrorAction Stop
@@ -114,7 +114,22 @@ $aliasPath = Join-Path $binDir 'devp.exe'
 # silently install the x64 build. Under any emulation, PROCESSOR_ARCHITEW6432 carries
 # the machine's real architecture; it is unset when the process is native.
 $nativeArch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
-$arch = if ($nativeArch -eq 'ARM64') { 'arm64' } else { 'x64' }
+# Two Windows builds are published and neither is 32-bit. A 32-bit PowerShell on 64-bit
+# Windows reads AMD64 from the variable above, so reaching `default` means the machine
+# itself has no 64-bit mode — and handing it the x64 zip produces "not a valid Win32
+# application", which names nothing. install.sh refuses unknown architectures rather
+# than guessing; this now matches it.
+$arch = switch ($nativeArch) {
+    'AMD64' { 'x64' }
+    'ARM64' { 'arm64' }
+    default {
+        # ASCII only inside the quotes. This script is fetched and `iex`'d, and a
+        # decoder that guesses ANSI turns a UTF-8 em dash into "a-euro-rightquote" —
+        # and PowerShell accepts a typographic right quote as a string terminator, so
+        # the parse dies three words later. Comments survive it; strings do not.
+        throw "Unsupported architecture: $nativeArch. dev-prune publishes 64-bit builds only (x64 and ARM64). There is no 32-bit x86 or ARM release. Build one from source instead: cargo install dev-prune"
+    }
+}
 $asset = "dev-prune-v$version-windows-$arch.zip"
 $baseUrl = "https://github.com/$repo/releases/download/v$version"
 

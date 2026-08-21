@@ -57,16 +57,24 @@ Six single-binary archives are built automatically for every tagged release and 
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.3.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.3.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.3.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.3.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.3.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.3.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.3.1-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.3.1-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.3.1-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.3.1-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.3.1-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.3.1-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
+**Every target is 64-bit.** `x64` is x86-64 (Intel/AMD, also called AMD64) and `arm64` is AArch64; there is no 32-bit build for any platform, and "x86" in the 32-bit sense is not published. A 32-bit *process* on 64-bit Windows is fine — `install.ps1` reads the machine's architecture, not the shell's — but a machine with no 64-bit mode gets a refusal rather than a download that cannot run. Building one is a `cargo install dev-prune` away on a 32-bit toolchain; nothing in the source is 64-bit-only.
+
 The install scripts construct these filenames by hand and refuse to install without the matching `.sha256`, so the naming is a contract rather than a convention.
+
+Each archive is additionally signed with GitHub build provenance, which ties it to this repository, the release workflow and the commit it was built from — something a checksum cannot do, because whoever produces an archive also produces its checksum. Verify with no key and no account:
+
+```bash
+gh attestation verify dev-prune-v1.3.1-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+```
 
 ### 4. NPM — packaging exists, channel currently off
 Nothing is on the npm registry today: the `publish-npm` release job is gated behind the
