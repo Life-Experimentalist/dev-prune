@@ -47,6 +47,7 @@ include = [
     "/assets/mimetype",
     "/assets/README.md",
     "/.agents/skills/dev-prune/SKILL.md",
+    "/.agents/rules/dev-prune.rules.md",
 ]
 
 # `cargo install dev-prune` compiles from source, because crates.io stores source and
