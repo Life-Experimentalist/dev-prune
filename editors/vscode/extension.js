@@ -87,33 +87,43 @@ function workspaceRoot() {
 
 function showCliMissing(context) {
 	cliMissing = true;
-	statusItem.text = '$(warning) devp not found';
-	statusItem.tooltip =
-		'This workspace has a .devprune.json, but the dev-prune CLI (devp) is not on your PATH — nothing is acting on that file.';
-	statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-	statusItem.show();
-	if (noticeShownThisSession || context.globalState.get(HIDE_KEY) || !notificationsEnabled()) {
-		return;
-	}
-	noticeShownThisSession = true;
-	// This popup exists to get the CLI installed, nothing more. Everything
-	// else lives in the status bar.
-	vscode.window
-		.showInformationMessage(
-			'The dev-prune CLI (devp) is not installed, so nothing is acting on this workspace’s .devprune.json.',
-			'Install devp',
-			'I installed it',
-			"Don't show again",
-		)
-		.then((choice) => {
-			if (choice === 'Install devp') {
-				vscode.env.openExternal(vscode.Uri.parse(INSTALL_URL));
-			} else if (choice === 'I installed it') {
-				recheckCli(context);
-			} else if (choice === "Don't show again") {
-				context.globalState.update(HIDE_KEY, true);
-			}
-		});
+	// The activation globs also match ignore.devprune.json — the opt-out
+	// marker. A workspace that only opted out has nothing for devp to act on,
+	// so it gets neither the warning nor the install nag: verify a real config
+	// file exists before claiming one does.
+	vscode.workspace.findFiles('**/.devprune.json', undefined, 1).then((found) => {
+		if (!found || found.length === 0) {
+			statusItem.hide();
+			return;
+		}
+		statusItem.text = '$(warning) devp not found';
+		statusItem.tooltip =
+			'This workspace has a .devprune.json, but the dev-prune CLI (devp) is not on your PATH — nothing is acting on that file.';
+		statusItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+		statusItem.show();
+		if (noticeShownThisSession || context.globalState.get(HIDE_KEY) || !notificationsEnabled()) {
+			return;
+		}
+		noticeShownThisSession = true;
+		// This popup exists to get the CLI installed, nothing more. Everything
+		// else lives in the status bar.
+		vscode.window
+			.showInformationMessage(
+				'The dev-prune CLI (devp) is not installed, so nothing is acting on this workspace’s .devprune.json.',
+				'Install devp',
+				'I installed it',
+				"Don't show again",
+			)
+			.then((choice) => {
+				if (choice === 'Install devp') {
+					vscode.env.openExternal(vscode.Uri.parse(INSTALL_URL));
+				} else if (choice === 'I installed it') {
+					recheckCli(context);
+				} else if (choice === "Don't show again") {
+					context.globalState.update(HIDE_KEY, true);
+				}
+			});
+	});
 }
 
 // Re-probe after the user says they installed the CLI. The probe covers the
@@ -219,10 +229,22 @@ function requireTrust() {
 	return false;
 }
 
-function runInTerminal(commandLine) {
+// Terminal commands run the same binary the status bar probed. When the probe
+// resolved an absolute path (PATH lookup failed but a managed install
+// directory has the CLI), a bare `devp` in the terminal would fail even though
+// the status bar works — so spell out the path, quoted for spaces. PowerShell,
+// the Windows default shell, treats a bare quoted string as an expression, not
+// a program; the call operator makes it run there.
+function cliForTerminal() {
+	if (binPath === BIN) return 'devp';
+	const quoted = `"${binPath}"`;
+	return process.platform === 'win32' ? `& ${quoted}` : quoted;
+}
+
+function runInTerminal(args) {
 	const terminal = vscode.window.createTerminal({ name: 'dev-prune', cwd: workspaceRoot() });
 	terminal.show();
-	terminal.sendText(commandLine, true);
+	terminal.sendText(`${cliForTerminal()} ${args}`, true);
 }
 
 function registerCommands(context) {
@@ -248,7 +270,7 @@ function registerCommands(context) {
 					if (!pick) return;
 					if (pick.action === 'refresh') refreshStatus(context);
 					else if (pick.action === 'dryRun') vscode.commands.executeCommand('devprune.dryRun');
-					else if (pick.action === 'dashboard') runInTerminal('devp status');
+					else if (pick.action === 'dashboard') runInTerminal('status');
 					else if (pick.action === 'skill') vscode.commands.executeCommand('devprune.installSkill');
 					else if (pick.action === 'docs') vscode.commands.executeCommand('devprune.openDocs');
 				});
@@ -257,7 +279,7 @@ function registerCommands(context) {
 			if (!requireTrust()) return;
 			// A dry run deletes nothing; it still goes to a visible terminal so
 			// the command the user would run next is the one they just watched.
-			runInTerminal('devp run --dry-run');
+			runInTerminal('run --dry-run');
 		}),
 		vscode.commands.registerCommand('devprune.installSkill', () => {
 			if (!requireTrust()) return;

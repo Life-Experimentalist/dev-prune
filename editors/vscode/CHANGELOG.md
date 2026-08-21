@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.1 - 2026-08-21
+
+- **Terminal commands run the CLI the extension actually found.** The dry run and
+  the dashboard used to send a bare `devp` to the terminal, which failed whenever
+  the status bar was working off a probed install directory rather than PATH. They
+  now run the same detected binary, quoted for the shell.
+- **The install notification only fires when a config file really exists.** The
+  missing-CLI popup and warning now verify a `.devprune.json` is present in the
+  workspace before claiming one is — and a workspace holding only
+  `ignore.devprune.json`, the opt-out marker, gets no install nag at all.
+- **Nested configs activate the extension.** A monorepo whose only
+  `.devprune.json` sits below the root now gets the status bar and commands; the
+  activation globs previously matched root-level files only.
+- **Honest virtual-workspace declaration.** The extension spawns a local CLI,
+  which cannot work on a virtual file system — the manifest now says `limited`
+  (schema validation still works everywhere) instead of claiming full support.
+
 ## 0.2.0 - 2026-08-20
 
 - **The schema is now bundled inside the extension.** Validation, autocomplete and

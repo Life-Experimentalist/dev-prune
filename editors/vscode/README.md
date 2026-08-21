@@ -16,10 +16,19 @@ fetch —:
 - **Validation** — unknown keys and out-of-range values are underlined, because a
   `.devprune.json` that does not parse makes `devp` skip the repository rather than
   guess at what it meant.
+- **A status bar item showing what you could reclaim** — the reclaimable size
+  from `devp status --json`, with repository and candidate counts in the tooltip.
+  Clicking it opens a small menu: refresh, dry-run in a terminal, open the
+  dashboard, install the AI agent skill, open the CLI reference. The same
+  read-only set lives in the command palette under *dev-prune:*. Reading is all
+  the extension ever does on its own — anything that deletes runs as a visible
+  `devp` command in a terminal you can read before it acts.
 - **A heads-up when the CLI is missing** — a workspace with a `.devprune.json` but
   no `devp` on PATH gets a one-time notification, because a config file nothing
-  acts on looks exactly like a working setup. This is the extension's only code;
-  it runs solely in trusted workspaces and "Don't show again" is remembered.
+  acts on looks exactly like a working setup. Everything that invokes the CLI
+  runs solely in trusted workspaces, "Don't show again" is remembered, and one
+  setting — `devprune.notifications` — turns every popup off; the status bar
+  informs without interrupting.
 
 Files that `devp config project` writes carry a `$schema` link already, so those work
 without this extension; installing it covers hand-written files too. When a file has
@@ -46,10 +55,9 @@ this extension ships is immune, but a file with its own `$schema` link fetches r
   ```
 
   `codium --install-extension …` and `cursor --install-extension …` work the same way,
-  as does *Extensions view → ⋯ → Install from VSIX*. A side-loaded copy is
-  byte-for-byte what the marketplace serves — there is no auto-update to miss out on
-  beyond new schema keys, which arrive through the hosted schema URL anyway, without
-  an extension update.
+  as does *Extensions view → ⋯ → Install from VSIX*. A side-loaded copy is the same
+  package the marketplace serves for that version — but it never auto-updates, so
+  check the releases page now and then for a newer one.
 
 ## Related
 

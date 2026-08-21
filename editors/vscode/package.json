@@ -2,7 +2,7 @@
 	"name": "dev-prune",
 	"displayName": "dev-prune",
 	"description": "Validation, autocomplete and hover docs for .devprune.json, plus a status bar showing reclaimable disk space — for dev-prune (devp), the lockfile-verified cleaner that reclaims disk space from node_modules, .venv, target, vendor and other rebuildable dependency folders in idle Git repositories.",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"publisher": "VKrishna04",
 	"license": "Apache-2.0",
 	"icon": "icons/devprune-128.png",
@@ -15,11 +15,14 @@
 	},
 	"main": "./extension.js",
 	"activationEvents": [
-		"workspaceContains:.devprune.json",
-		"workspaceContains:ignore.devprune.json"
+		"workspaceContains:**/.devprune.json",
+		"workspaceContains:**/ignore.devprune.json"
 	],
 	"capabilities": {
-		"virtualWorkspaces": true,
+		"virtualWorkspaces": {
+			"supported": "limited",
+			"description": "Schema validation for .devprune.json works everywhere. The status bar and the palette commands spawn the local devp CLI, which needs a real file system, so they stay off in virtual workspaces."
+		},
 		"untrustedWorkspaces": {
 			"supported": "limited",
 			"description": "Schema validation works everywhere. The status bar, the palette commands and the check that devp is installed only run once the workspace is trusted, because they invoke the devp CLI."
@@ -38,31 +41,21 @@
 		"devp",
 		"node_modules",
 		"disk space",
-		"disk usage",
 		"cleanup",
-		"clean",
 		"prune",
 		"json schema",
 		"validation",
-		"intellisense",
-		"autocomplete",
-		"storage",
-		"dependencies",
 		"lockfile",
-		"node",
 		"npm",
 		"pnpm",
 		"yarn",
 		"bun",
 		"python",
 		"venv",
-		"virtualenv",
 		"uv",
 		"rust",
 		"cargo",
-		"monorepo",
-		"cache",
-		"devtools"
+		"monorepo"
 	],
 	"repository": {
 		"type": "git",
