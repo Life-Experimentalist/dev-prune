@@ -26,6 +26,7 @@ GEMINI.md
 !.agents/skills/
 .agents/skills/*
 !.agents/skills/dev-prune/
+!.agents/rules/
 
 # dev-prune's own per-repo config, when developing against itself
 .devprune.json
