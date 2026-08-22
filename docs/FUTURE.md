@@ -47,6 +47,23 @@ Work that exists and is waiting on a party that is not this repository.
 - **homebrew-core.** Plain `brew install dev-prune`, with no tap prefix. It has a real
   notability bar measured in stars, forks and watchers, so it is a post-popularity step
   rather than a task. The named tap covers the same install today.
+- **Four more adapters: Terraform, Flutter/Dart, Mix and Nix.** `.terraform/` holds
+  downloaded providers that `terraform init` restores from the lock file; `.dart_tool/`
+  and `_build/` are the same shape for `pub get` and `mix deps.get`. Each has a lockfile
+  that proves the directory is recoverable, which is the only bar an adapter has to
+  clear. Nix is the odd one and is being looked at last, because a store path is shared
+  between projects and "recoverable" there means something different.
+- **`devp caches` for Composer, CocoaPods and Hex.** The three managers already covered
+  by adapters whose *download* caches are not yet listed. Each entry has to ask the
+  manager where its cache actually is on this platform rather than hard-coding a path —
+  `composer config --global cache-dir`, and the equivalent for the other two. Bundler's
+  shared gem home and Pipenv's virtualenv directory are deliberately **not** candidates:
+  those are install locations, not caches, and deleting one uninstalls software.
+- **A branded glyph in the VS Code status bar.** The extension currently borrows a
+  built-in codicon. Its own mark needs `contributes.icons` and an icon *font* — VS Code
+  will not take an SVG there — so the work is building a single-glyph font from
+  `assets/devprune.svg` and referencing it by ID, which then also works anywhere a
+  codicon does.
 - **Restore-cost estimates.** dev-prune knows what it deleted and can time what it takes
   to put back. Recording restore durations locally would let `devp status` answer the
   question people actually hesitate over — not "how much space is this", which it already

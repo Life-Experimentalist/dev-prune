@@ -295,9 +295,11 @@ jobs:
       - name: The install scripts and site agree with Cargo.toml's version
         run: sh scripts/check-version.sh
 
-      # The config schema is embedded in the binary, shipped in the VS Code extension and
-      # published at the URL every `.devprune.json` names. Nothing derives one from
-      # another, so a new config key can reach one copy and not the other two.
+      # The config schema is embedded in the binary, bundled in the VS Code extension and
+      # published at the URL both every `.devprune.json` and the SchemaStore catalog point
+      # at. The sync scripts that regenerate the copies run at build and packaging time,
+      # which is after the commit — so without this a schema change merges with two stale
+      # copies, and JetBrains, Neovim and Zed keep validating against the old one.
       - name: Every copy of the config schema is the same file
         run: sh scripts/check-schema.sh
 

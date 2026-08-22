@@ -73,6 +73,16 @@ contains, for the day it needs updating.
    irrelevant by design (presence alone opts the repository out) and it is usually
    empty, which a JSON schema would flag as an error.
 
+The URL in that entry is the one thing here this repository cannot change on its own —
+moving the published path needs a second SchemaStore PR, and until it merges every
+subscribed editor is asking for a file that is no longer served. `scripts/check-schema.sh`
+runs in CI and refuses a mismatch between the schema's `$id`, `constants::JSON_SCHEMA_URL`
+and the path `site/public/` publishes at, so the path cannot move quietly. It checks the
+same thing about content: the extension's bundled copy and the published copy must both
+equal `schemas/devprune.schema.json`. The two sync scripts regenerate them, but only at
+build and packaging time — which is after the commit, so without this check a schema
+change can merge with the other two copies still describing the previous one.
+
 ---
 
 ## VS Code family (VS Code, VSCodium, Cursor, Windsurf)
