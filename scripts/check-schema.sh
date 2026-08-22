@@ -58,6 +58,9 @@ done
 # agreeing with that one URL. Move the published path without a matching SchemaStore PR and
 # every JetBrains, Neovim and Zed user silently loses validation; this is the check that
 # says so at the moment the path moves rather than in a bug report months later.
+# The `$id` here is the JSON key of that name, not a shell variable — the single quotes
+# are the point, so shellcheck's reflex about them is wrong.
+# shellcheck disable=SC2016
 url="$(sed -n 's/.*"\$id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$canonical")"
 constant="$(sed -n 's/^pub const JSON_SCHEMA_URL: &str = "\(.*\)";$/\1/p' src/constants.rs)"
 published="site/public/schemas/v1/devprune.schema.json"
