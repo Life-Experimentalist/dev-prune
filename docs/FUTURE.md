@@ -39,16 +39,14 @@ Work that exists and is waiting on a party that is not this repository.
   job is gated on the `NPM_PUBLISH` variable and an `NPM_TOKEN` secret, and reports
   `skipped` rather than `success` until both exist, so switching it on is one variable
   and one secret. See [`RELEASING.md`](RELEASING.md).
-- **A named Homebrew tap and Scoop bucket.** The formula and the manifest are generated
-  by every release and install today by URL — see [`DISTRIBUTION.md`](DISTRIBUTION.md).
-  What is left is one repository each (`homebrew-tap`, `scoop-bucket`) so the shorter
-  `brew install Life-Experimentalist/tap/dev-prune` and `scoop install dev-prune` spellings
-  resolve. Neither is reviewed; both are a maintainer step rather than a code one.
-- **The WinGet submission.** The manifests are rendered per release into
-  `packaging/winget/`; what remains is the pull request against `microsoft/winget-pkgs`,
-  which a Microsoft reviewer signs off. There is no popularity requirement, so this is
-  purely a matter of making the first submission and then wiring `wingetcreate submit`
-  into the release job.
+- **`wingetcreate submit` in the release job.** The first WinGet submission is open
+  ([microsoft/winget-pkgs#422665](https://github.com/microsoft/winget-pkgs/pull/422665)).
+  Once it is merged the package identifier exists, and every release after it can raise
+  its own pull request from a PAT instead of a person copying three files — see
+  [`RELEASING.md`](RELEASING.md).
+- **homebrew-core.** Plain `brew install dev-prune`, with no tap prefix. It has a real
+  notability bar measured in stars, forks and watchers, so it is a post-popularity step
+  rather than a task. The named tap covers the same install today.
 - **Restore-cost estimates.** dev-prune knows what it deleted and can time what it takes
   to put back. Recording restore durations locally would let `devp status` answer the
   question people actually hesitate over — not "how much space is this", which it already

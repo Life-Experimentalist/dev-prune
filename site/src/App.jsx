@@ -25,6 +25,10 @@ import {
 } from "lucide-react";
 
 const REPO = "https://github.com/Life-Experimentalist/dev-prune";
+const PORTFOLIO = "https://vkrishna04.me";
+const MARKETPLACE =
+  "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
+const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
 const VERSION = "1.5.0";
 const THEME_KEY = "devprune-theme";
@@ -560,6 +564,120 @@ function EcosystemGroup({ group }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Motion wiring.                                                       */
+/*                                                                      */
+/* Everything decorative that needs a number from the browser lives      */
+/* here, in one effect, so there is exactly one scroll listener and one  */
+/* pointer listener on the page rather than one per card. All of it runs */
+/* after hydration and none of it changes the markup, so the prerendered */
+/* HTML the crawler reads is byte-identical to what React expects.       */
+/*                                                                      */
+/* `prefers-reduced-motion` is checked here as well as in motion.css:    */
+/* the CSS can stop an animation, but only this can stop the work that   */
+/* feeds it.                                                             */
+/* ------------------------------------------------------------------ */
+const SPOTLIT = ".info-card, .step-card, .eco-group, .f-card, .mono-card";
+
+function useMotion() {
+  useEffect(() => {
+    const reduced =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const bar = document.querySelector(".scroll-progress");
+    const nav = document.querySelector(".navbar");
+    if (bar && !reduced) bar.classList.add("is-live");
+
+    // One rAF-coalesced handler for both the progress bar and the navbar, because
+    // they answer the same question and reading scrollHeight twice per frame is a
+    // forced layout twice per frame.
+    let frame = 0;
+    const measure = () => {
+      frame = 0;
+      const doc = document.documentElement;
+      const max = doc.scrollHeight - window.innerHeight;
+      const y = window.scrollY;
+      if (bar) bar.style.setProperty("--sp", max > 0 ? (y / max).toFixed(4) : "0");
+      if (nav) nav.classList.toggle("is-condensed", y > 80);
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(measure);
+    };
+
+    // The spotlight follows the pointer inside whichever card it is over. Delegated
+    // from the document so cards added later need no wiring, and skipped entirely
+    // when the pointer is not over one — which is most of the time.
+    let mx = 0;
+    let my = 0;
+    let lit = null;
+    let litFrame = 0;
+    const paint = () => {
+      litFrame = 0;
+      if (!lit) return;
+      const r = lit.getBoundingClientRect();
+      lit.style.setProperty("--mx", `${mx - r.left}px`);
+      lit.style.setProperty("--my", `${my - r.top}px`);
+    };
+    const onMove = (e) => {
+      const card =
+        e.target instanceof Element ? e.target.closest(SPOTLIT) : null;
+      if (!card) {
+        lit = null;
+        return;
+      }
+      lit = card;
+      mx = e.clientX;
+      my = e.clientY;
+      if (!litFrame) litFrame = requestAnimationFrame(paint);
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    measure();
+    if (!reduced)
+      document.addEventListener("pointermove", onMove, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      document.removeEventListener("pointermove", onMove);
+      if (frame) cancelAnimationFrame(frame);
+      if (litFrame) cancelAnimationFrame(litFrame);
+    };
+  }, []);
+
+  // Scroll-spy. The nav already links to every section; this only marks which of
+  // them you are in. The rootMargin keeps the band in the middle of the viewport,
+  // so the mark changes when a section takes over the screen rather than the
+  // instant its first pixel appears.
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const links = Array.from(
+      document.querySelectorAll('.nav-links a[href^="#"]'),
+    );
+    if (!links.length) return;
+    const byId = new Map(
+      links.map((a) => [a.getAttribute("href").slice(1), a]),
+    );
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          links.forEach((a) => a.classList.remove("is-current"));
+          byId.get(entry.target.id)?.classList.add("is-current");
+        }
+      },
+      { rootMargin: "-45% 0px -50% 0px" },
+    );
+    for (const id of byId.keys()) {
+      const el = document.getElementById(id);
+      if (el) io.observe(el);
+    }
+    return () => io.disconnect();
+  }, []);
+}
+
 function CopyButton({ id, text, copied, onCopy }) {
   return (
     <button
@@ -597,6 +715,8 @@ export default function App() {
   const [avgSizeGB, setAvgSizeGB] = useState(0.8);
   const [idleShare, setIdleShare] = useState(60);
 
+  useMotion();
+
   // Windows visitors get the PowerShell line first. Runs after hydration, so the
   // prerendered HTML is identical for everyone and the crawler sees a real default.
   useEffect(() => {
@@ -628,14 +748,20 @@ export default function App() {
     brew: {
       group: "manager",
       label: "Homebrew",
-      note: "macOS and Linux, Intel and ARM. Installing a formula by URL needs no tap and no review — Homebrew checks the archive against the sha256 in the file. Installs both names and generates your shell completions from the binary.",
-      cmd: "brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/homebrew/dev-prune.rb",
+      note: "macOS and Linux, Intel and ARM. The fully-qualified name taps as it installs, so there is no separate brew tap step — and because the formula belongs to a tap, brew upgrade keeps finding new versions. Installs both names and generates your shell completions from the binary.",
+      cmd: "brew install Life-Experimentalist/tap/dev-prune",
     },
     scoop: {
       group: "manager",
       label: "Scoop",
-      note: "64-bit, ARM and 32-bit Windows, and no bucket to add: the manifest carries the download hash, so there is nothing left to trust. Registers both dev-prune and devp.",
-      cmd: "scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json",
+      note: "64-bit, ARM and 32-bit Windows. The manifest carries the download hash, so there is nothing left to trust, and the bucket is what makes scoop update dev-prune work later. Registers both dev-prune and devp.",
+      cmd: "scoop bucket add life-experimentalist https://github.com/Life-Experimentalist/scoop-bucket; scoop install dev-prune",
+    },
+    winget: {
+      group: "manager",
+      label: "WinGet",
+      note: "Submitted and awaiting a Microsoft reviewer — every winget-pkgs version is a pull request a person signs off, so this command starts resolving when that merges, and not before. WinGet installs the dev-prune name; the devp twin appears the first time you run it.",
+      cmd: "winget install VKrishna04.dev-prune",
     },
     python: {
       group: "manager",
@@ -725,6 +851,7 @@ Notes you should rely on, not work around:
         Skip to content
       </a>
 
+      <div className="scroll-progress" aria-hidden="true"></div>
       <div className="bg-glow bg-glow-1" aria-hidden="true"></div>
       <div className="bg-glow bg-glow-2" aria-hidden="true"></div>
 
@@ -750,6 +877,8 @@ Notes you should rely on, not work around:
             <a href="#ecosystems">Ecosystems</a>
             <a href="#commands">Commands</a>
             <a href="#ai">AI agents</a>
+            <a href="#editors">Editors</a>
+            <a href="/blog/">Guides</a>
             <a href="#faq">FAQ</a>
             <ThemeToggle />
             <a
@@ -2011,6 +2140,117 @@ Notes you should rely on, not work around:
           </div>
         </Reveal>
 
+        {/* ------------------------------ editors ------------------------------ */}
+        <Reveal as="section" className="section" id="editors">
+          <div className="container">
+            <div className="section-header">
+              <h2 className="section-title">
+                And in <span className="gradient-text">your editor</span>
+              </h2>
+              <p className="section-subtitle">
+                Nothing here is required — the CLI is the product. But the
+                config file is easier to write when the editor knows its shape,
+                and a repository's reclaimable size is easier to notice when it
+                is already on screen.
+              </p>
+            </div>
+
+            <div className="split-grid">
+              <div className="info-card">
+                <h3>
+                  <Puzzle size={18} /> The extension
+                </h3>
+                <div className="cmd-line small">
+                  <span className="cmd-prompt">$</span>
+                  <code className="cmd-code">
+                    code --install-extension VKrishna04.dev-prune
+                  </code>
+                  <CopyButton
+                    id="ext"
+                    text="code --install-extension VKrishna04.dev-prune"
+                    copied={copiedKey}
+                    onCopy={handleCopy}
+                  />
+                </div>
+                <p className="muted">
+                  Validates <code>.devprune.json</code> as you type — every key,
+                  every adapter name, every enum — from the schema bundled
+                  inside it rather than fetched, so it works offline. The
+                  workspace's reclaimable size sits in the status bar.
+                </p>
+                <p className="muted">
+                  <a href={MARKETPLACE} target="_blank" rel="noreferrer">
+                    VS Code Marketplace <ExternalLink size={13} />
+                  </a>{" "}
+                  ·{" "}
+                  <a href={OPENVSX} target="_blank" rel="noreferrer">
+                    Open VSX <ExternalLink size={13} />
+                  </a>{" "}
+                  — the same extension for VSCodium, Cursor, Windsurf, Positron
+                  and Kiro, which cannot reach Microsoft's registry.
+                </p>
+              </div>
+              <div className="info-card">
+                <h3>
+                  <FileCode size={18} /> No extension needed
+                </h3>
+                <p>
+                  The config schema is registered with{" "}
+                  <a
+                    href="https://www.schemastore.org/"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    SchemaStore
+                  </a>
+                  , so IntelliJ, PyCharm, WebStorm, GoLand, RubyMine, Rider,
+                  Visual Studio, Neovim and Zed validate{" "}
+                  <code>.devprune.json</code> out of the box. There is nothing
+                  to install and nothing to configure.
+                </p>
+                <p className="muted">
+                  <code>devp setup</code> offers the extension once, at a
+                  terminal, into whichever editors it finds — each from its own
+                  registry.
+                </p>
+              </div>
+              <div className="info-card">
+                <h3>
+                  <Bot size={18} /> And your coding agent
+                </h3>
+                <div className="cmd-line small">
+                  <span className="cmd-prompt">$</span>
+                  <code className="cmd-code">devp skill --agent cursor</code>
+                  <CopyButton
+                    id="skill-agent"
+                    text="devp skill --agent cursor"
+                    copied={copiedKey}
+                    onCopy={handleCopy}
+                  />
+                </div>
+                <p className="muted">
+                  Writes the rules file that editor actually reads —{" "}
+                  <code>.github/copilot-instructions.md</code>,{" "}
+                  <code>.cursor/rules/</code>, <code>CLAUDE.md</code>,{" "}
+                  <code>.junie/guidelines.md</code> and the rest — so an agent
+                  working in the repository knows what dev-prune will and will
+                  not delete before it suggests anything.
+                </p>
+                <p className="muted">
+                  <a
+                    href={`${DOCS}/IDE_INTEGRATION.md`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Everything about editors, in one page{" "}
+                    <ExternalLink size={13} />
+                  </a>
+                </p>
+              </div>
+            </div>
+          </div>
+        </Reveal>
+
         {/* -------------------------------- FAQ -------------------------------- */}
         <Reveal as="section" className="section" id="faq">
           <div className="container narrow">
@@ -2209,6 +2449,7 @@ Notes you should rely on, not work around:
             <a href={REPO} target="_blank" rel="noreferrer">
               GitHub
             </a>
+            <a href="/blog/">Guides</a>
             <a href={`${DOCS}/README.md`} target="_blank" rel="noreferrer">
               Docs
             </a>
@@ -2236,12 +2477,18 @@ Notes you should rely on, not work around:
             >
               Apache-2.0
             </a>
+            <a href={PORTFOLIO} target="_blank" rel="noreferrer">
+              vkrishna04.me
+            </a>
           </nav>
         </div>
         <div className="container">
           <p className="footer-legal">
-            Copyright 2026 VKrishna04 · Licensed under the Apache License,
-            Version 2.0
+            Copyright 2026{" "}
+            <a href={PORTFOLIO} target="_blank" rel="noreferrer">
+              VKrishna04
+            </a>{" "}
+            · Licensed under the Apache License, Version 2.0
           </p>
         </div>
       </footer>

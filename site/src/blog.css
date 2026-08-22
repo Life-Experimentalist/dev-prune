@@ -1,0 +1,184 @@
+/* Copyright 2026 VKrishna04 */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* ================================================================
+   Guide pages (/blog/ and the articles).
+   ----------------------------------------------------------------
+   These are static HTML emitted by `build-blog.mjs`, not React, but
+   they link the same stylesheet the app emits — so the rules live
+   here and travel with it. That is deliberate: one stylesheet for the
+   whole site means a reader who arrives on a guide and clicks through
+   to the homepage downloads nothing further.
+
+   Everything is scoped under `.doc-page` so none of it can reach the
+   landing page.
+   ================================================================ */
+
+.doc-main {
+  position: relative;
+  z-index: 1;
+  padding: 3.5rem 0 4rem;
+}
+
+.doc-article {
+  max-width: 46rem;
+}
+
+/* Breadcrumb ------------------------------------------------------ */
+.doc-crumbs {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 1.25rem;
+}
+.doc-crumbs a {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.doc-crumbs a:hover {
+  color: var(--primary);
+}
+.doc-crumbs span {
+  margin: 0 0.4rem;
+  opacity: 0.5;
+}
+
+/* Headings and body ----------------------------------------------- */
+.doc-article h1 {
+  font-size: clamp(2rem, 4.5vw, 2.9rem);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  margin-bottom: 1rem;
+}
+.doc-lede {
+  font-size: 1.15rem;
+  line-height: 1.65;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+}
+.doc-meta {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.7;
+  margin-bottom: 2.5rem;
+}
+
+.doc-article h2 {
+  font-size: 1.4rem;
+  letter-spacing: -0.01em;
+  margin: 2.75rem 0 1rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--border-color);
+}
+.doc-article p {
+  margin-bottom: 1.1rem;
+  line-height: 1.75;
+}
+.doc-article ul {
+  margin: 0 0 1.4rem 1.15rem;
+}
+.doc-article li {
+  margin-bottom: 0.7rem;
+  line-height: 1.7;
+}
+.doc-article strong {
+  color: var(--text-main);
+}
+.doc-article a {
+  color: var(--primary);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition:
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+.doc-article a:hover {
+  border-bottom-color: var(--primary);
+}
+
+/* Code ------------------------------------------------------------- */
+.doc-article :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.87em;
+  background: var(--table-head);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  padding: 0.1em 0.38em;
+  white-space: nowrap;
+}
+.doc-article pre {
+  /* The terminal blocks stay dark in both themes, for the same reason the
+     terminal mock on the homepage does: they depict a terminal. */
+  background: var(--code-bg);
+  color: var(--term-text);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1rem 1.15rem;
+  margin: 0 0 1.6rem;
+  overflow-x: auto;
+  line-height: 1.65;
+}
+.doc-article pre code {
+  font-family: var(--font-mono);
+  font-size: 0.87rem;
+  background: none;
+  border: 0;
+  padding: 0;
+  white-space: pre;
+}
+
+/* FAQ and related-links blocks ------------------------------------- */
+.doc-faq {
+  margin-top: 3rem;
+}
+.doc-faq h2,
+.doc-related h2 {
+  border-top: 0;
+  margin-top: 0;
+}
+
+.doc-related {
+  margin-top: 3rem;
+}
+.doc-related ul {
+  list-style: none;
+  margin: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+.doc-related li {
+  margin: 0;
+}
+.doc-related a {
+  display: block;
+  padding: 1rem 1.15rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  border-bottom: 1px solid var(--border-color);
+  transition:
+    border-color 0.25s ease,
+    transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.doc-related a:hover {
+  border-color: var(--primary);
+  transform: translateY(-2px);
+}
+.doc-related a strong {
+  display: block;
+  color: var(--text-main);
+  margin-bottom: 0.2rem;
+}
+.doc-related a span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-related a:hover {
+    transform: none;
+  }
+}

@@ -1,8 +1,9 @@
 User-agent: *
 Allow: /
 
-# The whole site is one prerendered page plus static docs assets. Nothing is gated,
-# nothing needs JavaScript, and AI crawlers are explicitly welcome.
+# The whole site is prerendered HTML: one landing page and a set of static guides under
+# /blog/. Nothing is gated, nothing needs JavaScript, and AI crawlers are explicitly
+# welcome.
 User-agent: GPTBot
 Allow: /
 

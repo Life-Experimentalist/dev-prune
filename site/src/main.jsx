@@ -7,6 +7,8 @@ import App from './App.jsx';
 import './index.css';
 import './sections.css';
 import './theme.css';
+import './motion.css';
+import './blog.css';
 
 const root = document.getElementById('root');
 

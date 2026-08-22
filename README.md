@@ -8,7 +8,7 @@
 
 <div align="center">
 
-# `dev-prune` &nbsp;·&nbsp; `devp` &nbsp;—&nbsp; by [VKrishna04](https://github.com/VKrishna04)
+# `dev-prune` &nbsp;·&nbsp; `devp` &nbsp;—&nbsp; by [VKrishna04](https://vkrishna04.me)
 
 >**Reclaim the disk space your idle repositories are sitting on — without ever deleting**
 **something a lockfile cannot put back.**
@@ -51,7 +51,7 @@ a single Rust binary, installs its own background schedule, and answers to two n
 ## Contents
 <div align="center">
 
-[Install](#install) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like) · [Why it is safe](#why-it-is-safe) · [Features](#features) · [Commands](#commands) · [Ecosystems](#supported-ecosystems) · [Monorepos](#repositories-with-more-than-one-ecosystem) · [Configuration](#configuration) · [Automation](#background-automation) · [Comparison](#how-it-compares) · [Architecture](#architecture) · [Docs](#documentation)
+[Install](#install) · [Editors](#in-your-editor) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like) · [Why it is safe](#why-it-is-safe) · [Features](#features) · [Commands](#commands) · [Ecosystems](#supported-ecosystems) · [Monorepos](#repositories-with-more-than-one-ecosystem) · [Configuration](#configuration) · [Automation](#background-automation) · [Comparison](#how-it-compares) · [Architecture](#architecture) · [Docs](#documentation)
 
 </div>
 
@@ -112,8 +112,22 @@ always compiles. [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall
 one that downloads: `Cargo.toml` tells it where this project's release archives live, so
 it unpacks the same executable the installers use, with no toolchain involved.
 
-Homebrew and Scoop install by URL, which needs neither a tap nor a bucket — the file
-carries the SHA-256 of the archive it installs, and the release regenerates it:
+Homebrew and Scoop each have a one-file tap and bucket, which exist so that upgrades keep
+arriving:
+
+```bash
+brew tap Life-Experimentalist/tap
+brew install dev-prune
+```
+
+```powershell
+scoop bucket add life-experimentalist https://github.com/Life-Experimentalist/scoop-bucket
+scoop install dev-prune
+```
+
+Both also install straight from a URL with nothing tapped or added, because the file
+carries the SHA-256 of the archive it installs — but a formula that belongs to no tap is
+one `brew upgrade` will never look at again:
 
 ```bash
 brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/homebrew/dev-prune.rb
@@ -122,6 +136,9 @@ brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/ma
 ```powershell
 scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json
 ```
+
+WinGet is [submitted and in review](https://github.com/microsoft/winget-pkgs/pull/422665);
+`winget install VKrishna04.dev-prune` starts resolving when that pull request merges.
 
 The two Python entry points differ in where they land. `pip install` follows whichever
 environment is active, so inside a virtualenv `devp` lives in that venv's `Scripts`/`bin`
@@ -138,6 +155,37 @@ architecture runs on every distribution including Alpine.
 
 Manual install and build-from-source:
 [docs/RELEASES_AND_MANUAL_INSTALL.md](docs/RELEASES_AND_MANUAL_INSTALL.md).
+
+### In your editor
+
+There is a companion extension. It validates `.devprune.json` as you type — every key,
+every adapter name, every enum, from the schema bundled inside it rather than fetched — and
+puts the workspace's reclaimable size in the status bar, so you can see what a repository
+is holding without leaving the window.
+
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/VKrishna04.dev-prune?logo=visualstudiocode&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune) [![Open VSX](https://img.shields.io/open-vsx/v/VKrishna04/dev-prune?logo=eclipseide&label=Open%20VSX)](https://open-vsx.org/extension/VKrishna04/dev-prune)
+
+```bash
+code --install-extension VKrishna04.dev-prune
+```
+
+Open VSX is the same extension for the editors that cannot reach Microsoft's marketplace —
+VSCodium, Cursor, Windsurf, Positron, Kiro. You do not have to pick: `devp setup` offers
+to install it once, at a terminal, into whichever of those it finds, each from its own
+registry.
+
+**JetBrains IDEs need no extension at all.** The config schema is registered with
+[SchemaStore](https://www.schemastore.org/), so IntelliJ, PyCharm, WebStorm, GoLand,
+RubyMine and Rider validate `.devprune.json` out of the box — as do Visual Studio, Neovim
+and Zed.
+
+**And your coding agent gets the same treatment.** `devp skill --agent <editor>` writes the
+rules file that editor actually reads — `.github/copilot-instructions.md`, `.cursor/rules/`,
+`CLAUDE.md`, `.junie/guidelines.md` and the rest — so an agent working in the repository
+knows what dev-prune will and will not delete before it suggests anything.
+
+Everything about editors, in one place:
+[docs/IDE_INTEGRATION.md](docs/IDE_INTEGRATION.md).
 
 ### Let an AI assistant do it
 
@@ -683,8 +731,8 @@ Deeper: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
 
 ## License & privacy
 
-Copyright 2026 VKrishna04. Licensed under the Apache License, Version 2.0 — see
-[LICENSE.md](LICENSE.md). Every source file carries an
+Copyright 2026 [VKrishna04](https://vkrishna04.me). Licensed under the Apache License,
+Version 2.0 — see [LICENSE.md](LICENSE.md). Every source file carries an
 [SPDX](https://spdx.dev/) identifier, so automated licence scanners see the same
 answer the file header does.
 

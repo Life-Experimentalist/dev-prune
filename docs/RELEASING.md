@@ -598,21 +598,57 @@ brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/ma
 scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json
 ```
 
-**A named tap or bucket** is one repository each and nothing more. `homebrew-tap` with the
-rendered formula at `Formula/dev-prune.rb` gives `brew install Life-Experimentalist/tap/dev-prune`;
-a `scoop-bucket` repository with the manifest in `bucket/` gives
-`scoop bucket add dev-prune … && scoop install dev-prune`. Neither is reviewed. Point each
-repository's own sync at `packaging/` here rather than copying files by hand.
-`homebrew-core` — plain `brew install dev-prune` — has a real notability bar and stays a
-post-popularity step.
+**The named tap and bucket exist and need nothing from you.**
+[`Life-Experimentalist/homebrew-tap`](https://github.com/Life-Experimentalist/homebrew-tap)
+and [`Life-Experimentalist/scoop-bucket`](https://github.com/Life-Experimentalist/scoop-bucket)
+hold one file each — `Formula/dev-prune.rb` and `bucket/dev-prune.json` — and each has a
+`sync.yml` workflow that fetches its file from `packaging/` here every morning and commits
+it if it changed. So a release propagates to `brew upgrade` and `scoop update` within a
+day of the manifests being refreshed, with no credential anywhere: the sync *pulls* a
+public file rather than being pushed a private token. To make it immediate, run the
+workflow by hand:
+
+```bash
+gh workflow run sync.yml --repo Life-Experimentalist/homebrew-tap
+gh workflow run sync.yml --repo Life-Experimentalist/scoop-bucket
+```
+
+`homebrew-core` — plain `brew install dev-prune`, no tap prefix — has a real notability
+bar and stays a post-popularity step.
 
 **WinGet** is the one that needs a person. `winget-pkgs` has no popularity requirement,
 but each version is a pull request a Microsoft reviewer signs off, so the release renders
-the manifests and stops there. To submit: fork `microsoft/winget-pkgs`, copy
-`packaging/winget/*` to `manifests/v/VKrishna04/dev-prune/<version>/`, run
-`winget validate` and `winget install --manifest` against them locally, and open the PR.
-`wingetcreate submit` does the same from a PAT and can be added to the release job once
-the first manual submission has been accepted and the package identifier exists.
+the manifests and stops there. The first submission is open as
+[microsoft/winget-pkgs#422665](https://github.com/microsoft/winget-pkgs/pull/422665); for
+every version after it, the steps are the same:
+
+1. Sync your fork and branch off it:
+
+   ```bash
+   gh repo sync VKrishna04/winget-pkgs --branch master
+   ```
+
+2. Copy `packaging/winget/*` to `manifests/v/VKrishna04/dev-prune/<version>/`, replacing
+   this repository's four header lines with the file's `# yaml-language-server:` line, and
+   **save each file as UTF-8 with a BOM** — `winget-pkgs` validation rejects manifests
+   without one.
+
+3. Validate locally before opening anything:
+
+   ```powershell
+   winget validate --manifest <the version directory>
+   ```
+
+   It must print "Manifest validation succeeded" with no warnings. A warning is exit code
+   40 and a failure is 41, so neither is silent. `winget install --manifest` is the other
+   half of the check, and needs
+   `winget settings --enable LocalManifestFiles` from an elevated prompt first.
+
+4. Open the pull request with the title `New version: VKrishna04.dev-prune version <version>`.
+
+The first pull request will also ask you to sign Microsoft's CLA, once, by replying to
+the bot's comment. `wingetcreate submit` does all of the above from a PAT and can be added
+to the release job now that the identifier is in flight.
 
 **Chocolatey.** No manifest is generated for it. Its moderation queue is slow enough that it is only worth it if Windows
 users ask for it specifically; WinGet covers the same audience with less friction.
