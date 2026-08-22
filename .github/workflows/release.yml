@@ -629,13 +629,16 @@ jobs:
           VERSION: ${{ needs.publish.outputs.version }}
         run: |
           set -eu
-          if git diff --quiet -- packaging; then
+          # Staged first, then compared: on the release that introduces a manifest the
+          # files are untracked, and `git diff` does not see untracked files at all — the
+          # job reported "nothing changed" and pushed nothing.
+          git add -A packaging
+          if git diff --cached --quiet -- packaging; then
             echo "Manifests already describe v${VERSION}."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packaging
           git commit -m "Packaging manifests for v${VERSION}"
           git push origin main
 

@@ -16,6 +16,10 @@ node_modules/
 *.swo
 temp/
 
+# Build output. The extension is published from the release, never from the tree —
+# a committed .vsix rides along with every future release as a stale extra asset.
+*.vsix
+
 # OS
 .DS_Store
 Thumbs.db
