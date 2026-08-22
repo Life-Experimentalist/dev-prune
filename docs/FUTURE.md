@@ -55,21 +55,11 @@ Work that exists and is waiting on a party that is not this repository.
   `composer config --global cache-dir`, and the equivalent for the other two. Bundler's
   shared gem home and Pipenv's virtualenv directory are deliberately **not** candidates:
   those are install locations, not caches, and deleting one uninstalls software.
-- **A branded glyph in the VS Code status bar.** The extension currently borrows a
-  built-in codicon. Its own mark needs `contributes.icons` and an icon *font* — VS Code
-  will not take an SVG there — so the work is building a single-glyph font from
-  `assets/devprune.svg` and referencing it by ID, which then also works anywhere a
-  codicon does.
 - **Restore-cost estimates.** dev-prune knows what it deleted and can time what it takes
   to put back. Recording restore durations locally would let `devp status` answer the
   question people actually hesitate over — not "how much space is this", which it already
   answers, but "how long is this to undo". Local timings only; nothing is uploaded, in
   keeping with [`PRIVACY.md`](PRIVACY.md).
-- **Comparison and reference pages on the site.** The content largely exists in
-  [`MARKET_ANALYSIS.md`](MARKET_ANALYSIS.md); what is missing is somewhere to put it. The
-  site is a single prerendered page with no router, so this is a structural change to
-  `site/`, not a writing task, and that is the reason it has not happened rather than
-  disagreement about its value.
 
 ## Later
 

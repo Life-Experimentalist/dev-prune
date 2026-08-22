@@ -36,6 +36,22 @@ claims the whole directory.
   `enable_swift` offer. Dart's `build/` is never touched, exactly as Mix's `_build/`
   is not.
 
+- **The full CLI reference is now a page on the site.**
+  [devprune.vkrishna04.me/reference/](https://devprune.vkrishna04.me/reference/) serves
+  every command, flag, exit code, config key and `--json` field as one linkable,
+  searchable document, so answering "what does `--except` take again?" no longer means
+  opening GitHub. It is generated from `docs/CLI_REFERENCE.md` during the site build
+  rather than written a second time, which is the only version of this that stays true:
+  a hand-copied reference is the copy that goes stale.
+
+### Fixed
+
+- **Four links inside the CLI reference went nowhere.** The anchors for `devp run`,
+  `devp status`, `devp update` and `devp doctor` did not match their headings, so
+  clicking a cross-reference to any of them left you where you were. The site build now
+  refuses to render the reference if any in-document anchor does not resolve, so this
+  cannot come back quietly.
+
 ### For contributors
 
 - **The release opens the winget-pkgs pull request.** A `submit-winget` job renders the

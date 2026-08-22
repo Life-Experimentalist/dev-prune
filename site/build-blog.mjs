@@ -22,6 +22,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { POSTS, SITE, UPDATED } from './blog/posts.mjs';
+import { REFERENCE, referenceMain } from './reference.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const dist = resolve(root, 'dist');
@@ -117,6 +118,7 @@ ${JSON.stringify(jsonLd, null, 2)}
           </a>
           <nav class="nav-links" aria-label="Primary">
             <a href="/blog/">Guides</a>
+            <a href="/reference/">Reference</a>
             <a href="/#install">Install</a>
             <a href="/#faq">FAQ</a>
             <a href="https://github.com/Life-Experimentalist/dev-prune" class="btn btn-secondary nav-github" target="_blank" rel="noreferrer">GitHub</a>
@@ -138,6 +140,7 @@ ${main}
           <nav class="footer-links" aria-label="Footer">
             <a href="/">Home</a>
             <a href="/blog/">Guides</a>
+            <a href="/reference/">Reference</a>
             <a href="https://github.com/Life-Experimentalist/dev-prune" target="_blank" rel="noreferrer">GitHub</a>
             <a href="https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/README.md" target="_blank" rel="noreferrer">Docs</a>
             <a href="https://vkrishna04.me" target="_blank" rel="noreferrer">vkrishna04.me</a>
@@ -314,11 +317,55 @@ write(
   }),
 );
 
+// The CLI reference, rendered from the document that ships with the source rather than
+// written a second time here. `reference.mjs` throws on anything it cannot render and on
+// any intra-document anchor that does not resolve, so a broken reference fails the build.
+write(
+  'reference',
+  page({
+    url: REFERENCE.url,
+    title: REFERENCE.title,
+    description: REFERENCE.description,
+    keywords: REFERENCE.keywords,
+    main: referenceMain(resolve(root, '..')),
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@graph': [
+        {
+          '@type': 'TechArticle',
+          '@id': `${SITE}${REFERENCE.url}#article`,
+          headline: `dev-prune ${REFERENCE.title}`,
+          description: REFERENCE.description,
+          inLanguage: 'en',
+          datePublished: UPDATED,
+          dateModified: UPDATED,
+          mainEntityOfPage: `${SITE}${REFERENCE.url}`,
+          author: { '@type': 'Person', name: 'VKrishna04', url: 'https://vkrishna04.me' },
+          publisher: { '@type': 'Organization', name: 'dev-prune', url: SITE },
+        },
+        {
+          '@type': 'BreadcrumbList',
+          itemListElement: [
+            { '@type': 'ListItem', position: 1, name: 'dev-prune', item: `${SITE}/` },
+            {
+              '@type': 'ListItem',
+              position: 2,
+              name: REFERENCE.title,
+              item: `${SITE}${REFERENCE.url}`,
+            },
+          ],
+        },
+      ],
+    },
+  }),
+);
+
 // The sitemap is generated rather than hand-maintained, because a guide added to
 // `posts.mjs` and forgotten in an XML file is a page that never gets crawled.
 const urls = [
   { loc: `${SITE}/`, priority: '1.0', changefreq: 'weekly' },
   { loc: `${SITE}/blog/`, priority: '0.8', changefreq: 'weekly' },
+  { loc: `${SITE}${REFERENCE.url}`, priority: '0.9', changefreq: 'weekly' },
   ...POSTS.map((p) => ({
     loc: `${SITE}/${p.slug}/`,
     priority: '0.7',
@@ -347,5 +394,5 @@ ${urls
 );
 
 console.log(
-  `build-blog: wrote ${POSTS.length} guides, /blog/ and a ${urls.length}-URL sitemap.`,
+  `build-blog: wrote ${POSTS.length} guides, /blog/, ${REFERENCE.url} and a ${urls.length}-URL sitemap.`,
 );

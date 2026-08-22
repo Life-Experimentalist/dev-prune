@@ -936,6 +936,7 @@ Notes you should rely on, not work around:
             <a href="#ai">AI agents</a>
             <a href="#editors">Editors</a>
             <a href="/blog/">Guides</a>
+            <a href="/reference/">Reference</a>
             <a href="#faq">FAQ</a>
             <ThemeToggle />
             <a
@@ -2511,13 +2512,7 @@ Notes you should rely on, not work around:
             <a href={`${DOCS}/README.md`} target="_blank" rel="noreferrer">
               Docs
             </a>
-            <a
-              href={`${DOCS}/CLI_REFERENCE.md`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              CLI reference
-            </a>
+            <a href="/reference/">CLI reference</a>
             <a
               href={`${DOCS}/troubleshooting/README.md`}
               target="_blank"

@@ -10,6 +10,7 @@ Version 1.5.1. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
+Full CLI reference: https://devprune.vkrishna04.me/reference/
 
 ## What it is
 
@@ -409,7 +410,9 @@ under your own config and data directories and is removed by `devp uninstall`.
 ## Docs
 
 - Index: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/README.md
-- CLI reference: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/CLI_REFERENCE.md
+- CLI reference: https://devprune.vkrishna04.me/reference/ — the same document as
+  https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/CLI_REFERENCE.md,
+  rendered at build time from that file rather than written twice
 - Safety invariants: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/SAFETY_INVARIANTS.md
 - Background automation: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/BACKGROUND_AUTOMATION.md
 - IDE & editor integration: https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/IDE_INTEGRATION.md

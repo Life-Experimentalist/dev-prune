@@ -182,3 +182,106 @@
     transform: none;
   }
 }
+
+/* ================================================================
+   The generated CLI reference (/reference/).
+   ----------------------------------------------------------------
+   Same shell as a guide, but it is a document of tables rather than
+   prose: wider, with an index at the top and every table allowed to
+   scroll sideways on its own instead of widening the page.
+   ================================================================ */
+
+.doc-reference {
+  max-width: 62rem;
+}
+
+.doc-reference h3 {
+  font-size: 1.12rem;
+  margin: 2.2rem 0 0.85rem;
+  letter-spacing: -0.01em;
+}
+.doc-reference h4 {
+  font-size: 1rem;
+  margin: 1.8rem 0 0.75rem;
+  color: var(--text-muted);
+}
+.doc-reference ol {
+  margin: 0 0 1.4rem 1.35rem;
+}
+.doc-reference ul ul,
+.doc-reference ul ol,
+.doc-reference ol ul {
+  margin: 0.6rem 0 0.6rem 1.15rem;
+}
+.doc-reference hr {
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  margin: 2.5rem 0;
+  opacity: 0.6;
+}
+
+/* A heading linked from elsewhere in the document must not land under the
+   sticky navbar, which is what happens without this. */
+.doc-reference :is(h2, h3, h4) {
+  scroll-margin-top: 5.5rem;
+}
+
+.doc-toc {
+  margin: 0 0 2.75rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+.doc-toc ul {
+  list-style: none;
+  margin: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.doc-toc li {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.doc-note {
+  padding: 0.85rem 1.1rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-left: 3px solid var(--primary);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 0.94rem;
+}
+
+/* A reference table is wide by nature. It scrolls inside its own box so the
+   page itself never does — a horizontally scrolling page on a phone makes
+   every other paragraph unreadable too. */
+.doc-table-wrap {
+  overflow-x: auto;
+  margin: 0 0 1.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+.doc-reference table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9rem;
+}
+.doc-reference th,
+.doc-reference td {
+  text-align: left;
+  vertical-align: top;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--border-color);
+  line-height: 1.6;
+}
+.doc-reference th {
+  background: var(--table-head);
+  color: var(--text-main);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.doc-reference tbody tr:last-child td {
+  border-bottom: 0;
+}
