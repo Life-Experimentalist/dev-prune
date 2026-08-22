@@ -26,7 +26,7 @@ import {
 
 const REPO = "https://github.com/Life-Experimentalist/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.4.0";
+const VERSION = "1.4.1";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -175,6 +175,15 @@ function Reveal({
 /* a bloat directory can only be told apart within their own language, so */
 /* each group carries the rule that decides between its members.          */
 /* ------------------------------------------------------------------ */
+// Nine channels in one flat row of tabs was a wall to read. They divide cleanly by what
+// you are actually choosing between: a one-liner that needs nothing installed, a package
+// manager you already use, or the archive itself.
+const INSTALL_GROUPS = [
+  { id: "script", label: "Install script" },
+  { id: "manager", label: "Package manager" },
+  { id: "manual", label: "Download" },
+];
+
 const ECOSYSTEMS = [
   {
     id: "eco-js",
@@ -589,41 +598,64 @@ export default function App() {
 
   const installCommands = {
     bash: {
+      group: "script",
       label: "Linux / macOS",
       note: "Needs a Unix shell — also fine on Windows under Git Bash, MSYS2, Cygwin or WSL. In PowerShell or Command Prompt it fails with 'sh is not recognized'; use the Windows tabs there.",
       cmd: "curl -fsSL https://devprune.vkrishna04.me/install.sh | sh",
     },
     powershell: {
+      group: "script",
       label: "Windows",
-      note: "Installs to %APPDATA%\\dev-prune\\bin and registers devp for PowerShell and cmd alike.",
+      note: "Installs to %APPDATA%\dev-prune\bin and registers devp for PowerShell and cmd alike.",
       cmd: "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex",
     },
     cmdexe: {
+      group: "script",
       label: "Windows (cmd)",
       note: "Command Prompt has no iwr, so it borrows PowerShell for the download. Same install; devp resolves in the next Command Prompt you open.",
       cmd: 'powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"',
     },
+    brew: {
+      group: "manager",
+      label: "Homebrew",
+      note: "macOS and Linux, Intel and ARM. Installing a formula by URL needs no tap and no review — Homebrew checks the archive against the sha256 in the file. Installs both names and generates your shell completions from the binary.",
+      cmd: "brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/homebrew/dev-prune.rb",
+    },
+    scoop: {
+      group: "manager",
+      label: "Scoop",
+      note: "64-bit, ARM and 32-bit Windows, and no bucket to add: the manifest carries the download hash, so there is nothing left to trust. Registers both dev-prune and devp.",
+      cmd: "scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json",
+    },
     python: {
+      group: "manager",
       label: "uv / pipx",
       note: "Platform wheels carrying the binary. Nothing Python runs. Swap in uvx dev-prune status to run it once and leave nothing behind, or pipx install dev-prune.",
       cmd: "uv tool install dev-prune",
     },
     pip: {
+      group: "manager",
       label: "pip",
       note: "The same wheels, into whichever environment is active — a venv's Scripts/bin rather than a shared tool directory. Use pip install --user dev-prune for a machine-wide install.",
       cmd: "pip install dev-prune",
     },
     cargo: {
+      group: "manager",
       label: "Cargo",
       note: "crates.io stores source, not binaries, so cargo install always compiles (Rust 1.88+). cargo binstall downloads the same prebuilt archive the installers use.",
       cmd: "cargo binstall dev-prune",
     },
     release: {
+      group: "manual",
       label: "Release binary",
-      note: "Every archive ships a .sha256 sidecar; the installers refuse to run without one.",
+      note: "Every archive ships a .sha256 sidecar; the installers refuse to run without one. Each release is also attested — gh attestation verify proves it came from this repository's workflow.",
       cmd: "https://github.com/Life-Experimentalist/dev-prune/releases/latest",
     },
   };
+
+  const channelsInGroup = (group) =>
+    Object.entries(installCommands).filter(([, v]) => v.group === group);
+  const activeGroup = installCommands[installTab].group;
 
   // The same prompt as docs/AI_SETUP_PROMPT.md, kept copy-ready right in the install
   // widget: hand it to any terminal-capable agent and it installs, verifies and registers
@@ -758,17 +790,46 @@ Notes you should rely on, not work around:
                   role="group"
                   aria-label="Installation method"
                 >
-                  {Object.entries(installCommands).map(([key, v]) => (
+                  {INSTALL_GROUPS.map((g) => (
                     <button
-                      key={key}
-                      aria-pressed={installTab === key}
-                      className={installTab === key ? "active" : ""}
-                      onClick={() => setInstallTab(key)}
+                      key={g.id}
+                      aria-pressed={activeGroup === g.id}
+                      className={activeGroup === g.id ? "active" : ""}
+                      onClick={() => setInstallTab(channelsInGroup(g.id)[0][0])}
                     >
-                      {v.label}
+                      {g.label}
                     </button>
                   ))}
                 </div>
+                {/* Every group's channels are rendered, and the inactive ones are hidden
+                    with CSS rather than dropped: the prerendered HTML is what a crawler
+                    and a reader without JavaScript get, and "you can install this with
+                    Homebrew" should not depend on having clicked the right tab. */}
+                {INSTALL_GROUPS.filter(
+                  (g) => channelsInGroup(g.id).length > 1,
+                ).map((g) => (
+                  <div
+                    key={g.id}
+                    className={
+                      activeGroup === g.id
+                        ? "widget-channels"
+                        : "widget-channels is-hidden"
+                    }
+                    role="group"
+                    aria-label={`${g.label} options`}
+                  >
+                    {channelsInGroup(g.id).map(([key, v]) => (
+                      <button
+                        key={key}
+                        aria-pressed={installTab === key}
+                        className={installTab === key ? "active" : ""}
+                        onClick={() => setInstallTab(key)}
+                      >
+                        {v.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
                 <div className="cmd-line">
                   <span className="cmd-prompt">$</span>
                   <code className="cmd-code">
@@ -812,7 +873,7 @@ Notes you should rely on, not work around:
 
               <div className="hero-stats">
                 <div>
-                  <strong>8</strong>
+                  <strong>18</strong>
                   <span>package managers</span>
                 </div>
                 <div>
@@ -2016,6 +2077,54 @@ Notes you should rely on, not work around:
                 and <code>devp update --offline</code> skips it once. Everything
                 else on the wire is your own package manager during verification
                 or restore.
+              </Faq>
+              <Faq q="Does it delete build output — dist/, .next/, target/?">
+                Not by default, and never on a rule of its own. A prune only
+                removes a directory a lockfile can prove comes back, and a build
+                output has no lockfile: nothing can promise{" "}
+                <code>dist/</code> rebuilds byte-for-byte, so it is out of scope
+                permanently. The three exceptions are opt-in and say so —{" "}
+                <code>devp config set enable_gradle true</code> (
+                <code>build/</code>, <code>.gradle/</code>),{" "}
+                <code>enable_maven</code> (<code>target/</code>) and{" "}
+                <code>enable_swift</code> (<code>.build/</code>) — whose claim
+                is rebuild-from-source rather than reinstall-from-lockfile,
+                which is why they ship off and wait an extra{" "}
+                <code>build_idle_days</code> (60) before they touch anything.
+                Cargo's <code>target/</code> is not among them.
+              </Faq>
+              <Faq q="Can I turn one ecosystem off for good?">
+                <code>devp config set disabled_adapters go,composer</code> makes
+                dev-prune behave as though those two were not installed at all:
+                not detected, not counted, not probed for by doctor, never
+                pruned and never restored.{" "}
+                <code>devp config set disabled_adapters -</code> turns them back
+                on, and <code>devp config wizard</code> offers the same list as
+                a checklist. For a single pass,{" "}
+                <code>devp run --only npm,cargo</code> and{" "}
+                <code>--skip go</code> do the same thing temporarily. Every
+                setting that <em>widens</em> what is deletable is listed by name
+                in <code>devp trust</code> — no letter grade, just which
+                switches are on and how to put each one back.
+              </Faq>
+              <Faq q="Does it touch anything outside my repositories?">
+                A prune never does — it stays inside registered repositories and
+                never crosses a <code>.git</code> boundary. The machine-wide
+                package caches (<code>~/.npm</code>, <code>~/.cargo</code>,{" "}
+                <code>~/.m2</code>, <code>~/.gradle</code> and the rest) are a
+                separate, explicit command: <code>devp caches</code> reports
+                them and only <code>devp caches clear &lt;manager&gt;</code>{" "}
+                removes one, after confirming.
+              </Faq>
+              <Faq q="Which copy of devp am I actually running?">
+                <code>devp doctor</code> answers that. Installing over time from
+                pip, npm, cargo or uv leaves copies in several places, and the
+                one first on PATH is not always the one the scheduler and git
+                hooks invoke — doctor reports every copy it finds and the
+                version each is. <code>devp update --install</code> then
+                upgrades all of them at once: it downloads the release binary
+                for your platform, checks it against the SHA-256 published
+                beside it, and installs nothing if that does not match.
               </Faq>
               <Faq q="How do I remove it?">
                 <code>devp uninstall</code> removes the program: the scheduler,

@@ -32,13 +32,18 @@ for anything that isn't.
    seven reasons a directory is skipped are in the troubleshooting table at the bottom
    of this file, and `devp run --dry-run` names the actual one per repository.
 4. **`--deep` on uninstall wipes configuration.** Confirm with the user before using it.
-5. **dev-prune never updates itself.** Its one network request is a release check against
-   GitHub's public API (no body, no identifier, no usage data, at most weekly, disabled by
-   `devp config set update_check false`; `DEV_PRUNE_OFFLINE=1` keeps the whole process off
-   the network regardless of any setting). It never downloads a binary — if a newer version
-   exists, tell the user the upgrade command for their install channel: re-run the
-   `install.sh`/`install.ps1` one-liner, `uv tool upgrade dev-prune`, `pipx upgrade
-   dev-prune`, `cargo binstall dev-prune --force` (prebuilt), or
+5. **dev-prune never upgrades itself unasked.** Its one background network request is a
+   release check against GitHub's public API (no body, no identifier, no usage data, at
+   most weekly, disabled by `devp config set update_check false`; `DEV_PRUNE_OFFLINE=1`
+   keeps the whole process off the network regardless of any setting). Nothing is
+   downloaded until someone asks: `devp update --install` fetches the release binary for
+   the platform, refuses it unless its SHA-256 matches the sidecar published beside it,
+   and writes it to every copy this installation runs. `devp config set auto_update true`
+   is the opt-in that runs that after a prune pass. The alternative is the install
+   channel's own command — re-run the `install.sh`/`install.ps1` one-liner,
+   `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `scoop update dev-prune`,
+   re-running the `brew install <formula URL>` line (a formula installed by URL has no
+   tap for `brew upgrade` to consult), `cargo binstall dev-prune --force` (prebuilt), or
    `cargo install dev-prune --force` (compiles).
 
 ## What it will never do

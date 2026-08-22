@@ -522,7 +522,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -569,7 +569,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -609,7 +609,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "command": "status --drift",
   "drift": [
     {
@@ -637,7 +637,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -669,7 +669,7 @@ an upgraded machine they start from zero while the lifetime figures do not — w
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "command": "caches",
   "caches": [
     {
@@ -700,7 +700,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -734,7 +734,7 @@ a before/after pair. Exit code is `1` if `summary.failed` is non-zero.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.0",
+  "version": "1.4.1",
   "command": "trust",
   "guarantees": [
     {

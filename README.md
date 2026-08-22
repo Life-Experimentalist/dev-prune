@@ -112,6 +112,17 @@ always compiles. [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall
 one that downloads: `Cargo.toml` tells it where this project's release archives live, so
 it unpacks the same executable the installers use, with no toolchain involved.
 
+Homebrew and Scoop install by URL, which needs neither a tap nor a bucket — the file
+carries the SHA-256 of the archive it installs, and the release regenerates it:
+
+```bash
+brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/homebrew/dev-prune.rb
+```
+
+```powershell
+scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json
+```
+
 The two Python entry points differ in where they land. `pip install` follows whichever
 environment is active, so inside a virtualenv `devp` lives in that venv's `Scripts`/`bin`
 and disappears with it; `pip install --user`, `pipx` and `uv tool install` are the

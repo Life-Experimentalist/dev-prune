@@ -90,7 +90,7 @@
           "operatingSystem": "Windows, macOS, Linux",
           "applicationCategory": "DeveloperApplication",
           "applicationSubCategory": "Command Line Utility",
-          "softwareVersion": "1.4.0",
+          "softwareVersion": "1.4.1",
           "programmingLanguage": "Rust",
           "license": "https://www.apache.org/licenses/LICENSE-2.0",
           "isAccessibleForFree": true,
@@ -191,6 +191,22 @@
               "acceptedAnswer": {
                 "@type": "Answer",
                 "text": "Yes, per adapter. devp config set disabled_adapters go,composer makes dev-prune behave as though Go and Composer were not installed: not detected, not counted in stats, not probed for by doctor, never pruned and never restored. devp config set disabled_adapters - turns them all back on, and devp config wizard offers the same list as a checklist."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Does dev-prune touch anything outside my repositories?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "A prune never does: it stays inside registered repositories and never crosses a .git boundary. The machine-wide package caches — ~/.npm, ~/.cargo, ~/.m2, ~/.gradle and the rest — are a separate, explicit command. devp caches reports what each one holds, and only devp caches clear <manager> removes one, after showing what goes and asking."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Which copy of devp am I running, and how do I upgrade it?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "devp doctor answers both. Installing over time from pip, npm, cargo or uv leaves copies in several places, and the one first on PATH is not always the one the scheduler and the git hooks invoke — doctor lists every copy it finds and the version of each. devp update --install then upgrades all of them at once: it downloads the release binary for your platform, verifies it against the SHA-256 sidecar published beside it, and installs nothing if that does not match."
               }
             },
             {

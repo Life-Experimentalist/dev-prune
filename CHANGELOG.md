@@ -5,6 +5,64 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-08-22
+
+A tidy-up release. Nothing in the tool changed; what changed is that the manifests
+1.4.0 promised are actually published, the release stops shipping a stale VS Code
+extension alongside the current one, and the test suite that ships in the source
+tarball passes on Linux as well as everywhere else.
+
+### Fixed
+
+- **The Homebrew formula and Scoop manifest 1.4.0 described now exist.** The job that
+  renders them ran, wrote all five files, and then reported that nothing had changed —
+  it asked `git diff` about paths that were untracked, which is a question `git diff`
+  answers with silence. So `brew install <raw URL>` and `scoop install <raw URL>` pointed
+  at a file that was never committed. Both work now, against the checksums 1.4.0
+  published.
+
+- **The release no longer attaches an old copy of the VS Code extension.** A built
+  `.vsix` had been committed to the repository, and it matched the glob that uploads the
+  freshly built one — so 1.4.0 shipped both 0.3.0 and 0.4.0, with nothing on the release
+  page to say which was current. The stale asset has been removed from the 1.4.0 release
+  as well.
+
+### Changed
+
+- **Installing is now three choices instead of nine.** The site listed every channel as a
+  flat row of tabs, which had grown into a wall to read. They now group by what you are
+  actually deciding between — an install script that needs nothing installed, a package
+  manager you already use, or the archive itself — and the individual channels appear as
+  a second, quieter row inside the group you pick.
+
+- **Homebrew and Scoop are listed as install channels everywhere else too**, not just in
+  `docs/DISTRIBUTION.md`: the site, the README and `llms.txt` all carry the by-URL
+  commands, which need no tap and no bucket because the file itself carries the SHA-256
+  of the archive it installs.
+
+- **The site answers four questions it used to leave to the docs**: whether build output
+  is ever deleted (it is not, and the three opt-in build adapters say so), how to switch
+  one ecosystem off for good with `disabled_adapters`, what `devp caches` touches outside
+  your repositories, and how to tell which of several installed copies of `devp` is the
+  one actually running.
+
+### For contributors
+
+- **The bundled agent skill claimed dev-prune "never downloads a binary".** That stopped
+  being true when `devp update --install` shipped, so an agent reading the skill would
+  have told a user to re-run their installer instead. It now describes `--install` and
+  the `auto_update` opt-in alongside each channel's own upgrade command.
+
+- **Two test fixtures were lying, and `cargo test` failed on Linux for anyone who ran it
+  against the 1.4.0 source tarball.** Neither was a defect in the tool. `git_repo()` wrote
+  the same README with the same author and message every time, so two fixtures created
+  inside the same second shared a root commit — git timestamps have second granularity —
+  and `link` correctly identified the second as the first one relocated. Separately, a
+  test scanned a repository it had built in the OS temp directory and expected `init` to
+  register it, but a scan skips anything under a directory named `tmp`, and on Linux the
+  temp directory *is* `/tmp`. Fixtures are now distinct by construction and built outside
+  the temp directory.
+
 ## [1.4.0] - 2026-08-22
 
 Seven more ecosystems and a switch to turn any of them off, a configurator you can

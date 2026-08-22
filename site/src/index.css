@@ -337,6 +337,42 @@ body {
   cursor: not-allowed;
 }
 
+/* The second row: which channel inside the chosen group. Deliberately quieter than the
+   group tabs above it — chips rather than tabs — so the eye picks the group first. */
+.widget-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.6rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.widget-channels button {
+  background: var(--bg-deep);
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  color: var(--text-muted);
+  padding: 0.25rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.widget-channels.is-hidden {
+  display: none;
+}
+
+.widget-channels button:hover {
+  color: var(--text-main);
+}
+
+.widget-channels button.active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: rgba(16, 185, 129, 0.08);
+}
+
 .cmd-line {
   padding: 0.85rem 1.25rem;
   display: flex;
