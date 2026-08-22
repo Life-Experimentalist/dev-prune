@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -65,7 +65,14 @@ fn test_cli_version_audit() {
 
 #[test]
 fn test_cli_init_and_status() {
-    let tmp = TempDir::new().unwrap();
+    // Not the OS temp directory, for once. A scan skips any repository under a directory
+    // named `tmp` — correctly, since that is where scratch clones live — and on Linux the
+    // OS temp directory *is* `/tmp`, so a fixture there was skipped and `init` had nothing
+    // to register. macOS (`/var/folders/...`) and Windows (`...\AppData\Local\Temp`) do
+    // not match the rule, which is why this only ever failed on one of the three.
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/init-fixtures");
+    fs::create_dir_all(&base).unwrap();
+    let tmp = TempDir::new_in(&base).unwrap();
     let repo_dir = tmp.path().join("my-test-repo");
     fs::create_dir_all(&repo_dir).unwrap();
 
