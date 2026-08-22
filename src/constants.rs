@@ -384,6 +384,11 @@ pub const AGENT_SKILLS_SUBDIR: &str = "skills";
 /// by `code --install-extension`.
 pub const VSCODE_EXTENSION_ID: &str = "VKrishna04.dev-prune";
 
+/// The WinGet package identifier, as published in `packaging/winget/` and in the
+/// manifests submitted to microsoft/winget-pkgs. `devp update` and `devp uninstall` name
+/// it back to the user, so a typo here sends someone to a command that does not resolve.
+pub const WINGET_PACKAGE_ID: &str = "VKrishna04.dev-prune";
+
 /// Where a person can read about the extension before installing it.
 ///
 /// The offer prints all three. The two registries carry the same build — the release

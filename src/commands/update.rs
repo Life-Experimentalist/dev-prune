@@ -32,6 +32,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use chrono::Utc;
 
+use crate::channel::Channel;
 use crate::config::Registry;
 use crate::constants;
 use crate::output;
@@ -107,57 +108,10 @@ fn print_upgrade_commands() {
     println!("    cargo install dev-prune --force");
     println!("    npm install -g dev-prune@latest");
     println!("    uv tool upgrade dev-prune  /  pipx upgrade dev-prune");
+    println!("    winget upgrade --id {}", constants::WINGET_PACKAGE_ID);
+    println!("    scoop update dev-prune  /  brew upgrade dev-prune");
     println!("    curl -fsSL {} | sh", constants::INSTALL_SH_URL);
     println!("    iwr -useb {} | iex", constants::INSTALL_PS1_URL);
-}
-
-/// The package manager that owns the running binary — the one whose upgrade command
-/// `--install` runs. One channel owns one binary: a copy installed through uv is
-/// upgraded through uv, never through npm, because two managers writing the same PATH
-/// entry would fight over it forever.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Channel {
-    /// `install.sh` / `install.ps1` put it under the managed `<config>/bin`.
-    Installer,
-    /// `cargo install` / `cargo binstall` put it under `~/.cargo/bin`.
-    Cargo,
-    /// `npm install -g` — the binary lives under a `node_modules` tree.
-    Npm,
-    /// `uv tool install` — under uv's tool environments.
-    UvTool,
-    /// `pipx install` — under a `pipx` venv.
-    Pipx,
-    /// Anywhere else: a dev build, a hand-copied binary, a distro package.
-    Unknown,
-}
-
-/// Classify where `exe` came from by the directories in its path.
-///
-/// Purely lexical on purpose: this must not touch the network or spawn anything, and
-/// each channel's layout is stable enough that its marker directory is a reliable
-/// fingerprint. `managed` is passed in (rather than resolved here) so tests can probe
-/// the classification without a config directory on disk.
-fn detect_channel(exe: &std::path::Path, managed: Option<&std::path::Path>) -> Channel {
-    if let Some(managed) = managed
-        && exe == managed
-    {
-        return Channel::Installer;
-    }
-    let has_dir = |name: &str| {
-        exe.components()
-            .any(|c| c.as_os_str().to_string_lossy().eq_ignore_ascii_case(name))
-    };
-    if has_dir(".cargo") {
-        Channel::Cargo
-    } else if has_dir("node_modules") {
-        Channel::Npm
-    } else if has_dir("uv") || has_dir("uv-tool") {
-        Channel::UvTool
-    } else if has_dir("pipx") {
-        Channel::Pipx
-    } else {
-        Channel::Unknown
-    }
 }
 
 /// `devp update --install`: upgrade this installation to the latest release.
@@ -206,9 +160,9 @@ fn run_install() -> Result<()> {
 
     let exe = std::env::current_exe().context("could not locate the running binary")?;
     let managed = crate::setup::managed_exe_path().ok();
-    let channel = detect_channel(&exe, managed.as_deref());
+    let channel = Channel::detect_at(&exe, managed.as_deref());
 
-    match install_directly(&latest, &exe, managed.as_deref()) {
+    match install_directly(&latest, &exe, managed.as_deref(), channel) {
         Ok(()) => {
             output::print_success(&format!("dev-prune v{latest} installed."));
             report_channel_bookkeeping(channel);
@@ -272,7 +226,12 @@ fn run_install() -> Result<()> {
 /// the twin is the running image — which is exactly the case when the user typed `devp
 /// update --install`. Renaming a running executable is allowed where deleting it is not,
 /// so this route leaves no copy behind on the previous release.
-fn install_directly(latest: &str, exe: &Path, managed: Option<&Path>) -> Result<()> {
+fn install_directly(
+    latest: &str,
+    exe: &Path,
+    managed: Option<&Path>,
+    channel: Channel,
+) -> Result<()> {
     let bytes = fetch_release_binary(latest)?;
     let primary = managed.unwrap_or(exe);
     install_bytes_at(&bytes, primary)?;
@@ -284,7 +243,13 @@ fn install_directly(latest: &str, exe: &Path, managed: Option<&Path>) -> Result<
     if let Some(dir) = primary.parent() {
         also.push(dir.join(if cfg!(windows) { "devp.exe" } else { "devp" }));
     }
-    if primary != exe && exe.is_file() {
+    // …except when a package manager owns the directory the running copy sits in and
+    // replaces that directory wholesale on upgrade. Writing new bytes there leaves WinGet,
+    // Scoop or Homebrew certain they still have the old version installed, and the next
+    // `winget upgrade` puts the old binary back over the top. Their copy is left exactly
+    // as the manager wrote it; `report_channel_bookkeeping` names the command that
+    // actually moves it forward.
+    if primary != exe && exe.is_file() && !channel.replaces_its_directory() {
         also.push(exe.to_path_buf());
     }
     for path in also {
@@ -308,19 +273,31 @@ fn install_directly(latest: &str, exe: &Path, managed: Option<&Path>) -> Result<
 /// Name the channel's own upgrade command after a direct install, for the one thing the
 /// direct route deliberately leaves untouched: the manager's record of what it installed.
 fn report_channel_bookkeeping(channel: Channel) {
-    let resync = match channel {
-        Channel::Cargo => "cargo install dev-prune --force",
-        Channel::Npm => "npm install -g dev-prune@latest",
-        Channel::UvTool => "uv tool upgrade dev-prune",
-        Channel::Pipx => "pipx upgrade dev-prune",
-        // Nothing else keeps a version record to disagree with the binary.
-        Channel::Installer | Channel::Unknown => return,
+    // The installer's copy *is* the managed one, and an unrecognised copy has no manager
+    // keeping a version record that could disagree with the binary.
+    let Some(resync) = channel
+        .owns_its_files()
+        .then(|| channel.upgrade_command())
+        .flatten()
+    else {
+        return;
     };
-    output::print_info(&format!(
-        "The binaries are up to date. `{resync}` also updates that manager's own record \
-         of the version, which still reads v{}.",
-        constants::VERSION
-    ));
+    if channel.replaces_its_directory() {
+        output::print_info(&format!(
+            "The managed copy is now v{}. The copy {} installed was left exactly as it \
+             wrote it — replacing a file inside a versioned package directory only makes \
+             the manager and the disk disagree. Run `{resync}` to move that one forward \
+             too.",
+            constants::VERSION,
+            channel.label()
+        ));
+    } else {
+        output::print_info(&format!(
+            "The binaries are up to date. `{resync}` also updates that manager's own \
+             record of the version, which still reads v{}.",
+            constants::VERSION
+        ));
+    }
 }
 
 /// Download release `version`'s binary for this platform and put it at `target`.
@@ -485,6 +462,7 @@ fn replace_binary(staged: &Path, target: &Path) -> Result<()> {
 fn spawn_channel_upgrade(channel: Channel) -> Result<()> {
     let install_ps1 = format!("iwr -useb {} | iex", constants::INSTALL_PS1_URL);
     let install_sh = format!("curl -fsSL {} | sh", constants::INSTALL_SH_URL);
+    let winget_id = constants::WINGET_PACKAGE_ID;
     let argv: Vec<&str> = match channel {
         Channel::Cargo => {
             // binstall pulls the prebuilt release; plain `cargo install` compiles for
@@ -498,6 +476,21 @@ fn spawn_channel_upgrade(channel: Channel) -> Result<()> {
         Channel::Npm => vec!["npm", "install", "-g", "dev-prune@latest"],
         Channel::UvTool => vec!["uv", "tool", "upgrade", "dev-prune"],
         Channel::Pipx => vec!["pipx", "upgrade", "dev-prune"],
+        Channel::Pip => vec!["pip", "install", "--upgrade", "dev-prune"],
+        // The three that own their whole package directory. Each is given its own
+        // command rather than the direct download, because replacing a file inside a
+        // versioned package directory desynchronises the manager from what is on disk —
+        // and the next `winget upgrade` or `brew upgrade` would put the old binary back.
+        Channel::WinGet => vec![
+            "winget",
+            "upgrade",
+            "--id",
+            winget_id,
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ],
+        Channel::Scoop => vec!["scoop", "update", "dev-prune"],
+        Channel::Homebrew => vec!["brew", "upgrade", "dev-prune"],
         Channel::Installer => {
             if cfg!(windows) {
                 vec!["powershell", "-NoProfile", "-Command", &install_ps1]
@@ -727,38 +720,6 @@ mod tests {
         registry.settings.update_check = false;
         assert!(!notify_if_outdated(&mut registry));
         assert!(registry.last_update_check.is_none());
-    }
-
-    #[test]
-    fn each_channel_is_recognised_by_its_marker_directory() {
-        use std::path::Path;
-        let cases: &[(&str, Channel)] = &[
-            ("/home/k/.cargo/bin/dev-prune", Channel::Cargo),
-            (
-                "/usr/lib/node_modules/dev-prune/bin/dev-prune",
-                Channel::Npm,
-            ),
-            (
-                "/home/k/.local/share/uv/tools/dev-prune/bin/dev-prune",
-                Channel::UvTool,
-            ),
-            (
-                "/home/k/.local/pipx/venvs/dev-prune/bin/dev-prune",
-                Channel::Pipx,
-            ),
-            ("/opt/somewhere/dev-prune", Channel::Unknown),
-        ];
-        for (path, expected) in cases {
-            assert_eq!(detect_channel(Path::new(path), None), *expected, "{path}");
-        }
-    }
-
-    #[test]
-    fn the_managed_copy_wins_over_every_path_heuristic() {
-        use std::path::Path;
-        // Even a managed dir that happens to live under `.cargo` is the installer's.
-        let managed = Path::new("/home/k/.cargo/odd/dev-prune/bin/dev-prune");
-        assert_eq!(detect_channel(managed, Some(managed)), Channel::Installer);
     }
 
     #[test]

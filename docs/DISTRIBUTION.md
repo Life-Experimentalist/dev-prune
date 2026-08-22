@@ -57,13 +57,13 @@ Seven single-binary archives are built automatically for every tagged release an
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.5.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.5.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.5.0-windows-x86.zip` | `i686-pc-windows-msvc` |
-| `dev-prune-v1.5.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.5.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.5.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.5.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.5.1-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.5.1-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.5.1-windows-x86.zip` | `i686-pc-windows-msvc` |
+| `dev-prune-v1.5.1-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.5.1-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.5.1-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.5.1-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
@@ -76,7 +76,7 @@ The install scripts construct these filenames by hand and refuse to install with
 Each archive is additionally signed with GitHub build provenance, which ties it to this repository, the release workflow and the commit it was built from — something a checksum cannot do, because whoever produces an archive also produces its checksum. Verify with no key and no account:
 
 ```bash
-gh attestation verify dev-prune-v1.5.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+gh attestation verify dev-prune-v1.5.1-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
 ```
 
 ### 4. NPM — packaging exists, channel currently off
@@ -163,7 +163,7 @@ winget install VKrishna04.dev-prune
 
 1.5.0 is the first submission: [microsoft/winget-pkgs#422665](https://github.com/microsoft/winget-pkgs/pull/422665). **The command above resolves only once that pull request is merged**; until then, use Scoop or the install script.
 
-One detail worth knowing if you install this way. The archive holds a single `dev-prune.exe`, and a portable WinGet install cannot publish two command names from one file — a repeated `RelativeFilePath` is a manifest error. So WinGet puts `dev-prune` on your PATH and not `devp`; the `devp` twin appears the first time you run `dev-prune`, which installs the managed pair described in [Background Automation](BACKGROUND_AUTOMATION.md).
+One detail worth knowing if you install this way. A portable WinGet install cannot publish two command names from one file — a repeated `RelativeFilePath` is a manifest error — so the Windows archive carries `dev-prune.exe` and `devp.exe` as two real files, and WinGet puts both on your PATH at install time. Nothing is created on first run, which matters here: WinGet versions its package directory and replaces it wholesale on upgrade, so anything written beside the binary there would be orphaned by the next upgrade while still sitting on your PATH. The managed pair described in [Background Automation](BACKGROUND_AUTOMATION.md) lives in the config directory instead, where an upgrade cannot reach it.
 
 ---
 

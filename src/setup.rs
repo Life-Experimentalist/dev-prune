@@ -266,6 +266,16 @@ pub(crate) fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
 /// `devp`. So this restores *the other* name in whichever direction is missing, rather
 /// than only ever creating `devp` — running either one puts the pair back.
 pub fn ensure_alias() -> Outcome {
+    // WinGet, Scoop and Homebrew each install into a directory they version and replace
+    // whole on upgrade, and each ships both names in the package itself — so there is
+    // nothing to create here, and creating it would be actively wrong twice over. The
+    // twin would be orphaned by the next upgrade, still on PATH, still running the old
+    // release; and writing a second executable beside a freshly downloaded unsigned
+    // binary on its first run is a behavioural malware signature. WinGet's own
+    // post-install validation flags exactly that, which is how this was found.
+    if crate::channel::Channel::detect().replaces_its_directory() {
+        return Outcome::AlreadyPresent;
+    }
     let Ok(current_exe) = std::env::current_exe() else {
         return Outcome::Failed("could not locate the running executable".to_string());
     };
@@ -1007,6 +1017,19 @@ pub fn setup_is_due() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether there is a human at this invocation who could see what was done and undo it.
+///
+/// The one question that gates everything dev-prune installs without being asked. CI
+/// variables and containers answer it directly; a redirected stdin or stdout answers it
+/// too, because output nobody reads is the same as no output — and an integration
+/// installed silently is one nobody knows to remove.
+fn a_person_is_present() -> bool {
+    use std::io::IsTerminal;
+    unattended_environment().is_none()
+        && std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal()
+}
+
 /// The unattended pass, run at most once per installed version.
 ///
 /// Called at the top of every command that a human typed. It is deliberately not called
@@ -1015,6 +1038,15 @@ pub fn setup_is_due() -> bool {
 pub fn auto_setup_if_due() {
     if !setup_is_due() {
         first_run_config_review();
+        return;
+    }
+    // The same question `first_run_config_review` asks, asked one step earlier. It used
+    // to be asked only about the *prompt*, never about the pass that installs a PATH
+    // entry, a scheduled task and a git hook — so a binary run once by an automated
+    // system, with its output captured, silently acquired persistence on that machine.
+    // Nothing here is skipped permanently: the stamp is not written, so the first run a
+    // person can actually see does the pass and reports it.
+    if !a_person_is_present() {
         return;
     }
 
@@ -1058,11 +1090,7 @@ fn first_run_config_review() {
         return;
     }
 
-    use std::io::IsTerminal;
-    if unattended_environment().is_some()
-        || !std::io::stdin().is_terminal()
-        || !std::io::stdout().is_terminal()
-    {
+    if !a_person_is_present() {
         crate::commands::config::skip_config_review();
         return;
     }

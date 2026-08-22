@@ -126,6 +126,18 @@ fn twin_is_current(exe: &Path, twin: &Path) -> bool {
 /// managed write; a rename refused because the twin is mid-fire simply keeps the
 /// previous build, which the next pass replaces.
 fn ensure_hidden_twin(exe_path: &Path) -> Option<PathBuf> {
+    // Almost always the managed copy under the config directory, because `get_exe_path`
+    // resolves there first. The exception is a machine where that copy could not be made,
+    // and then `exe_path` is wherever the package manager put the binary — which for
+    // WinGet and Scoop is a directory they version and replace whole on upgrade. A twin
+    // written there is orphaned by the next upgrade while the scheduled task still names
+    // it, so the daemon runs a release the user thinks they replaced. Refusing costs the
+    // windowless route only; `install` falls through to the S4U registration below it.
+    if crate::channel::Channel::detect().replaces_its_directory()
+        && crate::setup::managed_exe_path().is_ok_and(|managed| managed != exe_path)
+    {
+        return None;
+    }
     let twin = hidden_twin_path(exe_path);
     if twin_is_current(exe_path, &twin) {
         return Some(twin);

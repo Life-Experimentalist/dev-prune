@@ -256,6 +256,8 @@ jobs:
         run: shellcheck --shell=sh scripts/changelog-section.sh
       - name: shellcheck check-msrv.sh
         run: shellcheck --shell=sh scripts/check-msrv.sh
+      - name: shellcheck check-schema.sh
+        run: shellcheck --shell=sh scripts/check-schema.sh
       - name: shellcheck npm-prepare.sh
         run: shellcheck --shell=sh scripts/npm-prepare.sh
       - name: shellcheck npm-publish.sh
@@ -292,6 +294,12 @@ jobs:
       # site's version banner are both written by hand and both fail silently.
       - name: The install scripts and site agree with Cargo.toml's version
         run: sh scripts/check-version.sh
+
+      # The config schema is embedded in the binary, shipped in the VS Code extension and
+      # published at the URL every `.devprune.json` names. Nothing derives one from
+      # another, so a new config key can reach one copy and not the other two.
+      - name: Every copy of the config schema is the same file
+        run: sh scripts/check-schema.sh
 
   site:
     name: Site build

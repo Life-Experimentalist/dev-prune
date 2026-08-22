@@ -28,6 +28,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::channel::Channel;
 use crate::commands::hook;
 use crate::config::Registry;
 use crate::output;
@@ -150,13 +151,10 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
     }
 
     // 6. The binaries themselves.
-    let manager = std::env::current_exe()
-        .ok()
-        .as_deref()
-        .and_then(owning_package_manager);
+    let channel = Channel::detect();
     remove_binaries(
         deep,
-        manager.is_some(),
+        channel.owns_its_files(),
         &mut left_behind,
         &mut pending_files,
         &mut pending_dirs,
@@ -166,9 +164,9 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
     // install channel has more than one binary, and the ones not currently first on
     // PATH would quietly *become* the installation the moment the managed pair above
     // is gone.
-    let mut manager_hints: Vec<(&'static str, &'static str)> = Vec::new();
-    if let Some(hint) = manager {
-        manager_hints.push(hint);
+    let mut manager_hints: Vec<Channel> = Vec::new();
+    if channel.owns_its_files() {
+        manager_hints.push(channel);
     }
     sweep_stray_copies(
         yes,
@@ -247,10 +245,14 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
              prune history preserved for a future reinstall."
         });
     }
-    for (name, command) in &manager_hints {
+    for hint in &manager_hints {
+        let Some(command) = hint.uninstall_command() else {
+            continue;
+        };
         output::print_info(&format!(
-            "{name} still lists dev-prune as installed — finish with `{command}` to clear \
-             its records."
+            "{} still lists dev-prune as installed — finish with `{command}` to clear \
+             its records.",
+            hint.label()
         ));
     }
     output::print_info(&format!("Reinstall any time with: {}", reinstall_hint()));
@@ -348,7 +350,7 @@ fn remove_binaries(
 /// One copy of dev-prune found somewhere other than the managed directory.
 struct StrayCopy {
     path: PathBuf,
-    manager: Option<(&'static str, &'static str)>,
+    channel: Channel,
 }
 
 /// Find every other copy of the pair, show the list, and — with the user's yes —
@@ -366,7 +368,7 @@ struct StrayCopy {
 /// prompt is a decision, not a failure — it does not change the exit code.
 fn sweep_stray_copies(
     yes: bool,
-    manager_hints: &mut Vec<(&'static str, &'static str)>,
+    manager_hints: &mut Vec<Channel>,
     left_behind: &mut Vec<String>,
     pending_files: &mut Vec<PathBuf>,
 ) {
@@ -388,12 +390,14 @@ fn sweep_stray_copies(
         if strays.len() == 1 { "y" } else { "ies" }
     ));
     for stray in &strays {
-        match stray.manager {
-            Some((name, _)) => println!(
-                "   {}  (installed with {name})",
-                output::clean_path(&stray.path)
-            ),
-            None => println!("   {}", output::clean_path(&stray.path)),
+        if stray.channel.owns_its_files() {
+            println!(
+                "   {}  (installed with {})",
+                output::clean_path(&stray.path),
+                stray.channel.label()
+            );
+        } else {
+            println!("   {}", output::clean_path(&stray.path));
         }
     }
 
@@ -406,10 +410,17 @@ fn sweep_stray_copies(
 
     let mut removed = 0usize;
     for stray in strays {
-        if let Some(hint) = stray.manager
-            && !manager_hints.iter().any(|(name, _)| *name == hint.0)
-        {
-            manager_hints.push(hint);
+        if stray.channel.owns_its_files() && !manager_hints.contains(&stray.channel) {
+            manager_hints.push(stray.channel);
+        }
+        // WinGet, Scoop and Homebrew each keep their package in a versioned directory
+        // they own end to end. Deleting the binary out of one leaves the manager certain
+        // the package is still installed and its own uninstall with nothing to remove —
+        // a state the user cannot get out of without editing the manager's database. So
+        // that copy is named, not deleted, and the command that really removes it is
+        // printed with the rest of the hints.
+        if stray.channel.replaces_its_directory() {
+            continue;
         }
         match fs::remove_file(&stray.path) {
             Ok(()) => removed += 1,
@@ -468,6 +479,7 @@ fn confirm_sweep(yes: bool) -> bool {
 /// exists to clean up — which is why this checks `symlink_metadata`, not `is_file`.
 fn find_stray_copies() -> Vec<StrayCopy> {
     let managed = setup::managed_bin_dir().ok().map(|d| canon_key(&d));
+    let managed_exe = setup::managed_exe_path().ok();
     let names = sweep_names();
     let mut seen_dirs: HashSet<String> = HashSet::new();
     let mut seen_files: HashSet<String> = HashSet::new();
@@ -492,10 +504,10 @@ fn find_stray_copies() -> Vec<StrayCopy> {
             if !seen_files.insert(canon_key(&candidate)) {
                 continue;
             }
-            let manager = owning_package_manager(&candidate);
+            let channel = Channel::detect_at(&candidate, managed_exe.as_deref());
             found.push(StrayCopy {
                 path: candidate,
-                manager,
+                channel,
             });
         }
     }
@@ -523,24 +535,18 @@ fn sweep_dirs() -> Vec<PathBuf> {
         }
         return dirs;
     }
-    if let Some(home) = dirs::home_dir() {
-        dirs.push(home.join(".cargo").join("bin"));
-        dirs.push(home.join(".local").join("bin"));
-        if !cfg!(windows) {
-            dirs.push(home.join(".npm-global").join("bin"));
-        }
-    }
+    dirs.extend(crate::channel::install_dirs(dirs::home_dir().as_deref()));
     if cfg!(windows) {
-        // `config_dir` is %APPDATA% — npm's global prefix and pip's per-user scripts
-        // both live under it.
-        if let Some(appdata) = dirs::config_dir() {
-            dirs.push(appdata.join("npm"));
-            if let Ok(entries) = fs::read_dir(appdata.join("Python")) {
-                for entry in entries.flatten() {
-                    let scripts = entry.path().join("Scripts");
-                    if scripts.is_dir() {
-                        dirs.push(scripts);
-                    }
+        // `config_dir` is %APPDATA% — pip's per-user scripts live under it, one
+        // directory per interpreter version, so they have to be enumerated rather than
+        // named.
+        if let Some(appdata) = dirs::config_dir()
+            && let Ok(entries) = fs::read_dir(appdata.join("Python"))
+        {
+            for entry in entries.flatten() {
+                let scripts = entry.path().join("Scripts");
+                if scripts.is_dir() {
+                    dirs.push(scripts);
                 }
             }
         }
@@ -606,49 +612,12 @@ fn is_dev_build(exe: &Path) -> bool {
     path.contains("/target/debug/") || path.contains("/target/release/")
 }
 
-/// The package manager that owns the running executable's files, if one does, and the
-/// command that actually uninstalls through it.
-///
-/// dev-prune ships through cargo, npm, PyPI and uv as well as the installer scripts.
-/// Deleting files out from under one of those managers leaves *its* records pointing at
-/// nothing — `pip list` still shows the package, `cargo install` refuses to reinstall —
-/// so those copies are left for the manager's own uninstall, which is printed instead.
-fn owning_package_manager(exe: &Path) -> Option<(&'static str, &'static str)> {
-    let path = exe.to_string_lossy().replace('\\', "/").to_lowercase();
-    if path.contains("/.cargo/bin/") {
-        return Some(("cargo", "cargo uninstall dev-prune"));
-    }
-    if path.contains("/node_modules/") || path.contains("/_npx/") {
-        return Some(("npm", "npm uninstall -g dev-prune"));
-    }
-    if path.contains("/uv/tools/") {
-        return Some(("uv", "uv tool uninstall dev-prune"));
-    }
-    if path.contains("/pipx/") {
-        return Some(("pipx", "pipx uninstall dev-prune"));
-    }
-    if let Some(dir) = exe.parent() {
-        // npm's global shims sit *beside* its `node_modules`, not inside it.
-        if dir.join("node_modules").join("dev-prune").exists() {
-            return Some(("npm", "npm uninstall -g dev-prune"));
-        }
-        // pip puts console scripts beside a Python interpreter — the system
-        // `Scripts`/`bin` directory or a virtualenv's.
-        for interpreter in ["python.exe", "python", "python3"] {
-            if dir.join(interpreter).exists() {
-                return Some(("pip", "pip uninstall dev-prune"));
-            }
-        }
-    }
-    None
-}
-
 /// The install one-liner for this platform, for the goodbye message.
-fn reinstall_hint() -> &'static str {
+fn reinstall_hint() -> String {
     if cfg!(windows) {
-        "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"
+        format!("iwr -useb {} | iex", crate::constants::INSTALL_PS1_URL)
     } else {
-        "curl -fsSL https://devprune.vkrishna04.me/install.sh | sh"
+        format!("curl -fsSL {} | sh", crate::constants::INSTALL_SH_URL)
     }
 }
 

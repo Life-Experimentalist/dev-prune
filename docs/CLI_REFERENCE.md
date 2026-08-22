@@ -535,7 +535,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -582,7 +582,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -622,7 +622,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "command": "status --drift",
   "drift": [
     {
@@ -650,7 +650,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -682,7 +682,7 @@ an upgraded machine they start from zero while the lifetime figures do not — w
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "command": "caches",
   "caches": [
     {
@@ -713,7 +713,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -747,7 +747,7 @@ a before/after pair. Exit code is `1` if `summary.failed` is non-zero.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.0",
+  "version": "1.5.1",
   "command": "trust",
   "guarantees": [
     {
@@ -803,11 +803,11 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 - **Description**: Prints the installed version, asks GitHub's public API for the latest release, and shows the upgrade command for how you installed it. By default it never downloads or replaces its own binary — upgrade with `cargo binstall dev-prune --force`, `cargo install dev-prune --force`, or by re-running the installer script.
 - **Flags**:
   - `--offline` — skip the release check for this run without changing the setting.
-  - `--install` — actually perform the upgrade. It downloads the release binary for this platform straight from GitHub Releases, verifies it against the SHA-256 sidecar published beside it, and writes it to every copy this installation runs: the managed binary under the config `bin` directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary if that is a different file. **Nothing is installed if the checksum does not match.** The managed copy is the one whose failure aborts the upgrade — it is what the git hooks and the scheduler invoke — and a copy in a directory this process cannot write is reported rather than fatal.
+  - `--install` — actually perform the upgrade. It downloads the release binary for this platform straight from GitHub Releases, verifies it against the SHA-256 sidecar published beside it, and writes it to every copy this installation runs: the managed binary under the config `bin` directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary if that is a different file — unless that file lives in a directory WinGet, Scoop or Homebrew owns, which each replace wholesale on upgrade, so writing into one produces a copy the next upgrade throws away. **Nothing is installed if the checksum does not match.** The managed copy is the one whose failure aborts the upgrade — it is what the git hooks and the scheduler invoke — and a copy in a directory this process cannot write is reported rather than fatal.
 
-    The package manager that delivered the first copy is deliberately *not* run. Its record of the installed version therefore goes stale, and the one command that resyncs it (`cargo install dev-prune --force`, `npm install -g dev-prune@latest`, `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`) is printed after a successful install. Run it or don't — the binaries are already current either way.
+    The package manager that delivered the first copy is deliberately *not* run. Its record of the installed version therefore goes stale, and the one command that resyncs it (`cargo install dev-prune --force`, `npm install -g dev-prune@latest`, `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`, `brew upgrade dev-prune`) is printed after a successful install. Run it or don't — the binaries are already current either way.
 
-    Falls back to that channel's own upgrade command when the release publishes no binary for this platform or the download fails, so a release-page outage costs the fast path and not the upgrade. The channel is detected from where the binary lives: the managed `bin` directory means the installer script, `.cargo` means cargo (`cargo binstall` when available, `cargo install` otherwise), a `node_modules` tree means npm, uv's tool directory means `uv tool upgrade`, a `pipx` venv means `pipx upgrade`; an unrecognised location prints every channel's command instead. It refuses under `DEV_PRUNE_OFFLINE`, cannot be combined with `--offline`, and does nothing when the installed build is already the latest.
+    Falls back to that channel's own upgrade command when the release publishes no binary for this platform or the download fails, so a release-page outage costs the fast path and not the upgrade. The channel is detected from where the binary lives, by the one classifier `devp doctor` and `devp uninstall` also read: the managed `bin` directory means the installer script, `.cargo` means cargo (`cargo binstall` when available, `cargo install` otherwise), a `node_modules` tree means npm, uv's tool directory means `uv tool upgrade`, a `pipx` venv means `pipx upgrade`, a `pip` script beside the binary means `pip install --upgrade`, and a WinGet, Scoop or Homebrew package directory means that manager's own upgrade; an unrecognised location prints every channel's command instead. It refuses under `DEV_PRUNE_OFFLINE`, cannot be combined with `--offline`, and does nothing when the installed build is already the latest.
 - **`auto_update`** (`false` by default): `devp config set auto_update true` runs `--install` by itself at the end of a prune pass when the release check already knows a newer version exists. A failed upgrade warns and never fails the pass. **An upgrade never interrupts the scheduled pass**: the scheduler runs the managed copy under the config `bin` directory, package managers replace binaries by atomic rename (a running pass keeps its loaded image), and the managed copy and hidden `devpw` twin refresh themselves from the new binary on their next healthy run.
 - **The check is opt-out, not opt-in.** It also runs quietly from `devp run` and `devp status`, at most once every 7 days, and prints one line only when a newer version exists. Disable it permanently with `devp config set update_check false`. It sends no body, no identifier and no usage data — see [PRIVACY.md](PRIVACY.md).
 - **`DEV_PRUNE_OFFLINE=1`** keeps the process off the network entirely — the release check and the extension-download fallback alike — regardless of any setting. For air-gapped machines and test suites; the durable per-user switch remains `devp config set update_check false`.
@@ -841,7 +841,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ### 12. `devp doctor [PATH] [--fix]`
 - **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. Plain `doctor` changes nothing — no config is created, no integration installed, no package manager run — and when some of what it found is repairable, its verdict says how many findings `--fix` would mend.
-- **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus the fixed cargo, uv and pipx directories, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
+- **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **which package manager installed this copy, and the exact commands that upgrade and remove it through that manager** — the installers, cargo, npm, uv, pipx, pip, WinGet, Scoop or Homebrew, never a warning, because an unrecognised location is a valid way to run a binary; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus every fixed directory those managers install into, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
 - **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses and what it overrides, the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.
 - **`--fix`** — diagnosis first, then treatment: run the same checks, then repair what they found. It mends *installed-but-broken* only — a stale or missing `devp` twin, a missing `SKILL.md` export, Git hooks or a scheduler entry whose recorded binary no longer exists, a chained hook set that has drifted from the tool it forwards to, and registry entries whose repository is gone (the same cleanup as `devp unlink --missing`). Each repair is the corresponding `devp setup` pass re-run, so a repair can never do more than setup itself would; each re-checks state first, so a finding that healed in the meantime reports "already in place". It never performs a first-time install (that is `devp setup`'s job, gated by your `auto_*` settings), never touches an unreadable `registry.json` (a parse failure is for you to look at, not for a tool to guess at), and with `DEV_PRUNE_NO_AUTO_SETUP=1` set it skips every repair that writes outside the config directory, naming the command to run yourself. Problems `--fix` cannot mend are re-listed as such. Cannot be combined with a `PATH` — repository findings (not a Git repo, opted out, idle) are facts about your project, not breakage to mend.
 - **Exit codes**: `0` when everything works, warnings included — a missing scheduler should not fail a script. `1` only for something actually broken: an unreadable `registry.json`, an out-of-range setting, a registered path that no longer exists, a directory that is not a Git repository. `--fix` exits `0` when everything it found was repaired, `1` when any repair failed, was skipped, or was out of its reach.

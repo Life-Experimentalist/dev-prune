@@ -5,6 +5,80 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-08-23
+
+Install, update and uninstall, told the same story. dev-prune now recognises the package
+manager that installed it — the installers, cargo, npm, uv, pipx, pip, WinGet, Scoop or
+Homebrew — and every command that touches the installation reads from that one answer
+instead of guessing separately. The three managers that version their own package
+directory are handled properly for the first time: nothing is written into one, nothing
+is deleted out of one, and both `dev-prune` and `devp` now ship inside the Windows
+archive as real files.
+
+### Added
+
+- **`devp doctor` names your install channel and both of its commands.** A new
+  `Install channel` line reports which manager owns this copy and prints the exact
+  upgrade and removal commands for it — `winget upgrade --id VKrishna04.dev-prune`,
+  `brew upgrade dev-prune`, `pipx upgrade dev-prune`, whichever applies. It is never a
+  warning; it is there so "how do I update this?" is answered on the same screen as
+  everything else, rather than from memory of an install you did months ago.
+
+- **`devp update` upgrades through pip, WinGet, Scoop and Homebrew.** Those four joined
+  cargo, npm, uv and pipx, which were already handled. If dev-prune was installed by a
+  manager, `devp update` runs that manager's own upgrade rather than replacing the file
+  underneath it and leaving the manager's database describing a version that is gone.
+
+### Changed
+
+- **The Windows zip now carries `dev-prune.exe` and `devp.exe` as two real files.** Both
+  names are therefore installed by the archive itself, on every channel that unpacks it,
+  before anything runs. WinGet in particular resolves every command a package declares
+  against what the install actually put on PATH, and a name created on first run appears
+  long after that check has looked — so `devp` could not be a WinGet command until it was
+  a genuine second file. Four megabytes of duplicate is the cheap half of that trade.
+
+- **WinGet, Scoop and Homebrew installs create nothing at runtime.** Each of those three
+  keeps its package in a directory it versions and replaces wholesale on upgrade, so
+  anything dev-prune wrote beside itself there — the `devp` twin, the windowless
+  `devpw.exe` the Windows scheduler uses — was orphaned by the next upgrade while still
+  sitting on PATH, running the release you thought you had replaced. dev-prune now
+  recognises those three and writes nothing into their directories. All three packages
+  already ship both names, so nothing is lost.
+
+### Fixed
+
+- **A first run with its output redirected no longer installs anything.** The pass that
+  adds the PATH entry, registers the scheduler and installs the git hook now requires a
+  terminal on both stdin and stdout, the same condition the first-run config review
+  already used. A binary executed once by an automated system, with its output captured,
+  used to acquire persistence on that machine silently — nobody saw the report, so nobody
+  knew to undo it. Nothing is skipped permanently: the "already done" stamp is not
+  written, so the first run a person can actually see does the pass and prints what it
+  did.
+
+- **`devp uninstall` no longer half-removes a WinGet, Scoop or Homebrew install.** It
+  used to delete the binary out of the manager's package directory, which leaves the
+  manager certain the package is still installed and its own uninstall with nothing to
+  remove — a state you cannot get out of without editing the manager's database. That
+  copy is now named rather than deleted, and the command that really removes it is
+  printed with the rest.
+
+- **`devp update`, `devp uninstall` and `devp doctor` now agree on where dev-prune came
+  from.** There were three separate detectors: one matched path components, one matched
+  substrings, one carried a hand-written list of directories, and only one of them had
+  ever heard of WinGet. So `devp doctor` could report a copy `devp uninstall` did not
+  look for, and `devp update` could name a different manager than `devp uninstall` for
+  the same install. They are one answer now, and `devp doctor` searches exactly the
+  directories `devp uninstall` sweeps.
+
+### For contributors
+
+- `scripts/check-schema.sh` runs in CI. The config schema exists three times — embedded
+  in the binary, shipped in the VS Code extension, published at the `$id` URL every
+  `.devprune.json` points at — and nothing derived one from another, so a new config key
+  could reach one copy and silently not the other two.
+
 ## [1.5.0] - 2026-08-22
 
 The adapter screen, rebuilt. Adapters are now listed by language, a heading switches a

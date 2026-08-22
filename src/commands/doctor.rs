@@ -205,6 +205,7 @@ fn check_installation(fix: bool) -> Result<()> {
     let mut f = Findings::default();
 
     check_binary(&mut f);
+    check_install_channel(&mut f);
     check_other_copies(&mut f);
     let registry = check_configuration(&mut f);
     check_integrations(&mut f, registry.as_ref());
@@ -479,6 +480,33 @@ fn check_binary(f: &mut Findings) {
     }
 }
 
+/// Name the package manager that installed this copy, and the commands that upgrade and
+/// remove it through that manager.
+///
+/// Never a warning. Every channel here is a supported one and an unrecognised location is
+/// a perfectly valid way to run a binary — this reports what is true so the next question
+/// ("how do I update this?") has an answer on the same screen, rather than sending the
+/// user to guess between six install methods they may not remember choosing.
+fn check_install_channel(f: &mut Findings) {
+    let channel = crate::channel::Channel::detect();
+    let detail = match (channel.upgrade_command(), channel.uninstall_command()) {
+        (Some(upgrade), Some(uninstall)) => {
+            format!(
+                "{} — upgrade `{upgrade}`, remove `{uninstall}`",
+                channel.label()
+            )
+        }
+        // The installer's own copy: `devp uninstall` removes it, so there is no manager
+        // command to name.
+        (Some(upgrade), None) => format!("{} — upgrade `{upgrade}`", channel.label()),
+        _ => format!(
+            "{} — `devp update --install` still upgrades it in place",
+            channel.label()
+        ),
+    };
+    f.ok("Install channel", &detail);
+}
+
 /// Find every *other* `dev-prune` on the machine and report the ones running a
 /// different version.
 ///
@@ -547,7 +575,9 @@ fn check_other_copies(f: &mut Findings) {
 }
 
 /// Every directory that could hold a `dev-prune` this machine might run: `PATH`, plus
-/// the fixed per-channel directories.
+/// the fixed per-channel directories from [`crate::channel::install_dirs`] — the same
+/// list `devp uninstall` sweeps, so doctor can never report a copy that uninstall then
+/// fails to find.
 ///
 /// The channel directories are searched even when they are not on `PATH`, because that
 /// is the case that matters most — a copy nobody can see is also a copy nobody
@@ -565,46 +595,7 @@ fn copy_search_dirs(path_var: &str, home: Option<&Path>) -> Vec<PathBuf> {
         .map(PathBuf::from)
         .collect();
 
-    if let Some(home) = home {
-        // `bin` on unix, `Scripts` on Windows — the same venv layout under both uv and
-        // pipx, and the reason a Windows uv copy is missed by a unix-shaped guess.
-        let scripts = if cfg!(windows) { "Scripts" } else { "bin" };
-        dirs.push(home.join(".cargo").join("bin"));
-        dirs.push(home.join(".local").join("bin"));
-        dirs.push(
-            home.join(".local")
-                .join("share")
-                .join("uv")
-                .join("tools")
-                .join("dev-prune")
-                .join(scripts),
-        );
-        dirs.push(
-            home.join(".local")
-                .join("pipx")
-                .join("venvs")
-                .join("dev-prune")
-                .join(scripts),
-        );
-        dirs.push(
-            home.join("pipx")
-                .join("venvs")
-                .join("dev-prune")
-                .join(scripts),
-        );
-        if cfg!(windows) {
-            // uv keeps its tool environments under `%APPDATA%` on Windows, which is not
-            // under `.local` at all.
-            dirs.push(
-                home.join("AppData")
-                    .join("Roaming")
-                    .join("uv")
-                    .join("tools")
-                    .join("dev-prune")
-                    .join(scripts),
-            );
-        }
-    }
+    dirs.extend(crate::channel::install_dirs(home));
     dirs
 }
 

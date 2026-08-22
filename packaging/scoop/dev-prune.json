@@ -24,10 +24,7 @@
     },
     "bin": [
         "dev-prune.exe",
-        [
-            "dev-prune.exe",
-            "devp"
-        ]
+        "devp.exe"
     ],
     "checkver": {
         "github": "https://github.com/Life-Experimentalist/dev-prune"

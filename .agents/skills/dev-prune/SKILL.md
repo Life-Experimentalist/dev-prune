@@ -41,7 +41,8 @@ for anything that isn't.
    and writes it to every copy this installation runs. `devp config set auto_update true`
    is the opt-in that runs that after a prune pass. The alternative is the install
    channel's own command — re-run the `install.sh`/`install.ps1` one-liner,
-   `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `scoop update dev-prune`,
+   `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade
+   dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`,
    re-running the `brew install <formula URL>` line (a formula installed by URL has no
    tap for `brew upgrade` to consult), `cargo binstall dev-prune --force` (prebuilt), or
    `cargo install dev-prune --force` (compiles).
@@ -435,7 +436,7 @@ devp config set auto_setup false
 
 **Diagnose before asking the user anything:**
 ```bash
-devp doctor          # installation: binary, PATH, config, integrations, registry
+devp doctor          # installation: binary, PATH, install channel, config, integrations, registry
 devp doctor .        # this repository: why it would or would not be pruned
 ```
 

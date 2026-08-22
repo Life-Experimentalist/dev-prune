@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 pub mod adapters;
+pub mod channel;
 pub mod commands;
 pub mod config;
 pub mod constants;

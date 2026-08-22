@@ -174,8 +174,21 @@ jobs:
         if: matrix.os_name == 'windows'
         shell: pwsh
         run: |
+          # Both names go in the archive, as two real files.
+          #
+          # WinGet installs a portable package by putting each declared nested file on
+          # PATH, and it refuses two entries pointing at the same `RelativeFilePath`. So
+          # `devp` can only be a WinGet command if `devp.exe` is genuinely in the zip —
+          # and the alternative, letting the binary copy itself on first run, is what
+          # earned this package a `Validation-Executable-Error` and a
+          # `Validation-Defender-Error` on microsoft/winget-pkgs#422665. It also orphaned
+          # the copy on every upgrade, because WinGet replaces its package directory
+          # whole. Four megabytes of duplicate is the cheap half of that trade.
+          $stage = New-Item -ItemType Directory -Force -Path "stage-${{ matrix.arch }}"
+          Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" (Join-Path $stage 'dev-prune.exe')
+          Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" (Join-Path $stage 'devp.exe')
           $asset = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.zip"
-          Compress-Archive -Path "target/${{ matrix.target }}/release/dev-prune.exe" -DestinationPath $asset
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $asset
           $hash = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
           # Two spaces: the sha256sum format the install scripts parse.
           "$hash  $asset" | Out-File -FilePath "$asset.sha256" -Encoding ascii -NoNewline

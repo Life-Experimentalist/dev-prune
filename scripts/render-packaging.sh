@@ -135,10 +135,7 @@ cat >"$out/scoop/dev-prune.json" <<EOF
     },
     "bin": [
         "dev-prune.exe",
-        [
-            "dev-prune.exe",
-            "devp"
-        ]
+        "devp.exe"
     ],
     "checkver": {
         "github": "https://github.com/$repo"
@@ -186,17 +183,21 @@ ManifestType: version
 ManifestVersion: 1.12.0
 EOF
 
-# One `NestedInstallerFiles` entry per architecture, not two. WinGet rejects a second
-# entry that repeats a `RelativeFilePath` — "Duplicate relative file path found", and
-# `winget validate` exits 41 — so a portable install can publish only one name from a
-# single-file archive.
+# Two `NestedInstallerFiles` entries per architecture, and two `Commands` — one per name.
 #
-# `Commands` therefore lists `dev-prune` alone. It listed `devp` too until a reviewer on
-# microsoft/winget-pkgs#422665 pointed out the obvious: WinGet's installation validation
-# resolves every declared command against what the install actually put on PATH, and
-# `devp` is not there — the binary creates that twin itself on first run, which is after
-# validation has already looked. Declaring a command the installer does not install is
-# how a portable manifest earns `Validation-Executable-Error`.
+# Both are real files in the archive. The Windows zip carries `dev-prune.exe` and
+# `devp.exe`, which is what makes this legal: WinGet rejects two entries that repeat a
+# `RelativeFilePath` ("Duplicate relative file path found", `winget validate` exit 41),
+# so one file can only ever publish one name.
+#
+# It was one file until microsoft/winget-pkgs#422665. `Commands` listed `devp` anyway, on
+# the assumption that the binary creating its own twin on first run was good enough —
+# which it was not, twice over. WinGet's installation validation resolves every declared
+# command against what the install actually put on PATH, and first run happens long after
+# validation has looked: that is a `Validation-Executable-Error`. And the twin was being
+# written into `…\WinGet\Packages\<id>\`, a directory WinGet versions and replaces
+# wholesale, so every upgrade orphaned it. Shipping both names in the archive is the fix
+# for both: nothing is created at runtime, and nothing is left behind.
 cat >"$wg/VKrishna04.dev-prune.installer.yaml" <<EOF
 # Copyright 2026 VKrishna04
 # SPDX-License-Identifier: Apache-2.0
@@ -209,6 +210,7 @@ InstallerType: zip
 NestedInstallerType: portable
 Commands:
   - dev-prune
+  - devp
 ReleaseDate: $(date -u +%Y-%m-%d)
 Installers:
   - Architecture: x64
@@ -217,18 +219,24 @@ Installers:
     NestedInstallerFiles:
       - RelativeFilePath: dev-prune.exe
         PortableCommandAlias: dev-prune
+      - RelativeFilePath: devp.exe
+        PortableCommandAlias: devp
   - Architecture: arm64
     InstallerUrl: $base/dev-prune-v$version-windows-arm64.zip
     InstallerSha256: $win_arm
     NestedInstallerFiles:
       - RelativeFilePath: dev-prune.exe
         PortableCommandAlias: dev-prune
+      - RelativeFilePath: devp.exe
+        PortableCommandAlias: devp
   - Architecture: x86
     InstallerUrl: $base/dev-prune-v$version-windows-x86.zip
     InstallerSha256: $win_x86
     NestedInstallerFiles:
       - RelativeFilePath: dev-prune.exe
         PortableCommandAlias: dev-prune
+      - RelativeFilePath: devp.exe
+        PortableCommandAlias: devp
 ManifestType: installer
 ManifestVersion: 1.12.0
 EOF
