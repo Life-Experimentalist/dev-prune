@@ -189,8 +189,14 @@ EOF
 # One `NestedInstallerFiles` entry per architecture, not two. WinGet rejects a second
 # entry that repeats a `RelativeFilePath` — "Duplicate relative file path found", and
 # `winget validate` exits 41 — so a portable install can publish only one name from a
-# single-file archive. It publishes `dev-prune`; the `devp` twin appears on first run,
-# when the binary installs its managed pair on PATH.
+# single-file archive.
+#
+# `Commands` therefore lists `dev-prune` alone. It listed `devp` too until a reviewer on
+# microsoft/winget-pkgs#422665 pointed out the obvious: WinGet's installation validation
+# resolves every declared command against what the install actually put on PATH, and
+# `devp` is not there — the binary creates that twin itself on first run, which is after
+# validation has already looked. Declaring a command the installer does not install is
+# how a portable manifest earns `Validation-Executable-Error`.
 cat >"$wg/VKrishna04.dev-prune.installer.yaml" <<EOF
 # Copyright 2026 VKrishna04
 # SPDX-License-Identifier: Apache-2.0
@@ -203,7 +209,6 @@ InstallerType: zip
 NestedInstallerType: portable
 Commands:
   - dev-prune
-  - devp
 ReleaseDate: $(date -u +%Y-%m-%d)
 Installers:
   - Architecture: x64
