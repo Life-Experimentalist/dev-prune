@@ -218,12 +218,12 @@ mod tests {
         project(
             tmp.path(),
             ".",
-            &["package.json", "package-lock.json", "uv.lock", "Cargo.toml"],
+            &["package.json", "package-lock.json", "uv.lock", "go.mod"],
         );
 
         assert_eq!(
             names(&discover(tmp.path())),
-            vec![(".".to_string(), vec!["cargo", "npm", "uv"])]
+            vec![(".".to_string(), vec!["go", "npm", "uv"])]
         );
     }
 
@@ -232,14 +232,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         project(tmp.path(), "frontend", &["pnpm-lock.yaml"]);
         project(tmp.path(), "services/api", &["uv.lock"]);
-        project(tmp.path(), "tools/cli", &["Cargo.toml"]);
+        project(tmp.path(), "tools/cli", &["go.mod"]);
 
         assert_eq!(
             names(&discover(tmp.path())),
             vec![
                 ("frontend".to_string(), vec!["pnpm"]),
                 ("services/api".to_string(), vec!["uv"]),
-                ("tools/cli".to_string(), vec!["cargo"]),
+                ("tools/cli".to_string(), vec!["go"]),
             ]
         );
     }
@@ -247,13 +247,13 @@ mod tests {
     #[test]
     fn combines_a_root_project_with_nested_ones() {
         let tmp = TempDir::new().unwrap();
-        project(tmp.path(), ".", &["Cargo.toml"]);
+        project(tmp.path(), ".", &["go.mod"]);
         project(tmp.path(), "web", &["package.json", "package-lock.json"]);
 
         assert_eq!(
             names(&discover(tmp.path())),
             vec![
-                (".".to_string(), vec!["cargo"]),
+                (".".to_string(), vec!["go"]),
                 ("web".to_string(), vec!["npm"]),
             ]
         );
@@ -276,13 +276,13 @@ mod tests {
     #[test]
     fn never_descends_into_target_or_vendor() {
         let tmp = TempDir::new().unwrap();
-        project(tmp.path(), ".", &["Cargo.toml"]);
-        project(tmp.path(), "target/debug/build/x", &["Cargo.toml"]);
+        project(tmp.path(), ".", &["go.mod"]);
+        project(tmp.path(), "target/debug/build/x", &["go.mod"]);
         project(tmp.path(), "vendor/dep", &["go.mod"]);
 
         assert_eq!(
             names(&discover(tmp.path())),
-            vec![(".".to_string(), vec!["cargo"])]
+            vec![(".".to_string(), vec!["go"])]
         );
     }
 
@@ -291,7 +291,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         project(tmp.path(), ".", &["uv.lock"]);
         let venv = project(tmp.path(), "my_env", &["pyvenv.cfg"]);
-        project(&venv, "lib/site-packages/dep", &["Cargo.toml"]);
+        project(&venv, "lib/site-packages/dep", &["go.mod"]);
 
         assert_eq!(
             names(&discover(tmp.path())),
@@ -302,13 +302,13 @@ mod tests {
     #[test]
     fn never_descends_into_a_nested_repository() {
         let tmp = TempDir::new().unwrap();
-        project(tmp.path(), ".", &["Cargo.toml"]);
+        project(tmp.path(), ".", &["go.mod"]);
         let sub = project(tmp.path(), "submodule", &["package-lock.json"]);
         fs::create_dir(sub.join(".git")).unwrap();
 
         assert_eq!(
             names(&discover(tmp.path())),
-            vec![(".".to_string(), vec!["cargo"])]
+            vec![(".".to_string(), vec!["go"])]
         );
     }
 

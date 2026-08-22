@@ -115,6 +115,24 @@ fn venv_project(dir: &Path) {
     write(&dir.join(".venv/lib/site.py"), "payload");
 }
 
+/// Switch the opt-in Cargo adapter on for one test's config directory.
+///
+/// `target/` is compiler output, so cargo is off until someone says otherwise. These
+/// tests are about a monorepo holding several ecosystems at once, and cargo is the
+/// third one — so they say otherwise, through the same command a user would.
+fn enable_cargo(config_dir: &Path) {
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", config_dir)
+        .args(["config", "set", "enable_cargo", "true"])
+        .output()
+        .expect("failed to run dev-prune config set");
+    assert!(
+        out.status.success(),
+        "could not enable cargo: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// Run a targeted dry run against `repo` and return combined output.
 fn dry_run(config_dir: &Path, repo: &Path) -> String {
     let out = devp()
@@ -144,6 +162,7 @@ fn reports_three_ecosystems_sharing_one_root() {
     npm_project(&repo);
     cargo_project(&repo);
     venv_project(&repo);
+    enable_cargo(&tmp.path().join("config"));
 
     let output = dry_run(&tmp.path().join("config"), &repo);
     assert!(output.contains("node_modules"), "{output}");
@@ -159,6 +178,7 @@ fn reports_three_ecosystems_at_three_different_depths() {
     npm_project(&repo.join("frontend"));
     venv_project(&repo.join("services/api"));
     cargo_project(&repo.join("tools/cli"));
+    enable_cargo(&tmp.path().join("config"));
 
     let output = dry_run(&tmp.path().join("config"), &repo);
     assert!(output.contains("frontend/node_modules"), "{output}");
@@ -173,6 +193,7 @@ fn reports_a_root_project_alongside_nested_ones() {
     git_repo(&repo);
     cargo_project(&repo);
     npm_project(&repo.join("web"));
+    enable_cargo(&tmp.path().join("config"));
 
     let output = dry_run(&tmp.path().join("config"), &repo);
     assert!(output.contains("web/node_modules"), "{output}");
@@ -258,6 +279,7 @@ fn restore_covers_every_nested_project() {
     git_repo(&repo);
     npm_project(&repo.join("frontend"));
     cargo_project(&repo.join("tools/cli"));
+    enable_cargo(&tmp.path().join("config"));
 
     let out = devp()
         .env("DEV_PRUNE_CONFIG_DIR", tmp.path().join("config"))

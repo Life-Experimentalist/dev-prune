@@ -111,8 +111,6 @@ Work that exists and is waiting on a party that is not this repository.
   developer machine accumulates, and dev-prune could *name* what is there. It will never
   delete any of it — see the Not planned section for why — so the most this can ever be
   is another section of `devp caches`, printing what to run yourself.
-- **Per-adapter idle gates** beyond `build_idle_days` — a general `idle_days.<adapter>`
-  map. Waiting for a third tier that someone actually needs.
 - **Man page packaging.** `devp man --dir` generates the pages; installing them
   pre-placed is a per-channel packaging question (deb, rpm, a Homebrew formula) rather
   than a CLI one, so it arrives with those channels or not at all.

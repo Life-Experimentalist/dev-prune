@@ -12,6 +12,7 @@
 //
 // The engine enforces all safety invariants described in the project spec.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -221,12 +222,17 @@ pub struct PruneOptions {
     /// The user's `command_timeout_secs`. It was settable, displayed by `devp status`
     /// and named in the timeout message long before anything actually read it here.
     pub command_timeout_secs: u64,
-    /// Idle days required before *build-tool* directories (gradle, maven) are touched.
+    /// Idle days required before *build-tree* directories are touched.
     ///
     /// Applied as `max(build_idle_days, idle_days)`, only to adapters that answer
-    /// [`crate::adapters::PackageManager::opt_in`] — a recompile costs more than a
-    /// reinstall, so those directories wait longer.
+    /// [`crate::adapters::PackageManager::opt_in`] — cargo, gradle, maven and swift. A
+    /// recompile costs more than a reinstall, so those directories wait longer.
     pub build_idle_days: u64,
+    /// Per-adapter idle windows, keyed by adapter name; the user's `adapter_idle_days`.
+    ///
+    /// A floor on top of everything else, never a bypass — see
+    /// [`PruneOptions::idle_threshold_for`].
+    pub adapter_idle_days: BTreeMap<String, u64>,
 }
 
 impl Default for PruneOptions {
@@ -242,11 +248,36 @@ impl Default for PruneOptions {
             allow_manifest_rewrite: crate::constants::DEFAULT_ALLOW_MANIFEST_REWRITE,
             command_timeout_secs: crate::constants::DEFAULT_COMMAND_TIMEOUT_SECS,
             build_idle_days: crate::constants::DEFAULT_BUILD_IDLE_DAYS,
+            adapter_idle_days: BTreeMap::new(),
         }
     }
 }
 
 impl PruneOptions {
+    /// How many idle days this adapter needs before its directories may be deleted.
+    ///
+    /// Three rules, applied in order and each one only ever able to raise the bar:
+    ///
+    /// 1. the repository-level window (`idle_days`, or the repo's own override), which
+    ///    every adapter has already had to clear before this is asked;
+    /// 2. `build_idle_days` for an adapter holding compiler output;
+    /// 3. this adapter's own entry in `adapter_idle_days`, if there is one.
+    ///
+    /// Only ever raise, because the repository-level check runs once for the whole
+    /// repository and is the gate that makes "active work is never touched" true. An
+    /// adapter that could lower it would be a bypass of that gate wearing a
+    /// preference's clothes, so a smaller number is accepted and does nothing.
+    fn idle_threshold_for(&self, name: &str, opt_in: bool, base: u64) -> u64 {
+        let mut days = base;
+        if opt_in {
+            days = days.max(self.build_idle_days);
+        }
+        if let Some(&explicit) = self.adapter_idle_days.get(name) {
+            days = days.max(explicit);
+        }
+        days
+    }
+
     /// The common case: prune everything eligible in this repository.
     pub fn new(idle_days: u64, dry_run: bool, force: bool) -> Self {
         Self {
@@ -490,9 +521,11 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
     // guard the size is counted twice and the second delete fails with "not found".
     let mut claimed: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
-    // Computed once per repository, and only if a build-tool adapter actually shows up
-    // — it is a second `git log` walk.
-    let mut build_idle: Option<bool> = None;
+    // One `git log` walk per distinct threshold, computed lazily. Before per-adapter
+    // windows there was only ever one extra threshold to check; now a repository with
+    // cargo at 45 days and npm pinned to 30 needs two, and each is worth caching because
+    // the walk is the expensive part of a pass that finds nothing.
+    let mut idle_at: BTreeMap<u64, bool> = BTreeMap::new();
 
     for project in &projects {
         for adapter in &project.adapters {
@@ -500,14 +533,15 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                 continue;
             }
 
-            // Build-tool directories come back by recompiling, so they wait for the
-            // longer window. `force` bypasses this exactly as it bypasses the normal
-            // idle check; verification still applies.
-            if adapter.opt_in() && !force {
-                let threshold = opts.build_idle_days.max(effective_idle_days);
-                let idle_enough = *build_idle.get_or_insert_with(|| {
-                    git::is_repo_idle(repo_path, threshold).unwrap_or(false)
-                });
+            // Build trees come back by recompiling, and any adapter may carry a window
+            // of its own, so each one is asked what it needs. `force` bypasses this
+            // exactly as it bypasses the normal idle check; verification still applies.
+            let threshold =
+                opts.idle_threshold_for(adapter.name(), adapter.opt_in(), effective_idle_days);
+            if threshold > effective_idle_days && !force {
+                let idle_enough = *idle_at
+                    .entry(threshold)
+                    .or_insert_with(|| git::is_repo_idle(repo_path, threshold).unwrap_or(false));
                 if !idle_enough {
                     continue;
                 }
@@ -1628,15 +1662,9 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let repo = tmp.path().join("repo");
         create_git_repo_with_commit(&repo);
-        // Create target directory and Cargo.toml + Cargo.lock
-        fs::create_dir(repo.join("target")).unwrap();
-        fs::write(repo.join("target").join("dummy"), "data").unwrap();
-        fs::write(
-            repo.join("Cargo.toml"),
-            "[package]\nname = \"test\"\nversion = \"0.1.0\"\nedition = \"2024\"",
-        )
-        .unwrap();
-        fs::write(repo.join("Cargo.lock"), "# lockfile").unwrap();
+        // Go rather than Cargo: `target/` belongs to an opt-in adapter now, and a
+        // fixture nothing detects would make this test pass for the wrong reason.
+        create_go_project(&repo);
         // Force + dry run → should report what WOULD be pruned
         let results = prune_repo(&repo, 15, true, true);
         let dry_run_results: Vec<_> = results
@@ -1644,8 +1672,8 @@ mod tests {
             .filter(|r| matches!(r.status, PruneStatus::SkippedDryRun))
             .collect();
         assert!(!dry_run_results.is_empty());
-        // target should still exist
-        assert!(repo.join("target").exists());
+        // vendor should still exist
+        assert!(repo.join("vendor").exists());
     }
 
     /// A Python project with a populated `requirements.txt` and a virtual environment.
@@ -1661,6 +1689,20 @@ mod tests {
         fs::write(venv.join("payload.bin"), vec![0u8; 4096]).unwrap();
     }
 
+    /// A Go module with a vendored dependency tree.
+    ///
+    /// `modules.txt` is not decoration: the adapter refuses a `vendor/` without it,
+    /// because only a `go mod vendor` product carries one.
+    fn create_go_project(dir: &Path) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("go.mod"), "module example.com/x\n\ngo 1.22\n").unwrap();
+        fs::write(dir.join("go.sum"), "").unwrap();
+        let vendor = dir.join("vendor");
+        fs::create_dir_all(&vendor).unwrap();
+        fs::write(vendor.join("modules.txt"), "# example.com/dep v1.0.0\n").unwrap();
+        fs::write(vendor.join("payload.bin"), vec![0u8; 4096]).unwrap();
+    }
+
     /// The `bloat_dir` labels of every result, sorted.
     fn labels(results: &[PruneResult]) -> Vec<String> {
         let mut out: Vec<String> = results.iter().map(|r| r.bloat_dir.clone()).collect();
@@ -1674,15 +1716,14 @@ mod tests {
         let repo = tmp.path().join("repo");
         create_git_repo_with_commit(&repo);
 
-        fs::write(repo.join("Cargo.toml"), "[package]\nname = \"x\"").unwrap();
-        fs::create_dir(repo.join("target")).unwrap();
+        create_go_project(&repo);
         fs::write(repo.join("package.json"), "{}").unwrap();
         fs::write(repo.join("package-lock.json"), "{}").unwrap();
         fs::create_dir(repo.join("node_modules")).unwrap();
         create_python_project(&repo);
 
         let results = prune_repo(&repo, 15, true, true);
-        assert_eq!(labels(&results), vec![".venv", "node_modules", "target"]);
+        assert_eq!(labels(&results), vec![".venv", "node_modules", "vendor"]);
     }
 
     #[test]
@@ -1696,9 +1737,7 @@ mod tests {
         fs::write(repo.join("frontend/pnpm-lock.yaml"), "").unwrap();
         fs::create_dir(repo.join("frontend/node_modules")).unwrap();
 
-        fs::create_dir_all(repo.join("tools/cli")).unwrap();
-        fs::write(repo.join("tools/cli/Cargo.toml"), "[package]\nname = \"y\"").unwrap();
-        fs::create_dir(repo.join("tools/cli/target")).unwrap();
+        create_go_project(&repo.join("tools/cli"));
 
         create_python_project(&repo.join("services/api"));
 
@@ -1708,7 +1747,7 @@ mod tests {
             vec![
                 "frontend/node_modules",
                 "services/api/.venv",
-                "tools/cli/target",
+                "tools/cli/vendor",
             ]
         );
     }

@@ -175,10 +175,15 @@ pub trait PackageManager: Send + Sync {
 
     /// Whether this adapter is inert until the user enables it in settings.
     ///
-    /// Build-tool adapters (gradle, maven) answer `true`: their directories come back
-    /// by recompiling the project, which costs far more than a dependency reinstall,
-    /// so nobody should find them deleted without having asked. The engine also holds
-    /// them to the longer `build_idle_days` idle window.
+    /// Adapters whose directory is compiler output answer `true` — cargo, gradle,
+    /// maven and swift. Theirs come back by recompiling the project, which costs far
+    /// more than a dependency reinstall, so nobody should find them deleted without
+    /// having asked. The engine also holds them to the longer `build_idle_days` idle
+    /// window.
+    ///
+    /// The test is what it costs to get the directory back, not whether a lockfile
+    /// exists: cargo has as good a lockfile as npm does, and `target/` still has to be
+    /// rebuilt from source.
     fn opt_in(&self) -> bool {
         false
     }
@@ -239,6 +244,9 @@ fn opt_in_enabled() -> &'static [String] {
         crate::config::Registry::load()
             .map(|r| {
                 let mut names = Vec::new();
+                if r.settings.enable_cargo {
+                    names.push("cargo".to_string());
+                }
                 if r.settings.enable_gradle {
                     names.push("gradle".to_string());
                 }
@@ -279,6 +287,43 @@ fn user_disabled() -> &'static [String] {
 /// Whether `name` is a real adapter name, for validating what the user typed.
 pub fn is_adapter_name(name: &str) -> bool {
     get_all_adapters().iter().any(|a| a.name() == name)
+}
+
+/// The adapters, grouped by the language they belong to.
+///
+/// A flat list of eighteen names is a wall: the question a user actually has is "leave
+/// Python alone" or "only Rust waits longer", and neither is expressible one checkbox
+/// at a time. Order is the order the groups are shown in, which is roughly how common
+/// they are rather than alphabetical — the four JavaScript managers are what most
+/// people came for.
+///
+/// The one invariant, enforced by [`every_adapter_is_grouped_exactly_once`]: every
+/// registered adapter appears here exactly once, and nothing appears here that is not
+/// registered. A new adapter that is not added to a group would silently vanish from
+/// the picker, which is the one place a user goes to find it.
+pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
+    ("JavaScript", &["npm", "pnpm", "yarn", "bun"]),
+    ("Python", &["uv", "poetry", "pdm", "pipenv", "venv"]),
+    ("Rust", &["cargo"]),
+    ("Go", &["go"]),
+    ("JVM", &["gradle", "maven"]),
+    ("PHP", &["composer"]),
+    ("Ruby", &["bundler"]),
+    ("Swift & Objective-C", &["swift", "cocoapods"]),
+    ("Elixir", &["mix"]),
+];
+
+/// The language group `name` belongs to, or `"Other"` if it somehow belongs to none.
+///
+/// The fallback exists so a missing entry degrades to a visible oddity in the picker
+/// rather than an adapter that cannot be reached at all; the test is what actually
+/// keeps [`ADAPTER_GROUPS`] complete.
+pub fn adapter_group(name: &str) -> &'static str {
+    ADAPTER_GROUPS
+        .iter()
+        .find(|(_, names)| names.contains(&name))
+        .map(|(group, _)| *group)
+        .unwrap_or("Other")
 }
 
 /// Every adapter name, in registry order, for error messages and pickers.
@@ -1265,6 +1310,43 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn every_adapter_is_grouped_exactly_once() {
+        // The picker is built from ADAPTER_GROUPS, not from the registry, so an adapter
+        // missing here is an adapter nobody can switch off from the configurator.
+        let registered = all_adapter_names();
+        let grouped: Vec<&str> = ADAPTER_GROUPS
+            .iter()
+            .flat_map(|(_, names)| names.iter().copied())
+            .collect();
+
+        for name in &registered {
+            assert_eq!(
+                grouped.iter().filter(|g| *g == name).count(),
+                1,
+                "`{name}` must appear in exactly one ADAPTER_GROUPS entry"
+            );
+        }
+        for name in &grouped {
+            assert!(
+                registered.contains(name),
+                "ADAPTER_GROUPS names `{name}`, which is not a registered adapter"
+            );
+        }
+        assert_eq!(registered.len(), grouped.len());
+    }
+
+    #[test]
+    fn the_opt_in_adapters_are_the_ones_that_hold_compiler_output() {
+        // Not a restatement of the code: this is the product rule. An adapter whose
+        // directory only comes back by recompiling must be opt-in, and one that comes
+        // back by downloading must not be — otherwise the longer `build_idle_days`
+        // window and the trust report both describe something else.
+        let mut opt_in = opt_in_adapter_names();
+        opt_in.sort_unstable();
+        assert_eq!(opt_in, vec!["cargo", "gradle", "maven", "swift"]);
+    }
+
+    #[test]
     fn go_is_probed_with_the_subcommand_it_actually_accepts() {
         // `go --version` exits 2 with "flag provided but not defined: -version". The
         // probe reading that as "go is not installed" made `devp doctor` warn on every
@@ -1401,7 +1483,11 @@ mod tests {
         fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
         fs::write(tmp.path().join("go.mod"), "module x").unwrap();
 
-        assert_eq!(detected_names(tmp.path()), vec!["cargo", "go", "npm", "uv"]);
+        // Cargo is missing on purpose: it is opt-in, `enable_cargo` is off here, and
+        // detection is the single funnel that has to enforce that. An opt-in adapter
+        // that still detected would be counted by status and stats and only refuse at
+        // the point of deletion.
+        assert_eq!(detected_names(tmp.path()), vec!["go", "npm", "uv"]);
     }
 
     #[test]

@@ -105,9 +105,11 @@ skips the confirmation, and `--dry-run` reports what a pass would do without del
 anything at all. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
 venv, poetry, pdm, pipenv, cargo, go, composer, bundler, cocoapods, mix, gradle, \
 maven, swift — an unknown name is an error listing the valid ones, not a silently \
-empty pass. gradle, maven and swift are opt-in (`devp config set enable_gradle \
-true`) and idle-gated separately by `build_idle_days`, because a build directory \
-takes far longer to get back than a dependency directory.
+empty pass. cargo, gradle, maven and swift are opt-in (`devp config set \
+enable_cargo true`) and idle-gated separately by `build_idle_days`, because a \
+build directory takes far longer to get back than a dependency directory. \
+`devp config wizard` switches them on by language, and can give any one adapter \
+its own idle window.
 
 `--except` is the safe spelling of \"clean up but keep the API project\": the named \
 repositories are never verified, never deleted and never restored, which beats \

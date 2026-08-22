@@ -73,13 +73,23 @@ pub const HISTORY_STARTS_AT: &str = "1.1.0";
 /// Default idle threshold in days before a repository is eligible for pruning.
 pub const DEFAULT_IDLE_DAYS: u64 = 15;
 
-/// Default idle threshold for *build-tool* directories (gradle, maven), in days.
+/// Default idle threshold for *build-tree* directories, in days.
 ///
-/// Deliberately much longer than [`DEFAULT_IDLE_DAYS`]: those directories come back
-/// by recompiling the whole project, not by re-downloading a dependency tree, so the
-/// bar for "nobody will miss this" sits higher. The engine applies
-/// `max(build_idle_days, idle_days)`.
-pub const DEFAULT_BUILD_IDLE_DAYS: u64 = 60;
+/// Applies to every adapter that answers [`crate::adapters::PackageManager::opt_in`]:
+/// cargo, gradle, maven and swift. Deliberately longer than [`DEFAULT_IDLE_DAYS`],
+/// because those directories come back by recompiling the whole project rather than by
+/// re-downloading a dependency tree, so the bar for "nobody will miss this" sits
+/// higher. The engine applies `max(build_idle_days, idle_days)`.
+///
+/// Three times the dependency window and no more: 60 days was long enough that a
+/// project touched once a quarter never became a candidate at all, which is not
+/// caution, it is the feature never firing.
+pub const DEFAULT_BUILD_IDLE_DAYS: u64 = 45;
+
+/// Shown while `devp trust` and the configurator ask the OS about the scheduler and
+/// Git hooks, then overwritten in place. Kept here because its width is what the
+/// erase writes over, so the two must not be able to drift apart.
+pub const READING_MACHINE: &str = "Reading this machine (scheduler, Git hooks)...";
 
 /// Default interval in days between background daemon prune runs.
 pub const DEFAULT_CHECK_INTERVAL_DAYS: u64 = 2;

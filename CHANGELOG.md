@@ -5,6 +5,76 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-08-22
+
+The adapter screen, rebuilt. Adapters are now listed by language, a heading switches a
+whole ecosystem on or off in one keypress, and any adapter — or any language — can be
+given its own idle window without touching the global one. Cargo joins the opt-in build
+adapters, and the build-tool wait drops from 60 days to 45.
+
+### Added
+
+- **`devp config wizard` groups adapters by language.** The adapter checklist used to be
+  eighteen names in registry order, which is the order they were written in and no help
+  at all when you want "all my Python tooling, off". Now every adapter sits under a
+  language heading — JavaScript, Python, Rust, Go, JVM, PHP, Ruby, Swift & Objective-C,
+  Elixir — and the heading is itself selectable: <kbd>Space</kbd> on it turns that whole
+  language on or off, and the heading shows `[x]`, `[ ]` or `[-]` so a partly-off
+  language is visible without expanding anything.
+
+- **`adapter_idle_days` gives one adapter its own idle window.** `devp config set
+  adapter_idle_days cargo=90,npm=30` makes cargo wait ninety days and npm thirty, while
+  everything else keeps the global `idle_days`. It is applied as
+  `max(idle_days, build_idle_days, adapter_idle_days[<name>])` — a floor and never a
+  bypass, so no number you put here can make dev-prune touch a repository the global
+  window still considers active. `devp config set adapter_idle_days -` clears the map.
+
+- **The same windows are editable from the wizard, per language.** Press <kbd>d</kbd> on
+  an adapter to type its window; press <kbd>d</kbd> on a language heading and what you
+  type applies to every adapter under it at once, which is the difference between one
+  keystroke and five for "all of Python waits a month". The column shows `default` or
+  `45d` beside each adapter, so the whole policy reads off one screen.
+
+- **`enable_cargo`** turns the Cargo adapter on. Off by default — see below.
+
+### Changed
+
+- **Cargo is now opt-in, like gradle, maven and swift.** `target/` is compiler output:
+  the lockfile proves it comes back, but it comes back by *recompiling* rather than
+  downloading, and on a real workspace that is minutes where a dependency reinstall is
+  seconds. That is the line the other build adapters were already on, and cargo belonged
+  on it. **If you were relying on dev-prune reclaiming `target/`, run `devp config set
+  enable_cargo true` after upgrading** — until you do, cargo is invisible: not detected,
+  not counted by `stats`, and `--only cargo` prunes nothing.
+
+- **`build_idle_days` now defaults to 45 days, down from 60.** Two months was long
+  enough that a repository you had genuinely finished with still sat there taking up the
+  space. Forty-five days is still three times the dependency window, and the setting has
+  not moved — `devp config set build_idle_days 60` restores the old wait exactly.
+
+- **The wizard paints its first screen faster.** `devp trust` and the first-run
+  walkthrough read the machine's scheduler state and Git hook state before drawing
+  anything, and they read them one after the other; on Windows the `schtasks` query alone
+  was most of a 1.4-second wait staring at an empty terminal. The two checks now run at
+  the same time.
+
+### Fixed
+
+- **The documented default for `auto_config` was wrong.** Three places — the CLI
+  reference, `llms.txt` and the agent skill — said it defaults to `true`, so an agent
+  reading them would tell you `devp link` drops a `.devprune.json` into every repository
+  it registers. It does not, and never has: the default is `false`, which is what
+  `devp config show` reports. Only the documentation changed.
+
+### For contributors
+
+- `PackageManager::opt_in` adapters are filtered inside `detect_adapters`, so an adapter
+  that is off is invisible to `status`, `stats`, `run` and `doctor` at once rather than
+  in four places that could disagree.
+- A new adapter must be added to `ADAPTER_GROUPS` in `src/adapters/mod.rs` as well as to
+  the registry; `every_adapter_is_grouped_exactly_once` fails if it is not, because an
+  ungrouped adapter would vanish from the only screen that lists them.
+
 ## [1.4.1] - 2026-08-22
 
 A tidy-up release. Nothing in the tool changed; what changed is that the manifests

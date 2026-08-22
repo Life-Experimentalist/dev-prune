@@ -133,6 +133,53 @@ pub fn run(json_output: bool) -> Result<()> {
     Ok(())
 }
 
+/// Ask the OS its two questions at the same time.
+///
+/// These are the only two rows that shell out — `schtasks` and `git config` — and
+/// together they were most of the second this report took to build. That second was
+/// spent before the configurator drew anything at all, which read as a slow tool rather
+/// than as two processes being waited on one after the other.
+fn machine_answers() -> (String, String) {
+    let scheduler = std::thread::spawn(scheduler_state);
+    let hooks = hook_state();
+    // A panic in the probe must not take the report down with it: the row's whole
+    // purpose is to say what is unknown.
+    let scheduler = scheduler
+        .join()
+        .unwrap_or_else(|_| "Unknown (the check did not finish)".to_string());
+    (scheduler, hooks)
+}
+
+/// Say what is happening while [`machine_answers`] blocks, and erase it afterwards.
+///
+/// Asking Windows for a scheduled task costs a second on its own, and it happens before
+/// the first screen of the configurator can be drawn — so without this the wizard opens
+/// on an empty terminal for long enough to look hung. Stderr, so a piped `--json` run is
+/// unaffected, and only when stderr is a terminal, so a log file never collects it.
+fn with_progress<T>(work: impl FnOnce() -> T) -> T {
+    use std::io::{IsTerminal, Write};
+
+    let mut err = std::io::stderr();
+    let show = err.is_terminal();
+    if show {
+        let _ = write!(err, "{}", constants::READING_MACHINE);
+        let _ = err.flush();
+    }
+    let value = work();
+    if show {
+        // Carriage return and overwrite rather than an erase sequence: this runs before
+        // the alternate screen is entered, on terminals that predate it.
+        let _ = write!(
+            err,
+            "\r{:width$}\r",
+            "",
+            width = constants::READING_MACHINE.chars().count()
+        );
+        let _ = err.flush();
+    }
+    value
+}
+
 /// Assemble the report from the code's own guarantees and this machine's actual state.
 ///
 /// `pub(crate)` because the first-run configurator opens on this same report: the
@@ -203,6 +250,7 @@ fn guarantees() -> Vec<TrustRow> {
 /// Everything read back from this machine rather than asserted.
 fn machine_state(registry: &Registry) -> Vec<TrustRow> {
     let s = &registry.settings;
+    let (scheduler, hooks) = with_progress(machine_answers);
     let mut rows = vec![
         TrustRow::new(
             "network",
@@ -262,10 +310,10 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
         TrustRow::new(
             "scheduler",
             "Background scheduler",
-            scheduler_state(),
+            scheduler,
             Verdict::Neutral,
         ),
-        TrustRow::new("git_hooks", "Git hooks", hook_state(), Verdict::Neutral),
+        TrustRow::new("git_hooks", "Git hooks", hooks, Verdict::Neutral),
     ];
 
     // Opt-in adapters delete compiled output, which every other adapter refuses to do.
@@ -300,7 +348,7 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
         "idle_window",
         "Idle window",
         format!(
-            "{} days of no commits and no file changes ({} for build trees)",
+            "{} days of no commits and no file changes ({} for build trees, before any per-adapter window)",
             s.idle_days,
             s.build_idle_days.max(s.idle_days)
         ),
@@ -323,6 +371,7 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
 fn opt_in_adapters(registry: &Registry) -> Vec<&'static str> {
     let s = &registry.settings;
     [
+        ("cargo", s.enable_cargo),
         ("gradle", s.enable_gradle),
         ("maven", s.enable_maven),
         ("swift", s.enable_swift),

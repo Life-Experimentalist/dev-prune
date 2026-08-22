@@ -154,6 +154,7 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
         allow_manifest_rewrite: resolve_manifest_rewrite(registry.as_ref()),
         command_timeout_secs: resolve_command_timeout(registry.as_ref()),
         build_idle_days: resolve_build_idle_days(registry.as_ref()),
+        adapter_idle_days: resolve_adapter_idle_days(registry.as_ref()),
     };
 
     let results = engine::prune_repo_with(&path, &opts);
@@ -367,11 +368,20 @@ fn resolve_scan_depth(registry: Option<&Registry>) -> usize {
         .unwrap_or(constants::DEFAULT_SCAN_DEPTH)
 }
 
-/// The ceiling on any one package-manager command, in seconds.
+/// The idle window for adapters holding compiler output, in days.
 fn resolve_build_idle_days(registry: Option<&Registry>) -> u64 {
     registry
         .map(|r| r.settings.build_idle_days)
         .unwrap_or(constants::DEFAULT_BUILD_IDLE_DAYS)
+}
+
+/// The user's per-adapter idle windows, empty when there is no registry yet.
+fn resolve_adapter_idle_days(
+    registry: Option<&Registry>,
+) -> std::collections::BTreeMap<String, u64> {
+    registry
+        .map(|r| r.settings.adapter_idle_days.clone())
+        .unwrap_or_default()
 }
 
 fn resolve_command_timeout(registry: Option<&Registry>) -> u64 {
@@ -452,6 +462,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         allow_manifest_rewrite: resolve_manifest_rewrite(Some(&registry)),
         command_timeout_secs: resolve_command_timeout(Some(&registry)),
         build_idle_days: resolve_build_idle_days(Some(&registry)),
+        adapter_idle_days: resolve_adapter_idle_days(Some(&registry)),
     };
 
     if !args.json {
@@ -715,6 +726,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                 allow_manifest_rewrite: analysis.allow_manifest_rewrite,
                 command_timeout_secs: analysis.command_timeout_secs,
                 build_idle_days: analysis.build_idle_days,
+                adapter_idle_days: analysis.adapter_idle_days.clone(),
             },
         );
         for result in single_results {
@@ -1067,6 +1079,7 @@ fn run_explain(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                 allow_manifest_rewrite: resolve_manifest_rewrite(registry.as_ref()),
                 command_timeout_secs: resolve_command_timeout(registry.as_ref()),
                 build_idle_days: resolve_build_idle_days(registry.as_ref()),
+                adapter_idle_days: resolve_adapter_idle_days(registry.as_ref()),
             },
         );
         let refs: Vec<&PruneResult> = results.iter().collect();
@@ -1094,6 +1107,7 @@ fn run_explain(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         allow_manifest_rewrite: resolve_manifest_rewrite(Some(&registry)),
         command_timeout_secs: resolve_command_timeout(Some(&registry)),
         build_idle_days: resolve_build_idle_days(Some(&registry)),
+        adapter_idle_days: resolve_adapter_idle_days(Some(&registry)),
     };
     let results = engine::prune_all_with(&mut registry, &analysis);
 

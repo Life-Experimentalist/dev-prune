@@ -32,6 +32,12 @@ pub enum Control {
     Number,
     /// Opens the adapter checklist.
     Adapters,
+    /// Opens the same adapter checklist, on the idle-window column.
+    ///
+    /// Which adapters run and how long each one waits are one decision made twice, so
+    /// they are edited on one screen. The row exists separately only because the
+    /// settings table stores them as two keys.
+    AdapterDays,
 }
 
 /// One setting, as the view needs it.
@@ -85,6 +91,9 @@ pub struct ConfigSession<'a> {
     pub adapters: &'a [&'static str],
     /// Adapter names that need their own `enable_*` switch as well.
     pub opt_in_adapters: &'a [&'static str],
+    /// The language groups the adapters are shown under, in display order. Anything
+    /// not named by a group is collected under a trailing "Other".
+    pub groups: &'a [(&'static str, &'static [&'static str])],
     /// Round-trips one value through the setter that owns it. `Err` is shown in place
     /// and the edit is refused, so validation lives in exactly one place.
     pub validate: &'a dyn Fn(&str, &str) -> std::result::Result<(), String>,
@@ -107,6 +116,73 @@ enum Screen {
     Summary,
 }
 
+/// One drawn line of the adapter checklist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PickerEntry {
+    /// A language heading, carrying the indices of every adapter under it so that one
+    /// keypress on the heading reaches all of them.
+    Group {
+        label: &'static str,
+        members: Vec<usize>,
+    },
+    /// An adapter, by its index into `session.adapters`.
+    Adapter(usize),
+}
+
+/// Lay the adapters out under their language headings.
+///
+/// Order comes from the group table rather than the adapter registry: someone looking
+/// for "the Python ones" is looking for a heading, not for four names that happen to be
+/// adjacent. An adapter no group claims still has to appear — a checklist that silently
+/// omits an adapter is a checklist that cannot turn it off.
+fn build_entries(
+    adapters: &[&'static str],
+    groups: &[(&'static str, &'static [&'static str])],
+) -> Vec<PickerEntry> {
+    let mut entries = Vec::new();
+    let mut placed = vec![false; adapters.len()];
+
+    for (label, names) in groups {
+        let members: Vec<usize> = names
+            .iter()
+            .filter_map(|name| adapters.iter().position(|a| a == name))
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        for &i in &members {
+            placed[i] = true;
+        }
+        entries.push(PickerEntry::Group {
+            label,
+            members: members.clone(),
+        });
+        entries.extend(members.into_iter().map(PickerEntry::Adapter));
+    }
+
+    let rest: Vec<usize> = (0..adapters.len()).filter(|&i| !placed[i]).collect();
+    if !rest.is_empty() {
+        entries.push(PickerEntry::Group {
+            label: "Other",
+            members: rest.clone(),
+        });
+        entries.extend(rest.into_iter().map(PickerEntry::Adapter));
+    }
+    entries
+}
+
+/// The value of one row, by key.
+fn row_value(rows: &[ConfigRow], key: &str) -> Option<String> {
+    rows.iter().find(|r| r.key == key).map(|r| r.value.clone())
+}
+
+/// Write one row by key, ignoring a key the settings table does not carry.
+fn set_row(rows: &mut [ConfigRow], key: &str, value: String) {
+    if let Some(row) = rows.iter_mut().find(|r| r.key == key) {
+        row.value = value;
+    }
+}
+
 struct State<'a> {
     session: ConfigSession<'a>,
     screen: Screen,
@@ -117,6 +193,14 @@ struct State<'a> {
     error: Option<String>,
     /// Adapter checklist state: `true` means the adapter stays active.
     picker_active: Vec<bool>,
+    /// Per-adapter idle window in days, `None` when the adapter follows the global one.
+    picker_days: Vec<Option<u64>>,
+    /// The checklist as it is drawn: group headings interleaved with their adapters.
+    /// Rebuilt when the screen opens, because it depends on nothing that changes while
+    /// it is open.
+    picker_entries: Vec<PickerEntry>,
+    /// Buffer for an in-progress idle-window edit on the checklist.
+    picker_editing: Option<String>,
     picker_list: ListState,
     /// Scroll position of the declaration, which is longer than most terminals are tall.
     decl_list: ListState,
@@ -139,6 +223,9 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
 
     let mut state = State {
         picker_active: vec![true; session.adapters.len()],
+        picker_days: vec![None; session.adapters.len()],
+        picker_entries: Vec::new(),
+        picker_editing: None,
         session,
         screen: Screen::Declaration,
         list,
@@ -273,18 +360,48 @@ fn activate(state: &mut State<'_>, index: usize) {
             };
         }
         Control::Number => state.editing = Some(state.session.rows[index].value.clone()),
-        Control::Adapters => {
-            let disabled = parse_list(&state.session.rows[index].value);
-            state.picker_active = state
-                .session
-                .adapters
-                .iter()
-                .map(|name| !disabled.iter().any(|d| d == name))
-                .collect();
-            state.picker_list.select(Some(0));
-            state.screen = Screen::Adapters;
-        }
+        Control::Adapters | Control::AdapterDays => open_picker(state),
     }
+}
+
+/// Seed the checklist from the rows it will write back to.
+///
+/// Opening with everything ticked would silently re-enable an adapter the user turned
+/// off, the first time they visited this screen for any other reason — so all three
+/// rows that govern an adapter are read back here, not just the deny-list.
+fn open_picker(state: &mut State<'_>) {
+    let rows = &state.session.rows;
+    let disabled = parse_list(&row_value(rows, "disabled_adapters").unwrap_or_default());
+    let days = parse_days(&row_value(rows, "adapter_idle_days").unwrap_or_default());
+
+    state.picker_active = state
+        .session
+        .adapters
+        .iter()
+        .map(|name| {
+            if disabled.iter().any(|d| d == name) {
+                return false;
+            }
+            // An opt-in adapter is active only if its own switch is on: it is off by
+            // default and absent from the deny-list, and showing it ticked would
+            // promise a prune that never happens.
+            if state.session.opt_in_adapters.contains(name) {
+                return row_value(rows, &format!("enable_{name}")).as_deref() == Some("true");
+            }
+            true
+        })
+        .collect();
+    state.picker_days = state
+        .session
+        .adapters
+        .iter()
+        .map(|name| days.iter().find(|(n, _)| n == name).map(|(_, d)| *d))
+        .collect();
+
+    state.picker_entries = build_entries(state.session.adapters, state.session.groups);
+    state.picker_editing = None;
+    state.picker_list.select(Some(0));
+    state.screen = Screen::Adapters;
 }
 
 fn number_edit_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
@@ -324,45 +441,166 @@ fn number_edit_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
 }
 
 fn adapters_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
-    let len = state.session.adapters.len();
+    if state.picker_editing.is_some() {
+        return picker_days_key(state, code);
+    }
+
+    let len = state.picker_entries.len().max(1);
     let current = state.picker_list.selected().unwrap_or(0);
     match code {
         KeyCode::Up | KeyCode::Char('k') => {
+            state.error = None;
             state
                 .picker_list
                 .select(Some(if current == 0 { len - 1 } else { current - 1 }));
         }
         KeyCode::Down | KeyCode::Char('j') => {
+            state.error = None;
             state
                 .picker_list
                 .select(Some(if current + 1 >= len { 0 } else { current + 1 }));
         }
-        KeyCode::Char(' ') => state.picker_active[current] = !state.picker_active[current],
+        // On a heading, one keypress governs the whole language: off if any of them is
+        // on, so "turn Python off" never needs four presses and a count.
+        KeyCode::Char(' ') => match state.picker_entries.get(current).cloned() {
+            Some(PickerEntry::Adapter(i)) => state.picker_active[i] = !state.picker_active[i],
+            Some(PickerEntry::Group { members, .. }) => {
+                let target = !members.iter().any(|&i| state.picker_active[i]);
+                for i in members {
+                    state.picker_active[i] = target;
+                }
+            }
+            None => {}
+        },
+        KeyCode::Char('d') | KeyCode::Char('D') => {
+            state.error = None;
+            let seed = match state.picker_entries.get(current) {
+                Some(PickerEntry::Adapter(i)) => state.picker_days[*i],
+                // A group seeds from the window its members already share; a group of
+                // disagreeing values seeds empty rather than picking one of them.
+                Some(PickerEntry::Group { members, .. }) => {
+                    let first = members.first().and_then(|&i| state.picker_days[i]);
+                    if members.iter().all(|&i| state.picker_days[i] == first) {
+                        first
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            };
+            state.picker_editing = Some(seed.map(|d| d.to_string()).unwrap_or_default());
+        }
         KeyCode::Char('a') | KeyCode::Char('A') => state.picker_active.fill(true),
         KeyCode::Char('n') | KeyCode::Char('N') => state.picker_active.fill(false),
-        KeyCode::Enter => {
-            let disabled: Vec<&str> = state
-                .session
-                .adapters
-                .iter()
-                .zip(state.picker_active.iter())
-                .filter(|(_, active)| !**active)
-                .map(|(name, _)| *name)
-                .collect();
-            let index = state.list.selected().unwrap_or(0);
-            // `(none)` rather than an empty string, so what the row shows is exactly
-            // what `devp config get disabled_adapters` prints.
-            state.session.rows[index].value = if disabled.is_empty() {
-                "(none)".to_string()
-            } else {
-                disabled.join(",")
-            };
-            state.screen = Screen::Settings;
-        }
+        KeyCode::Enter => commit_picker(state),
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => state.screen = Screen::Settings,
         _ => {}
     }
     None
+}
+
+/// The inline idle-window editor on the checklist. An empty buffer clears the window,
+/// which is the only way back to "follow the global one" once a number is set.
+fn picker_days_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
+    let current = state.picker_list.selected().unwrap_or(0);
+    match code {
+        KeyCode::Char(c) if c.is_ascii_digit() => {
+            if let Some(buf) = state.picker_editing.as_mut() {
+                buf.push(c);
+            }
+        }
+        KeyCode::Backspace => {
+            if let Some(buf) = state.picker_editing.as_mut() {
+                buf.pop();
+            }
+        }
+        KeyCode::Enter => {
+            let typed = state.picker_editing.clone().unwrap_or_default();
+            let typed = typed.trim().to_string();
+            let targets: Vec<usize> = match state.picker_entries.get(current) {
+                Some(PickerEntry::Adapter(i)) => vec![*i],
+                Some(PickerEntry::Group { members, .. }) => members.clone(),
+                None => Vec::new(),
+            };
+            let value = if typed.is_empty() {
+                None
+            } else {
+                let Some(&first) = targets.first() else {
+                    state.picker_editing = None;
+                    return None;
+                };
+                let probe = format!("{}={typed}", state.session.adapters[first]);
+                // Through the real setter, so the checklist cannot store a number
+                // `devp config set` would refuse.
+                if let Err(why) = (state.session.validate)("adapter_idle_days", &probe) {
+                    state.error = Some(why);
+                    return None;
+                }
+                typed.parse::<u64>().ok()
+            };
+            for i in targets {
+                state.picker_days[i] = value;
+            }
+            state.picker_editing = None;
+            state.error = None;
+        }
+        KeyCode::Esc => {
+            state.picker_editing = None;
+            state.error = None;
+        }
+        _ => {}
+    }
+    None
+}
+
+/// Fold the checklist back into the rows that store it.
+///
+/// An opt-in adapter is governed by its own `enable_*` switch rather than by the
+/// deny-list: two ways to say the same "off" would leave the settings screen showing a
+/// contradiction, and unticking it here should read back there as the switch being off.
+fn commit_picker(state: &mut State<'_>) {
+    let adapters = state.session.adapters;
+    let opt_in = state.session.opt_in_adapters;
+
+    let disabled: Vec<&str> = adapters
+        .iter()
+        .enumerate()
+        .filter(|(i, name)| !state.picker_active[*i] && !opt_in.contains(name))
+        .map(|(_, name)| *name)
+        .collect();
+    // `(none)` rather than an empty string, so what the row shows is exactly what
+    // `devp config get disabled_adapters` prints.
+    let disabled = if disabled.is_empty() {
+        "(none)".to_string()
+    } else {
+        disabled.join(",")
+    };
+
+    let days: Vec<String> = adapters
+        .iter()
+        .enumerate()
+        .filter_map(|(i, name)| state.picker_days[i].map(|d| format!("{name}={d}")))
+        .collect();
+    let days = if days.is_empty() {
+        "(none)".to_string()
+    } else {
+        days.join(",")
+    };
+
+    let switches: Vec<(String, String)> = adapters
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| opt_in.contains(name))
+        .map(|(i, name)| (format!("enable_{name}"), state.picker_active[i].to_string()))
+        .collect();
+
+    let rows = &mut state.session.rows;
+    set_row(rows, "disabled_adapters", disabled);
+    set_row(rows, "adapter_idle_days", days);
+    for (key, value) in switches {
+        set_row(rows, &key, value);
+    }
+    state.screen = Screen::Settings;
 }
 
 fn summary_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
@@ -399,6 +637,24 @@ fn parse_list(value: &str) -> Vec<String> {
         .split(',')
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Split a stored `name=days` map back into pairs. `(none)` is the empty map.
+///
+/// Anything malformed is dropped rather than refused: this parses a value the setter
+/// already accepted, and a checklist that will not open is worse than one that opens
+/// with a window missing.
+fn parse_days(value: &str) -> Vec<(String, u64)> {
+    if value.trim().eq_ignore_ascii_case("(none)") {
+        return Vec::new();
+    }
+    value
+        .split(',')
+        .filter_map(|entry| {
+            let (name, days) = entry.trim().split_once('=')?;
+            Some((name.trim().to_lowercase(), days.trim().parse().ok()?))
+        })
         .collect()
 }
 
@@ -558,7 +814,7 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
                 ),
                 Control::Toggle => Span::styled("[ ] ", dim()),
                 Control::Number => Span::styled("123 ", dim()),
-                Control::Adapters => Span::styled("••• ", dim()),
+                Control::Adapters | Control::AdapterDays => Span::styled("••• ", dim()),
             };
 
             let shown = if state.editing.is_some() && selected == Some(i) {
@@ -658,6 +914,7 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(5),
+        Constraint::Length(4),
         Constraint::Length(2),
     ])
     .split(frame.area());
@@ -674,34 +931,85 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
         chunks[0],
     );
 
+    let selected = state.picker_list.selected();
     let items: Vec<ListItem> = state
-        .session
-        .adapters
+        .picker_entries
         .iter()
-        .zip(state.picker_active.iter())
-        .map(|(name, active)| {
-            let mut spans = vec![
-                if *active {
-                    Span::styled(
-                        "[x] ",
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
-                    )
+        .enumerate()
+        .map(|(line, entry)| match entry {
+            PickerEntry::Group { label, members } => {
+                let on = members.iter().filter(|&&i| state.picker_active[i]).count();
+                let mark = if on == members.len() {
+                    "[x]"
+                } else if on == 0 {
+                    "[ ]"
                 } else {
-                    Span::styled("[ ] ", dim())
-                },
-                Span::styled(crate::output::pad_display(name, 16), Style::default()),
-            ];
-            if state.session.opt_in_adapters.contains(name) {
-                // Two switches govern these, and someone who ticks this box and sees
-                // nothing happen deserves to know which other one to look at.
-                spans.push(Span::styled(
-                    format!("opt-in — also needs enable_{name}"),
-                    dim(),
-                ));
+                    // A language half on is neither, and drawing it as either is how
+                    // one Space press silently turns three adapters back on.
+                    "[-]"
+                };
+                let shared = members.first().and_then(|&i| state.picker_days[i]);
+                // A heading is an editing target like any adapter row, so it has to show
+                // the buffer being typed into it — otherwise the keys land silently.
+                let window = if state.picker_editing.is_some() && selected == Some(line) {
+                    format!("{}_", state.picker_editing.clone().unwrap_or_default())
+                } else if members.iter().all(|&i| state.picker_days[i] == shared) {
+                    shared.map(|d| format!("{d}d")).unwrap_or_default()
+                } else {
+                    "mixed".to_string()
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{mark} {}", crate::output::pad_display(label, 22)),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        crate::output::pad_display(&format!("{on}/{}", members.len()), 8),
+                        dim(),
+                    ),
+                    Span::styled(window, dim()),
+                ]))
             }
-            ListItem::new(Line::from(spans))
+            PickerEntry::Adapter(i) => {
+                let name = state.session.adapters[*i];
+                let shown = if state.picker_editing.is_some() && selected == Some(line) {
+                    format!("{}_", state.picker_editing.clone().unwrap_or_default())
+                } else {
+                    state.picker_days[*i]
+                        .map(|d| format!("{d}d"))
+                        .unwrap_or_else(|| "default".to_string())
+                };
+                let mut spans = vec![
+                    if state.picker_active[*i] {
+                        Span::styled(
+                            "  [x] ",
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        Span::styled("  [ ] ", dim())
+                    },
+                    Span::styled(crate::output::pad_display(name, 18), Style::default()),
+                    Span::styled(
+                        crate::output::pad_display(&shown, 10),
+                        if state.picker_days[*i].is_some() {
+                            Style::default().fg(Color::Yellow)
+                        } else {
+                            dim()
+                        },
+                    ),
+                ];
+                if state.session.opt_in_adapters.contains(&name) {
+                    // Naming the cost is the whole argument for the switch: these come
+                    // back by recompiling, and nobody should turn one on without being
+                    // told that is what "restore" means here.
+                    spans.push(Span::styled("opt-in — rebuilt, not downloaded", dim()));
+                }
+                ListItem::new(Line::from(spans))
+            }
         })
         .collect();
 
@@ -720,17 +1028,44 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
         .highlight_symbol("▶ ");
     frame.render_stateful_widget(list, chunks[1], &mut state.picker_list);
 
+    let mut detail = vec![Line::from(Span::styled(
+        "  Space toggles one adapter, or a whole language from its heading. d sets how \
+         many days that adapter — or that language — must be idle first; an empty value \
+         puts it back on the global window.",
+        dim(),
+    ))];
+    if let Some(why) = &state.error {
+        detail.push(Line::from(Span::styled(
+            format!("  {why}"),
+            Style::default().fg(Color::Red),
+        )));
+    }
     frame.render_widget(
-        footer(&[
+        Paragraph::new(detail)
+            .wrap(Wrap { trim: true })
+            .block(Block::default().borders(Borders::ALL).border_style(dim())),
+        chunks[2],
+    );
+
+    let keys: &[(&str, &str)] = if state.picker_editing.is_some() {
+        &[
+            ("digits", "days"),
+            ("Enter", "accept"),
+            ("empty", "use the global window"),
+            ("Esc", "abandon"),
+        ]
+    } else {
+        &[
             ("↑↓", "move"),
             ("Space", "toggle"),
+            ("d", "idle days"),
             ("a", "all on"),
             ("n", "all off"),
             ("Enter", "accept"),
             ("Esc", "back"),
-        ]),
-        chunks[2],
-    );
+        ]
+    };
+    frame.render_widget(footer(keys), chunks[3]);
 }
 
 fn render_summary(frame: &mut Frame, state: &State<'_>) {
@@ -827,8 +1162,17 @@ mod tests {
             rows,
             adapters,
             opt_in_adapters: &[],
-            validate: &|_, v| {
-                v.parse::<u64>()
+            groups: &[("Test", &["npm", "cargo", "go"])],
+            validate: &|key, v| {
+                // Stands in for the real setters: the same shapes accepted, so a test
+                // that types a value the checklist stores is a test the wizard passes.
+                let number = if key == "adapter_idle_days" {
+                    v.split_once('=').map(|(_, d)| d).unwrap_or("")
+                } else {
+                    v
+                };
+                number
+                    .parse::<u64>()
                     .map(|_| ())
                     .map_err(|_| "not a number".to_string())
             },
@@ -843,6 +1187,9 @@ mod tests {
         picker_list.select(Some(0));
         State {
             picker_active: vec![true; s.adapters.len()],
+            picker_days: vec![None; s.adapters.len()],
+            picker_entries: build_entries(s.adapters, s.groups),
+            picker_editing: None,
             session: s,
             screen: Screen::Settings,
             list,
@@ -895,8 +1242,12 @@ mod tests {
         let settings = screenshot(&mut st, Screen::Settings);
         assert!(settings.contains("idle_days"));
 
+        st.picker_entries = build_entries(st.session.adapters, st.session.groups);
+        st.picker_days[1] = Some(45);
         let picker = screenshot(&mut st, Screen::Adapters);
         assert!(picker.contains("cargo"));
+        assert!(picker.contains("Test"), "the language heading is missing");
+        assert!(picker.contains("45d"), "the idle window is missing");
 
         // The summary must say so when there is nothing to say, rather than draw an
         // empty box that reads as a rendering failure.
@@ -950,11 +1301,122 @@ mod tests {
         ));
         handle_key(&mut st, KeyCode::Enter); // open the checklist
         assert_eq!(st.screen, Screen::Adapters);
+        handle_key(&mut st, KeyCode::Down); // past the heading, onto npm
         handle_key(&mut st, KeyCode::Down); // cargo
         handle_key(&mut st, KeyCode::Char(' '));
         handle_key(&mut st, KeyCode::Enter);
         assert_eq!(st.session.rows[0].value, "cargo");
         assert_eq!(st.screen, Screen::Settings);
+    }
+
+    #[test]
+    fn every_adapter_appears_under_exactly_one_heading() {
+        // An adapter no group claims still has to be listed: a checklist that silently
+        // omits an adapter is a checklist that cannot turn it off.
+        let adapters: &[&'static str] = &["npm", "cargo", "mystery"];
+        let groups: &[(&'static str, &'static [&'static str])] =
+            &[("JavaScript", &["npm"]), ("Rust", &["cargo"])];
+        let entries = build_entries(adapters, groups);
+        let headings: Vec<&str> = entries
+            .iter()
+            .filter_map(|e| match e {
+                PickerEntry::Group { label, .. } => Some(*label),
+                PickerEntry::Adapter(_) => None,
+            })
+            .collect();
+        assert_eq!(headings, vec!["JavaScript", "Rust", "Other"]);
+
+        let mut listed: Vec<usize> = entries
+            .iter()
+            .filter_map(|e| match e {
+                PickerEntry::Adapter(i) => Some(*i),
+                PickerEntry::Group { .. } => None,
+            })
+            .collect();
+        listed.sort_unstable();
+        assert_eq!(
+            listed,
+            vec![0, 1, 2],
+            "an adapter was dropped from the list"
+        );
+    }
+
+    #[test]
+    fn a_heading_turns_its_whole_language_off_in_one_press() {
+        let adapters: &[&'static str] = &["npm", "pnpm", "cargo"];
+        let mut st = state(session(
+            vec![row("disabled_adapters", Control::Adapters, "(none)")],
+            adapters,
+        ));
+        st.session.groups = &[("JavaScript", &["npm", "pnpm"]), ("Rust", &["cargo"])];
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // on the JavaScript heading
+        assert_eq!(st.picker_active, vec![false, false, true]);
+        // And back on again: a heading that only ever turned things off would leave the
+        // user unable to undo their own keypress.
+        handle_key(&mut st, KeyCode::Char(' '));
+        assert_eq!(st.picker_active, vec![true, true, true]);
+    }
+
+    #[test]
+    fn an_idle_window_typed_on_a_heading_reaches_every_adapter_under_it() {
+        let adapters: &[&'static str] = &["npm", "pnpm", "cargo"];
+        let mut st = state(session(
+            vec![
+                row("disabled_adapters", Control::Adapters, "(none)"),
+                row("adapter_idle_days", Control::AdapterDays, "(none)"),
+            ],
+            adapters,
+        ));
+        st.session.groups = &[("JavaScript", &["npm", "pnpm"]), ("Rust", &["cargo"])];
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char('d')); // on the JavaScript heading
+        handle_key(&mut st, KeyCode::Char('3'));
+        handle_key(&mut st, KeyCode::Char('0'));
+        handle_key(&mut st, KeyCode::Enter);
+        assert_eq!(st.picker_days, vec![Some(30), Some(30), None]);
+
+        handle_key(&mut st, KeyCode::Enter); // accept the checklist
+        assert_eq!(st.session.rows[1].value, "npm=30,pnpm=30");
+
+        // Clearing is how a window goes back to following the global one, and there is
+        // no other way to spell it.
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char('d'));
+        handle_key(&mut st, KeyCode::Backspace);
+        handle_key(&mut st, KeyCode::Backspace);
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Enter);
+        assert_eq!(st.session.rows[1].value, "(none)");
+    }
+
+    #[test]
+    fn an_opt_in_adapter_is_governed_by_its_own_switch_not_the_deny_list() {
+        // Two ways to spell the same "off" would leave the settings screen showing a
+        // contradiction: ticking cargo here has to read back there as enable_cargo.
+        let adapters: &[&'static str] = &["npm", "cargo"];
+        let opt_in: &[&'static str] = &["cargo"];
+        let mut st = state(session(
+            vec![
+                row("disabled_adapters", Control::Adapters, "(none)"),
+                row("enable_cargo", Control::Toggle, "false"),
+            ],
+            adapters,
+        ));
+        st.session.opt_in_adapters = opt_in;
+        st.session.groups = &[("JavaScript", &["npm"]), ("Rust", &["cargo"])];
+
+        handle_key(&mut st, KeyCode::Enter);
+        // Off by default and absent from the deny-list: showing it ticked would promise
+        // a prune that never happens.
+        assert_eq!(st.picker_active, vec![true, false]);
+        handle_key(&mut st, KeyCode::Down); // JavaScript heading -> npm
+        handle_key(&mut st, KeyCode::Down); // Rust heading
+        handle_key(&mut st, KeyCode::Down); // cargo
+        handle_key(&mut st, KeyCode::Char(' '));
+        handle_key(&mut st, KeyCode::Enter);
+        assert_eq!(st.session.rows[0].value, "(none)");
+        assert_eq!(st.session.rows[1].value, "true");
     }
 
     #[test]

@@ -2,6 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Cargo/Rust package manager adapter.
+//
+// Opt-in (`devp config set enable_cargo true`), and it is worth being clear about why,
+// because `cargo metadata --locked` genuinely does prove the dependency graph resolves
+// from `Cargo.lock`. What it does not prove is that anything comes back *cheaply*:
+// `target/` holds compiler output, and the only way to get it back is to rebuild it.
+// That puts cargo in the same class as gradle, maven and swift rather than with
+// `node_modules` and `.venv`, so it waits for the longer `build_idle_days` window and
+// nobody finds it deleted without having asked.
 
 use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier};
 use anyhow::Result;
@@ -93,6 +101,10 @@ impl PackageManager for Cargo {
     fn lockfiles(&self) -> &'static [&'static str] {
         &["Cargo.lock"]
     }
+
+    fn opt_in(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +113,13 @@ mod tests {
     use std::fs;
     use std::fs::File;
     use tempfile::tempdir;
+
+    #[test]
+    fn cargo_is_opt_in() {
+        // `target/` is compiler output: proving the crates resolve is not the same as
+        // getting the compiled artefacts back for free.
+        assert!(Cargo.opt_in());
+    }
 
     #[test]
     fn test_name() {

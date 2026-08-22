@@ -199,6 +199,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                     allow_manifest_rewrite: registry.settings.allow_manifest_rewrite,
                     command_timeout_secs: registry.settings.command_timeout_secs,
                     build_idle_days: registry.settings.build_idle_days,
+                    adapter_idle_days: registry.settings.adapter_idle_days.clone(),
                 };
 
                 for path in &candidates {

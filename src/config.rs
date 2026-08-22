@@ -9,7 +9,7 @@
 //
 // All data is stored in `~/.config/dev-prune/registry.json`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -93,6 +93,14 @@ pub struct Settings {
     /// asked for rather than assumed. Same thing as `devp hook install --chain`.
     #[serde(default = "default_auto_hooks_chain")]
     pub auto_hooks_chain: bool,
+    /// Whether the opt-in Cargo adapter is active. Off by default, and the reason is
+    /// the same one that keeps `enable_gradle` off: Rust's `target/` is compiler
+    /// output. `cargo metadata --locked` proves the *crates* come back from
+    /// `Cargo.lock`, but nothing downloads a compiled artefact — the directory returns
+    /// only by rebuilding, which on a large workspace is minutes rather than the
+    /// seconds a dependency reinstall costs. See [`crate::adapters::cargo_adapter`].
+    #[serde(default)]
+    pub enable_cargo: bool,
     /// Whether the opt-in Gradle build-tool adapter is active. Off by default:
     /// `build/` comes back by recompiling the project, so nobody should find it
     /// deleted without having asked. See [`crate::adapters::gradle`].
@@ -107,8 +115,8 @@ pub struct Settings {
     /// back through `swift build`. See [`crate::adapters::swift`].
     #[serde(default)]
     pub enable_swift: bool,
-    /// Idle days required before *build-tool* directories (gradle, maven, swift) are
-    /// pruned.
+    /// Idle days required before *build-tree* directories (cargo, gradle, maven,
+    /// swift) are pruned.
     ///
     /// Separate from `idle_days` because the cost of being wrong is different: a
     /// deleted `node_modules` is one `npm ci` away, a deleted Android `build/` is a
@@ -134,6 +142,23 @@ pub struct Settings {
     /// every command at once rather than listed by `status` and skipped by `run`.
     #[serde(default)]
     pub disabled_adapters: Vec<String>,
+    /// Per-adapter idle windows, in days, keyed by adapter name.
+    ///
+    /// The one dial that is neither global nor per-repository: "wait longer before
+    /// touching Rust" is a statement about a *toolchain*, not about one checkout, and
+    /// before this it could only be said by moving the global window for everything.
+    ///
+    /// **A floor, never a bypass.** The value is applied as
+    /// `max(idle_days, adapter_idle_days[name])`, so it can only make an adapter wait
+    /// longer than the repository-level check already requires. A smaller number is
+    /// accepted and simply has no effect — the repository gate runs first and is the
+    /// same gate for every adapter, and letting one adapter lower it would be a
+    /// bypass of the idle check rather than a preference.
+    ///
+    /// `BTreeMap` rather than `HashMap` so the JSON round-trips in a stable order and
+    /// a diff of the registry file shows what actually changed.
+    #[serde(default)]
+    pub adapter_idle_days: BTreeMap<String, u64>,
 }
 
 fn default_build_idle_days() -> u64 {
@@ -206,12 +231,14 @@ impl Default for Settings {
             update_check_interval_days: constants::UPDATE_CHECK_INTERVAL_DAYS,
             update_check_timeout_secs: constants::UPDATE_CHECK_TIMEOUT_SECS,
             auto_hooks_chain: constants::DEFAULT_AUTO_HOOKS_CHAIN,
+            enable_cargo: false,
             enable_gradle: false,
             enable_maven: false,
             enable_swift: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: false,
             disabled_adapters: Vec::new(),
+            adapter_idle_days: BTreeMap::new(),
         }
     }
 }

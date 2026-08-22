@@ -46,7 +46,7 @@ pub trait PackageManager: Send + Sync {
     /// Whether this adapter must be switched on explicitly before it detects
     /// anything. Defaults to `false`. Return `true` when what you delete is a
     /// build tree that has to be *recompiled* back rather than re-downloaded —
-    /// gradle, maven and swift do — and add a matching `enable_<name>` setting in
+    /// cargo, gradle, maven and swift do — and add a matching `enable_<name>` setting in
     /// `src/commands/config.rs`. While the setting is off, the adapter is
     /// invisible: not detected, not listed, and `--only <name>` prunes nothing.
     /// Opt-in adapters are also idle-gated by `build_idle_days`, applied as
@@ -263,6 +263,25 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
     ]
 }
 ```
+
+---
+
+### Step 5b: Put your adapter in a language group
+
+`ADAPTER_GROUPS` in the same file is what `devp config wizard` draws its checklist
+from, grouped by language so a heading can switch a whole ecosystem on, off, or onto
+its own idle window in one keypress. Add your adapter to the group it belongs to, or
+add a new group:
+
+```rust
+pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
+    ("JVM", &["gradle", "maven"]),
+    // ...
+];
+```
+
+`every_adapter_is_grouped_exactly_once` fails if you forget — an ungrouped adapter is
+one a user cannot find in the only screen that lists them.
 
 ---
 

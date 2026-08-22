@@ -443,7 +443,7 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **PDM** (Python)  | `pdm.lock`, `[tool.pdm]` or `pdm.backend` in `pyproject.toml` | `.venv`, `__pypackages__`               | `pdm lock --check`                                                                                                | `pdm install`                                             |
 | **Pipenv** (Python) | `Pipfile`                                              | `.venv` *(in-project installs only)*    | `pipenv verify`                                                                                                   | `pipenv install --deploy`                                 |
 | **venv** (Python) | `requirements.txt` + a directory containing `pyvenv.cfg` | every directory containing `pyvenv.cfg` | `requirements.txt` must exist and list at least one package                                                       | `python -m venv .venv && pip install -r requirements.txt` |
-| **Cargo** (Rust)  | `Cargo.toml`                                             | `target`                                | `cargo metadata --locked`                                                                                         | *(rebuilt by the next `cargo build`)*                     |
+| **Cargo** (Rust) *(opt-in)* | `Cargo.toml`                                   | `target`                                | `cargo metadata --locked`                                                                                         | *(rebuilt by the next `cargo build`)*                     |
 | **Go**            | `go.mod`                                                 | `vendor`                                | `go mod download`                                                                                                 | `go mod vendor`                                           |
 | **Composer** (PHP) | `composer.json`                                         | `vendor`                                | `composer validate --no-check-publish --no-check-all`                                                             | `composer install`                                        |
 | **Bundler** (Ruby) | `Gemfile`                                               | `vendor/bundle` *(vendored installs only)* | `bundle lock --check`                                                                                          | `bundle install`                                          |
@@ -456,12 +456,18 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
 
-The three build-tool adapters ship **disabled**, because a build tree is regenerated
+The four build-tool adapters ship **disabled**, because a build tree is regenerated
 by recompiling, not downloading — it costs more to get back. `devp config set
-enable_gradle true` / `enable_maven true` / `enable_swift true` switches them on, and
-their candidates wait for `build_idle_days` (60 by default), applied as the *maximum*
-of it and `idle_days` — the build-tool gate only ever makes pruning later, never
-earlier.
+enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true`
+switches them on, and their candidates wait for `build_idle_days` (45 by default),
+applied as the *maximum* of it and `idle_days` — the build-tool gate only ever makes
+pruning later, never earlier.
+
+Any one adapter can be made to wait longer than the rest: `devp config set
+adapter_idle_days cargo=90,npm=30` sets a per-adapter floor, applied as
+`max(idle_days, build_idle_days, adapter_idle_days[name])`. `devp config wizard` edits
+it beside the adapter checklist, grouped by language, where one heading sets the same
+window for every adapter under it.
 
 Bundler and Pipenv claim only the install that lives *inside* the repository: the
 `vendor/bundle` a project gets from `bundle config set path vendor/bundle`, and the
@@ -547,7 +553,8 @@ inherited — and again after an upgrade adds a setting you have never been show
 | `check_interval_days`                                      |    `2`    | How often the OS scheduler runs a pass                                              |
 | `update_check`                                             |  `true`   | Whether the periodic release check runs                                             |
 | `update_check_interval_days` · `update_check_timeout_secs` | `7` · `5` | Minimum gap between checks, and how long one may hang                               |
-| `enable_gradle` · `enable_maven` · `enable_swift`              |  `false`  | Turn on an opt-in build-tool adapter; `build_idle_days` (`60`) gates all three       |
+| `enable_cargo` · `enable_gradle` · `enable_maven` · `enable_swift` |  `false`  | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all four    |
+| `adapter_idle_days`                                        | *(none)*  | Per-adapter idle floors, as `cargo=90,npm=30` — each raises only its own window      |
 | `disabled_adapters`                                        | *(none)*  | Adapters to leave alone entirely, by name — as if that ecosystem were not installed |
 
 Three of them — `idle_days` (as `override_idle_days`), `min_size_mb` and `scan_depth` —

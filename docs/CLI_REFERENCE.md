@@ -191,19 +191,30 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `composer` declines `vendor/` outright when a `vendor/bundle` is inside it: deleting
   it would take gems with it under a proof that says nothing about them.
 
-  **Gradle, Maven and SwiftPM are opt-in adapters.** `devp config set enable_gradle
-  true` / `enable_maven true` / `enable_swift true` turns each on; until then the
-  adapter is invisible everywhere — `status`, `run`, `--only gradle` all behave as if
-  it did not exist. They are off by default because what they delete (`build/`,
-  `.gradle/`, `target/`, `.build/`) comes back by *recompiling from the sources in the
-  repository* rather than by re-downloading, and a large JVM or Swift build can take
-  real time to rebuild. For the same reason they answer to their own idle threshold:
-  `build_idle_days` (60 by default) is applied as `max(build_idle_days, idle_days)`,
+  **Cargo, Gradle, Maven and SwiftPM are opt-in adapters.** `devp config set
+  enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true`
+  turns each on; until then the adapter is invisible everywhere — `status`, `run`,
+  `--only cargo` all behave as if it did not exist. They are off by default because of
+  what it costs to get their directories back, not because of any doubt that they come
+  back: `target/`, `build/`, `.gradle/` and `.build/` are compiler output, so they
+  return by *recompiling from the sources in the repository* rather than by
+  re-downloading, and a large workspace can spend minutes doing that where a dependency
+  reinstall spends seconds. For the same reason they answer to their own idle threshold:
+  `build_idle_days` (45 by default) is applied as `max(build_idle_days, idle_days)`,
   so a repository must be idle much longer before its build directories go than before
   its dependency directories do. Recoverability is proved by the build manifest
-  (`pom.xml`, `build.gradle`/`settings.gradle`, `Package.swift`) being present and
-  readable — no network command runs. User-home caches (`~/.m2`,
-  `~/.gradle`) are never touched; those belong to `devp caches`.
+  (`Cargo.lock`, `pom.xml`, `build.gradle`/`settings.gradle`, `Package.swift`) being
+  present and readable — for cargo, `cargo metadata --locked`; for the rest, no network
+  command runs at all. User-home caches (`~/.cargo`, `~/.m2`, `~/.gradle`) are never
+  touched; those belong to `devp caches`.
+
+  **Any one adapter can wait longer still.** `devp config set adapter_idle_days
+  cargo=90,npm=30` gives a named adapter its own window, applied as
+  `max(idle_days, build_idle_days, adapter_idle_days[name])` — a floor, never a bypass,
+  so no per-adapter number can make dev-prune touch a repository the global window
+  still considers active. `devp config set adapter_idle_days -` clears the map, and
+  `devp config wizard` edits it as a column beside the adapter checklist, where a
+  language heading sets the same window for every adapter under it at once.
 
   `--except` is the safe spelling of "clean up but keep the API project". Each entry
   matches a registered repository by full path, by directory name, or case-insensitively
@@ -343,7 +354,7 @@ reads unambiguously:
 
   Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. Two probes that resolve to the same directory are counted once.
 
-  This is also where the .NET and C/C++ ecosystems live in dev-prune, and why they are *not* adapters: a .NET `bin/`+`obj/` and a CMake `build/` are compiler **outputs** — no lockfile can prove a deleted one comes back byte-for-byte, so deleting them is out of scope by design. Their *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports. Maven `target/` and Gradle `build/`+`.gradle/` are the deliberate exception: they have [opt-in adapters](#5-devp-run) whose recoverability claim is rebuild-from-source (`pom.xml`/`build.gradle` plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`.
+  This is also where the .NET and C/C++ ecosystems live in dev-prune, and why they are *not* adapters: a .NET `bin/`+`obj/` and a CMake `build/` are compiler **outputs** — no lockfile can prove a deleted one comes back byte-for-byte, so deleting them is out of scope by design. Their *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports. Cargo `target/`, Maven `target/` and Gradle `build/`+`.gradle/` are the deliberate exception: they have [opt-in adapters](#5-devp-run) whose recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle` plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the table. Global within `caches`, so `devp caches clear npm --json` parses the same as `devp caches --json clear npm`.
 - **Examples**:
@@ -398,12 +409,14 @@ reads unambiguously:
     | `update_check` | `true` | Whether the periodic release check runs (see [`devp update`](#10-devp-update---offline---install)) |
     | `update_check_interval_days` | `7` | Minimum gap between two release checks |
     | `update_check_timeout_secs` | `5` | How long that one request may hang before it is abandoned |
-    | `auto_config` | `true` | Whether `devp init` / `devp link` write a default `.devprune.json` into newly registered repositories |
+    | `auto_config` | `false` | Whether `devp init` / `devp link` write a default `.devprune.json` into newly registered repositories |
+    | `enable_cargo` | `false` | Turn on the opt-in Cargo adapter (`target/` — compiler output, so it comes back by recompiling rather than downloading) |
     | `enable_gradle` | `false` | Turn on the opt-in Gradle adapter (`build/`, `.gradle/` — they come back by recompiling) |
     | `enable_maven` | `false` | Turn on the opt-in Maven adapter (`target/`) |
     | `enable_swift` | `false` | Turn on the opt-in Swift Package Manager adapter (`.build/` — compiled modules, so they come back by recompiling) |
     | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, by name, comma-separated. A disabled adapter is not detected, not counted by `stats`, not probed for by `doctor` and never pruned — as if the ecosystem were not installed. `devp config set disabled_adapters -` clears the list |
-    | `build_idle_days` | `60` | Extra idle threshold for the opt-in build adapters, applied as `max(build_idle_days, idle_days)` |
+    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift), applied as `max(build_idle_days, idle_days)` |
+    | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. Each raises only its own adapter's wait — `max(idle_days, build_idle_days, this)` — and can never lower one. `devp config set adapter_idle_days -` clears the map |
     | `auto_update` | `false` | Run `devp update --install` by itself at the end of a prune pass when a newer release is known |
 
     Three of these have a per-repository form in that repository's `.devprune.json`,
@@ -522,7 +535,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -569,7 +582,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -609,7 +622,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "command": "status --drift",
   "drift": [
     {
@@ -637,7 +650,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -669,7 +682,7 @@ an upgraded machine they start from zero while the lifetime figures do not — w
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "command": "caches",
   "caches": [
     {
@@ -700,7 +713,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -734,7 +747,7 @@ a before/after pair. Exit code is `1` if `summary.failed` is non-zero.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.4.1",
+  "version": "1.5.0",
   "command": "trust",
   "guarantees": [
     {
@@ -941,7 +954,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 - **Two sections, and the split is the point**:
   - **Guaranteed by the code** — the seven [safety invariants](SAFETY_INVARIANTS.md) plus the two questions asked as often as any of them: there is no telemetry endpoint, and build output is never deleted. These rows read the same on every machine. None of them has a setting or a flag behind it, and a build where one did not hold would be a bug, not a configuration.
   - **On this machine** — read live: whether the scheduler is installed, whether the Git hooks register repositories on their own, how many repositories are registered, the idle window, the managed binary's path, and the settings that widen what may happen without you asking.
-- **The four settings that widen anything** are named individually rather than summed into a grade: `auto_update`, `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run) (`enable_gradle`, `enable_maven`, `enable_swift`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
+- **The four settings that widen anything** are named individually rather than summed into a grade: `auto_update`, `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
 - **No letter grade, on purpose**: `trust level: MEDIUM` tells nobody which switch to look at. The report lists the switches.
 - **Row marks**: `+` guaranteed or safe, `!` widened, blank for a neutral fact (a path, a count).
 - **Flags**:

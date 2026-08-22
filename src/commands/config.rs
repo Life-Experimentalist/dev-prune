@@ -49,6 +49,13 @@ enum Kind {
     Number,
     /// A comma-separated list of adapter names.
     Adapters,
+    /// Adapter names with a number each, as `cargo=60,npm=30`.
+    ///
+    /// Edited on the same screen as [`Kind::Adapters`] rather than in a field of its
+    /// own: which adapters run and how long each waits are one decision made twice,
+    /// and splitting them across two rows is how someone switches an adapter on and
+    /// never finds the dial that would have made it safe.
+    AdapterDays,
 }
 
 /// Every global setting, in the order a person would want to be asked about them.
@@ -269,6 +276,17 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "enable_cargo",
+        since: "1.5.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Cargo adapter (target/ comes back by recompiling, not downloading).",
+        get: |s| s.enable_cargo.to_string(),
+        set: |s, v| {
+            s.enable_cargo = parse_bool("enable_cargo", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "enable_gradle",
         since: "1.3.0",
         kind: Kind::Toggle,
@@ -305,7 +323,7 @@ const SETTINGS: &[Setting] = &[
         key: "build_idle_days",
         since: "1.3.0",
         kind: Kind::Number,
-        help: "Idle days before gradle/maven/swift build trees are pruned. Applied as max(this, idle_days).",
+        help: "Idle days before cargo/gradle/maven/swift build trees are pruned. Applied as max(this, idle_days).",
         get: |s| s.build_idle_days.to_string(),
         set: |s, v| {
             let days: u64 = v
@@ -343,6 +361,27 @@ const SETTINGS: &[Setting] = &[
             Ok(())
         },
     },
+    Setting {
+        key: "adapter_idle_days",
+        since: "1.5.0",
+        kind: Kind::AdapterDays,
+        help: "Per-adapter idle windows, as `cargo=60,npm=30`. Each one can only raise its own wait.",
+        get: |s| {
+            if s.adapter_idle_days.is_empty() {
+                "(none)".to_string()
+            } else {
+                s.adapter_idle_days
+                    .iter()
+                    .map(|(name, days)| format!("{name}={days}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }
+        },
+        set: |s, v| {
+            s.adapter_idle_days = parse_adapter_days(v)?;
+            Ok(())
+        },
+    },
 ];
 
 /// Parse the comma-separated adapter deny-list, rejecting names that do not exist.
@@ -350,6 +389,43 @@ const SETTINGS: &[Setting] = &[
 /// An unknown name is an error listing the valid ones rather than a no-op, for the same
 /// reason `--only nmp` is: a silently ignored typo reads as "npm is protected" right up
 /// until the pass that deletes `node_modules`.
+/// Parse `cargo=60,npm=30` into the per-adapter idle map.
+///
+/// Same "clear it" spellings as [`parse_adapter_list`], and the same closed loop: what
+/// `config get adapter_idle_days` prints is accepted verbatim by `config set`.
+fn parse_adapter_days(value: &str) -> Result<std::collections::BTreeMap<String, u64>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || matches!(trimmed.to_lowercase().as_str(), "none" | "(none)" | "-") {
+        return Ok(std::collections::BTreeMap::new());
+    }
+
+    let mut days = std::collections::BTreeMap::new();
+    for raw in trimmed.split(',') {
+        let entry = raw.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let Some((name, value)) = entry.split_once('=') else {
+            bail!("`{entry}` must be written as `<adapter>=<days>`, for example `cargo=60`.");
+        };
+        let name = name.trim().to_lowercase();
+        if !crate::adapters::is_adapter_name(&name) {
+            bail!(
+                "`{name}` is not an adapter. Valid names: {}",
+                crate::adapters::all_adapter_names().join(", ")
+            );
+        }
+        let parsed: u64 = value.trim().parse().map_err(|_| {
+            anyhow::anyhow!(
+                "`{name}` needs a whole number of days, not `{}`.",
+                value.trim()
+            )
+        })?;
+        days.insert(name, parsed);
+    }
+    Ok(days)
+}
+
 fn parse_adapter_list(value: &str) -> Result<Vec<String>> {
     let trimmed = value.trim();
     // The spellings that mean "clear it". `(none)` closes the loop with the getter, so
@@ -584,6 +660,7 @@ fn run_wizard_tui() -> Result<()> {
                     Kind::Toggle => Control::Toggle,
                     Kind::Number => Control::Number,
                     Kind::Adapters => Control::Adapters,
+                    Kind::AdapterDays => Control::AdapterDays,
                 },
                 original: value.clone(),
                 value,
@@ -611,6 +688,7 @@ fn run_wizard_tui() -> Result<()> {
         rows,
         adapters: &adapters,
         opt_in_adapters: &opt_in,
+        groups: crate::adapters::ADAPTER_GROUPS,
         validate: &validate,
         title: "dev-prune configuration",
     })?;
@@ -1195,6 +1273,9 @@ mod tests {
                 // A real adapter name, so the round trip also proves the list prints
                 // back in the spelling `config set` takes.
                 Kind::Adapters => "cargo".to_string(),
+                // Same, with a window attached: proves the map prints back in the
+                // `name=days` spelling `config set` parses.
+                Kind::AdapterDays => "cargo=45".to_string(),
             };
             (setting.set)(&mut settings, &probe)
                 .unwrap_or_else(|e| panic!("{} rejected `{probe}`: {e}", setting.key));

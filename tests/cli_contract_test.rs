@@ -137,7 +137,43 @@ fn fixture(tmp: &TempDir) -> (std::path::PathBuf, std::path::PathBuf) {
         .output()
         .unwrap();
     assert!(out.status.success(), "link failed:\n{}", combined(&out));
+
+    // Cargo is opt-in, and this fixture's whole point is to offer two ecosystems. The
+    // switch is set through the CLI rather than by writing the file, so the fixture
+    // also proves `config set` reaches the adapter gate.
+    let out = devp(&config)
+        .args(["config", "set", "enable_cargo", "true"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "enable failed:\n{}", combined(&out));
     (config, repo)
+}
+
+#[test]
+fn cargo_finds_nothing_until_its_switch_is_on() {
+    // The opt-in has to hold at the point of discovery, not at the point of deletion:
+    // an adapter that detects and then refuses is one that shows up in every total.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+    cargo_project(&repo.join("cli"), 4096);
+    let out = devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "link failed:\n{}", combined(&out));
+
+    let out = devp(&config)
+        .args(["--force", "run", "--json", "--dry-run", "--only", "cargo"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(
+        parse_json(&out)["results"].as_array().unwrap().is_empty(),
+        "cargo was pruned without enable_cargo:\n{}",
+        combined(&out)
+    );
 }
 
 // ---------------------------------------------------------------------------
