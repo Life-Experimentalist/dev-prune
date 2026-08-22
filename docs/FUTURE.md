@@ -49,11 +49,12 @@ Work that exists and is waiting on a party that is not this repository.
 - **homebrew-core.** Plain `brew install dev-prune`, with no tap prefix. It has a real
   notability bar measured in stars, forks and watchers, so it is a post-popularity step
   rather than a task. The named tap covers the same install today.
-- **Four more adapters: Terraform, Flutter/Dart, Mix and Nix.** `.terraform/` holds
-  downloaded providers that `terraform init` restores from the lock file; `.dart_tool/`
-  and `_build/` are the same shape for `pub get` and `mix deps.get`. Each has a lockfile
+- **Three more adapters: Terraform, Flutter/Dart and Nix.** `.terraform/` holds
+  downloaded providers that `terraform init` restores from `.terraform.lock.hcl`, and
+  `.dart_tool/` is the same shape for `pub get` and `pubspec.lock` — each has a lockfile
   that proves the directory is recoverable, which is the only bar an adapter has to
-  clear. Nix is the odd one and is being looked at last, because a store path is shared
+  clear. Neither would touch compiled output: Dart's `build/` stays, exactly as Mix's
+  `_build/` does today. Nix is the odd one and is last, because a store path is shared
   between projects and "recoverable" there means something different.
 - **`devp caches` for Composer, CocoaPods and Hex.** The three managers already covered
   by adapters whose *download* caches are not yet listed. Each entry has to ask the
