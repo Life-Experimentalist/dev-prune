@@ -60,7 +60,14 @@ fn git(path: &Path) -> Command {
 fn git_repo(path: &Path) {
     fs::create_dir_all(path).unwrap();
     git(path).args(["init"]).output().unwrap();
-    fs::write(path.join("README.md"), "# test").unwrap();
+    // Unique per repository — see the same helper in `cli_contract_test.rs`: identical
+    // trees committed within one second collide, and `link` identifies a repository by
+    // its root commit.
+    fs::write(
+        path.join("README.md"),
+        format!("# {}", path.file_name().unwrap().to_string_lossy()),
+    )
+    .unwrap();
     git(path).args(["add", "."]).output().unwrap();
     git(path)
         .args([

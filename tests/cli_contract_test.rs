@@ -64,7 +64,16 @@ fn git(path: &Path) -> Command {
 fn git_repo(path: &Path) {
     fs::create_dir_all(path).unwrap();
     git(path).args(["init"]).output().unwrap();
-    fs::write(path.join("README.md"), "# test").unwrap();
+    // The directory name, not a constant: two repositories with the same tree, author and
+    // commit message made in the same second get the *same* commit hash, and `link`
+    // recognises a repository by its root commit. Identical fixtures made a moved-repo
+    // relink fire between unrelated test repositories, on whichever machine was fast
+    // enough to create them inside one second.
+    fs::write(
+        path.join("README.md"),
+        format!("# {}", path.file_name().unwrap().to_string_lossy()),
+    )
+    .unwrap();
     git(path).args(["add", "."]).output().unwrap();
     git(path)
         .args([
