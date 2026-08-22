@@ -258,6 +258,8 @@ jobs:
         run: shellcheck --shell=sh scripts/check-msrv.sh
       - name: shellcheck check-schema.sh
         run: shellcheck --shell=sh scripts/check-schema.sh
+      - name: shellcheck winget-manifests.sh
+        run: shellcheck --shell=sh scripts/winget-manifests.sh
       - name: shellcheck npm-prepare.sh
         run: shellcheck --shell=sh scripts/npm-prepare.sh
       - name: shellcheck npm-publish.sh

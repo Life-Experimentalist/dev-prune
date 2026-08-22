@@ -616,24 +616,51 @@ gh workflow run sync.yml --repo Life-Experimentalist/scoop-bucket
 `homebrew-core` — plain `brew install dev-prune`, no tap prefix — has a real notability
 bar and stays a post-popularity step.
 
-**WinGet** is the one that needs a person. `winget-pkgs` has no popularity requirement,
-but each version is a pull request a Microsoft reviewer signs off, so the release renders
-the manifests and stops there. The first submission is open as
-[microsoft/winget-pkgs#422665](https://github.com/microsoft/winget-pkgs/pull/422665); for
-every version after it, the steps are the same:
+**WinGet** is submitted by the release, and merged by a person. `winget-pkgs` has no
+popularity requirement, but every version is a pull request a Microsoft reviewer signs
+off, so "submitted" and "installable" are days apart. The first submission is open as
+[microsoft/winget-pkgs#422665](https://github.com/microsoft/winget-pkgs/pull/422665).
 
-1. Sync your fork and branch off it:
+The `submit-winget` job renders the manifests from the published sidecars, strips this
+repository's licence header, writes each file as UTF-8 with a BOM, and hands the
+directory to `wingetcreate submit`, which forks, branches, commits and opens the pull
+request. It needs two things set once:
+
+| Where | Name | Value |
+|---|---|---|
+| Repository variable | `WINGET_PUBLISH` | `true` |
+| Repository secret | `WINGET_TOKEN` | A classic PAT with `public_repo`, owned by the account that forked `winget-pkgs` |
+
+It is gated on the variable rather than on the secret because the `secrets` context is
+not readable from a job-level `if:`, and a step that returns early paints the job green.
+Until the variable is set, the release summary says **not submitted** in as many words.
+The token is passed as `WINGET_CREATE_GITHUB_TOKEN` and never as `--token`, because
+winget-create's own documentation warns that the flag can put the token in a log.
+
+Pre-releases are excluded: `winget install` has no notion of a channel, so a `-rc1` tag
+would become the version everyone gets.
+
+The first pull request from a given account also asks you to sign Microsoft's CLA, once,
+by replying to the bot's comment. That is the one part no token can do.
+
+To submit by hand — a re-submission, or a version whose CI run predates the job:
+
+1. Sync your fork:
 
    ```bash
    gh repo sync VKrishna04/winget-pkgs --branch master
    ```
 
-2. Copy `packaging/winget/*` to `manifests/v/VKrishna04/dev-prune/<version>/`, replacing
-   this repository's four header lines with the file's `# yaml-language-server:` line, and
-   **save each file as UTF-8 with a BOM** — `winget-pkgs` validation rejects manifests
-   without one.
+2. Produce the submission copies. Do not copy `packaging/winget/*` by hand: the header
+   strip and the BOM are exactly what a hand copy gets wrong, and the script CI uses is
+   the same one:
 
-3. Validate locally before opening anything:
+   ```bash
+   sh scripts/render-packaging.sh <version>
+   sh scripts/winget-manifests.sh <fork>/manifests/v/VKrishna04/dev-prune/<version>
+   ```
+
+3. Validate before opening anything:
 
    ```powershell
    winget validate --manifest <the version directory>
@@ -645,10 +672,6 @@ every version after it, the steps are the same:
    `winget settings --enable LocalManifestFiles` from an elevated prompt first.
 
 4. Open the pull request with the title `New version: VKrishna04.dev-prune version <version>`.
-
-The first pull request will also ask you to sign Microsoft's CLA, once, by replying to
-the bot's comment. `wingetcreate submit` does all of the above from a PAT and can be added
-to the release job now that the identifier is in flight.
 
 **Chocolatey.** No manifest is generated for it. Its moderation queue is slow enough that it is only worth it if Windows
 users ask for it specifically; WinGet covers the same audience with less friction.

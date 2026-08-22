@@ -655,9 +655,84 @@ jobs:
           git commit -m "Packaging manifests for v${VERSION}"
           git push origin main
 
+
+  # WinGet is the one channel where publishing means opening a pull request against
+  # somebody else's repository, and a person at Microsoft merges it. `wingetcreate` does
+  # the fork, the branch, the commit and the PR from a PAT, so the part that needs a human
+  # is the review and not the copying — which matters because the copying is what went
+  # wrong the first time: three files moved by hand, with two encoding rules and a header
+  # rule written down as prose in RELEASING.md for a person to remember.
+  #
+  # Gated on a repository variable for the same reason as npm: a step that returns early
+  # paints the job green, and "submitted" is not something to be wrong about. Set
+  # WINGET_PUBLISH to "true" once WINGET_TOKEN exists — a classic PAT with `public_repo`,
+  # belonging to the account that owns the winget-pkgs fork. Until then this reports
+  # `skipped`.
+  #
+  # Windows, because `wingetcreate` is a Windows binary; `sh` is git-bash, which every
+  # windows runner has.
+  submit-winget:
+    name: Submit to winget-pkgs
+    needs: publish
+    runs-on: windows-latest
+    # Same rule as the manifest refresh: a pre-release must never become a winget-pkgs
+    # version, because `winget install` has no notion of a channel.
+    if: ${{ vars.WINGET_PUBLISH == 'true' && !contains(github.event.inputs.tag || github.ref_name, '-') }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      # Rendered here rather than taken from the `packaging` job's commit: the two jobs
+      # run in parallel, and a submission that depends on a push having landed is a race
+      # that fails once a year and is impossible to reproduce.
+      - name: Render the manifests from the published sidecars
+        shell: bash
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: sh scripts/render-packaging.sh "$VERSION"
+
+      # The licence header comes off and the BOM goes on. Same script a maintainer runs
+      # by hand, so a submission from CI and a submission from a laptop are byte-identical.
+      - name: Prepare the submission copies
+        shell: bash
+        run: sh scripts/winget-manifests.sh winget-submission
+
+      - name: Install wingetcreate
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest `
+            -OutFile "$env:RUNNER_TEMP\wingetcreate.exe"
+
+      # `submit` rather than `update`: `update` rewrites a manifest already in the
+      # catalog, and this package's first version is still an open pull request. `submit`
+      # validates the manifests against the schema before it opens anything, so a broken
+      # render fails here rather than in front of a reviewer.
+      #
+      # The token goes in via WINGET_CREATE_GITHUB_TOKEN and not `--token`, because
+      # winget-create's own documentation warns that the flag "may result in the token
+      # being logged" — it is a command line, and command lines end up in traces.
+      # `--no-open` because the default is to open the pull request in a browser, and a
+      # runner has none.
+      - name: wingetcreate submit
+        shell: pwsh
+        env:
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          if (-not $env:WINGET_CREATE_GITHUB_TOKEN) {
+            Write-Error "WINGET_PUBLISH is true but WINGET_TOKEN is not set."
+            exit 1
+          }
+          & "$env:RUNNER_TEMP\wingetcreate.exe" submit `
+            --no-open `
+            --prtitle "New version: VKrishna04.dev-prune version $env:VERSION" `
+            winget-submission
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   summary:
     name: What actually shipped
-    needs: [publish, publish-npm, publish-pypi, publish-crate, packaging]
+    needs: [publish, publish-npm, publish-pypi, publish-crate, packaging, submit-winget]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -668,6 +743,7 @@ jobs:
           PYPI: ${{ needs.publish-pypi.result }}
           CRATE: ${{ needs.publish-crate.result }}
           PKG: ${{ needs.packaging.result }}
+          WINGET: ${{ needs.submit-winget.result }}
         run: |
           set -eu
           describe() {
@@ -693,6 +769,13 @@ jobs:
               success) echo "| Homebrew/Scoop/WinGet manifests | ✅ refreshed on \`main\` |" ;;
               skipped) echo "| Homebrew/Scoop/WinGet manifests | ⚠️ skipped — pre-release tags never move the manifests |" ;;
               *)       echo "| Homebrew/Scoop/WinGet manifests | ❌ **failed** — see the job log |" ;;
+            esac
+            # Submitting is not publishing: a merged pull request is what makes
+            # `winget install` resolve, and that is a person at Microsoft, not this job.
+            case "$WINGET" in
+              success) echo "| winget-pkgs | ✅ pull request opened — merging is a Microsoft review |" ;;
+              skipped) echo "| winget-pkgs | ⚠️ **not submitted** — channel not enabled (set \`WINGET_PUBLISH\`) |" ;;
+              *)       echo "| winget-pkgs | ❌ **failed** — see the job log |" ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"
 

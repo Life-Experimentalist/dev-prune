@@ -39,11 +39,13 @@ Work that exists and is waiting on a party that is not this repository.
   job is gated on the `NPM_PUBLISH` variable and an `NPM_TOKEN` secret, and reports
   `skipped` rather than `success` until both exist, so switching it on is one variable
   and one secret. See [`RELEASING.md`](RELEASING.md).
-- **`wingetcreate submit` in the release job.** The first WinGet submission is open
-  ([microsoft/winget-pkgs#422665](https://github.com/microsoft/winget-pkgs/pull/422665)).
-  Once it is merged the package identifier exists, and every release after it can raise
-  its own pull request from a PAT instead of a person copying three files — see
-  [`RELEASING.md`](RELEASING.md).
+- **Switching on the WinGet submission.** The release job that raises the `winget-pkgs`
+  pull request is built and gated the same way npm is: it reports `skipped` until the
+  `WINGET_PUBLISH` variable and the `WINGET_TOKEN` secret both exist. What is still
+  outstanding is a person signing Microsoft's CLA once and the first submission
+  ([microsoft/winget-pkgs#422665](https://github.com/microsoft/winget-pkgs/pull/422665))
+  being merged, because until that identifier is in the catalog there is nothing for
+  later versions to be a new version *of*. See [`RELEASING.md`](RELEASING.md).
 - **homebrew-core.** Plain `brew install dev-prune`, with no tap prefix. It has a real
   notability bar measured in stars, forks and watchers, so it is a post-popularity step
   rather than a task. The named tap covers the same install today.
