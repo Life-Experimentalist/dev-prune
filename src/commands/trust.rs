@@ -375,6 +375,7 @@ fn opt_in_adapters(registry: &Registry) -> Vec<&'static str> {
         ("gradle", s.enable_gradle),
         ("maven", s.enable_maven),
         ("swift", s.enable_swift),
+        ("dart", s.enable_dart),
     ]
     .into_iter()
     .filter_map(|(name, on)| on.then_some(name))

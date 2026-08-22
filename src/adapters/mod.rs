@@ -21,6 +21,7 @@ pub mod bundler;
 pub mod cargo_adapter;
 pub mod cocoapods;
 pub mod composer;
+pub mod dart;
 pub mod go;
 pub mod gradle;
 pub mod maven;
@@ -31,6 +32,7 @@ pub mod pipenv;
 pub mod pnpm;
 pub mod poetry;
 pub mod swift;
+pub mod terraform;
 pub mod uv;
 pub mod venv;
 pub mod yarn;
@@ -228,6 +230,8 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(gradle::Gradle),
         Box::new(maven::Maven),
         Box::new(swift::Swift),
+        Box::new(terraform::Terraform),
+        Box::new(dart::Dart),
     ]
 }
 
@@ -255,6 +259,9 @@ fn opt_in_enabled() -> &'static [String] {
                 }
                 if r.settings.enable_swift {
                     names.push("swift".to_string());
+                }
+                if r.settings.enable_dart {
+                    names.push("dart".to_string());
                 }
                 names
             })
@@ -291,7 +298,7 @@ pub fn is_adapter_name(name: &str) -> bool {
 
 /// The adapters, grouped by the language they belong to.
 ///
-/// A flat list of eighteen names is a wall: the question a user actually has is "leave
+/// A flat list of twenty names is a wall: the question a user actually has is "leave
 /// Python alone" or "only Rust waits longer", and neither is expressible one checkbox
 /// at a time. Order is the order the groups are shown in, which is roughly how common
 /// they are rather than alphabetical — the four JavaScript managers are what most
@@ -311,6 +318,8 @@ pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("Ruby", &["bundler"]),
     ("Swift & Objective-C", &["swift", "cocoapods"]),
     ("Elixir", &["mix"]),
+    ("Infrastructure", &["terraform"]),
+    ("Dart & Flutter", &["dart"]),
 ];
 
 /// The language group `name` belongs to, or `"Other"` if it somehow belongs to none.
@@ -1205,7 +1214,7 @@ pub fn adapter_binary(adapter: &str) -> &str {
 ///
 /// `devp doctor` naming a missing manager without saying how to get it is a finding the
 /// reader has to go and research; every other finding it prints carries its own repair.
-const INSTALL_HINTS: [(&str, &str); 14] = [
+const INSTALL_HINTS: [(&str, &str); 16] = [
     ("npm", "ships with Node.js — https://nodejs.org"),
     (
         "pnpm",
@@ -1240,6 +1249,14 @@ const INSTALL_HINTS: [(&str, &str); 14] = [
     (
         "mix",
         "ships with Elixir — https://elixir-lang.org/install.html",
+    ),
+    (
+        "terraform",
+        "https://developer.hashicorp.com/terraform/install",
+    ),
+    (
+        "dart",
+        "https://dart.dev/get-dart — or the Flutter SDK, which bundles it",
     ),
 ];
 
@@ -1343,7 +1360,7 @@ mod tests {
         // window and the trust report both describe something else.
         let mut opt_in = opt_in_adapter_names();
         opt_in.sort_unstable();
-        assert_eq!(opt_in, vec!["cargo", "gradle", "maven", "swift"]);
+        assert_eq!(opt_in, vec!["cargo", "dart", "gradle", "maven", "swift"]);
     }
 
     #[test]

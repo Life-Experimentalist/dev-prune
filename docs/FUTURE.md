@@ -49,13 +49,6 @@ Work that exists and is waiting on a party that is not this repository.
 - **homebrew-core.** Plain `brew install dev-prune`, with no tap prefix. It has a real
   notability bar measured in stars, forks and watchers, so it is a post-popularity step
   rather than a task. The named tap covers the same install today.
-- **Three more adapters: Terraform, Flutter/Dart and Nix.** `.terraform/` holds
-  downloaded providers that `terraform init` restores from `.terraform.lock.hcl`, and
-  `.dart_tool/` is the same shape for `pub get` and `pubspec.lock` — each has a lockfile
-  that proves the directory is recoverable, which is the only bar an adapter has to
-  clear. Neither would touch compiled output: Dart's `build/` stays, exactly as Mix's
-  `_build/` does today. Nix is the odd one and is last, because a store path is shared
-  between projects and "recoverable" there means something different.
 - **`devp caches` for Composer, CocoaPods and Hex.** The three managers already covered
   by adapters whose *download* caches are not yet listed. Each entry has to ask the
   manager where its cache actually is on this platform rather than hard-coding a path —
@@ -83,17 +76,9 @@ Work that exists and is waiting on a party that is not this repository.
 - **More adapters.** The trait, registration and test recipe are in
   [`ADDING_ADAPTERS.md`](ADDING_ADAPTERS.md), and the opt-in mechanism (`opt_in()`,
   `enable_*` settings, `build_idle_days`) already exists for anything whose deletion
-  costs a recompile rather than a download. What is left after the 1.4.0 batch, in
+  costs a recompile rather than a download. What is left after the 1.6.0 batch, in
   rough order of how ready each one is:
 
-  - **Terraform.** `.terraform/` is a provider cache with a real lockfile beside it
-    (`.terraform.lock.hcl`), and `terraform init` puts back exactly what it records.
-    That is the same relationship `package-lock.json` has with `node_modules`, which
-    makes this the closest thing on the list to a drop-in.
-  - **Flutter and Dart.** `.dart_tool/` holds package resolution *and* build output in
-    one directory, so it cannot be claimed under the plain download proof — it needs
-    the opt-in treatment Gradle and Maven get, and a decision about whether the
-    resolution half is worth separating.
   - **Mix's `_build/`.** The Elixir adapter deletes `deps/` today. `_build/` is a
     compiled tree, so it is opt-in territory too, and it is waiting on someone who
     actually wants it.

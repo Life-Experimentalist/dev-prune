@@ -5,6 +5,53 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-08-23
+
+Two more ecosystems, and both of them get told what dev-prune will *not* touch as
+clearly as what it will. Terraform's `.terraform/` and Dart's `.dart_tool/` each mix a
+restorable download cache with files that are not restorable at all, so neither adapter
+claims the whole directory.
+
+### Added
+
+- **Terraform.** Any repository with a `*.tf` or `*.tf.json` file is now detected, and
+  `.terraform/providers` — the downloaded provider plugins, often hundreds of megabytes
+  of them per repository — is pruned once `.terraform.lock.hcl` proves they come back.
+  `devp undo` and `devp restore` run `terraform init -backend=false`, so putting them
+  back never needs your backend's credentials.
+
+  Nothing else under `.terraform/` is touched, deliberately. `.terraform/environment`
+  records your selected workspace and losing it silently returns you to `default` — the
+  next `terraform apply` would then target the wrong environment. `terraform.tfstate` in
+  there is the backend's initialisation record, and `modules/` comes from module sources
+  that the lock file says nothing about. None of those three is provably recoverable, so
+  none of them is in scope.
+
+- **Dart and Flutter, opt-in.** `devp config set enable_dart true` turns on an adapter
+  for `.dart_tool/`, restored with `flutter pub get` or `dart pub get` depending on what
+  `pubspec.yaml` declares. It is opt-in and waits for `build_idle_days` (45) rather than
+  `idle_days`, because the pub metadata in there restores offline in about a second but
+  the `build_runner` and `flutter_build` caches beside it come back by recompiling —
+  which is the same bargain `enable_cargo`, `enable_gradle`, `enable_maven` and
+  `enable_swift` offer. Dart's `build/` is never touched, exactly as Mix's `_build/`
+  is not.
+
+### For contributors
+
+- **The release opens the winget-pkgs pull request.** A `submit-winget` job renders the
+  manifests from the published sidecars, strips the licence header, adds the BOM
+  winget-pkgs validation requires, and runs `wingetcreate submit`. The two encoding rules
+  used to live in `RELEASING.md` as prose for a person to remember, which is how the
+  first submission went out with the wrong `Commands` list. `scripts/winget-manifests.sh`
+  is the same transform for the manual path, so a submission from a laptop and one from
+  CI are byte-identical. The job is gated on a `WINGET_PUBLISH` repository variable and
+  reports `skipped` until that and `WINGET_TOKEN` both exist.
+
+- **`scripts/check-schema.sh` now asserts the schema URL as well as the copies.** The
+  `$id` in `schemas/devprune.schema.json`, `constants::JSON_SCHEMA_URL` and the path
+  `site/public/` publishes at have to agree, so the published schema URL cannot move in
+  one place and stay put in the other two.
+
 ## [1.5.1] - 2026-08-23
 
 Install, update and uninstall, told the same story. dev-prune now recognises the package

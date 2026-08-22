@@ -177,8 +177,8 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   at a time.
 
   Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `poetry`, `pdm`,
-  `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix` — plus `gradle`,
-  `maven` and `swift`, which are opt-in (see below). An unrecognised name is an error
+  `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`, `terraform` —
+  plus `gradle`, `maven`, `swift` and `dart`, which are opt-in (see below). An unrecognised name is an error
   listing the valid ones rather than a silently empty pass, and `--only` and `--skip`
   cannot be combined. A name listed in `disabled_adapters` is gone from that set
   entirely, and `--only <that name>` prunes nothing.
@@ -191,9 +191,16 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `composer` declines `vendor/` outright when a `vendor/bundle` is inside it: deleting
   it would take gems with it under a proof that says nothing about them.
 
-  **Cargo, Gradle, Maven and SwiftPM are opt-in adapters.** `devp config set
+  `terraform` claims `.terraform/providers` and nothing else under `.terraform/`.
+  The sibling directories are not bloat: `environment` records the selected workspace,
+  and losing it silently returns you to `default` — the next `apply` then targets the
+  wrong environment. `terraform.tfstate` is the backend's initialisation record, and
+  `modules/` is fetched from module sources that `.terraform.lock.hcl` says nothing
+  about. Providers are the bulk anyway, and the lock file proves those exactly.
+
+  **Cargo, Gradle, Maven, SwiftPM and Dart are opt-in adapters.** `devp config set
   enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true`
-  turns each on; until then the adapter is invisible everywhere — `status`, `run`,
+  / `enable_dart true` turns each on; until then the adapter is invisible everywhere — `status`, `run`,
   `--only cargo` all behave as if it did not exist. They are off by default because of
   what it costs to get their directories back, not because of any doubt that they come
   back: `target/`, `build/`, `.gradle/` and `.build/` are compiler output, so they
@@ -203,8 +210,8 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `build_idle_days` (45 by default) is applied as `max(build_idle_days, idle_days)`,
   so a repository must be idle much longer before its build directories go than before
   its dependency directories do. Recoverability is proved by the build manifest
-  (`Cargo.lock`, `pom.xml`, `build.gradle`/`settings.gradle`, `Package.swift`) being
-  present and readable — for cargo, `cargo metadata --locked`; for the rest, no network
+  (`Cargo.lock`, `pom.xml`, `build.gradle`/`settings.gradle`, `Package.swift`,
+  `pubspec.lock`) being present and readable — for cargo, `cargo metadata --locked`; for the rest, no network
   command runs at all. User-home caches (`~/.cargo`, `~/.m2`, `~/.gradle`) are never
   touched; those belong to `devp caches`.
 
@@ -414,8 +421,9 @@ reads unambiguously:
     | `enable_gradle` | `false` | Turn on the opt-in Gradle adapter (`build/`, `.gradle/` — they come back by recompiling) |
     | `enable_maven` | `false` | Turn on the opt-in Maven adapter (`target/`) |
     | `enable_swift` | `false` | Turn on the opt-in Swift Package Manager adapter (`.build/` — compiled modules, so they come back by recompiling) |
+    | `enable_dart` | `false` | Turn on the opt-in Dart/Flutter adapter (`.dart_tool/` — pub metadata restores in a second, but the `build_runner` and `flutter_build` caches beside it come back by recompiling) |
     | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, by name, comma-separated. A disabled adapter is not detected, not counted by `stats`, not probed for by `doctor` and never pruned — as if the ecosystem were not installed. `devp config set disabled_adapters -` clears the list |
-    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift), applied as `max(build_idle_days, idle_days)` |
+    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart), applied as `max(build_idle_days, idle_days)` |
     | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. Each raises only its own adapter's wait — `max(idle_days, build_idle_days, this)` — and can never lower one. `devp config set adapter_idle_days -` clears the map |
     | `auto_update` | `false` | Run `devp update --install` by itself at the end of a prune pass when a newer release is known |
 
@@ -954,7 +962,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 - **Two sections, and the split is the point**:
   - **Guaranteed by the code** — the seven [safety invariants](SAFETY_INVARIANTS.md) plus the two questions asked as often as any of them: there is no telemetry endpoint, and build output is never deleted. These rows read the same on every machine. None of them has a setting or a flag behind it, and a build where one did not hold would be a bug, not a configuration.
   - **On this machine** — read live: whether the scheduler is installed, whether the Git hooks register repositories on their own, how many repositories are registered, the idle window, the managed binary's path, and the settings that widen what may happen without you asking.
-- **The four settings that widen anything** are named individually rather than summed into a grade: `auto_update`, `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
+- **The four settings that widen anything** are named individually rather than summed into a grade: `auto_update`, `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
 - **No letter grade, on purpose**: `trust level: MEDIUM` tells nobody which switch to look at. The report lists the switches.
 - **Row marks**: `+` guaranteed or safe, `!` widened, blank for a neutral fact (a path, a count).
 - **Flags**:

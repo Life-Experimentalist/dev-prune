@@ -87,6 +87,12 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         "bundler" => "bundle lock",
         "cocoapods" => "pod install",
         "mix" => "mix deps.get",
+        // Writes the provider selections into `.terraform.lock.hcl` without touching
+        // the backend, which is the whole of what this adapter needs proven.
+        "terraform" => "terraform providers lock",
+        // Like bun, pub has no resolve-only write mode: `pub get` is what writes
+        // `pubspec.lock`, and it fills the machine-wide pub cache on the way past.
+        "dart" => "dart pub get",
         // venv has no lockfile to regenerate — the fix is to write `requirements.txt`,
         // which is authoring work, not a command we can hand over. gradle, maven and
         // swift verify manifest presence, not lockfile sync — a missing manifest has no

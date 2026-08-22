@@ -115,6 +115,12 @@ pub struct Settings {
     /// back through `swift build`. See [`crate::adapters::swift`].
     #[serde(default)]
     pub enable_swift: bool,
+    /// Whether the opt-in Dart and Flutter adapter is active. Off by default: the pub
+    /// metadata in `.dart_tool/` is a second's work to restore, but the `build_runner`
+    /// and `flutter_build` caches beside it are compiler output and come back only by
+    /// recompiling. See [`crate::adapters::dart`].
+    #[serde(default)]
+    pub enable_dart: bool,
     /// Idle days required before *build-tree* directories (cargo, gradle, maven,
     /// swift) are pruned.
     ///
@@ -130,7 +136,7 @@ pub struct Settings {
     pub auto_update: bool,
     /// Adapters switched off by name, whatever their lockfiles say.
     ///
-    /// A deny-list rather than eighteen `enable_*` booleans, because the answer for
+    /// A deny-list rather than twenty `enable_*` booleans, because the answer for
     /// almost everyone is "none of them" and a list of exceptions says that in one
     /// place. It is a *preference*, and the opposite of `enable_gradle` and friends:
     /// those are off until asked for because deleting a build tree is expensive to
@@ -235,6 +241,7 @@ impl Default for Settings {
             enable_gradle: false,
             enable_maven: false,
             enable_swift: false,
+            enable_dart: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: false,
             disabled_adapters: Vec::new(),

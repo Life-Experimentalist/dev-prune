@@ -320,6 +320,17 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "enable_dart",
+        since: "1.6.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Dart/Flutter adapter (.dart_tool/ holds build caches).",
+        get: |s| s.enable_dart.to_string(),
+        set: |s, v| {
+            s.enable_dart = parse_bool("enable_dart", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "build_idle_days",
         since: "1.3.0",
         kind: Kind::Number,

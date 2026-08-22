@@ -497,17 +497,19 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **Bundler** (Ruby) | `Gemfile`                                               | `vendor/bundle` *(vendored installs only)* | `bundle lock --check`                                                                                          | `bundle install`                                          |
 | **CocoaPods** (Apple) | `Podfile`                                            | `Pods`                                  | `Podfile.lock` carries its `SPEC CHECKSUMS` section and is no older than the `Podfile`                            | `pod install`                                             |
 | **Mix** (Elixir)  | `mix.exs`                                                | `deps`                                  | `mix.lock` is a complete Elixir map and no older than `mix.exs`                                                   | `mix deps.get`                                            |
+| **Terraform**     | any `*.tf` / `*.tf.json`                                 | `.terraform/providers`                  | `.terraform.lock.hcl` records at least one provider                                                              | `terraform init -backend=false`                           |
 | **Gradle** *(opt-in)* | `build.gradle[.kts]`, `settings.gradle[.kts]`        | `build`, `.gradle`                      | manifest present and readable — the rebuild-from-source proof                                                     | *(rebuilt by the next `./gradlew build`)*                 |
 | **Maven** *(opt-in)*  | `pom.xml`                                            | `target`                                | `pom.xml` parses as a Maven manifest                                                                              | *(rebuilt by the next `mvn package`)*                     |
 | **SwiftPM** *(opt-in)* | `Package.swift`                                     | `.build`                                | `Package.swift` declares a `Package(` — the rebuild-from-source proof                                                | *(rebuilt by the next `swift build`)*                     |
+| **Dart / Flutter** *(opt-in)* | `pubspec.yaml`                               | `.dart_tool`                            | `pubspec.lock` has a `packages:` section and is no older than `pubspec.yaml`                                      | `dart pub get` / `flutter pub get`                        |
 
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
 
-The four build-tool adapters ship **disabled**, because a build tree is regenerated
+The five build-tool adapters ship **disabled**, because a build tree is regenerated
 by recompiling, not downloading — it costs more to get back. `devp config set
-enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true`
-switches them on, and their candidates wait for `build_idle_days` (45 by default),
+enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` /
+`enable_dart true` switches them on, and their candidates wait for `build_idle_days` (45 by default),
 applied as the *maximum* of it and `idle_days` — the build-tool gate only ever makes
 pruning later, never earlier.
 
@@ -601,7 +603,7 @@ inherited — and again after an upgrade adds a setting you have never been show
 | `check_interval_days`                                      |    `2`    | How often the OS scheduler runs a pass                                              |
 | `update_check`                                             |  `true`   | Whether the periodic release check runs                                             |
 | `update_check_interval_days` · `update_check_timeout_secs` | `7` · `5` | Minimum gap between checks, and how long one may hang                               |
-| `enable_cargo` · `enable_gradle` · `enable_maven` · `enable_swift` |  `false`  | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all four    |
+| `enable_cargo` · `enable_gradle` · `enable_maven` · `enable_swift` · `enable_dart` |  `false`  | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all five |
 | `adapter_idle_days`                                        | *(none)*  | Per-adapter idle floors, as `cargo=90,npm=30` — each raises only its own window      |
 | `disabled_adapters`                                        | *(none)*  | Adapters to leave alone entirely, by name — as if that ecosystem were not installed |
 
