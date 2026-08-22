@@ -307,6 +307,16 @@ reads unambiguously:
   (`shared_bytes`) say how much was excluded and why. A pnpm install that *copied* —
   store on another volume, a filesystem without hardlinks — has no external links, so it
   still counts in full. This is also why `pnpm install` after a prune is fast.
+- **Restore cost**: above the table, once this machine has measured it, `status` also
+  answers the question space alone does not — *how long is this to undo*. Every number in
+  that line comes from restores timed by [`devp restore --last-run`](#9-devp-restore-path---last-run)
+  on this machine, split by adapter, because a `node_modules` and a `target` come back at
+  nothing like the same speed. Until a restore has been timed here the line is simply
+  absent: there is no built-in table of typical speeds, because that would be a number
+  about somebody else's laptop. An adapter that has never been timed here contributes
+  nothing and is subtracted from the coverage, so a partial answer says so. The timings
+  are three numbers per adapter — sample count, bytes, milliseconds — held in the
+  registry and never uploaded; see [`PRIVACY.md`](PRIVACY.md).
 - **Flags**:
   - `--top <N>` — list only the `N` repositories with the most reclaimable space. On a
     machine tracking a hundred repositories the handful worth pruning are otherwise pushed
@@ -358,8 +368,11 @@ reads unambiguously:
   | `nuget` | global packages | `dotnet nuget locals global-packages --clear` |
   | `vcpkg` | binary cache | deleting the `vcpkg/archives` directory (`VCPKG_DEFAULT_BINARY_CACHE` respected) |
   | `conan` | package cache | `conan remove "*" --confirm` |
+  | `composer` | cache | `composer clear-cache` |
+  | `cocoapods` | cache | `pod cache clean --all` (`CP_CACHE_DIR` respected) |
+  | `hex` | package cache | deleting `$HEX_HOME/packages` — Hex ships no clean task |
 
-  Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. Two probes that resolve to the same directory are counted once.
+  Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, `composer config --global cache-dir`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. CocoaPods and Hex are found the same way (`CP_CACHE_DIR`, `HEX_HOME`) for the simpler reason that neither ships a command that prints the path at all. Two probes that resolve to the same directory are counted once.
 
   This is also where the .NET and C/C++ ecosystems live in dev-prune, and why they are *not* adapters: a .NET `bin/`+`obj/` and a CMake `build/` are compiler **outputs** — no lockfile can prove a deleted one comes back byte-for-byte, so deleting them is out of scope by design. Their *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports. Cargo `target/`, Maven `target/` and Gradle `build/`+`.gradle/` are the deliberate exception: they have [opt-in adapters](#5-devp-run-target_path) whose recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle` plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`.
 - **Flags**:
@@ -374,8 +387,8 @@ reads unambiguously:
 
 - **Description**: Empties one manager's cache, or every one of them. What is about to go is listed and sized first, and unless `--yes` answers for you, it asks.
 - **Why this is not a contradiction of the above**: the report still deletes nothing, and nothing that runs on its own ever will — no scheduler, no Git hook and no `devp run` clears a cache. `clear` runs only when you type it. It exists because typing the command the report already prints is the whole of what it does, and doing it by hand for every manager on the machine is tedious.
-- **`<MANAGER>`**: a manager name as the report prints it — `npm`, `pnpm`, `yarn`, `bun`, `uv`, `pip`, `cargo`, `go`, `maven`, `gradle`, `nuget`, `vcpkg`, `conan` — or `all` for every one found. A manager that has more than one cache (cargo, go, gradle) clears both. An unrecognised name is a **usage error** (exit `2`) that lists the ones it knows.
-- **How each one is emptied**: through the manager's own subcommand wherever one exists (`npm cache clean --force`, `pnpm store prune`, `go clean -modcache`), because the manager knows what is still referenced and keeps its own bookkeeping consistent — `pnpm store prune` and `uv cache prune` deliberately keep part of the store, which no directory delete can work out. Only `cargo`, `maven`, `gradle` and `vcpkg`, which ship nothing equivalent, are cleared by removing a directory, and the path removed is the one this command already resolved and sized — never a string handed to a shell.
+- **`<MANAGER>`**: a manager name as the report prints it — `npm`, `pnpm`, `yarn`, `bun`, `uv`, `pip`, `cargo`, `go`, `maven`, `gradle`, `nuget`, `vcpkg`, `conan`, `composer`, `cocoapods`, `hex` — or `all` for every one found. A manager that has more than one cache (cargo, go, gradle) clears both. An unrecognised name is a **usage error** (exit `2`) that lists the ones it knows.
+- **How each one is emptied**: through the manager's own subcommand wherever one exists (`npm cache clean --force`, `pnpm store prune`, `go clean -modcache`), because the manager knows what is still referenced and keeps its own bookkeeping consistent — `pnpm store prune` and `uv cache prune` deliberately keep part of the store, which no directory delete can work out. Only `cargo`, `maven`, `gradle`, `vcpkg` and `hex`, which ship nothing equivalent, are cleared by removing a directory, and the path removed is the one this command already resolved and sized — never a string handed to a shell.
 - **If the manager is not installed**: the row is reported as failed rather than worked around. dev-prune will not delete a store directly when the manager that owns it is the only thing that knows what is safe to keep.
 - **What it costs**: nothing is lost — every manager re-downloads what it needs. What goes is time, in every project on the machine, on the next install and the next [`devp restore`](#9-devp-restore-path---last-run).
 - **Freed size is measured, not assumed**: each cache is sized again after the clear and the report shows `before - after`, so a `prune` that kept half the store says so, and a half-failed clear reports what actually went.
@@ -543,7 +556,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.1",
+  "version": "1.6.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -590,7 +603,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.1",
+  "version": "1.6.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -601,7 +614,11 @@ silently when none is available.
     "candidates": 3,
     "reclaimable_bytes": 4812963840,
     "historical_bytes_freed": 0,
-    "prune_passes": 0  // passes that deleted something — not repositories, not directories
+    "prune_passes": 0,  // passes that deleted something — not repositories, not directories
+    // null until this machine has timed a restore. `covered_bytes` is the part of
+    // `reclaimable_bytes` whose adapters have been timed here — quote `seconds` as a
+    // whole answer only when the two match.
+    "restore_estimate": { "seconds": 873, "covered_bytes": 4812963840, "samples": 23 }
   },
   "repositories": [
     {
@@ -614,6 +631,7 @@ silently when none is available.
       "added_at": "2026-04-11T18:22:31+00:00",
       "adapters": ["pnpm"],
       "reclaimable_bytes": 481296384,
+      "restore_estimate_secs": 96,  // null when no adapter here has ever been timed on this machine
       "directories": [{ "name": "node_modules", "path": "~/Code/api/node_modules", "bytes": 481296384, "shared_bytes": 0 }]
       // "error" — present only when `state` is `config_error`, carrying the parse failure
     }
@@ -630,7 +648,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.1",
+  "version": "1.6.0",
   "command": "status --drift",
   "drift": [
     {
@@ -658,7 +676,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.1",
+  "version": "1.6.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -690,7 +708,7 @@ an upgraded machine they start from zero while the lifetime figures do not — w
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.1",
+  "version": "1.6.0",
   "command": "caches",
   "caches": [
     {
@@ -721,7 +739,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.1",
+  "version": "1.6.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -755,7 +773,7 @@ a before/after pair. Exit code is `1` if `summary.failed` is non-zero.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.5.1",
+  "version": "1.6.0",
   "command": "trust",
   "guarantees": [
     {

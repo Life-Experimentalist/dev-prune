@@ -7,10 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.6.0] - 2026-08-23
 
-Two more ecosystems, and both of them get told what dev-prune will *not* touch as
-clearly as what it will. Terraform's `.terraform/` and Dart's `.dart_tool/` each mix a
-restorable download cache with files that are not restorable at all, so neither adapter
-claims the whole directory.
+Two more ecosystems, three more machine-wide caches, and the first answer to the
+question space alone never answered: *how long is all of this to put back?*
 
 ### Added
 
@@ -44,6 +42,26 @@ claims the whole directory.
   rather than written a second time, which is the only version of this that stays true:
   a hand-copied reference is the copy that goes stale.
 
+- **`devp caches` now finds Composer, CocoaPods and Hex.** A PHP, iOS or Elixir
+  toolchain leaves a machine-wide download cache behind exactly like npm and pip do, and
+  those three were invisible. `devp caches --clear composer` runs `composer clear-cache`,
+  `--clear cocoapods` runs `pod cache clean --all`, and each is found by asking the
+  manager where its cache is — `composer config --global cache-dir` — rather than by
+  guessing a path that `COMPOSER_HOME`, `COMPOSER_CACHE_DIR` or a global `cache-dir`
+  setting can each move. Hex ships no clean task at all, so that row prints the deletion
+  it will actually perform, and `mix deps.get` re-fetches the tarballs.
+
+- **`devp status` estimates what a full restore would cost you in time.** Above the
+  table, once there is anything to go on, `status` prints how long putting everything
+  back would take — split by adapter, because a `node_modules` and a `target` come back
+  at nothing like the same speed. Every second of it was measured on your machine by
+  `devp restore --last-run`; there is no built-in table of typical speeds, because that
+  would be a number about somebody else's laptop. Until a restore has been timed here
+  the line is simply absent, and an adapter never timed here is left out of both the
+  estimate and its stated coverage, so a partial answer says that it is one. The record
+  is three numbers per adapter — sample count, bytes, milliseconds — kept in the registry
+  and never uploaded; see [`PRIVACY.md`](docs/PRIVACY.md).
+
 ### Fixed
 
 - **Four links inside the CLI reference went nowhere.** The anchors for `devp run`,
@@ -53,6 +71,11 @@ claims the whole directory.
   cannot come back quietly.
 
 ### For contributors
+
+- **`scripts/bump-version.sh <version>` sets the release version everywhere.** Eleven
+  files restate the number by hand and `check-version.sh` has always named them; now
+  there is a command that writes them, refreshes `Cargo.lock` and re-runs that check to
+  prove it. Releasing no longer starts with nine edits made from a list of failures.
 
 - **The release opens the winget-pkgs pull request.** A `submit-winget` job renders the
   manifests from the published sidecars, strips the licence header, adds the BOM

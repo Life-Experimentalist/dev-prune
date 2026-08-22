@@ -126,6 +126,13 @@ const VCPKG_ARCHIVES_CLEAR: &str = r"Remove-Item -Recurse -Force $env:LOCALAPPDA
 #[cfg(not(windows))]
 const VCPKG_ARCHIVES_CLEAR: &str = "rm -rf ~/.cache/vcpkg/archives";
 
+/// Hex has no cache-clearing task. hexpm/hex#344 asked for one and there still is not
+/// one, so the honest command is the deletion; `mix deps.get` re-fetches the tarballs.
+#[cfg(windows)]
+const HEX_CACHE_CLEAR: &str = r"Remove-Item -Recurse -Force $env:USERPROFILE\.hex\packages";
+#[cfg(not(windows))]
+const HEX_CACHE_CLEAR: &str = "rm -rf ~/.hex/packages";
+
 const PROBES: &[Probe] = &[
     Probe {
         manager: "npm",
@@ -275,6 +282,42 @@ const PROBES: &[Probe] = &[
         clear: Clear::Command("conan", &["remove", "*", "--confirm"]),
         note: Some(
             "recipes and binaries shared by every Conan project; re-fetched on the next install",
+        ),
+    },
+    // Composer will say where its cache is, and asking is the only way to get it right:
+    // the directory moves with `COMPOSER_HOME`, with `COMPOSER_CACHE_DIR`, and with a
+    // `cache-dir` written into the global config, and the default differs on all three
+    // platforms. That is four ways to be wrong and one command that is not.
+    Probe {
+        manager: "composer",
+        kind: "cache",
+        query: Some(("composer", &["config", "--global", "cache-dir"])),
+        clear_command: "composer clear-cache",
+        clear: Clear::Command("composer", &["clear-cache"]),
+        note: Some(
+            "downloaded package archives and repository metadata; re-fetched by the next composer install",
+        ),
+    },
+    // CocoaPods ships no command that prints the cache directory — `pod cache list`
+    // prints its *contents* — so this row is the conventional location plus the
+    // relocation variable. Emptying it is still CocoaPods' own job: the cache is keyed by
+    // pod name and version and it keeps an index of what is in there.
+    Probe {
+        manager: "cocoapods",
+        kind: "cache",
+        query: None,
+        clear_command: "pod cache clean --all",
+        clear: Clear::Command("pod", &["cache", "clean", "--all"]),
+        note: Some("downloaded pod sources, re-fetched by the next pod install"),
+    },
+    Probe {
+        manager: "hex",
+        kind: "package cache",
+        query: None,
+        clear_command: HEX_CACHE_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "package tarballs shared by every Mix project on the machine; re-fetched by the next mix deps.get",
         ),
     },
 ];
@@ -455,6 +498,29 @@ fn fallbacks(manager: &str, kind: &str) -> Vec<PathBuf> {
         ("conan", _) => vec![
             std::env::var_os("CONAN_HOME").map(|p| PathBuf::from(p).join("p")),
             under(&home, ".conan2/p"),
+        ],
+        // Only reached when `composer` is not installed, which is the case worth
+        // covering: the cache a PHP toolchain left behind is the one nobody remembers.
+        ("composer", _) => vec![
+            std::env::var_os("COMPOSER_CACHE_DIR").map(PathBuf::from),
+            std::env::var_os("COMPOSER_HOME").map(|p| PathBuf::from(p).join("cache")),
+            under(&local, "Composer"),
+            under(&cache, "composer"),
+            under(&home, ".composer/cache"),
+        ],
+        // CocoaPods puts the cache under `~/Library/Caches` by name rather than through
+        // the platform's cache directory, so this is `home` and not `cache` even on the
+        // one platform where the two would agree.
+        ("cocoapods", _) => vec![
+            std::env::var_os("CP_CACHE_DIR").map(PathBuf::from),
+            under(&home, "Library/Caches/CocoaPods"),
+        ],
+        // HEX_HOME moves the whole `.hex` tree; MIX_XDG puts it under the platform cache
+        // directory instead. Both are checked because either can be set alone.
+        ("hex", _) => vec![
+            std::env::var_os("HEX_HOME").map(|p| PathBuf::from(p).join("packages")),
+            under(&home, ".hex/packages"),
+            under(&cache, "hex/packages"),
         ],
         _ => vec![],
     };

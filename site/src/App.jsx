@@ -30,7 +30,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.5.1";
+const VERSION = "1.6.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -1837,7 +1837,9 @@ Notes you should rely on, not work around:
                       Interactive dashboard; a plain table when there is no TTY.{" "}
                       <code>--top N</code> lists only the N repositories with the
                       most reclaimable space — the totals above the table still
-                      cover every one of them
+                      cover every one of them. Once a restore has been timed on
+                      this machine, the header also estimates how long putting it
+                      all back would take
                     </td>
                   </tr>
                   <tr>
@@ -1876,9 +1878,9 @@ Notes you should rely on, not work around:
                     </td>
                     <td>
                       Size every package manager cache on the machine — npm to
-                      cargo to Maven, Gradle, NuGet, vcpkg and Conan — and print
-                      the command that clears each. Reports only — it deletes
-                      nothing
+                      cargo to Maven, Gradle, NuGet, vcpkg, Conan, Composer,
+                      CocoaPods and Hex — and print the command that clears
+                      each. Reports only — it deletes nothing
                     </td>
                   </tr>
                   <tr>

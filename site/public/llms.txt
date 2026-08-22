@@ -6,7 +6,7 @@
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.5.1. Written by VKrishna04.
+Version 1.6.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
@@ -127,7 +127,11 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   there is no TTY. In the dashboard `s` cycles the sort (relevance, size, longest idle,
   name), `f` cycles the filter (all, candidates, has bloat, problems) and `/` searches
   paths and adapter names; all three change only what is shown, never the totals. `--top N` lists only the N repositories with the most reclaimable
-  space; the totals above the table still cover every registered repository. `--drift`
+  space; the totals above the table still cover every registered repository. Above the
+  table, once this machine has timed a restore with `devp restore --last-run`, `status`
+  also estimates how long putting everything back would take, split by adapter; the
+  timings are local and never uploaded, and the line is absent rather than guessed until
+  there is a measurement. `--drift`
   replaces the dashboard with the lockfile-drift report: every environment holding
   packages its lockfile never recorded (`npm install --no-save`, a bare `pip install`
   into a pinned venv, an ad-hoc `uv pip install`), with the one command that records
@@ -138,8 +142,8 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
 - `devp completions <bash|zsh|fish|powershell|elvish>` — print a shell completion script
   to stdout, generated from the same argument definition the binary parses with
 - `devp caches [--json]` — find and size every package-manager cache and store on the
-  machine (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan),
-  largest first, with the command that clears each. The report deletes nothing, and no
+  machine (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg,
+  conan, composer, cocoapods, hex), largest first, with the command that clears each. The report deletes nothing, and no
   scheduler, Git hook or `devp run` ever will: a cache is shared by every project, so no
   one lockfile can prove it recoverable, and it is what makes `devp restore` fast. This is also where the
   .NET and C/C++ ecosystems are covered — their in-repository `bin/`+`obj/` and CMake
@@ -152,8 +156,9 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   convenience, never automation: only this command clears a cache, and only when you
   type it. It runs the manager's own subcommand wherever one exists (`npm cache clean
   --force`, `pnpm store prune`, `go clean -modcache`) because the manager knows what is
-  still referenced; only cargo, maven, gradle and vcpkg, which ship nothing equivalent,
-  are cleared by removing the directory this command already resolved and sized. A
+  still referenced; only cargo, maven, gradle, vcpkg and hex, which ship nothing
+  equivalent, are cleared by removing the directory this command already resolved and
+  sized. A
   manager that is not installed is reported as failed, never deleted around. The freed
   size is measured afterwards rather than assumed. `--json` requires `--yes`; exit 1 if
   any cache could not be cleared, 2 for an unknown manager name
@@ -373,7 +378,9 @@ Add `--json` to `run`, `status`, `stats`, `trust` or `caches` for a versioned JS
 (`schema` 1, additive changes only within a major version). Highlights:
 
 - `devp status --json` — per-repository totals, per-directory sizes, and status
-  (candidate / active / ignored / no_bloat / path_missing / config_error).
+  (candidate / active / ignored / no_bloat / path_missing / config_error). `totals.restore_estimate`
+  and each repository's `restore_estimate_secs` are null until a restore has been timed
+  on that machine.
 - `devp run --json` — one result per repository × directory with the action taken or
   the refusal reason; refusals include the exact fix command where one exists
   (e.g. the lockfile-repair command for that ecosystem). `size_freed` counts only bytes

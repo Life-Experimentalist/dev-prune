@@ -195,7 +195,7 @@ fn settings_value(settings: &Settings) -> Value {
     })
 }
 
-fn repo_value(entry: &RepoStatusEntry) -> Value {
+fn repo_value(registry: &Registry, entry: &RepoStatusEntry) -> Value {
     let mut obj = json!({
         "path": clean_path(&entry.path),
         "state": reason_tag(&entry.reason),
@@ -213,6 +213,11 @@ fn repo_value(entry: &RepoStatusEntry) -> Value {
             "bytes": b.size_bytes,
             "shared_bytes": b.shared_bytes,
         })).collect::<Vec<_>>(),
+        // Null, not zero, when this machine has never timed a restore for any adapter
+        // this repository uses. Zero would read as "instant".
+        "restore_estimate_secs": registry
+            .estimate_restore(&entry.reclaimable_by_adapter)
+            .map(|(secs, _)| secs.round() as u64),
     });
 
     // Present only on `config_error`, and absent rather than null everywhere else — the
@@ -248,6 +253,15 @@ pub fn status_document(
         .count();
     let listed = crate::engine::take_top(repos, top);
 
+    // Over every repository, like the rest of `totals`, and not over the trimmed list.
+    let mut by_adapter: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for repo in repos {
+        for (adapter, bytes) in &repo.reclaimable_by_adapter {
+            *by_adapter.entry(adapter.clone()).or_default() += bytes;
+        }
+    }
+    let estimate = registry.estimate_restore(&by_adapter.into_iter().collect::<Vec<_>>());
+
     let mut doc = json!({
         "schema": SCHEMA_VERSION,
         "version": constants::VERSION,
@@ -261,8 +275,17 @@ pub fn status_document(
             "reclaimable_bytes": reclaimable,
             "historical_bytes_freed": registry.total_freed_bytes,
             "prune_passes": registry.total_pruned_count,
+            // Measured on this machine and nowhere else: `covered_bytes` is the part of
+            // `reclaimable_bytes` whose adapters have actually been timed here, so a
+            // consumer can tell a whole answer from a partial one instead of quoting
+            // `seconds` as if it covered everything.
+            "restore_estimate": estimate.map(|(secs, covered)| json!({
+                "seconds": secs.round() as u64,
+                "covered_bytes": covered,
+                "samples": registry.restore_rates.values().map(|r| r.samples as u64).sum::<u64>(),
+            })),
         },
-        "repositories": listed.iter().map(repo_value).collect::<Vec<_>>(),
+        "repositories": listed.iter().map(|r| repo_value(registry, r)).collect::<Vec<_>>(),
     });
 
     // Absent rather than null when the whole list is present, the same rule `message`
@@ -639,16 +662,21 @@ mod tests {
             adapters: Vec::new(),
             bloat_dirs: Vec::new(),
             reclaimable_bytes: 0,
+            reclaimable_by_adapter: Vec::new(),
             last_activity: None,
             idle_days: 15,
         };
 
-        let broken = repo_value(&entry(SkipReason::ConfigError("bad json".into())));
+        let registry = Registry::default();
+        let broken = repo_value(
+            &registry,
+            &entry(SkipReason::ConfigError("bad json".into())),
+        );
         assert_eq!(broken["state"], "config_error");
         assert_eq!(broken["error"], "bad json");
 
         // Absent, not null — the same shape rule `message` follows in the run document.
-        let healthy = repo_value(&entry(SkipReason::Candidate));
+        let healthy = repo_value(&registry, &entry(SkipReason::Candidate));
         assert!(healthy.get("error").is_none());
     }
 

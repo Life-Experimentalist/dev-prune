@@ -698,6 +698,37 @@ pub struct Registry {
     /// user actually upgrades without needing the network again.
     #[serde(default)]
     pub latest_known_version: Option<String>,
+    /// How fast each adapter has actually restored on this machine.
+    ///
+    /// Measured by `devp restore --last-run`, which is the one command that knows both
+    /// how long a restore took and how many bytes it put back. Local only: nothing here
+    /// is uploaded, compared against anyone else's machine, or used for anything except
+    /// the estimate `devp status` prints. See `docs/PRIVACY.md`.
+    #[serde(default)]
+    pub restore_rates: BTreeMap<String, RestoreRate>,
+}
+
+/// One adapter's observed restore throughput on this machine.
+///
+/// Totals rather than a stored average, because that is what lets a new measurement be
+/// folded in without keeping the individual samples — and the individual samples are
+/// per-repository, which is exactly the shape of data this tool has no business keeping.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct RestoreRate {
+    /// How many restores this average is made of.
+    pub samples: u32,
+    /// Bytes those restores put back.
+    pub bytes: u64,
+    /// Milliseconds they took.
+    pub millis: u64,
+}
+
+impl RestoreRate {
+    /// Bytes per second, or `None` when the record cannot support the division.
+    pub fn bytes_per_sec(&self) -> Option<f64> {
+        (self.samples > 0 && self.millis > 0 && self.bytes > 0)
+            .then(|| self.bytes as f64 * 1000.0 / self.millis as f64)
+    }
 }
 
 impl Default for Registry {
@@ -713,6 +744,7 @@ impl Default for Registry {
             prune_history: Vec::new(),
             last_update_check: None,
             latest_known_version: None,
+            restore_rates: BTreeMap::new(),
         }
     }
 }
@@ -967,6 +999,54 @@ impl Registry {
     /// is exactly the condition all three describe. Splitting them across call sites is
     /// how the counter previously came to mean repositories in `devp run` and directories
     /// in the `devp status` dashboard.
+    /// Fold one measured restore into an adapter's running average.
+    ///
+    /// Ignores anything too quick to have been real work — see
+    /// [`constants::RESTORE_RATE_MIN_MILLIS`] — because a manager that found everything
+    /// still in its cache returns in a moment and would teach a throughput no cold
+    /// restore can reach. That is the difference between an estimate that is optimistic
+    /// and one that is wrong.
+    pub fn record_restore(&mut self, adapter: &str, bytes: u64, millis: u64) {
+        if bytes == 0 || millis < constants::RESTORE_RATE_MIN_MILLIS {
+            return;
+        }
+        let rate = self.restore_rates.entry(adapter.to_string()).or_default();
+        if rate.samples >= constants::RESTORE_RATE_SAMPLE_CAP {
+            rate.samples /= 2;
+            rate.bytes /= 2;
+            rate.millis /= 2;
+        }
+        rate.samples += 1;
+        rate.bytes = rate.bytes.saturating_add(bytes);
+        rate.millis = rate.millis.saturating_add(millis);
+    }
+
+    /// How long putting back `by_adapter` would take, from what this machine has
+    /// measured.
+    ///
+    /// Returns the seconds and the bytes those seconds account for. Anything from an
+    /// adapter that has never been timed here is left out of both, so a caller can say
+    /// how much of the estimate is actually covered rather than quietly quoting a
+    /// number for half the work. `None` when nothing is covered at all — an estimate
+    /// with no measurement behind it is a guess, and this command does not print
+    /// guesses.
+    pub fn estimate_restore(&self, by_adapter: &[(String, u64)]) -> Option<(f64, u64)> {
+        let mut secs = 0.0;
+        let mut covered = 0u64;
+        for (adapter, bytes) in by_adapter {
+            let Some(rate) = self
+                .restore_rates
+                .get(adapter)
+                .and_then(|r| r.bytes_per_sec())
+            else {
+                continue;
+            };
+            secs += *bytes as f64 / rate;
+            covered = covered.saturating_add(*bytes);
+        }
+        (covered > 0).then_some((secs, covered))
+    }
+
     pub fn record_prune(&mut self, dirs: Vec<PrunedDir>) {
         self.record_prune_progress(Utc::now(), dirs);
     }
@@ -1598,5 +1678,59 @@ mod tests {
         assert_eq!(reg.adopt_moved_entry(&new, None), Adoption::Nothing);
         assert_eq!(reg.repositories.len(), 2);
         assert!(reg.needs_identity(&new));
+    }
+
+    #[test]
+    fn a_restore_too_quick_to_be_real_teaches_nothing() {
+        // A manager that found everything still in its cache returns in a moment. Folding
+        // that into the average would claim a throughput no cold restore can reach, and
+        // the estimate exists precisely to describe a cold one.
+        let mut reg = Registry::default();
+        reg.record_restore("npm", 500_000_000, 10);
+        reg.record_restore("npm", 0, 60_000);
+        assert!(reg.restore_rates.is_empty(), "{:?}", reg.restore_rates);
+
+        reg.record_restore("npm", 500_000_000, 60_000);
+        assert_eq!(reg.restore_rates["npm"].samples, 1);
+    }
+
+    #[test]
+    fn the_average_forgets_the_disk_the_machine_no_longer_has() {
+        let mut reg = Registry::default();
+        for _ in 0..constants::RESTORE_RATE_SAMPLE_CAP {
+            reg.record_restore("npm", 1_000_000, 1_000);
+        }
+        assert_eq!(
+            reg.restore_rates["npm"].samples,
+            constants::RESTORE_RATE_SAMPLE_CAP
+        );
+
+        // The cap is a halving, not a ceiling: the next sample still lands, on top of
+        // half of what came before.
+        reg.record_restore("npm", 1_000_000, 1_000);
+        let rate = &reg.restore_rates["npm"];
+        assert_eq!(rate.samples, constants::RESTORE_RATE_SAMPLE_CAP / 2 + 1);
+        assert!(rate.bytes_per_sec().is_some());
+    }
+
+    #[test]
+    fn an_estimate_with_nothing_measured_is_not_offered() {
+        // Never a zero and never a guess: a machine that has not restored anything yet
+        // has no honest answer to "how long is this to undo", so it does not print one.
+        let reg = Registry::default();
+        assert!(reg.estimate_restore(&[("npm".into(), 1_000_000)]).is_none());
+    }
+
+    #[test]
+    fn an_untimed_adapter_is_left_out_of_the_coverage() {
+        // Half an answer, reported as half. Counting cargo's bytes at npm's speed would
+        // be the one thing worse than saying nothing.
+        let mut reg = Registry::default();
+        reg.record_restore("npm", 10_000_000, 10_000);
+        let (secs, covered) = reg
+            .estimate_restore(&[("npm".into(), 10_000_000), ("cargo".into(), 90_000_000)])
+            .expect("npm alone is enough to answer for npm");
+        assert_eq!(covered, 10_000_000, "cargo has never been timed here");
+        assert!((secs - 10.0).abs() < 0.01, "{secs}");
     }
 }

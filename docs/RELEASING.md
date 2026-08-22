@@ -331,12 +331,14 @@ tagging something that will fail.
 
 Then:
 
-1. **Bump the version** in `Cargo.toml`. Run `cargo build` so `Cargo.lock` picks it up —
-   the release builds with `--locked` and will fail on a stale lockfile. Then run
-   `sh scripts/check-version.sh`: it names every other file that spells the version out
-   by hand — the install scripts' offline fallback, the site's banner and `llms.txt`,
-   and the docs that quote a whole asset filename. CI runs it on every push and the
-   release runs it before building, so a missed one stops the tag rather than shipping.
+1. **Bump the version:** `sh scripts/bump-version.sh 1.6.0`. It writes `Cargo.toml` and
+   every file that restates the number by hand — the install scripts' offline fallback,
+   the site's banner and `llms.txt`, the JSON-LD, `npm/package.json`, the `--json`
+   samples in the CLI reference and the docs that quote a whole asset filename — then
+   refreshes `Cargo.lock` (the release builds with `--locked` and fails on a stale one)
+   and runs `sh scripts/check-version.sh` to prove it got all of them. That check also
+   runs on every push and once more inside the release before anything is built, so a
+   file the bump script does not yet know about stops the tag rather than shipping.
 2. **Write the changelog entry.** See [the changelog contract](#-the-changelog-contract).
    CI fails if `CHANGELOG.md` has no section matching the version in `Cargo.toml`, so
    this is enforced, not merely encouraged.

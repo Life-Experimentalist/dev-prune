@@ -340,6 +340,27 @@ pub fn format_bytes(bytes: u64) -> String {
     format_size(bytes, BINARY)
 }
 
+/// A duration in seconds, at the precision a person would actually say it in.
+///
+/// Deliberately coarse above a minute: an estimate printed as "14m 37s" claims a second
+/// of accuracy that a throughput average over a handful of restores does not have, and
+/// reads as a measurement rather than as the guess it is.
+pub fn format_seconds(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s}s"),
+        s if s < 3600 => format!("{}m", s.div_ceil(60)),
+        s => {
+            let hours = s / 3600;
+            let minutes = (s % 3600) / 60;
+            if minutes == 0 {
+                format!("{hours}h")
+            } else {
+                format!("{hours}h {minutes}m")
+            }
+        }
+    }
+}
+
 /// The suffix explaining bytes a prune does not free because a package-manager store
 /// hardlinks them (pnpm, bun). Empty when there is nothing to explain, so call sites
 /// can append it unconditionally.
@@ -495,5 +516,14 @@ mod tests {
         let raw = "a\n\n\nb\n\n\nc\n\n\nd\n";
         let out = condense_tool_output(raw, 2);
         assert!(out.contains("2 more lines"), "{out}");
+    }
+
+    #[test]
+    fn an_estimate_is_stated_at_the_precision_it_has() {
+        assert_eq!(format_seconds(45), "45s");
+        // Rounded up: "0m" for a 61-second restore reads as instant.
+        assert_eq!(format_seconds(61), "2m");
+        assert_eq!(format_seconds(3600), "1h");
+        assert_eq!(format_seconds(4500), "1h 15m");
     }
 }

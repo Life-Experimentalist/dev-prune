@@ -141,18 +141,25 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     let scan_bar = (!json_output).then(|| {
         output::create_progress_bar("Scanning repositories", registry.repositories.len() as u64)
     });
-    let repos = engine::take_top(
-        &engine::get_full_status_reporting(&registry, &|done, _total| {
-            if let Some(pb) = &scan_bar {
-                pb.set_position(done as u64);
-            }
-        }),
-        top,
-    );
+    let scanned = engine::get_full_status_reporting(&registry, &|done, _total| {
+        if let Some(pb) = &scan_bar {
+            pb.set_position(done as u64);
+        }
+    });
+    // Over every repository, before `--top` trims the list, for the same reason the
+    // totals above are: `--top 5` must not make the machine look cheaper to undo than
+    // it is.
+    let estimate = restore_estimate_line(&registry, &scanned);
+    let repos = engine::take_top(&scanned, top);
     if let Some(pb) = scan_bar {
         // `finish_and_clear`, not `finish`: the dashboard is what the user asked for, and
         // a completed progress bar left above it is scaffolding.
         pb.finish_and_clear();
+    }
+
+    if let Some(line) = estimate {
+        output::print_info(&line);
+        println!();
     }
 
     // Both ends: the dashboard draws on stdout but reads keys from stdin, and with
@@ -422,6 +429,47 @@ fn run_drift(json_output: bool) -> Result<()> {
          or uninstall them, and the refusal goes away.",
     );
     Ok(())
+}
+
+/// "How long is this to undo?", answered only when this machine has measured enough to
+/// answer it.
+///
+/// The question `devp status` could not answer before. Space it already reports; what
+/// people hesitate over is the reinstall, and every number in this line comes from
+/// restores timed on this machine by `devp restore --last-run` — never from a table of
+/// typical speeds, which would be a number about somebody else's laptop. An adapter that
+/// has never been timed here contributes nothing and is subtracted from the coverage,
+/// so a partial answer says it is partial instead of reading as a whole one.
+fn restore_estimate_line(registry: &Registry, repos: &[engine::RepoStatusEntry]) -> Option<String> {
+    let mut by_adapter: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for repo in repos {
+        for (adapter, bytes) in &repo.reclaimable_by_adapter {
+            *by_adapter.entry(adapter.clone()).or_default() += bytes;
+        }
+    }
+    let total: u64 = by_adapter.values().sum();
+    let tallied: Vec<(String, u64)> = by_adapter.into_iter().collect();
+    let (secs, covered) = registry.estimate_restore(&tallied)?;
+
+    let samples: usize = registry
+        .restore_rates
+        .values()
+        .map(|r| r.samples as usize)
+        .sum();
+    let mut line = format!(
+        "Estimated Restore Cost: ~{} to put it all back, from {} timed {} on this machine",
+        output::format_seconds(secs.round() as u64),
+        samples,
+        output::plural(samples, "restore", "restores"),
+    );
+    if covered < total {
+        line.push_str(&format!(
+            " (covers {} of {} — the rest has never been restored here)",
+            output::format_bytes(covered),
+            output::format_bytes(total),
+        ));
+    }
+    Some(line)
 }
 
 /// A seconds count as the unit a human would have typed it in.

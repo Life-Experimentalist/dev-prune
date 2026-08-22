@@ -1,0 +1,61 @@
+#!/bin/sh
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+#
+# Set the release version everywhere at once.
+#
+# `version` in Cargo.toml is the source of truth, and eleven other files restate the
+# number by hand. scripts/check-version.sh knows where all of them are and fails the
+# build when one drifts; this is that script's inverse, so the answer to "check-version
+# says nine files are stale" is one command rather than nine edits. Every rewrite below
+# is anchored to the same exact string check-version.sh greps for, and the two lists are
+# meant to be changed together.
+#
+# Usage: sh scripts/bump-version.sh 1.6.0   (from the repository root)
+#
+# It does not commit, tag, or touch CHANGELOG.md: the changelog entry is the release
+# note and has to be written, not generated. Run it, read the diff, write the entry.
+
+set -eu
+
+version="${1:-}"
+case "$version" in
+    '' | -*)
+        echo "usage: sh scripts/bump-version.sh <version>" >&2
+        exit 2
+        ;;
+esac
+
+# Rewrite by line shape rather than by the old number: this way a file that was already
+# stale gets corrected too, instead of being skipped because it did not hold the version
+# we were bumping from.
+rewrite() {
+    file="$1"
+    script="$2"
+    tmp="$file.bump.tmp"
+    sed "$script" "$file" > "$tmp"
+    mv "$tmp" "$file"
+}
+
+rewrite Cargo.toml "0,/^version = \"[^\"]*\"/s//version = \"$version\"/"
+rewrite scripts/install.sh "s/^FALLBACK_VERSION=\"[^\"]*\"/FALLBACK_VERSION=\"$version\"/"
+rewrite scripts/install.ps1 's/^\$fallbackVersion = .*/$fallbackVersion = '"'$version'"'/'
+rewrite site/src/App.jsx "s/^const VERSION = \"[^\"]*\";/const VERSION = \"$version\";/"
+rewrite site/public/llms.txt "s/Version [0-9][0-9A-Za-z.+-]*\./Version $version./"
+rewrite site/index.html "s/\"softwareVersion\": \"[^\"]*\"/\"softwareVersion\": \"$version\"/"
+rewrite npm/package.json "s/\": \"[0-9][0-9A-Za-z.+-]*\"/\": \"$version\"/"
+rewrite docs/CLI_REFERENCE.md "s/^  \"version\": \"[^\"]*\",/  \"version\": \"$version\",/"
+
+# Whole asset filenames, quoted so a reader can copy them. The version sits in the
+# middle of the name, so these are matched on the surrounding `dev-prune-v...-` shape.
+for doc in docs/DISTRIBUTION.md docs/RELEASES_AND_MANUAL_INSTALL.md \
+    docs/troubleshooting/INSTALLATION_ISSUES.md; do
+    rewrite "$doc" "s/dev-prune-v[0-9][0-9A-Za-z.+-]*-\(linux\|darwin\|windows\)/dev-prune-v$version-\1/g"
+done
+
+# Cargo.lock records dev-prune's own version, and a bump without this leaves the lockfile
+# one version behind until the next build writes it — which on CI is after the check.
+cargo update --workspace --offline --quiet 2>/dev/null || cargo update --workspace --quiet
+
+echo "Bumped to $version. Verifying:"
+sh scripts/check-version.sh

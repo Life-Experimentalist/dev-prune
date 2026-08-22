@@ -61,6 +61,20 @@ pub static LONG_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(
 /// as much as a display one. Fifty passes is roughly a year of a fortnightly schedule.
 pub const PRUNE_HISTORY_LIMIT: usize = 50;
 
+/// How many restore measurements one adapter's throughput average is worth.
+///
+/// Past this, the running totals are halved before the new sample is added, so the
+/// average follows the machine rather than remembering a disk it no longer has. A plain
+/// lifetime mean would quote a spinning-rust number years after the SSD went in.
+pub const RESTORE_RATE_SAMPLE_CAP: u32 = 20;
+
+/// The shortest restore worth learning a throughput from, in milliseconds.
+///
+/// A restore that returned in under this is a manager deciding it had nothing to do —
+/// the packages were still in its cache, or already on disk. Averaging those in would
+/// claim a rate no cold restore can reach.
+pub const RESTORE_RATE_MIN_MILLIS: u64 = 250;
+
 /// The release that started recording per-repository totals and the pass history.
 ///
 /// A machine that pruned for months on 1.0.0 has a large lifetime total and no history at

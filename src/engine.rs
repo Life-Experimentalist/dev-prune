@@ -826,16 +826,21 @@ fn find_nested_git(dir: &Path) -> Option<PathBuf> {
 /// Every bloat directory in a repository, across every nested project.
 ///
 /// Returns the distinct adapter names in play alongside the deduplicated directories,
-/// each labelled with its repository-relative path. Directories under `min_size_bytes`
-/// are omitted so that what `devp status` reports as reclaimable is what `devp run`
-/// would actually offer to delete.
+/// each labelled with its repository-relative path, and how many bytes each adapter
+/// accounts for. Directories under `min_size_bytes` are omitted so that what `devp
+/// status` reports as reclaimable is what `devp run` would actually offer to delete.
+///
+/// The per-adapter tally exists for the restore estimate: `node_modules` and `target`
+/// come back at wildly different speeds, so a repository's total tells you nothing about
+/// how long it takes to put back until it is split by who puts it back.
 fn collect_bloat(
     repo_path: &Path,
     min_size_bytes: u64,
     depth: usize,
-) -> (Vec<String>, Vec<BloatDir>) {
+) -> (Vec<String>, Vec<BloatDir>, Vec<(String, u64)>) {
     let mut adapter_names: Vec<String> = Vec::new();
     let mut bloat: Vec<BloatDir> = Vec::new();
+    let mut by_adapter: BTreeMap<String, u64> = BTreeMap::new();
     let mut claimed: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
 
     for project in workspace::discover_to_depth(repo_path, depth) {
@@ -862,6 +867,7 @@ fn collect_bloat(
                     continue;
                 }
                 if claimed.insert(bd.path.clone()) {
+                    *by_adapter.entry(name.to_string()).or_default() += bd.size_bytes;
                     bloat.push(BloatDir {
                         name: workspace::relative_label(repo_path, &bd.path),
                         ..bd
@@ -871,7 +877,7 @@ fn collect_bloat(
         }
     }
 
-    (adapter_names, bloat)
+    (adapter_names, bloat, by_adapter.into_iter().collect())
 }
 
 /// Run a prune pass across all registered repositories.
@@ -1007,21 +1013,49 @@ fn owning_project(bloat_label: &str) -> &str {
 /// renamed, or its manifest removed since the prune — comes back as an `Err` under its
 /// own label rather than being dropped, because a restore that silently skips half its
 /// work is the failure mode this whole command exists to avoid.
+/// One recorded directory's restore: what was attempted, whether it worked, and what it
+/// cost.
+///
+/// The cost is carried out of the engine rather than measured by the caller because this
+/// is the only place that knows where one directory's rebuild starts and ends. A caller
+/// timing the whole pass would learn the average of a `node_modules` and a `target`,
+/// which is a number about nothing.
+pub struct RestoreOutcome {
+    /// `adapter (repo/relative/dir)`, as the command prints it.
+    pub label: String,
+    /// The adapter that owned the directory.
+    pub adapter: String,
+    /// Bytes the prune recorded for it — what this restore is putting back.
+    pub bytes: u64,
+    /// How long the rebuild took, successful or not.
+    pub elapsed: std::time::Duration,
+    /// Whether it worked.
+    pub result: Result<()>,
+}
+
 pub fn restore_deleted(
     repo_path: &Path,
     deleted: &[crate::config::PrunedDir],
     global_depth: usize,
     timeout: std::time::Duration,
-) -> Vec<(String, Result<()>)> {
+) -> Vec<RestoreOutcome> {
     let depth = workspace::resolve_depth(repo_path, global_depth);
     let projects = workspace::discover_to_depth(repo_path, depth);
 
     let mut results = Vec::new();
     for dir in deleted {
         let (bloat_label, adapter_name) = (&dir.bloat_dir, &dir.adapter);
+        // Closure rather than a helper: it captures the record being restored, and the
+        // three call sites below differ only in what they pass for `result`.
+        let timed = |result: Result<()>, started: std::time::Instant| RestoreOutcome {
+            label: format!("{adapter_name} ({bloat_label})"),
+            adapter: adapter_name.clone(),
+            bytes: dir.size_freed,
+            elapsed: started.elapsed(),
+            result,
+        };
         let runtime = dir.runtime.as_deref();
         let wanted = owning_project(bloat_label);
-        let label = format!("{adapter_name} ({bloat_label})");
         // The deleted directory's own name, so an adapter that supports several
         // (venv's `.venv`/`venv`/`my_env`) rebuilds the one that was actually there.
         let dir_name = bloat_label
@@ -1035,10 +1069,9 @@ pub fn restore_deleted(
             .find(|(_, a)| a.name() == adapter_name);
 
         if let Some((project, adapter)) = found {
-            results.push((
-                label,
-                adapter.restore_named(&project.path, dir_name, runtime, timeout),
-            ));
+            let started = std::time::Instant::now();
+            let result = adapter.restore_named(&project.path, dir_name, runtime, timeout);
+            results.push(timed(result, started));
             continue;
         }
 
@@ -1057,18 +1090,17 @@ pub fn restore_deleted(
             .find(|a| a.name() == adapter_name);
         match recorded {
             Some(adapter) if project_dir.is_dir() => {
-                results.push((
-                    label,
-                    adapter.restore_named(&project_dir, dir_name, runtime, timeout),
-                ));
+                let started = std::time::Instant::now();
+                let result = adapter.restore_named(&project_dir, dir_name, runtime, timeout);
+                results.push(timed(result, started));
             }
-            _ => results.push((
-                label,
+            _ => results.push(timed(
                 Err(anyhow::anyhow!(
                     "`{wanted}` in {} is no longer a {adapter_name} project — it may have been \
                      moved or removed since the prune. Restore it by hand if it still exists.",
                     repo_path.display()
                 )),
+                std::time::Instant::now(),
             )),
         }
     }
@@ -1122,6 +1154,9 @@ pub struct RepoStatusEntry {
     pub bloat_dirs: Vec<BloatDir>,
     /// Total reclaimable bytes.
     pub reclaimable_bytes: u64,
+    /// Reclaimable bytes split by the adapter that would have to put them back, sorted
+    /// by adapter name. Empty whenever `bloat_dirs` is.
+    pub reclaimable_by_adapter: Vec<(String, u64)>,
     /// Last git/file-system activity time.
     pub last_activity: Option<DateTime<Utc>>,
     /// Idle threshold that applies to this repo (days).
@@ -1150,6 +1185,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
             reason: SkipReason::PathMissing,
             adapters: Vec::new(),
             bloat_dirs: Vec::new(),
+            reclaimable_by_adapter: Vec::new(),
             reclaimable_bytes: 0,
             last_activity: None,
             idle_days: registry_idle_days,
@@ -1169,6 +1205,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
                 reason: SkipReason::ConfigError(e),
                 adapters: Vec::new(),
                 bloat_dirs: Vec::new(),
+                reclaimable_by_adapter: Vec::new(),
                 reclaimable_bytes: 0,
                 last_activity: last_activity_time(path),
                 idle_days: registry_idle_days,
@@ -1191,6 +1228,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
             reason: SkipReason::Ignored,
             adapters: Vec::new(),
             bloat_dirs: Vec::new(),
+            reclaimable_by_adapter: Vec::new(),
             reclaimable_bytes: 0,
             last_activity: last_activity_time(path),
             idle_days,
@@ -1220,7 +1258,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
             .and_then(|c| c.scan_depth)
             .unwrap_or(registry.settings.scan_depth),
     );
-    let (adapter_names, all_bloat) = collect_bloat(path, min_size_bytes, depth);
+    let (adapter_names, all_bloat, by_adapter) = collect_bloat(path, min_size_bytes, depth);
     let reclaimable: u64 = all_bloat.iter().map(|b| b.size_bytes).sum();
 
     let reason = if !is_idle {
@@ -1238,6 +1276,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
         adapters: adapter_names,
         bloat_dirs: all_bloat,
         reclaimable_bytes: reclaimable,
+        reclaimable_by_adapter: by_adapter,
         last_activity: activity_time,
         idle_days,
     }
@@ -1548,7 +1587,7 @@ mod tests {
         let results = restore_deleted(root, &deleted, 4, TEST_TIMEOUT);
 
         assert_eq!(results.len(), 1, "one recorded directory, one attempt");
-        assert_eq!(results[0].0, "npm (frontend/node_modules)");
+        assert_eq!(results[0].label, "npm (frontend/node_modules)");
     }
 
     #[test]
@@ -1566,8 +1605,8 @@ mod tests {
         let results = restore_deleted(tmp.path(), &deleted, 4, TEST_TIMEOUT);
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, "uv (services/api/.venv)");
-        let err = results[0].1.as_ref().unwrap_err().to_string();
+        assert_eq!(results[0].label, "uv (services/api/.venv)");
+        let err = results[0].result.as_ref().unwrap_err().to_string();
         assert!(err.contains("services/api"), "names the missing project");
         assert!(err.contains("uv"), "names the adapter that owned it");
     }
@@ -1851,8 +1890,8 @@ mod tests {
         let results = restore_deleted(tmp.path(), &deleted, 4, std::time::Duration::ZERO);
 
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].0, "venv (api/.venv)");
-        if let Err(e) = &results[0].1 {
+        assert_eq!(results[0].label, "venv (api/.venv)");
+        if let Err(e) = &results[0].result {
             assert!(
                 !e.to_string().contains("no longer a"),
                 "the recorded adapter must be attempted, got: {e}"
@@ -1888,6 +1927,7 @@ mod tests {
             reason: SkipReason::Candidate,
             adapters: Vec::new(),
             bloat_dirs: Vec::new(),
+            reclaimable_by_adapter: Vec::new(),
             reclaimable_bytes: reclaimable,
             last_activity: None,
             idle_days: 15,

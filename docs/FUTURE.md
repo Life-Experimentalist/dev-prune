@@ -49,17 +49,6 @@ Work that exists and is waiting on a party that is not this repository.
 - **homebrew-core.** Plain `brew install dev-prune`, with no tap prefix. It has a real
   notability bar measured in stars, forks and watchers, so it is a post-popularity step
   rather than a task. The named tap covers the same install today.
-- **`devp caches` for Composer, CocoaPods and Hex.** The three managers already covered
-  by adapters whose *download* caches are not yet listed. Each entry has to ask the
-  manager where its cache actually is on this platform rather than hard-coding a path —
-  `composer config --global cache-dir`, and the equivalent for the other two. Bundler's
-  shared gem home and Pipenv's virtualenv directory are deliberately **not** candidates:
-  those are install locations, not caches, and deleting one uninstalls software.
-- **Restore-cost estimates.** dev-prune knows what it deleted and can time what it takes
-  to put back. Recording restore durations locally would let `devp status` answer the
-  question people actually hesitate over — not "how much space is this", which it already
-  answers, but "how long is this to undo". Local timings only; nothing is uploaded, in
-  keeping with [`PRIVACY.md`](PRIVACY.md).
 
 ## Later
 
@@ -74,20 +63,9 @@ Work that exists and is waiting on a party that is not this repository.
     actually wants it.
   - **Nix.** `result` symlinks are already refused for being symlinks; a real adapter
     would have to reason about the store, which is a different kind of problem.
-- **`devp caches` coverage for the newer ecosystems.** The table resolves thirteen
-  managers — npm through conan — and Composer, CocoaPods and Hex each keep a real,
-  clearable download cache that is not among them (`composer clear-cache`,
-  `pod cache clean --all`). Adding them is mechanical; it sits here rather than in
-  Next only because each entry has to *ask* the manager where its cache is on each
-  platform rather than assume, the way the existing thirteen do. Bundler's shared gem
-  home and Pipenv's virtualenv directory are explicitly **not** candidates: those are
-  install locations, not caches, and emptying one uninstalls software.
 - **JetBrains plugin publishing.** The icon micro-plugin in `editors/jetbrains/` builds;
   the marketplace listing is the remaining step. It needs a JDK and downloads the
   IntelliJ platform on first build, so it is deliberately outside the repository gate.
-- **A branded glyph in the VS Code status bar.** The extension uses built-in codicons
-  because a status bar item can only render icon-font glyphs, not images. The route to a
-  dev-prune mark is contributing an icon font (`contributes.icons`) built from the SVG.
 - **More `--agent` targets** as editors standardise their rules files. Fifteen ship
   today; adding the sixteenth is four small changes documented in
   [`IDE_INTEGRATION.md`](IDE_INTEGRATION.md), and an editor that adopts the `AGENTS.md`

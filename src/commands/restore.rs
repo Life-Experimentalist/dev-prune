@@ -127,6 +127,10 @@ pub fn run_last_run() -> Result<()> {
     let timeout = std::time::Duration::from_secs(registry.settings.command_timeout_secs);
     let mut attempted = 0usize;
     let mut failed = 0usize;
+    // (adapter, bytes, milliseconds). Held until the pass is over rather than written as
+    // they arrive: this pass can run for an hour, and the registry it would be writing
+    // into is the one loaded before it started.
+    let mut measured: Vec<(String, u64, u64)> = Vec::new();
 
     for (repo_path, deleted) in &by_repo {
         println!();
@@ -146,17 +150,34 @@ pub fn run_last_run() -> Result<()> {
             continue;
         }
 
-        for (label, result) in engine::restore_deleted(repo_path, deleted, global_depth, timeout) {
+        for outcome in engine::restore_deleted(repo_path, deleted, global_depth, timeout) {
             attempted += 1;
-            match result {
-                Ok(()) => output::print_success(&format!("  {label}: restored")),
+            match &outcome.result {
+                Ok(()) => {
+                    // Only a restore that worked says anything about how fast this
+                    // machine restores. A failure's duration is the time to the error,
+                    // which is a measurement of the error.
+                    measured.push((
+                        outcome.adapter.clone(),
+                        outcome.bytes,
+                        outcome.elapsed.as_millis().min(u128::from(u64::MAX)) as u64,
+                    ));
+                    output::print_success(&format!("  {}: restored", outcome.label));
+                }
                 Err(e) => {
                     failed += 1;
-                    output::print_error(&format!("  {label}: {e}"));
+                    output::print_error(&format!("  {}: {e}", outcome.label));
                 }
             }
         }
     }
+
+    // Before the failure exit, not after: a pass that put back nine directories and lost
+    // the tenth still measured nine restores, and throwing that away would mean the
+    // estimate never learns anything from the passes that need it most. Reloaded so a
+    // registry edit made while this pass ran is not overwritten, and a save that fails is
+    // silent — losing a timing sample is not worth failing a restore over.
+    record_restore_rates(measured);
 
     println!();
     if failed > 0 {
@@ -174,6 +195,24 @@ pub fn run_last_run() -> Result<()> {
     ));
 
     Ok(())
+}
+
+/// Fold a pass's measurements into the throughput averages `devp status` estimates from.
+///
+/// Local only, and nothing but timings: the adapter, the byte count and the duration. No
+/// path and no project name, which is what keeps this on the right side of
+/// [`PRIVACY.md`](../../docs/PRIVACY.md).
+fn record_restore_rates(measured: Vec<(String, u64, u64)>) {
+    if measured.is_empty() {
+        return;
+    }
+    let Ok(mut registry) = Registry::load() else {
+        return;
+    };
+    for (adapter, bytes, millis) in measured {
+        registry.record_restore(&adapter, bytes, millis);
+    }
+    let _ = registry.save();
 }
 
 /// What a `--last-run` restore intends to do about the interpreters it recorded.

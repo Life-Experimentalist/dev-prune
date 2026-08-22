@@ -1136,6 +1136,7 @@ mod tests {
             adapters: vec!["uv".to_string()],
             bloat_dirs: Vec::new(),
             reclaimable_bytes: bytes,
+            reclaimable_by_adapter: Vec::new(),
             last_activity: Some(chrono::Utc::now() - chrono::Duration::days(days_idle)),
             idle_days: 30,
         }

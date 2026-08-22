@@ -102,9 +102,19 @@ and a "no" is remembered: nothing asks twice.
 | Prune history and byte counters | `<config dir>/registry.json` | No |
 | Daemon logs | `<config dir>/` | No |
 | Directory sizes and scan results | memory only | No |
+| Restore timings, per adapter | `<config dir>/registry.json` | No |
 
 `<config dir>` is `%APPDATA%\dev-prune` on Windows and `~/.config/dev-prune` elsewhere,
 overridable with `DEV_PRUNE_CONFIG_DIR`.
+
+The restore timings are the newest of those rows, so they are worth spelling out. When
+`devp restore --last-run` puts a directory back, dev-prune adds three numbers to a running
+total for that adapter — how many restores it has measured, how many bytes they put back,
+and how many milliseconds they took. That is the whole record: no path, no project name,
+no lockfile contents, nothing that says which repository the restore was for. It exists so
+`devp status` can answer *how long is this to undo* with a number measured on this disk
+instead of a number invented from somebody else's. It is never uploaded and never compared
+against anyone else's machine, and deleting `registry.json` deletes it.
 
 ## Subprocesses dev-prune runs
 

@@ -84,7 +84,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "clean everything but the API project" | `devp run --except api -y` — never verified, never deleted, never reinstalled |
 | "put the dependencies back" | `devp restore .` |
 | "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched, rebuilding each virtual environment on the Python version it was originally built with |
-| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan) and prints the command that clears each. Read-only |
+| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan, composer, cocoapods, hex) and prints the command that clears each. Read-only |
 | "empty my npm cache" / "clear all the caches" | `devp caches clear npm` (or `all`) — **ask first**, and say what it costs: every project on the machine re-downloads on its next install, and `devp restore` stops being fast. `--dry-run` shows what would go. Never run this unprompted |
 | "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the four settings that widen anything (`auto_update`, `require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`). Read-only |
 | "did I install anything my lockfiles don't know about?" | `devp status --drift` — every environment holding packages its lockfile never recorded, with the one command that records them. A pure read; this is what a prune would refuse on |
@@ -185,6 +185,7 @@ The fields worth reading first:
 | `repositories[].state` (status) | `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, `config_error` |
 | `repositories[].error` | the parse failure — present only on `config_error` |
 | `totals.reclaimable_bytes` | the number to quote back to the user |
+| `totals.restore_estimate` / `repositories[].restore_estimate_secs` | how long putting it back would take, from restores timed on *this* machine — `null` until there is one. Never quote it as a whole answer unless `covered_bytes` equals `totals.reclaimable_bytes` |
 | `results[].shared_bytes` / `directories[].shared_bytes` | bytes hardlinked into a pnpm/bun store and therefore excluded from `bytes` — if the user asks why the figure is smaller than the folder size, this is the answer |
 | `summary.total_bytes` (caches) | every package-manager cache added up; `caches[].clear_command` is what the *user* runs, never you |
 
