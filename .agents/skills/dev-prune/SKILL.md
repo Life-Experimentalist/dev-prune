@@ -53,10 +53,13 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 - Never crosses into a nested repository; a submodule is pruned as itself or not at all.
 - Never executes anything named in a repository-tracked file. `.devprune.json` holds
   inert data only.
-- Never touches a package-manager cache. `devp caches` reports their sizes and prints the
-  clear command; running it is the user's decision, not yours. A cache is shared by every
-  project on the machine, so no one lockfile can prove it is recoverable — and it is what
-  makes `devp restore` fast.
+- Never touches a package-manager cache on its own. No prune pass, scheduler or Git hook
+  clears one, ever. `devp caches` reports their sizes and prints the clear command, and
+  `devp caches clear <manager>` runs it — but only when the user asks for it, and it asks
+  before it acts. Do not reach for `clear` to free space: a cache is shared by every
+  project on the machine, so no one lockfile can prove it is recoverable, and it is what
+  makes `devp restore` fast. Suggest it only when the user has said they want the disk
+  space more than the speed.
 
 ---
 
@@ -65,7 +68,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | The user wants | Run |
 | :--- | :--- |
 | "how much space can I get back?" | `devp run --dry-run` |
-| "show me my repos" | `devp status` (interactive; prints a plain table when not a TTY) |
+| "show me my repos" | `devp status` (interactive; prints a plain table when not a TTY). In the dashboard: `s` sorts, `f` filters, `/` searches — display only, the totals always cover every registered repository |
 | "just the worst offenders" / "top 10 biggest" | `devp status --top 10` — trims the list, never the totals |
 | "how much has this saved me?" / "what did it clean last week?" | `devp stats` — lifetime total, prune passes, the last pass, and the repositories that gave back the most |
 | "add tab completion" | `devp completions <bash\|zsh\|fish\|powershell\|elvish>` — prints the script to stdout; the user redirects it |
@@ -74,8 +77,10 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "clean it even though I'm working on it" | `devp run . --ignore-idle -y` — **ask first** |
 | "clean everything but the API project" | `devp run --except api -y` — never verified, never deleted, never reinstalled |
 | "put the dependencies back" | `devp restore .` |
-| "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched |
-| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan) and prints the command that clears each. It deletes nothing; the user runs the clear command |
+| "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched, rebuilding each virtual environment on the Python version it was originally built with |
+| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan) and prints the command that clears each. Read-only |
+| "empty my npm cache" / "clear all the caches" | `devp caches clear npm` (or `all`) — **ask first**, and say what it costs: every project on the machine re-downloads on its next install, and `devp restore` stops being fast. `--dry-run` shows what would go. Never run this unprompted |
+| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the four settings that widen anything (`auto_update`, `require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters). Read-only |
 | "did I install anything my lockfiles don't know about?" | `devp status --drift` — every environment holding packages its lockfile never recorded, with the one command that records them. A pure read; this is what a prune would refuse on |
 | "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it. Across every repository at once: `devp run --explain` — read-only, every verdict listed including the quiet ones (still active with the actual age, opted out, under the size floor). Conflicts with `--json`; the `--json --dry-run` document already carries every status |
 | "is anything wrong with my install?" | `devp doctor` |
@@ -84,6 +89,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "track this repo" | `devp link .` |
 | "stop tracking this" | `devp unlink .` |
 | "the registry is full of folders I deleted" | `devp unlink --missing` — clears every entry whose directory is gone |
+| "I moved a repo and it lost its history" | `devp link <new path>` — matching root commits let it adopt the old entry |
 | "undo that" | `devp undo` (reverts the last `init` or `link`) |
 | "never touch this repo" | create `ignore.devprune.json` in its root, or press `i` in `devp status` |
 | "what's my config?" | `devp config show` |
@@ -93,12 +99,12 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "turn the automation off" | `devp config set auto_setup false` |
 | "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed (add `--deep` to wipe config — confirm first) |
 | "is there a newer version?" | `devp update` — prints the installed and latest versions plus the right upgrade command; never installs anything by itself |
-| "upgrade it" | `devp update --install` — upgrades through the package manager that owns this copy (cargo/binstall, npm, uv, pipx, or the installer script); `devp config set auto_update true` makes it happen by itself after a pass |
+| "upgrade it" | `devp update --install` — downloads the release binary from GitHub, verifies its SHA-256, and replaces every copy this install runs (managed binary, `devp` alias, `devpw` scheduler twin, the running binary); the package manager that delivered the first copy is not run, and the one command that resyncs its version record is printed. Falls back to that manager's own upgrade command if there is no binary for this platform. `devp config set auto_update true` makes it happen by itself after a pass |
 | "clean my Java/Gradle/Maven builds too" | `devp config set enable_gradle true` / `enable_maven true` — opt-in adapters, idle-gated separately by `build_idle_days` (60) |
-| "give my editor's agent the rules" | `devp skill --agent <cursor\|windsurf\|antigravity\|cline\|copilot\|agents-md>` — writes the per-repository rules file that editor reads; `agents-md` upserts a marked block in `AGENTS.md` (Codex, Jules, Amp, OpenCode) |
+| "give my editor's agent the rules" | `devp skill --agent <editor>` — writes the per-repository rules file that editor reads. Own file: `cursor`, `windsurf`, `antigravity`, `cline`, `roo`, `kilocode`, `continue`, `amazon-q`, `kiro`, `trae`. Marked block inside a shared file: `agents-md` (`AGENTS.md` — Codex, Jules, Amp, OpenCode), `copilot`, `gemini`, `junie`, `zed`. `devp skill --help` lists the exact paths |
 | "man pages" | `devp man \| man -l -` to read now, `devp man --dir ./man` to write the full set |
 | "what version?" | `devp -V` (also prints OS, arch, config path, PATH audit) |
-| you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats` or `caches` — see below |
+| you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats`, `trust` or `caches` — see below |
 
 Global flags, valid on any subcommand: `--dry-run`, `--ignore-idle` (`--force` is the
 deprecated alias), `--yes` / `-y`.
@@ -128,7 +134,8 @@ A run in which any repository failed exits `1` even if others succeeded.
 
 ## 🔌 Machine-readable output — prefer this over parsing the human report
 
-`devp run --json`, `devp status --json`, `devp stats --json` and `devp caches --json` each
+`devp run --json`, `devp status --json`, `devp stats --json`, `devp caches --json` and
+`devp trust --json` each
 emit **one** JSON document on stdout and nothing else; warnings go to stderr. `--json`
 implies non-interactive, so it never blocks on a prompt. `status --json` and
 `stats --json` change nothing at all, not even the registry file. (When a human runs
@@ -142,6 +149,7 @@ devp stats --json           # what has already been reclaimed, and by which repo
 devp run --dry-run --json   # what a pass would do, with exact byte counts
 devp run -y --json          # do it
 devp caches --json          # every package-manager cache, sized, largest first
+devp trust --json           # what the tool guarantees, and what this machine has switched on
 devp status --drift --json  # unrecorded packages per environment, with the record command
 ```
 
@@ -150,6 +158,10 @@ asks what dev-prune *has* done and `status` when they ask what it *could* do. On
 upgraded from 1.0.0 the per-repository figures and the pass list in `stats` start empty
 while the lifetime total does not; the document's `history_starts_at` field says so, so
 report the gap rather than reading it as "nothing was ever pruned".
+
+`devp status` sizes every dependency tree in every registered repository, so on a large
+registry it takes several seconds even though it is a pure read. Prefer `--top N` when
+the user only wants the worst offenders.
 
 Every document carries `schema`, an integer that increases **only** when a consumer would
 have to change: a field removed, renamed, or given a new meaning. Adding a field does not
@@ -215,18 +227,35 @@ over plain venv when `uv.lock` or `[tool.uv]` is present.
 | uv | `uv.lock`, `[tool.uv]` | `.venv` | `uv lock --locked` | `uv sync` |
 | venv | `requirements.txt` + `pyvenv.cfg` | every dir holding `pyvenv.cfg` | `requirements.txt` lists ≥1 package and accounts for every installed package | `python -m venv .venv && pip install -r requirements.txt` |
 | poetry | `poetry.lock`, `[tool.poetry]` | `.venv` | `poetry check --lock`, plus no installed package missing from the lockfile | `poetry install` |
+| pdm | `pdm.lock`, `[tool.pdm]` / `pdm.backend` | `.venv`, `__pypackages__` | `pdm lock --check` | `pdm install` |
+| pipenv | `Pipfile` | `.venv` (in-project installs only) | `pipenv verify` | `pipenv install --deploy` |
 | cargo | `Cargo.toml` | `target` | `cargo metadata --locked` | next `cargo build` |
 | go | `go.mod` | `vendor` | `go mod download` | `go mod vendor` |
+| composer | `composer.json` | `vendor` (skipped when it holds a `vendor/bundle`) | `composer validate --no-check-publish --no-check-all` | `composer install` |
+| bundler | `Gemfile` | `vendor/bundle` (vendored installs only) | `bundle lock --check` | `bundle install` |
+| cocoapods | `Podfile` | `Pods` | `Podfile.lock` has its `SPEC CHECKSUMS` section and is no older than the `Podfile` | `pod install` |
+| mix | `mix.exs` | `deps` (never `_build`) | `mix.lock` is a complete Elixir map and no older than `mix.exs` | `mix deps.get` |
 | gradle *(opt-in)* | `build.gradle[.kts]` / `settings.gradle[.kts]` | `build`, `.gradle` | manifest present and readable (rebuild-from-source proof) | next `./gradlew build` |
 | maven *(opt-in)* | `pom.xml` | `target` | `pom.xml` present and looks like a Maven manifest | next `mvn package` |
+| swift *(opt-in)* | `Package.swift` | `.build` (never `.swiftpm`) | `Package.swift` declares a `Package(` (rebuild-from-source proof) | next `swift build` |
 
-gradle and maven ship **disabled** — a build directory takes far longer to regenerate
-than a dependency directory (a full recompile, not a download). Enable them with
-`devp config set enable_gradle true` / `enable_maven true`; while disabled they are
-invisible (not detected, not listed, `--only gradle` prunes nothing). Their candidates
-also wait for `build_idle_days` (60 by default), applied as the **maximum** of it and the
-repository's effective `idle_days` — the build-tool gate can only ever make pruning
-later, never earlier.
+gradle, maven and swift ship **disabled** — a build directory takes far longer to
+regenerate than a dependency directory (a full recompile, not a download). Enable them
+with `devp config set enable_gradle true` / `enable_maven true` / `enable_swift true`;
+while disabled they are invisible (not detected, not listed, `--only gradle` prunes
+nothing). Their candidates also wait for `build_idle_days` (60 by default), applied as
+the **maximum** of it and the repository's effective `idle_days` — the build-tool gate
+can only ever make pruning later, never earlier.
+
+bundler and pipenv claim only the in-repository install — `vendor/bundle` after
+`bundle config set path vendor/bundle`, and `.venv` under `PIPENV_VENV_IN_PROJECT`.
+Their defaults are shared stores under the user's home, which dev-prune never touches —
+not as a prune and not through `devp caches` either: those directories are where other
+projects' dependencies are installed, not a cache. If the user asks why a Ruby or
+Pipenv project reclaims nothing, that is the answer.
+
+Any adapter, opt-in or not, can be switched off with `disabled_adapters` — that one is
+a preference, not a safety gate.
 
 Every verification command is **read-only**. A lockfile that has drifted from its
 manifest is a refusal, not something to quietly fix — a prune pass can be started by the
@@ -260,7 +289,9 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `auto_config` | `true` | Whether `link`/`init` write a default `.devprune.json` into repositories they register |
 | `enable_gradle` | `false` | Turn the opt-in Gradle adapter on |
 | `enable_maven` | `false` | Turn the opt-in Maven adapter on |
-| `build_idle_days` | `60` | Extra idle gate for the build-tool adapters (gradle, maven); applied as `max(build_idle_days, idle_days)` |
+| `enable_swift` | `false` | Turn the opt-in Swift Package Manager adapter on |
+| `build_idle_days` | `60` | Extra idle gate for the build-tool adapters (gradle, maven, swift); applied as `max(build_idle_days, idle_days)` |
+| `disabled_adapters` | *(none)* | Adapters to leave alone entirely, comma-separated by name. A disabled adapter is not detected, not counted, not pruned — as if that ecosystem were not installed. `-` clears the list |
 
 **Per repository:**
 - `ignore.devprune.json` in the root — instant skip, checked before anything is parsed.
@@ -291,9 +322,14 @@ manager** (Explorer, Finder, Nautilus and friends) and, for editors, only *print
 `settings.json` snippet for you to paste. And it does not register repositories: which
 directories to track stays the user's decision.
 
-> ⚠️ Git supports exactly one global `core.hooksPath`, and while it is set, per-repo
-> `.git/hooks` are ignored machine-wide. dev-prune does not simply give up when another
-> tool holds it. `devp hook install --chain` takes the slot and writes a shim per hook
+> Git supports exactly one global `core.hooksPath`, and while it is set Git stops
+> looking in any repository's own `.git/hooks`. dev-prune restores that itself: it writes
+> a shim for every hook name Git looks for, each ending by `exec`ing the repository's own
+> hook of the same name with the same arguments, stdin and exit code — so a repo-local
+> `pre-commit` gate still runs and can still block the commit. `reference-transaction`
+> and `post-index-change` are left unshimmed on purpose; both fire many times per
+> ordinary fetch and the shell spawns would be a cost users feel. dev-prune also does not
+> simply give up when another tool holds the slot. `devp hook install --chain` takes the slot and writes a shim per hook
 > that `exec`s the displaced directory's hook of the same name — same arguments, same
 > stdin, same exit code — so husky, pre-commit or lefthook keep running exactly as before.
 > `devp hook uninstall` restores the previous `core.hooksPath`. Chaining is **opt-in**
@@ -308,6 +344,28 @@ Off switches, narrowest first: `auto_hooks_chain`, `auto_daemon`, `auto_hooks`,
 and CI, `DEV_PRUNE_NO_AUTO_SETUP=1` overrides all four with no config file — the same
 variable the install scripts read, so setting it once covers install time and every run
 after it.
+
+### Changing settings on the user's behalf
+
+Use `devp config set <key> <value>` and `devp config show`. Both are one-shot, both
+print what they did, and neither waits for a keypress.
+
+**Never run `devp config wizard`.** It opens a full-screen configurator for a person to
+drive, and an agent holding a pty passes every terminal check it makes while never
+sending the keypress it waits for. If something must run it anyway, `--no-tui` or
+`DEV_PRUNE_NO_TUI=1` gets the line-by-line form instead — but `config set` is the
+right answer, because it does not need a terminal at all.
+
+To switch one ecosystem off without touching anything else:
+
+```bash
+devp config get disabled_adapters              # (none), or the current list
+devp config set disabled_adapters go,composer  # the whole list, not an addition
+devp config set disabled_adapters -            # every adapter active again
+```
+
+The value is the complete list every time — there is no add or remove verb, so read
+the current one before writing a new one or the user loses the rest of their choices.
 
 ---
 
@@ -332,7 +390,7 @@ specific symptom the report named.
 | A project in the repository is never listed | It sits deeper than `scan_depth` (6 levels) | `devp config set scan_depth N`, or set `"scan_depth"` in that repository's `.devprune.json` |
 | A small bloat directory is never offered | It is under `min_size_mb` | `devp run --min-size 0` for one pass, or `devp config set min_size_mb 0` |
 | A repository is not in `devp status` at all | It was never registered | `devp link .` in it, or `devp init <parent dir>` |
-| **Path Missing** | The directory was moved or deleted | `devp unlink <old path>`, then `devp link <new path>`. For a registry full of them, `devp unlink --missing` clears the lot |
+| **Path Missing** | The directory was moved or deleted | If moved: `devp link <new path>` alone — the matching root commit adopts the old entry, history and all, and the dead row goes. If deleted: `devp unlink <old path>`, or `devp unlink --missing` for a registry full of them |
 | Lockfile verification fails | The lockfile has drifted from the manifest, and verification is read-only so it refuses rather than repairing | Run the exact command dev-prune printed (it is the writing form for that ecosystem), in that project. Or `devp config set allow_manifest_rewrite true` to let dev-prune run it during the pass. Never delete the lockfile |
 | "holds package(s) that the lockfile does not record" | Something was installed without recording it — `npm install --no-save`, a bare `pip install` into a pinned venv, an ad-hoc `uv pip install` | `devp status --drift` lists every such environment with the exact record command (`npm install <pkg>`, `uv add <package>`, `pip freeze > requirements.txt`). Run it, or uninstall the extras. Never delete the directory manually |
 | "`npm` is not available" | that manager is not installed, or not on `PATH` | Install it. dev-prune will not delete a tree it cannot prove it can rebuild |

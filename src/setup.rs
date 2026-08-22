@@ -236,7 +236,7 @@ fn refresh_managed_copy_if_stale(current: &std::path::Path, managed: &std::path:
 }
 
 /// The `major.minor.patch` a binary reports for itself, if it can.
-fn binary_version(exe: &std::path::Path) -> Option<(u64, u64, u64)> {
+pub(crate) fn binary_version(exe: &std::path::Path) -> Option<(u64, u64, u64)> {
     let output = crate::spawn::command(exe).arg("--version").output().ok()?;
     if !output.status.success() {
         return None;
@@ -248,7 +248,7 @@ fn binary_version(exe: &std::path::Path) -> Option<(u64, u64, u64)> {
 
 /// Parse `x.y.z` into an orderable triple. Anything else — including the pre-release
 /// and build suffixes this project never publishes — answers `None`.
-fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+pub(crate) fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
     let mut parts = text.split('.');
     let triple = (
         parts.next()?.parse().ok()?,
@@ -533,10 +533,16 @@ pub fn ensure_hooks(chain: bool) -> Outcome {
         // still exists" is. A hook backgrounds itself and discards its own output, so
         // one left pointing at a deleted npm cache dies silently on every commit and
         // nothing ever registers again; this pass is the only thing that ever looks.
-        Ok(HookState::Active) if hook_target_is_dead() => match hook::install() {
-            Ok(()) => Outcome::Installed,
-            Err(e) => Outcome::Failed(format!("{e:#}")),
-        },
+        // Two reasons to rewrite a working install: it names a binary that is gone, or
+        // it predates the passthrough shims and is silently shadowing every repository's
+        // own `.git/hooks`. Neither reports itself — a hook discards its own output by
+        // design — so the upgrade pass is the only thing that will ever notice.
+        Ok(HookState::Active) if hook_target_is_dead() || hook::shims_incomplete() => {
+            match hook::install() {
+                Ok(()) => Outcome::Installed,
+                Err(e) => Outcome::Failed(format!("{e:#}")),
+            }
+        }
         Ok(HookState::Active) => Outcome::AlreadyPresent,
         // Drift is repaired here rather than reported: the setup pass already runs on
         // install, on update and on a schedule, and a chain the user opted into is a
@@ -1036,12 +1042,13 @@ pub fn auto_setup_if_due() {
     first_run_config_review();
 }
 
-/// Put the defaults in front of the user, once, on a fresh install.
+/// Put the defaults in front of the user on a fresh install, and any setting an upgrade
+/// added that they have never been shown.
 ///
 /// Separate from the integration stamp on purpose. The integrations are re-checked after
-/// every upgrade; the settings are not — being asked to reconfirm `idle_days` on each new
-/// version would be a nuisance, and the marker only disappears when the config directory
-/// does.
+/// every upgrade; the settings are not, except for the ones that did not exist last time
+/// — being asked to reconfirm `idle_days` on each new version would be a nuisance, and a
+/// nuisance is something people learn to dismiss without reading.
 ///
 /// Every condition here is a way of asking "is there a person reading this?", because the
 /// alternative to asking is a prompt written into a log nobody will read, on a run that
@@ -1062,10 +1069,13 @@ fn first_run_config_review() {
 
     // Any error here is the wizard's own reporting; the command the user actually typed
     // still runs. A failed walkthrough must not become a failed `devp status`.
-    if let Err(e) = crate::commands::config::run_wizard() {
+    if let Err(e) = crate::commands::config::run_wizard(false) {
         output::print_warning(&format!("Could not run the first-run setup ({e:#})."));
-        crate::commands::config::skip_config_review();
     }
+    // Marked regardless of how it ended, including a deliberate quit. This is the one
+    // caller that runs uninvited, and an unasked-for walkthrough that reappears on every
+    // subsequent command is worse than one somebody dismissed once on purpose.
+    crate::commands::config::skip_config_review();
     // Same first run, same person already answering questions — the one moment the
     // extension offer is a courtesy rather than an interruption.
     offer_vscode_extension();

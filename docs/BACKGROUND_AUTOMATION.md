@@ -25,7 +25,9 @@ It installs five things:
 
 4. **Git hook auto-registration** — non-blocking `post-commit`, `post-checkout` and `post-merge` hooks that run `dev-prune link . --quiet` in the background, so repositories you clone or create get tracked without a manual `devp link`.
 
-   ⚠️ This sets the **global** `core.hooksPath`, and Git supports exactly one hooks directory with no way to chain two. While it is active, per-repo `.git/hooks` are ignored **machine-wide**.
+   This sets the **global** `core.hooksPath`, and Git supports exactly one hooks directory with no way to chain two — so while it is active, Git stops looking in any repository's own `.git/hooks`. dev-prune puts that behaviour back itself: it writes a shim for **every** hook name Git looks for, and each one ends by `exec`ing the same-named hook in the repository's own hooks directory, with the same arguments, the same stdin and the same exit code. A repository-local `pre-commit` lint gate or secret scanner keeps running, and keeps being able to block the commit.
+
+   Two names are deliberately not shimmed: `reference-transaction` and `post-index-change`. Both fire many times per ordinary operation — `reference-transaction` once per ref on every fetch — and a shell spawned that often to discover there is nothing to run is a cost you would feel and never attribute to dev-prune. If you use either, install with `--chain` instead, or run `devp hook uninstall`.
 
    dev-prune does not simply give up when husky, pre-commit or lefthook already hold the slot. `devp hook install --chain` takes it and writes, for every hook name, a shim that does dev-prune's own work and then `exec`s the same-named hook in the directory it displaced — same arguments, same stdin (which `pre-push` reads its refs from), same exit code, so a failing pre-commit check still blocks the commit. `devp hook uninstall` restores the original `core.hooksPath`.
 

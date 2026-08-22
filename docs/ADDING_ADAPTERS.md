@@ -46,7 +46,7 @@ pub trait PackageManager: Send + Sync {
     /// Whether this adapter must be switched on explicitly before it detects
     /// anything. Defaults to `false`. Return `true` when what you delete is a
     /// build tree that has to be *recompiled* back rather than re-downloaded —
-    /// gradle and maven do — and add a matching `enable_<name>` setting in
+    /// gradle, maven and swift do — and add a matching `enable_<name>` setting in
     /// `src/commands/config.rs`. While the setting is off, the adapter is
     /// invisible: not detected, not listed, and `--only <name>` prunes nothing.
     /// Opt-in adapters are also idle-gated by `build_idle_days`, applied as

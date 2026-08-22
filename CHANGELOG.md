@@ -5,6 +5,400 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-08-22
+
+Seven more ecosystems and a switch to turn any of them off, a configurator you can
+actually see, a command that tells you exactly what dev-prune is allowed to do on your
+machine, one that empties a package manager's cache without you looking up fourteen
+different incantations, per-repository AI rules for fifteen editors instead of six, and
+a 32-bit Windows build. Plus the fix for the two things that made `devp status` lie: a
+registry filling with dead paths, and every repository reading as "worked in today"
+forever.
+
+### Added
+
+- **`devp update --install` now upgrades itself from the GitHub release, instead of
+  asking whichever package manager delivered the first copy to do it.** There is exactly
+  one binary that matters — the managed copy under the config directory, which the git
+  hooks, the scheduler and `PATH` all point at — and it does not live inside
+  `node_modules`, a uv tool directory or `~/.cargo/bin`. Asking `uv` to upgrade a file it
+  has never heard of was never going to work, and asking it to upgrade its *own* copy
+  left the one that actually runs on the previous version. Now the release binary is
+  downloaded once, checked against the SHA-256 published beside it, and written to every
+  copy this installation runs: the managed binary, its `devp` alias, the windowless
+  scheduler twin, and the binary you typed. Nothing is installed if the checksum does not
+  match. The channel's own record of the version is left alone deliberately — correcting
+  it means running the channel's installer, which is the thing this route exists to avoid
+  — and the one command that resyncs it is printed. If there is no published binary for
+  your platform, or the download fails, it falls back to the channel's upgrade command
+  exactly as before.
+
+- **`devp doctor` now finds the *other* copies of dev-prune on your machine and says
+  which version each one runs.** dev-prune ships through five channels and each keeps its
+  own copy; upgrading replaces the one that matters and deliberately leaves the others
+  alone. The cost of that is a stale binary sitting on `PATH`, and if it comes first you
+  type `devp` and silently get the old release — with every symptom pointing at
+  dev-prune rather than at which copy answered. Doctor searches `PATH` and the fixed
+  cargo, uv and pipx directories (including ones not on `PATH`, which are exactly the
+  copies nobody ever upgrades) and names any whose version differs. It deletes nothing:
+  which copy you want is your call, and the manager that installed one is the only thing
+  that should remove it.
+
+- **`brew install` and `scoop install` now work, from a URL, with no tap and no bucket to
+  add first.** Every release renders a Homebrew formula, a Scoop manifest and the three
+  WinGet manifest files from the checksums it just published, and commits them to the
+  repository — so the two commands in
+  [`DISTRIBUTION.md`](https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/DISTRIBUTION.md)
+  always install the newest release, and neither of them can quietly drift a version
+  behind the way a hand-maintained manifest does. The Homebrew formula covers macOS and
+  Linux on x64 and arm64, installs both names, and generates your shell completions from
+  the binary; the Scoop manifest covers 64-bit, arm64 and 32-bit Windows and carries
+  `checkver`/`autoupdate`, so a bucket that adopts it bumps itself. The WinGet manifests
+  are rendered ready to submit — that one still needs a reviewed pull request, so
+  `winget install dev-prune` does not resolve yet.
+
+- **The Python interpreter a virtual environment was built with is now recorded when it
+  is pruned, and `devp restore --last-run` rebuilds on that same interpreter.** A `.venv`
+  created by Python 3.12 and restored on whatever `python` happens to be first on `PATH`
+  today is not the environment that was deleted — different wheels resolve, and the
+  failure surfaces weeks later as an import error nobody connects back to a restore. The
+  version is read from the environment's own `pyvenv.cfg` before the delete, stored in
+  the registry, and passed back to `venv`, `uv` and `poetry` on the way in. If the
+  recorded interpreter is still installed it is simply used, and the restore says so. If
+  it is not, the restore stops and asks once for the whole pass — never once per project
+  — and defaults to *no*, with the `uv python install 3.12` line you need to fix it
+  properly. Anything pruned before 1.4.0 recorded nothing and restores exactly as it did
+  before.
+
+- **`DEV_PRUNE_SCAN_THREADS` sets the status scan's thread count**, for the two cases the
+  automatic figure gets wrong: a network filesystem, where the scan is waiting on
+  latency and wants far more threads than you have cores, and a spinning disk, where
+  `DEV_PRUNE_SCAN_THREADS=1` stops the head thrashing and is genuinely faster. The
+  automatic figure now also ramps further on machines that can take it — up to 32
+  threads rather than 16.
+
+- **`devp status` separates what you can reclaim *now* from what you could reclaim in
+  total.** The header used to show one number that counted the dependency directories in
+  every registered repository, including the one you worked in this morning — a figure
+  nothing was ever going to act on. It now reads `12.4 GB ready now | 47.1 GB
+  reclaimable in all`, where "ready now" is the sum over the repositories that are
+  actually idle enough to prune. Both totals are always over the whole registry, so
+  applying a filter or a search does not make your machine look tidier than it is. The
+  same split appears in the plain (non-TUI) footer.
+
+- **Sort, filter and search in the `devp status` dashboard.** `s` cycles the sort —
+  relevance, biggest reclaim, longest untouched, name. `f` cycles the filter — all,
+  candidates only, anything holding reclaimable bytes, or just the rows that need a
+  decision rather than a prune (a path that is gone, a `.devprune.json` that does not
+  parse). `/` searches paths *and* adapter names, so `/uv` finds every Python project on
+  the machine without your remembering where they live; `Enter` keeps the query, `Esc`
+  clears it. All three change only what is displayed: a repository checked for pruning
+  stays checked when a filter hides it, `a` and `p` arm only the candidates actually on
+  screen, and the counts in the header always cover the whole registry — a filtered
+  dashboard can never make a machine look tidier than it is.
+
+- **`devp status` shows a progress bar while it scans, and finishes in about half the
+  time.** Sizing every dependency tree in eighty repositories used to be twenty-five
+  seconds of a blank screen, which reads as a hang; people killed it before it drew
+  anything. The scan now runs across several threads — the work is one independent
+  file-system walk per repository, so it is the disk that is the limit, not the CPU — and
+  reports `41/80` against a bar as it goes. `--json` is unchanged and still emits one
+  document and nothing else.
+
+- **`devp config wizard` is a configurator you can see.** Every setting on one screen,
+  arrow keys to move, `Space` to change the highlighted one — a toggle flips, a number
+  opens a field, `disabled_adapters` opens a checklist of every adapter. `r` puts one
+  back, and the last screen lists exactly what is about to be written before it is
+  written. Nothing is saved until you say so, and `q` leaves without saving anything.
+
+  The first-run walkthrough is the same screen, with the `devp trust` declaration in
+  front of it: what the tool guarantees, and what it is about to do on this machine, read
+  live rather than restated — on screen before any of it is configurable. `y` still means
+  "yes, all of it, carry on", exactly as it did at the old prompt.
+
+  It also reopens after an upgrade that adds a setting you have never been shown, marks
+  that one `NEW` and opens on it. Before, a new default started applying quietly and
+  nothing ever told you. Settings you already confirmed are not asked about again.
+
+  ```powershell
+  devp config wizard
+  devp config wizard --no-tui   # one question per line
+  ```
+
+  Terminals that cannot run the full-screen view get the line-by-line form automatically,
+  and `--no-tui` or `DEV_PRUNE_NO_TUI=1` asks for it deliberately. That switch exists for
+  AI agents in particular: an agent driving `devp` through a pty passes every "is this a
+  terminal?" test and will never press a key. Agents should use `devp config set`, which
+  needs no terminal at all — the bundled skill now says so.
+
+- **`disabled_adapters` switches off an ecosystem you do not want touched.** Name it and
+  dev-prune behaves as though that package manager were not installed: not detected, not
+  counted by `stats`, not probed for by `doctor`, never pruned, never restored. Reversible
+  at any time, and per adapter rather than all or nothing.
+
+  ```powershell
+  devp config set disabled_adapters go,composer   # leave Go and PHP projects alone
+  devp config set disabled_adapters -             # every adapter active again
+  ```
+
+  The value is the whole list every time, so read it before writing it. It is separate
+  from `enable_gradle` / `enable_maven` / `enable_swift`, which are off because undoing
+  those costs a recompile rather than a download — this one is a preference, and applies
+  to all eighteen adapters equally. The adapter checklist in `devp config wizard` is the
+  same setting with a list to tick.
+
+- **`devp trust`** answers "what is this thing actually allowed to do on my machine?" on
+  one screen, and separates the two halves of that question that usually get muddled.
+  The top section is what the code guarantees everywhere — registered repositories only,
+  a lockfile verified before every delete, symlinks refused, no telemetry endpoint, build
+  output never touched — and none of those rows has a setting behind it. The bottom
+  section is read live off this machine: whether the scheduler is installed, whether the
+  Git hooks register repositories on their own, how many are registered, the idle window,
+  the managed binary's path, and any setting you have switched on that widens what may
+  happen without you being asked.
+
+  There is deliberately no letter grade. `trust level: MEDIUM` tells nobody which switch
+  to look at, so the switches are listed by name instead, and `--json` gives them to a
+  script:
+
+  ```bash
+  devp trust
+  devp trust --json | jq -e '.summary.widened_count == 0'   # fails if anything is widened
+  ```
+
+- **`devp caches clear <MANAGER>`** empties one package manager's cache — or `all` of
+  them — after listing and sizing what is about to go. `devp caches` has printed the
+  right command for each manager since 1.2.0; this runs it for you, because doing it for
+  fourteen managers by hand is the kind of tedium people give up halfway through.
+
+  It goes through the manager's own subcommand wherever one exists (`npm cache clean
+  --force`, `pnpm store prune`, `go clean -modcache`), because the manager knows what is
+  still referenced and keeps its own bookkeeping consistent. The freed size is measured
+  afterwards rather than assumed, so a `prune` that deliberately kept half the store says
+  so.
+
+  This changes nothing about what runs on its own: no prune pass, no scheduled run and no
+  Git hook clears a cache, and none ever will. `clear` runs when you type it.
+
+  ```powershell
+  devp caches clear npm            # one manager, after confirming
+  devp caches clear all --dry-run  # everything that would go, nothing touched
+  devp caches clear all --yes      # no prompt, for a script
+  ```
+
+- **Seven more ecosystems**, taking the total to eighteen. Ruby **Bundler**
+  (`vendor/bundle`), **CocoaPods** (`Pods/`), PHP **Composer** (`vendor/`), Elixir
+  **Mix** (`deps/`), Python **PDM** (`.venv`) and **Pipenv** (its named virtualenv), and
+  **Swift Package Manager** (`.build/`). Each verifies its lockfile read-only before
+  anything is deleted and restores with the manager's own install command, exactly like
+  the eleven before them.
+
+  SwiftPM is opt-in — `devp config set enable_swift true` — for the same reason Gradle
+  and Maven are: `.build/` holds compiled modules that come back by recompiling, not by
+  downloading, so it is governed by `build_idle_days` rather than `idle_days`.
+
+- **`devp skill --agent` now writes rules for fifteen editors**, up from six. New:
+  `roo`, `kilocode`, `continue`, `amazon-q`, `kiro`, `trae`, `junie`, `gemini` and `zed`,
+  alongside `cursor`, `windsurf`, `antigravity`, `cline`, `copilot` and `agents-md`.
+
+  Ten of them get a file of their own. The other five share a file with every other tool
+  that reads it — `AGENTS.md`, `.github/copilot-instructions.md`, `GEMINI.md`,
+  `.junie/guidelines.md`, `.rules` — so dev-prune owns a marked block inside it and
+  leaves every byte outside the markers exactly as it found them. Running it twice
+  updates the block rather than stacking a second copy.
+
+  ```powershell
+  devp skill --agent zed
+  devp skill --help    # every value, with the exact file it writes
+  ```
+
+- **A 32-bit Windows build.** `dev-prune-v1.4.0-windows-x86.zip`, built from
+  `i686-pc-windows-msvc`, published alongside the six 64-bit archives and carried through
+  every channel: `install.ps1` installs it, `cargo binstall` resolves it, npm ships it as
+  `dev-prune-win32-ia32` and PyPI as the `win32` wheel. It exists for machines with no
+  64-bit mode at all — locked-down corporate images, industrial control PCs — which
+  1.3.1's installer correctly refused rather than handing them a binary they could not
+  run. Now there is one to hand them.
+
+  A 32-bit *shell* on 64-bit Windows still gets the x64 build: the installer reads the
+  machine's architecture, not the shell's. There is no 32-bit Linux, macOS or ARM build,
+  and [`docs/FUTURE.md`](docs/FUTURE.md) records why.
+
+  Because there are now two Windows builds that can end up on the same machine, `devp -v`
+  and `devp doctor` both say when the one you are running is not the one the machine
+  wants. `Architecture: x86` on its own reads as a statement about the laptop; it never
+  was — it is compiled into the binary — so on a 64-bit machine the line now finishes the
+  sentence, naming the machine's own architecture and the command that fetches the
+  matching build. `devp doctor` raises the same thing as a warning, never a failure: the
+  32-bit build works, it is just capped at 4 GB of address space for no reason.
+
+- **A repository you moved is recognised as the same repository.** Move or rename a
+  workspace and its registry entry used to die with the old path: `devp status` grew a
+  `Path missing` row nothing could prune, and the new location registered from scratch
+  with a lifetime total of zero. dev-prune now records each repository's root commit —
+  the one thing about it that survives a move — and when `devp link` or `devp init` finds
+  a repository whose root commit matches an entry whose path is gone, it takes over that
+  entry instead of starting a new one. The dead row disappears, and `added_at`, the prune
+  history, the lifetime total, `override_idle_days` and a repository you had disabled all
+  come across intact.
+
+  ```powershell
+  devp link .          # after moving the repo, from inside it
+  devp init ~/code     # or in bulk, for everything under a directory
+  ```
+
+  It happens on its own too: the Git hook links on first commit, so the first commit
+  after a move reconnects the history without you doing anything. Two missing entries
+  sharing one root commit are clones rather than a move, so nothing is guessed and
+  dev-prune says why. Entries registered before 1.4.0 carry no root commit yet — running
+  `devp init` over your code directory once records them, and every move after that is
+  recognised.
+
+### Fixed
+
+- **`devp doctor` no longer reports "Git hooks ✓ active" on a hook set that is silently
+  shadowing your repositories' own hooks.** The check only asked whether the hook files
+  existed and named a binary that is still there, both of which are true of a set
+  installed before this release — so the machine most affected by the bug above got a
+  clean bill of health. Doctor now inspects the hooks themselves, reports the missing
+  passthrough, and `devp doctor --fix` rewrites them.
+
+- **Git hooks installed by dev-prune no longer disable your repositories' own hooks.**
+  This is the important one in this release. Registering the auto-link hooks sets the
+  global `core.hooksPath`, and Git treats that as a *replacement* for `.git/hooks`, not
+  an addition — so on a machine where dev-prune had installed hooks, every
+  repository-local `pre-commit`, `commit-msg` and `pre-push` had quietly stopped
+  running. Lint gates, secret scanners and conventional-commit checks were being skipped
+  with nothing to indicate it, because a hook that never runs has no output to notice.
+  dev-prune now writes a shim for every hook name Git looks for, and each one ends by
+  `exec`ing your repository's own hook — same arguments, same stdin, same exit code, so a
+  `pre-commit` that fails still blocks the commit. Existing installations are repaired
+  automatically the first time 1.4.0 runs; nothing to do by hand. (`reference-transaction`
+  and `post-index-change` are deliberately left unshimmed — they fire hundreds of times
+  per fetch, and the shell spawns would be a cost you would feel. Use `--chain` if you
+  rely on either.)
+
+- **The status scan no longer aborts when the OS refuses a thread.** Under a low
+  `ulimit -u`, in a constrained container or on a busy machine, spawning a scan thread
+  can fail — and `devp status` would panic rather than scan. It now starts as many
+  threads as it is given, does the work on the calling thread as well, and falls back to
+  a single-threaded scan if it gets none at all. A slow scan instead of no scan.
+
+- **A plugin manager's throwaway clones no longer fill the registry.** `devp init` on a
+  home directory used to sweep up every `temp_git_1787245534782`-style checkout an editor
+  or plugin manager had left behind — twenty-eight of them on the machine that motivated
+  this — and they sat in `devp status` forever as rows that were never going to be pruned
+  and were never going to go away. Directories whose name begins `temp_git_`/`tmp_git_`,
+  and anything below a `cache`/`.cache`/`tmp` directory *inside* the scan root, are now
+  counted and skipped with one summary line instead of listed. `devp init ~/.cache/things`
+  still works: a directory you name outright is never second-guessed, and
+  `devp link <path>` registers any single repository regardless. Ones already registered
+  come out with `devp unlink <path>`.
+
+- **A failed package manager no longer dumps its usage screen into the report.** When
+  `npm ci` refused to run, dev-prune relayed all hundred-odd lines of npm's help text into
+  the middle of a prune summary, and the one line that said *why* was somewhere in it. The
+  output is now reduced to its diagnostic lines — plus the "complete log of this run can be
+  found in" pointer, which is the line you actually want next — and a count of what was
+  dropped. Every adapter and the `--json` document get this, not just npm.
+
+- **A Python version mismatch warning now tells you the command that fixes it.** Warning
+  that a venv was built with 3.12 while `python` on PATH is 3.14 left the reader to work
+  out the rest. It now prints the rebuild command underneath, `uv venv --python 3.12`
+  first because that one downloads the interpreter if the machine no longer has it, with
+  the `py -3.12 -m venv` form after it.
+
+- **`devp stats` no longer explains a version boundary that has stopped mattering.** The
+  "per-repository totals are recorded from 1.1.0 onward" line printed on every run, long
+  after everybody's numbers started at 1.1.0 anyway. It survives only in the case it was
+  written for: when there are no per-repository figures at all yet.
+
+- **Go is detected again.** dev-prune asked every package manager for its version with
+  `<manager> --version`, and Go is the one that does not answer to it: `go --version`
+  exits `2` with `flag provided but not defined: -version`, because the toolchain reads
+  everything after `go` as a subcommand and the answer is `go version`. So on every
+  machine with Go installed, dev-prune concluded Go was not.
+
+  That was visible as `devp doctor` reporting `go ! not on PATH` next to a working `go`,
+  and as `devp caches clear go` refusing to run. It was also invisible where it mattered
+  most: before deleting a Go module cache the adapter runs `go mod download` to prove
+  `go.sum` can rebuild it, and a manager it believes is absent falls back to the weaker
+  "is `go.mod` newer than `go.sum`?" check instead. Nothing was ever deleted without
+  *some* proof, but Go projects were pruned on the lesser one. They now get the real one.
+
+- **`devp doctor` says how to install a package manager it cannot find.** The warning
+  named the missing manager and stopped there, which left the one finding in the report
+  that came with no repair. Each now carries where to get it —
+  `go ! not on PATH … Install it: https://go.dev/dl/`.
+
+- **`devp status` no longer fills up with repositories that no longer exist.** The Git
+  hook registered every repository it saw its first commit in — including the throwaway
+  ones that tools create constantly: a test fixture in `mktemp -d`, a plugin manager's
+  checkout under `~/.claude/plugins/cache/temp_git_<id>`, anything under a `cache`,
+  `tmp`, `temp` or `node_modules` ancestor. They are deleted minutes later and their
+  registry entries are not, so one real dashboard reached thirty-four `Path missing` rows
+  that nothing could prune and nothing could find. The hook now declines to register
+  those unasked. `devp link` on one still works — this only stops it happening by
+  itself — and `devp unlink --missing` clears out what is already there.
+
+- **A repository no longer reads as "worked in today" because dev-prune wrote to it.**
+  Last activity is the newest modification time in the tree, and dev-prune's own writes
+  were counted as yours. `devp link` and `auto_config` write `.devprune.json`, so linking
+  eighty repositories in one afternoon reset all eighty activity clocks to that
+  afternoon; a `devp restore` stamps every file it puts back with the moment it ran. The
+  effect was a dashboard where every date was the day you set the tool up and nothing
+  ever went idle again — eighty repositories, zero candidates, and no error anywhere.
+  Files dev-prune writes and directories package managers refill are now excluded from
+  the scan.
+
+- **`devp status` sorts by what you can act on.** Rows were ordered by path, which on
+  Windows put every dead `C:\Users\…\Temp` entry above every live `V:\Code` one — the
+  rows that mattered started below the fold. The order is now: reclaimable, then present
+  but idle, then missing, and by path within each band.
+
+- **`devp doctor` stops reporting an older release as an upgrade.** It compared the
+  cached release string to the running version with `!=`, so a machine on 1.2.0 with
+  1.1.0 still in the cache was told to upgrade *to 1.1.0*, and a development build one
+  commit ahead of the tag was told the same. Versions are compared as versions now, and a
+  build newer than the last published release is reported as exactly that.
+
+- **The fix command for a failed lockfile check names the right directory.** It offered
+  `cd "<repository root>"; uv lock`, but the project that failed is `backend/`, not the
+  repository — so the command as printed either rebuilt a different project or found
+  nothing to rebuild, in exactly the monorepos where working out which directory was
+  meant is hardest. It now points at the project directory the adapter actually detected.
+  The same failure reported from inside `devp status` used to print the error alone, with
+  no fix command at all; it now prints what `devp run` prints.
+
+- **Virtual-environment warnings print a path you can paste.** The two `venv` notices —
+  an environment not named `.venv`, and one built against a different Python than the one
+  on `PATH` — printed the raw Windows spelling, `\?\V:\Code\…`, which no shell accepts.
+  Every other path in the tool was already cleaned; these three were not.
+
+- **The scanner stops descending into dependency trees.** `deps/` is full of Elixir
+  packages with their own `mix.exs`, and `.build/` of Swift checkouts with their own
+  `Package.swift`, so a crawl would register a dependency as a project of its own and
+  offer to prune inside something the parent rebuilds wholesale.
+
+### For contributors
+
+- Every dependency is on its current major again: `clap_mangen` 0.2 → 0.3 and `sha2` 0.10
+  → 0.11. Both were the whole of libraries.io's `-1` for outdated dependencies, which is
+  the only part of that score the repository itself controls. sha2 0.11 returns a
+  `hybrid_array::Array` rather than a `GenericArray`, so the digest is hex-encoded by hand
+  now; nothing else changed and the MSRV is untouched — the new crates all declare 1.85.
+
+- `scripts/check-version.sh` now also checks `npm/package.json`, which had sat at `1.1.0`
+  for three releases. `scripts/npm-prepare.sh` rewrites every version in it from the tag
+  before publishing, so the stale number never reached the registry — it reached readers.
+  The check pins the package count the prepare script asserts at the same time, so adding
+  a platform package and forgetting the count fails loudly at packaging time rather than
+  quietly at install time.
+- CI's `cross` job is a matrix over both non-native Windows targets
+  (`aarch64-pc-windows-msvc`, `i686-pc-windows-msvc`), and the `packaging` job fabricates
+  seven assets instead of six, so the 32-bit path through both packaging scripts is
+  exercised on every push rather than first at a tag.
+
 ## [1.3.1] - 2026-08-22
 
 Every release archive can now be proved to have come from this repository, the Windows

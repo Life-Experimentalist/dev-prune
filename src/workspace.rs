@@ -55,7 +55,21 @@ pub fn clamp_depth(requested: usize) -> usize {
 ///
 /// Hidden directories, virtual environments and nested repositories are excluded
 /// separately in [`is_scannable`] because they cannot be matched by name alone.
-const SKIP_DIRS: [&str; 4] = ["node_modules", "target", "vendor", "bower_components"];
+/// Several of these hold whole projects of their own: `deps/` is full of Elixir
+/// packages with their own `mix.exs`, `.build/` of Swift checkouts with their own
+/// `Package.swift`. Descending would register a dependency as a project and offer to
+/// prune inside something the parent repository rebuilds wholesale.
+const SKIP_DIRS: &[&str] = &[
+    "node_modules",
+    "target",
+    "vendor",
+    "bower_components",
+    "__pypackages__",
+    "Pods",
+    "deps",
+    "_build",
+    ".build",
+];
 
 /// A directory inside a repository that at least one package manager owns.
 pub struct Project {

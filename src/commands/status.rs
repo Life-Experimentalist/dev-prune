@@ -134,7 +134,26 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
 
     // Gather full per-repo detail for ALL registered repositories, then trim the list —
     // after the totals above, which are deliberately computed over all of them.
-    let repos = engine::take_top(&engine::get_full_status(&registry), top);
+    //
+    // Never on the `--json` path: the bar writes to stderr, but a machine-readable mode
+    // should produce one document and nothing else, and a progress bar in a log capture
+    // is noise a script has to learn to ignore.
+    let scan_bar = (!json_output).then(|| {
+        output::create_progress_bar("Scanning repositories", registry.repositories.len() as u64)
+    });
+    let repos = engine::take_top(
+        &engine::get_full_status_reporting(&registry, &|done, _total| {
+            if let Some(pb) = &scan_bar {
+                pb.set_position(done as u64);
+            }
+        }),
+        top,
+    );
+    if let Some(pb) = scan_bar {
+        // `finish_and_clear`, not `finish`: the dashboard is what the user asked for, and
+        // a completed progress bar left above it is scaffolding.
+        pb.finish_and_clear();
+    }
 
     // Both ends: the dashboard draws on stdout but reads keys from stdin, and with
     // stdin redirected it would open on a screen no keypress can ever leave.
@@ -196,6 +215,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                                     bloat_dir: result.bloat_dir.clone(),
                                     adapter: result.adapter_name.clone(),
                                     size_freed: result.size_freed,
+                                    runtime: result.runtime.clone(),
                                 });
                                 output::print_success(&format!(
                                     "{} → {} ({}) — {}",
@@ -207,11 +227,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                             }
                             PruneStatus::LockfileError(e) => {
                                 error_count += 1;
-                                output::print_error(&format!(
-                                    "{} lockfile sync failed: {}",
-                                    output::clean_path(&result.repo_path),
-                                    e,
-                                ));
+                                crate::commands::run::report_lockfile_failure(&result, e);
                             }
                             PruneStatus::DeleteError(e) => {
                                 error_count += 1;
@@ -225,6 +241,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                                         bloat_dir: result.bloat_dir.clone(),
                                         adapter: result.adapter_name.clone(),
                                         size_freed: result.size_freed,
+                                        runtime: result.runtime.clone(),
                                     });
                                 }
                                 output::print_error(&format!(

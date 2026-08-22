@@ -9,8 +9,8 @@
     <!-- Primary Meta Tags -->
     <title>dev-prune (devp) — Lockfile-Safe node_modules, .venv, target &amp; vendor Cleaner</title>
     <meta name="title" content="dev-prune (devp) — Lockfile-Safe node_modules, .venv, target & vendor Cleaner" />
-    <meta name="description" content="dev-prune reclaims disk space from idle Git repositories by deleting node_modules, .venv, target and vendor — but only after the package manager proves a lockfile can rebuild them. Rust CLI for Windows, macOS and Linux. Free and open source." />
-    <meta name="keywords" content="dev-prune, devp, node_modules cleaner, delete node_modules, .venv cleaner, cargo target cleaner, go vendor, disk space, rust cli, monorepo, lockfile safety, npm, pnpm, yarn, bun, uv, pip, cargo, go, developer tools" />
+    <meta name="description" content="dev-prune reclaims disk space from idle Git repositories by deleting node_modules, .venv, target, vendor, Pods and deps — but only after the package manager proves a lockfile can rebuild them. Eighteen ecosystems, and any of them can be switched off. Rust CLI for Windows, macOS and Linux. Free and open source." />
+    <meta name="keywords" content="dev-prune, devp, node_modules cleaner, delete node_modules, .venv cleaner, cargo target cleaner, go vendor, composer vendor, cocoapods Pods, elixir deps, disk space, reclaim disk space, rust cli, monorepo, lockfile safety, npm, pnpm, yarn, bun, uv, poetry, pdm, pipenv, pip, cargo, go, composer, bundler, cocoapods, mix, gradle, maven, swiftpm, developer tools" />
     <meta name="author" content="VKrishna04" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
     <link rel="canonical" href="https://devprune.vkrishna04.me/" />
@@ -20,7 +20,7 @@
     <meta property="og:site_name" content="dev-prune" />
     <meta property="og:url" content="https://devprune.vkrishna04.me/" />
     <meta property="og:title" content="dev-prune (devp) — Lockfile-Safe Workspace Pruner" />
-    <meta property="og:description" content="Reclaim disk space from idle Git repositories. Nothing is deleted until a lockfile proves it can be rebuilt. Eight package managers, any number of them per repository." />
+    <meta property="og:description" content="Reclaim disk space from idle Git repositories. Nothing is deleted until a lockfile proves it can be rebuilt. Eighteen package managers, any number of them per repository, and any of them switchable off." />
     <!-- JPEG, not PNG: both Twitter (5 MB) and Slack drop a card whose image exceeds
          their ceiling rather than resizing it, and 1200×630 is the size every scraper
          crops to — shipping it pre-cropped is the only way to know what they show. -->
@@ -90,15 +90,16 @@
           "operatingSystem": "Windows, macOS, Linux",
           "applicationCategory": "DeveloperApplication",
           "applicationSubCategory": "Command Line Utility",
-          "softwareVersion": "1.2.0",
+          "softwareVersion": "1.4.0",
           "programmingLanguage": "Rust",
           "license": "https://www.apache.org/licenses/LICENSE-2.0",
           "isAccessibleForFree": true,
           "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
-          "description": "Universal, lockfile-safe workspace pruner and background dependency cleaner. Deletes node_modules, .venv, target and vendor from idle Git repositories only after the package manager confirms a lockfile can rebuild them.",
+          "description": "Universal, lockfile-safe workspace pruner and background dependency cleaner. Deletes node_modules, .venv, target, vendor, Pods and deps from idle Git repositories only after the package manager confirms a lockfile can rebuild them.",
           "featureList": [
             "Lockfile-verified deletion that no flag can bypass",
-            "Eight package managers: npm, pnpm, yarn, bun, uv, pip/venv, cargo, go",
+            "Eighteen adapters: npm, pnpm, yarn, bun, uv, poetry, pdm, pipenv, pip/venv, cargo, go, composer, bundler, cocoapods, mix, and opt-in gradle, maven and swift",
+            "Any adapter can be switched off individually with disabled_adapters",
             "Any number of ecosystems per repository, at any depth",
             "Idle detection from git log and source file modification times",
             "One-command dependency restore",
@@ -158,6 +159,38 @@
               "acceptedAnswer": {
                 "@type": "Answer",
                 "text": "Run devp restore in the project, or devp restore <path>. Each project in the tree is reinstalled by its own manager: npm ci, pnpm install --frozen-lockfile, uv sync, go mod vendor, and so on."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Is it safe to delete node_modules?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "It is safe when a lockfile can put it back, and unsafe when one cannot — which is the distinction dev-prune enforces rather than assumes. Before deleting node_modules it runs the manager's own read-only check (npm ci --dry-run, pnpm install --lockfile-only --frozen-lockfile, and so on). If that check fails, the directory stays and the exact fix is printed. Deleting it by hand skips that step entirely, which is why a stale or missing lockfile only becomes visible at the worst moment."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "How do I delete node_modules from every project at once?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Register the repositories once with devp link ~/code --recursive, then run devp run. Every registered repository that has been idle long enough is verified and pruned in one pass, and devp status shows what would be reclaimed before you commit to anything. A single project is devp run . in that directory."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Does dev-prune delete build output like dist/, .next/ or target/?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "dist/ and .next/ are never touched, and there is no setting that makes them candidates. No lockfile can prove a build output is reproducible, so it falls outside the guarantee the tool is built on. Cargo's target/ is deleted because cargo metadata --locked proves the crates come back from Cargo.lock; Gradle's build/, Maven's target/ and SwiftPM's .build/ are deleted only if you opt in, and then only after a much longer idle window, because they come back by recompiling rather than downloading."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Can I stop dev-prune from touching one language or package manager?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes, per adapter. devp config set disabled_adapters go,composer makes dev-prune behave as though Go and Composer were not installed: not detected, not counted in stats, not probed for by doctor, never pruned and never restored. devp config set disabled_adapters - turns them all back on, and devp config wizard offers the same list as a checklist."
               }
             },
             {

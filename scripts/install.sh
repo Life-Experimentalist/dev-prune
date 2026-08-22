@@ -76,7 +76,7 @@ REPO="Life-Experimentalist/dev-prune"
 # /releases/latest carries the tag, so one HEAD request answers without parsing JSON.
 # FALLBACK_VERSION exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-FALLBACK_VERSION="1.3.1"
+FALLBACK_VERSION="1.4.0"
 if [ -z "$VERSION" ]; then
     LATEST_URL="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
     case "$LATEST_URL" in
@@ -92,12 +92,6 @@ echo "-> Installing dev-prune v${VERSION}"
 RAW_OS="$(uname -s)"
 ARCH="$(uname -m)"
 
-case "$ARCH" in
-    x86_64|amd64) TARGET_ARCH="x64" ;;
-    aarch64|arm64) TARGET_ARCH="arm64" ;;
-    *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
-esac
-
 # Git Bash, MSYS2 and Cygwin are POSIX shells on Windows: the same script can serve
 # them, but the asset, the file extension and the install directory are all Windows'.
 case "$RAW_OS" in
@@ -105,6 +99,27 @@ case "$RAW_OS" in
     Darwin) OS="darwin" ;;
     Linux) OS="linux" ;;
     *) echo "Unsupported operating system: $RAW_OS" >&2; exit 1 ;;
+esac
+
+# The OS is resolved first because 32-bit is not a portable answer: a 32-bit x86 build
+# is published for Windows and for nothing else. On Linux `i686` has to be refused, and
+# refusing is the point -- installing the x64 asset on a machine that cannot run it
+# produces "cannot execute binary file", which names nothing.
+case "$ARCH" in
+    x86_64|amd64) TARGET_ARCH="x64" ;;
+    aarch64|arm64) TARGET_ARCH="arm64" ;;
+    i386|i486|i586|i686)
+        # A 32-bit MSYS or Cygwin on 64-bit Windows also reports i686. It gets the x86
+        # build, which is correct for it: a 32-bit process cannot load a 64-bit image.
+        if [ "$OS" = "windows" ]; then
+            TARGET_ARCH="x86"
+        else
+            echo "Unsupported architecture: $ARCH. The 32-bit x86 build is published for Windows only." >&2
+            echo "Build one from source instead: cargo install dev-prune" >&2
+            exit 1
+        fi
+        ;;
+    *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
 if [ "$OS" = "windows" ]; then

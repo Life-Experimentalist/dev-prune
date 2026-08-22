@@ -6,11 +6,11 @@
 #
 # Produces one package per platform, each holding the real binary and marked with `os`
 # and `cpu` so npm installs exactly the matching one, plus the `dev-prune` dispatcher
-# that depends on all six as optionalDependencies. This is the esbuild/biome layout, and
-# it is why `npx dev-prune` works with nothing installed beforehand.
+# that depends on all seven as optionalDependencies. This is the esbuild/biome layout,
+# and it is why `npx dev-prune` works with nothing installed beforehand.
 #
-# The platform manifests are generated rather than checked in: six near-identical files
-# whose only job is to carry the version are six files that drift.
+# The platform manifests are generated rather than checked in: seven near-identical
+# files whose only job is to carry the version are seven files that drift.
 #
 # Usage: scripts/npm-prepare.sh <version> <assets-dir> <out-dir>
 #   assets-dir  holds dev-prune-v<version>-<os>-<arch>.{tar.gz,zip} from the build job
@@ -91,6 +91,7 @@ darwin  x64    darwin  x64    tar
 darwin  arm64  darwin  arm64  tar
 windows x64    win32   x64    zip
 windows arm64  win32   arm64  zip
+windows x86    win32   ia32   zip
 TARGETS
 
 # The dispatcher. Its own version and every optionalDependency version are rewritten
@@ -109,8 +110,8 @@ sed -e "s/\"version\": \"[^\"]*\"/\"version\": \"$version\"/" \
 # at the previous version installs the previous binary, which is a far quieter failure
 # than not installing at all.
 stale=$(grep -c "\"$version\"" "$dispatcher/package.json" || true)
-if [ "$stale" -ne 7 ]; then
-    echo "expected 7 occurrences of $version in the dispatcher manifest, found $stale" >&2
+if [ "$stale" -ne 8 ]; then
+    echo "expected 8 occurrences of $version in the dispatcher manifest, found $stale" >&2
     cat "$dispatcher/package.json" >&2
     exit 1
 fi

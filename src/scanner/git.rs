@@ -15,7 +15,37 @@ use anyhow::{Context, Result};
 use walkdir::WalkDir;
 
 /// Directories to exclude when scanning file mtimes.
-const EXCLUDED_DIRS: &[&str] = &[".git", "node_modules", ".venv", "venv", "target", "vendor"];
+///
+/// Every one of these is a directory some adapter deletes and some package manager
+/// refills. Counting what a manager wrote there as the user's activity is how a
+/// repository that was pruned and restored last week reads as touched today: the
+/// restore stamps every file in the tree with the moment it ran. Plain `build/` is
+/// deliberately not here — outside a Gradle project that name usually holds build
+/// scripts people edit, and suppressing those would hide real work.
+const EXCLUDED_DIRS: &[&str] = &[
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "target",
+    "vendor",
+    "__pypackages__",
+    "Pods",
+    "deps",
+    "_build",
+    ".build",
+    ".gradle",
+];
+
+/// Files whose mtime is dev-prune's own bookkeeping rather than the user's work.
+///
+/// `.devprune.json` is written by `auto_config` and by `devp init`, so on a machine where
+/// every repository was linked in one afternoon every repository also has a file modified
+/// that afternoon — and `get_last_activity` returns the newest mtime in the tree. The
+/// effect was that linking a workspace reset every repository's activity clock to *now*
+/// and no repository could go idle again until the user next edited it. Eighty tracked
+/// repositories, zero candidates, and nothing anywhere reporting a fault.
+const EXCLUDED_FILES: &[&str] = &[crate::constants::PER_REPO_CONFIG_FILE];
 
 /// Depth ceiling for the mtime fallback walk, matching the repo-discovery scan.
 ///
@@ -41,6 +71,33 @@ pub fn git_in(repo_path: &Path) -> Command {
         .env_remove("GIT_OBJECT_DIRECTORY")
         .current_dir(repo_path);
     cmd
+}
+
+/// A repository's root commit — the one identifier that survives being moved.
+///
+/// The registry is keyed by path, so a workspace that is moved or renamed looks like a
+/// repository that vanished and a different one that appeared: the prune history is
+/// stranded on a path that will never exist again, and the same project registers a
+/// second time from scratch. The root commit is identical on both sides of that move,
+/// which is what lets `link` and `init` join them back up.
+///
+/// `None` when the repository has no commits yet, or when git refuses to answer. There
+/// is nothing to identify an empty repository by, and a guess would be worse than the
+/// dead entry it replaced.
+pub fn repo_identity(repo_path: &Path) -> Option<String> {
+    let output = git_in(repo_path)
+        .args(["rev-list", "--max-parents=0", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    // A history with more than one root — a subtree merge, a graft — lists them newest
+    // first. The last is the oldest, and it is the one that does not change when
+    // another root is merged in later.
+    let hash = text.split_whitespace().next_back()?;
+    (hash.len() >= 7 && hash.chars().all(|c| c.is_ascii_hexdigit())).then(|| hash.to_string())
 }
 
 /// Get the timestamp of the most recent commit in a repository.
@@ -87,8 +144,9 @@ pub fn get_last_commit_time(repo_path: &Path) -> Result<Option<SystemTime>> {
 
 /// Scan all source files in a repo and return the latest `mtime`.
 ///
-/// Used as a fallback for empty repos (no commits). Excludes bloat directories
-/// and the `.git` folder itself.
+/// Used as a fallback for empty repos (no commits). Excludes bloat directories, the
+/// `.git` folder itself, and every file dev-prune writes into a repository — see
+/// [`EXCLUDED_FILES`].
 pub fn get_mtime_activity(repo_path: &Path) -> Result<Option<SystemTime>> {
     let mut latest: Option<SystemTime> = None;
 
@@ -99,7 +157,7 @@ pub fn get_mtime_activity(repo_path: &Path) -> Result<Option<SystemTime>> {
         .into_iter()
         .filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
-            !EXCLUDED_DIRS.contains(&name.as_ref())
+            !EXCLUDED_DIRS.contains(&name.as_ref()) && !EXCLUDED_FILES.contains(&name.as_ref())
         });
 
     for entry in walker.flatten() {
@@ -251,6 +309,28 @@ mod tests {
         // The root dir itself might return something, but no source files
         // This just verifies it doesn't crash
         assert!(activity.is_some() || activity.is_none());
+    }
+
+    #[test]
+    fn a_repo_whose_only_new_file_is_dev_prunes_own_config_is_not_active() {
+        // The bug this pins: `devp link` writes `.devprune.json`, the activity scan saw
+        // it, and every linked repository read as "worked in today" forever.
+        let tmp = TempDir::new().unwrap();
+        fs::write(
+            tmp.path().join(crate::constants::PER_REPO_CONFIG_FILE),
+            "{}",
+        )
+        .unwrap();
+        assert!(
+            get_mtime_activity(tmp.path()).unwrap().is_none(),
+            "`.devprune.json` must not count as user activity"
+        );
+
+        fs::write(tmp.path().join("main.rs"), "fn main() {}").unwrap();
+        assert!(
+            get_mtime_activity(tmp.path()).unwrap().is_some(),
+            "a real source file still counts"
+        );
     }
 
     #[test]

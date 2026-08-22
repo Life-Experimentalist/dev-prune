@@ -17,13 +17,20 @@
 // See [../../docs/ADDING_ADAPTERS.md] for a detailed guide.
 
 pub mod bun;
+pub mod bundler;
 pub mod cargo_adapter;
+pub mod cocoapods;
+pub mod composer;
 pub mod go;
 pub mod gradle;
 pub mod maven;
+pub mod mix;
 pub mod npm;
+pub mod pdm;
+pub mod pipenv;
 pub mod pnpm;
 pub mod poetry;
+pub mod swift;
 pub mod uv;
 pub mod venv;
 pub mod yarn;
@@ -112,14 +119,33 @@ pub trait PackageManager: Send + Sync {
     /// not: it prunes any folder carrying a `pyvenv.cfg` — `venv`, `env`, `my_env` — and
     /// without the recorded name it would rebuild the environment as `.venv`, leaving
     /// every activate script, IDE interpreter path and Makefile pointing at nothing.
+    /// `runtime` is the interpreter tag recorded when the directory was deleted (see
+    /// [`crate::config::PrunedDir::runtime`]). `None` means nothing was recorded, or the
+    /// caller has decided this machine cannot honour it; either way the manager should
+    /// fall back to whatever it would have used before.
     fn restore_named(
         &self,
         project_path: &Path,
         dir_name: &str,
+        runtime: Option<&str>,
         timeout: std::time::Duration,
     ) -> Result<()> {
-        let _ = dir_name;
+        let _ = (dir_name, runtime);
         self.restore(project_path, timeout)
+    }
+
+    /// The language runtime a bloat directory is built against, recorded at prune time.
+    ///
+    /// Only the Python managers answer this. A `node_modules` is rebuilt by the same
+    /// `npm ci` whichever Node is installed, and cargo and go pin their toolchains in
+    /// files that are already in the repository — but a virtual environment is a
+    /// *copy* of one specific interpreter, and rebuilding it on a different one silently
+    /// changes which wheels resolve.
+    ///
+    /// `dir_name` is the directory about to be deleted, relative to `project_path`.
+    fn runtime_tag(&self, project_path: &Path, dir_name: &str) -> Option<String> {
+        let _ = (project_path, dir_name);
+        None
     }
 
     /// The file this manager rebuilds its bloat directory from.
@@ -185,11 +211,18 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(bun::Bun),
         Box::new(uv::Uv),
         Box::new(poetry::Poetry),
+        Box::new(pdm::Pdm),
+        Box::new(pipenv::Pipenv),
         Box::new(venv::Venv),
         Box::new(cargo_adapter::Cargo),
         Box::new(go::Go),
+        Box::new(composer::Composer),
+        Box::new(bundler::Bundler),
+        Box::new(cocoapods::CocoaPods),
+        Box::new(mix::Mix),
         Box::new(gradle::Gradle),
         Box::new(maven::Maven),
+        Box::new(swift::Swift),
     ]
 }
 
@@ -212,10 +245,57 @@ fn opt_in_enabled() -> &'static [String] {
                 if r.settings.enable_maven {
                     names.push("maven".to_string());
                 }
+                if r.settings.enable_swift {
+                    names.push("swift".to_string());
+                }
                 names
             })
             .unwrap_or_default()
     })
+}
+
+/// The adapters switched off by name in `disabled_adapters`, resolved once per process.
+///
+/// The mirror image of [`opt_in_enabled`], and read at the same single funnel for the
+/// same reason: an adapter someone has turned off should not appear in `status`, be
+/// counted by `stats`, or be probed for by `doctor` — "off" that still shows up
+/// everywhere is not off.
+fn user_disabled() -> &'static [String] {
+    static DISABLED: OnceLock<Vec<String>> = OnceLock::new();
+    DISABLED.get_or_init(|| {
+        crate::config::Registry::load()
+            .map(|r| {
+                r.settings
+                    .disabled_adapters
+                    .iter()
+                    .map(|n| n.trim().to_ascii_lowercase())
+                    .filter(|n| !n.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+/// Whether `name` is a real adapter name, for validating what the user typed.
+pub fn is_adapter_name(name: &str) -> bool {
+    get_all_adapters().iter().any(|a| a.name() == name)
+}
+
+/// Every adapter name, in registry order, for error messages and pickers.
+pub fn all_adapter_names() -> Vec<&'static str> {
+    get_all_adapters().iter().map(|a| a.name()).collect()
+}
+
+/// The adapters that need their own `enable_*` switch as well as not being disabled.
+///
+/// Two switches govern these, and a picker that ticks one without saying so leaves the
+/// user watching nothing happen.
+pub fn opt_in_adapter_names() -> Vec<&'static str> {
+    get_all_adapters()
+        .iter()
+        .filter(|a| a.opt_in())
+        .map(|a| a.name())
+        .collect()
 }
 
 /// Detect which adapters apply to a given project directory.
@@ -228,6 +308,7 @@ pub fn detect_adapters(project_path: &Path) -> Vec<Box<dyn PackageManager>> {
     let mut detected: Vec<Box<dyn PackageManager>> = get_all_adapters()
         .into_iter()
         .filter(|adapter| !adapter.opt_in() || opt_in_enabled().iter().any(|n| n == adapter.name()))
+        .filter(|adapter| !user_disabled().iter().any(|n| n == adapter.name()))
         .filter(|adapter| adapter.detect(project_path))
         .collect();
     resolve_conflicts(project_path, &mut detected);
@@ -271,31 +352,48 @@ fn resolve_js_conflict(project_path: &Path, detected: &mut Vec<Box<dyn PackageMa
     detected.retain(|a| !JS_MANAGERS.contains(&a.name()) || a.name() == winner);
 }
 
-/// Give uv sole ownership of the Python environment whenever it applies.
+/// Give one lockfile-backed Python manager sole ownership of the environment directory.
 ///
-/// uv and the plain-venv adapter both point at the same virtual environment directory.
-/// uv is the more capable of the two — it has a real lockfile and can rebuild the
-/// environment exactly — so it takes the project whenever it recognises one, and the
-/// `requirements.txt` + `pyvenv.cfg` adapter picks up everything else.
+/// uv, poetry, pdm and pipenv all point at the same in-project `.venv`, and so does the
+/// plain-venv adapter. Running the wrong one's `enforce_lockfile` would sync a lockfile
+/// the project does not use, so pick deliberately:
+///
+/// 1. Any of the four displaces `venv`. They have real lockfiles and rebuild the
+///    environment exactly; `requirements.txt` cannot promise that, so it is the
+///    fallback for projects none of them recognises.
+/// 2. Between themselves — usually a half-finished migration — the one whose lockfile
+///    is actually on disk built the tree we are about to delete. With several or none
+///    present, the tie goes to whichever comes first in [`get_all_adapters()`].
+const PYTHON_ENV_MANAGERS: [(&str, &str); 4] = [
+    ("uv", "uv.lock"),
+    ("poetry", "poetry.lock"),
+    ("pdm", "pdm.lock"),
+    ("pipenv", "Pipfile.lock"),
+];
+
 fn resolve_python_conflict(project_path: &Path, detected: &mut Vec<Box<dyn PackageManager>>) {
-    if detected.iter().any(|a| a.name() == "uv") {
-        detected.retain(|a| a.name() != "venv");
+    let claimants: Vec<(&str, &str)> = PYTHON_ENV_MANAGERS
+        .iter()
+        .copied()
+        .filter(|(name, _)| detected.iter().any(|a| a.name() == *name))
+        .collect();
+    let Some(&(first, _)) = claimants.first() else {
+        return;
+    };
+    detected.retain(|a| a.name() != "venv");
+    if claimants.len() < 2 {
+        return;
     }
-    // uv and poetry both claim `.venv`. When both detect — usually a half-finished
-    // migration — the one whose lockfile actually exists is the one that built the tree;
-    // with both or neither on disk, uv keeps the tie by `get_all_adapters()` order.
-    let uv_detected = detected.iter().any(|a| a.name() == "uv");
-    let poetry_detected = detected.iter().any(|a| a.name() == "poetry");
-    if uv_detected && poetry_detected {
-        let loser = if !project_path.join("uv.lock").exists()
-            && project_path.join("poetry.lock").exists()
-        {
-            "uv"
-        } else {
-            "poetry"
-        };
-        detected.retain(|a| a.name() != loser);
-    }
+    let winner = claimants
+        .iter()
+        .find(|(_, lockfile)| project_path.join(lockfile).exists())
+        .map_or(first, |(name, _)| *name);
+    detected.retain(|a| {
+        a.name() == winner
+            || !PYTHON_ENV_MANAGERS
+                .iter()
+                .any(|(name, _)| *name == a.name())
+    });
 }
 
 /// The manager that actually installed the `node_modules` tree currently on disk.
@@ -513,10 +611,27 @@ pub fn binary_available(program: &str) -> bool {
     available
 }
 
-/// The actual `<program> --version` spawn behind [`binary_available`].
+/// Programs that do not answer `--version`, and what to ask them instead.
+///
+/// `go --version` is not a typo for `go version`: the Go toolchain parses everything
+/// after `go` as a subcommand, rejects the flag with `flag provided but not defined:
+/// -version` and exits 2. A probe reading that as "not installed" is wrong on every
+/// machine with Go on it, and wrong in a way that silently weakens things — the Go
+/// adapter skips `go mod download` verification when it believes `go` is absent.
+const VERSION_PROBE_ARGS: [(&str, &[&str]); 1] = [("go", &["version"])];
+
+/// The arguments that make `program` print its version and exit `0`.
+fn version_probe_args(program: &str) -> &'static [&'static str] {
+    VERSION_PROBE_ARGS
+        .iter()
+        .find(|(name, _)| *name == program)
+        .map_or(&["--version"], |(_, args)| *args)
+}
+
+/// The actual version-probe spawn behind [`binary_available`].
 fn probe_binary(program: &str) -> bool {
     crate::spawn::command(resolve_program(program))
-        .arg("--version")
+        .args(version_probe_args(program))
         .stdin(std::process::Stdio::null())
         .output()
         .map(|o| o.status.success())
@@ -630,7 +745,10 @@ pub fn run_command_with_timeout(
             program,
             args.join(" "),
             out.status.code(),
-            out.stderr.trim()
+            crate::output::condense_tool_output(
+                &out.stderr,
+                crate::constants::TOOL_OUTPUT_MAX_LINES
+            )
         )
     }
 }
@@ -655,7 +773,10 @@ pub fn capture_command_with_timeout(
             program,
             args.join(" "),
             out.status.code(),
-            out.stderr.trim()
+            crate::output::condense_tool_output(
+                &out.stderr,
+                crate::constants::TOOL_OUTPUT_MAX_LINES
+            )
         )
     }
 }
@@ -697,6 +818,8 @@ fn refuse_if_manifest_newer(lockfile: &Path, program: &str, cwd: &Path) -> Resul
         Some("uv.lock") | Some("poetry.lock") | Some("pdm.lock") => "pyproject.toml",
         Some("go.sum") => "go.mod",
         Some("composer.lock") => "composer.json",
+        Some("Gemfile.lock") => "Gemfile",
+        Some("Pipfile.lock") => "Pipfile",
         _ => return Ok(()),
     };
     let manifest = cwd.join(manifest_name);
@@ -713,6 +836,39 @@ fn refuse_if_manifest_newer(lockfile: &Path, program: &str, cwd: &Path) -> Resul
                  recently than `{}` — the lockfile may no longer record the current \
                  dependencies, and without `{program}` that cannot be verified. Install \
                  {program} and run its lockfile sync, then prune again.",
+            lockfile.display()
+        );
+    }
+    Ok(())
+}
+
+/// The lockfile-freshness proof for managers that have no read-only check of their own.
+///
+/// CocoaPods, Mix and SwiftPM all rebuild from a lockfile, and not one of them offers a
+/// command that compares the lockfile to the manifest without also resolving over the
+/// network — `pod install`, `mix deps.get` and `swift package resolve` all *fix* the
+/// drift rather than reporting it, which is a write in the middle of a delete pass. The
+/// timestamps are the only offline evidence there is, so they are the evidence used: a
+/// manifest edited after its lockfile means the lockfile may no longer describe the
+/// dependency set, and a directory only a stale lockfile can rebuild is not recoverable
+/// in the sense this tool promises.
+pub fn refuse_if_manifest_stale(
+    manifest: &Path,
+    lockfile: &Path,
+    sync_command: &str,
+) -> Result<()> {
+    let (Ok(manifest_meta), Ok(lock_meta)) =
+        (std::fs::metadata(manifest), std::fs::metadata(lockfile))
+    else {
+        return Ok(());
+    };
+    if let (Ok(manifest_mtime), Ok(lock_mtime)) = (manifest_meta.modified(), lock_meta.modified())
+        && manifest_mtime > lock_mtime + MANIFEST_MTIME_TOLERANCE
+    {
+        anyhow::bail!(
+            "`{}` has been edited more recently than `{}` — the lockfile may no longer \
+             record the current dependencies. Run `{sync_command}` and prune again.",
+            manifest.display(),
             lockfile.display()
         );
     }
@@ -880,6 +1036,176 @@ pub fn lock_sync_or_verify(
     )
 }
 
+/// Adapters with no binary worth probing before a restore: venv rebuilds through
+/// whichever `python` the user has, and the build-tool adapters restore by the project's
+/// next compile rather than by a command dev-prune runs.
+/// Filename every virtual environment carries, and the only reliable record of which
+/// interpreter built it.
+const PYVENV_CFG: &str = "pyvenv.cfg";
+
+/// The `major.minor` a virtual environment was built with, as `"3.12"`.
+///
+/// Read from the environment's own `pyvenv.cfg`, which CPython writes at creation time
+/// and never updates — which is exactly what makes it a record of the *original*
+/// interpreter rather than of whatever is on `PATH` now. `None` when the directory is
+/// not a virtual environment, or is one written by something that omitted the key.
+pub(crate) fn venv_runtime_tag(venv: &Path) -> Option<String> {
+    let cfg = std::fs::read_to_string(venv.join(PYVENV_CFG)).ok()?;
+    for line in cfg.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if matches!(key.trim(), "version" | "version_info") {
+            let mut parts = value.trim().split('.');
+            let major: u64 = parts.next()?.parse().ok()?;
+            let minor: u64 = parts.next()?.parse().ok()?;
+            return Some(format!("{major}.{minor}"));
+        }
+    }
+    None
+}
+
+/// A runtime tag is spliced into a command line, so it has to be proved to be a version
+/// number before it gets there. The registry is a file on disk; a hand-edited or
+/// corrupted entry must not be able to turn a restore into `python --version; rm -rf /`.
+pub(crate) fn is_valid_runtime_tag(tag: &str) -> bool {
+    let mut parts = tag.split('.');
+    let (Some(major), Some(minor), None) = (parts.next(), parts.next(), parts.next()) else {
+        return false;
+    };
+    !major.is_empty()
+        && !minor.is_empty()
+        && major.len() <= 2
+        && minor.len() <= 3
+        && major.bytes().all(|b| b.is_ascii_digit())
+        && minor.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// How to invoke one specific Python `major.minor`: the program, and the arguments that
+/// must come before anything else.
+///
+/// Windows ships the `py` launcher, which knows about every interpreter the machine has
+/// registered and takes the version as a flag. Everywhere else the convention is a
+/// separate `python3.12` binary on `PATH`. Returns `None` for a tag that is not a plain
+/// version number.
+pub(crate) fn python_launcher(tag: &str) -> Option<(String, Vec<String>)> {
+    if !is_valid_runtime_tag(tag) {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        Some(("py".to_string(), vec![format!("-{tag}")]))
+    }
+    #[cfg(not(windows))]
+    {
+        Some((format!("python{tag}"), Vec::new()))
+    }
+}
+
+/// The absolute path of one specific Python `major.minor`, asked of the interpreter
+/// itself.
+///
+/// The launcher form is enough to *run* an interpreter, but not to name one to a tool
+/// that wants a path — `poetry env use` is the case in hand, and `poetry env use py` is
+/// not a thing. Returns `None` when that version is not installed, which makes this an
+/// availability check as well.
+pub(crate) fn python_executable(tag: &str) -> Option<String> {
+    let (program, prefix) = python_launcher(tag)?;
+    let out = crate::spawn::command(resolve_program(&program))
+        .args(&prefix)
+        .args(["-c", "import sys; print(sys.executable)"])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!path.is_empty()).then_some(path)
+}
+
+/// Whether this machine can actually run that interpreter.
+///
+/// Asked before a restore commits to it, because the recorded version is a fact about
+/// the machine the prune ran on, and the restore may well be happening somewhere else.
+pub(crate) fn python_runtime_available(tag: &str) -> bool {
+    let Some((program, prefix)) = python_launcher(tag) else {
+        return false;
+    };
+    crate::spawn::command(resolve_program(&program))
+        .args(&prefix)
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+const NO_RESTORE_BINARY: [&str; 4] = ["venv", "gradle", "maven", "swift"];
+
+/// Adapters whose executable is not called what the adapter is called.
+const ADAPTER_BINARIES: [(&str, &str); 2] = [("bundler", "bundle"), ("cocoapods", "pod")];
+
+/// The executable that restores for a given adapter.
+pub fn adapter_binary(adapter: &str) -> &str {
+    ADAPTER_BINARIES
+        .iter()
+        .find(|(name, _)| *name == adapter)
+        .map_or(adapter, |(_, binary)| *binary)
+}
+
+/// Where to get each package manager, for the one report that has to say so.
+///
+/// `devp doctor` naming a missing manager without saying how to get it is a finding the
+/// reader has to go and research; every other finding it prints carries its own repair.
+const INSTALL_HINTS: [(&str, &str); 14] = [
+    ("npm", "ships with Node.js — https://nodejs.org"),
+    (
+        "pnpm",
+        "`npm install -g pnpm` — https://pnpm.io/installation",
+    ),
+    (
+        "yarn",
+        "`corepack enable` — https://yarnpkg.com/getting-started/install",
+    ),
+    ("bun", "https://bun.sh/docs/installation"),
+    (
+        "uv",
+        "https://docs.astral.sh/uv/getting-started/installation/",
+    ),
+    ("poetry", "https://python-poetry.org/docs/#installation"),
+    (
+        "pdm",
+        "`uv tool install pdm` — https://pdm-project.org/en/latest/#installation",
+    ),
+    (
+        "pipenv",
+        "`uv tool install pipenv` — https://pipenv.pypa.io/en/latest/installation.html",
+    ),
+    ("cargo", "ships with Rust — https://rustup.rs"),
+    ("go", "https://go.dev/dl/"),
+    ("composer", "https://getcomposer.org/download/"),
+    ("bundler", "`gem install bundler` — https://bundler.io"),
+    (
+        "cocoapods",
+        "`gem install cocoapods` — https://cocoapods.org",
+    ),
+    (
+        "mix",
+        "ships with Elixir — https://elixir-lang.org/install.html",
+    ),
+];
+
+/// How to install the manager behind `adapter`, if there is a one-line answer.
+pub fn install_hint(adapter: &str) -> Option<&'static str> {
+    INSTALL_HINTS
+        .iter()
+        .find(|(name, _)| *name == adapter)
+        .map(|(_, hint)| *hint)
+}
+
 /// Information describing status of a required package manager binary.
 #[derive(Debug, Clone)]
 pub struct BinaryCheckStatus {
@@ -894,7 +1220,7 @@ pub fn scan_required_binaries(adapter_names: &[String]) -> Vec<BinaryCheckStatus
         .iter()
         // venv restores through python, and the build-tool adapters restore by the
         // next compile — none of them has a binary named after the adapter to probe.
-        .filter(|&n| n != "-" && n != "venv" && n != "gradle" && n != "maven")
+        .filter(|&n| !NO_RESTORE_BINARY.contains(&n.as_str()) && n != "-")
         .cloned()
         .collect();
     unique.sort();
@@ -903,8 +1229,9 @@ pub fn scan_required_binaries(adapter_names: &[String]) -> Vec<BinaryCheckStatus
     unique
         .into_iter()
         .map(|name| {
-            let output = crate::spawn::command(resolve_program(&name))
-                .arg("--version")
+            let binary = adapter_binary(&name);
+            let output = crate::spawn::command(resolve_program(binary))
+                .args(version_probe_args(binary))
                 .stdin(std::process::Stdio::null())
                 .output();
             match output {
@@ -936,6 +1263,32 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+
+    #[test]
+    fn go_is_probed_with_the_subcommand_it_actually_accepts() {
+        // `go --version` exits 2 with "flag provided but not defined: -version". The
+        // probe reading that as "go is not installed" made `devp doctor` warn on every
+        // machine with Go on it, and made the Go adapter fall back from `go mod
+        // download` to the weaker manifest-age check before deleting anything.
+        assert_eq!(version_probe_args("go"), &["version"]);
+        assert_eq!(version_probe_args("npm"), &["--version"]);
+    }
+
+    #[test]
+    fn every_probed_adapter_binary_has_somewhere_to_get_it() {
+        // A `doctor` warning that names a manager and not how to install it is research
+        // homework. The adapters excluded from the probe have no binary to install.
+        for adapter in get_all_adapters() {
+            let name = adapter.name();
+            if NO_RESTORE_BINARY.contains(&name) {
+                continue;
+            }
+            assert!(
+                install_hint(name).is_some(),
+                "adapter `{name}` has no install hint"
+            );
+        }
+    }
 
     #[test]
     fn test_bloat_dir_display() {
@@ -1202,5 +1555,45 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(names.len(), unique.len(), "Adapter names must be unique");
+    }
+
+    #[test]
+    fn a_runtime_tag_is_a_version_number_and_nothing_else() {
+        // This is spliced into a command line, and the registry it comes from is a file
+        // on disk. A hand-edited or corrupted entry must not reach a shell.
+        assert!(is_valid_runtime_tag("3.12"));
+        assert!(is_valid_runtime_tag("3.9"));
+        for bad in [
+            "",
+            "3",
+            "3.12.1",
+            "3.x",
+            "3.12; rm -rf /",
+            "-3.12",
+            "../python",
+            "3.1234",
+            "300.1",
+        ] {
+            assert!(!is_valid_runtime_tag(bad), "{bad} must be refused");
+        }
+    }
+
+    #[test]
+    fn the_interpreter_is_read_from_the_environments_own_pyvenv_cfg() {
+        let tmp = tempfile::tempdir().unwrap();
+        let venv = tmp.path().join(".venv");
+        std::fs::create_dir_all(&venv).unwrap();
+        std::fs::write(
+            venv.join("pyvenv.cfg"),
+            "home = /usr/bin\nversion = 3.12.4\ninclude-system-site-packages = false\n",
+        )
+        .unwrap();
+        assert_eq!(venv_runtime_tag(&venv), Some("3.12".to_string()));
+    }
+
+    #[test]
+    fn a_directory_that_is_not_an_environment_records_no_interpreter() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(venv_runtime_tag(tmp.path()), None);
     }
 }

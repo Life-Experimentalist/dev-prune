@@ -24,6 +24,9 @@
 // its loaded image and the next pass picks up the new one.
 
 use std::cmp::Ordering;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -157,7 +160,25 @@ fn detect_channel(exe: &std::path::Path, managed: Option<&std::path::Path>) -> C
     }
 }
 
-/// `devp update --install`: upgrade this binary through the channel that installed it.
+/// `devp update --install`: upgrade this installation to the latest release.
+///
+/// Downloads the release binary from GitHub and replaces the files itself, rather than
+/// asking whichever package manager delivered the first copy to do it. That inversion is
+/// deliberate. There is exactly one binary that matters — the managed copy under
+/// `<config>/bin`, which the git hooks, the scheduler and `PATH` all point at — and it
+/// does not live inside `node_modules`, a uv tool directory or `~/.cargo/bin`. Asking
+/// `uv` to upgrade a file it has never heard of was never going to work, and asking it to
+/// upgrade its *own* copy left the one that actually runs untouched.
+///
+/// So both are replaced: the managed copy first, because that is what runs unattended,
+/// then the running binary if it is a different file, because that is what the user
+/// types. The channel's own bookkeeping (what `uv tool list` believes is installed) is
+/// left stale on purpose — correcting it means running the channel's installer, which is
+/// the one thing this route exists to avoid — and the command to resync it is printed.
+///
+/// Falls back to the channel's own upgrade command when there is no published binary for
+/// this platform or the download fails, so a release-page outage costs the fast path and
+/// not the upgrade.
 fn run_install() -> Result<()> {
     output::print_header("dev-prune self-update");
 
@@ -187,6 +208,23 @@ fn run_install() -> Result<()> {
     let managed = crate::setup::managed_exe_path().ok();
     let channel = detect_channel(&exe, managed.as_deref());
 
+    match install_directly(&latest, &exe, managed.as_deref()) {
+        Ok(()) => {
+            output::print_success(&format!("dev-prune v{latest} installed."));
+            report_channel_bookkeeping(channel);
+            output::print_info(
+                "The scheduled pass was not interrupted: it runs the managed copy, which \
+                 was replaced by atomic rename, so a pass already in flight keeps the \
+                 image it loaded and the next one picks up the new binary.",
+            );
+            return Ok(());
+        }
+        Err(e) => output::print_warning(&format!(
+            "Direct download did not work ({e:#}).\nFalling back to the channel that \
+             installed this copy."
+        )),
+    }
+
     // On Windows a running executable's file is locked against replacement but not
     // against rename. Moving it aside first lets the channel write a fresh file at the
     // real path; the `.old` left behind is swept up by the *next* run, when nothing is
@@ -194,8 +232,8 @@ fn run_install() -> Result<()> {
     #[cfg(windows)]
     let aside = {
         let aside = exe.with_extension("exe.old");
-        let _ = std::fs::remove_file(&aside);
-        std::fs::rename(&exe, &aside).ok().map(|_| aside)
+        let _ = fs::remove_file(&aside);
+        fs::rename(&exe, &aside).ok().map(|_| aside)
     };
 
     let result = spawn_channel_upgrade(channel);
@@ -205,11 +243,11 @@ fn run_install() -> Result<()> {
         if result.is_ok() {
             // Best effort: the file is still our running image, so Windows may refuse
             // the delete. The sweep at the top of the next `--install` gets it then.
-            let _ = std::fs::remove_file(&aside);
+            let _ = fs::remove_file(&aside);
         } else if !exe.exists() {
             // The upgrade never wrote a new binary — put the old one back so the
             // command the user has on PATH still exists.
-            let _ = std::fs::rename(&aside, &exe);
+            let _ = fs::rename(&aside, &exe);
         }
     }
     result?;
@@ -220,6 +258,226 @@ fn run_install() -> Result<()> {
          refreshes itself from the new binary on its next run.",
     );
     Ok(())
+}
+
+/// Replace every copy of the binary this installation actually runs, from one download.
+///
+/// The managed copy is done first and is the only one whose failure aborts the upgrade:
+/// it is what the scheduler and the git hooks invoke, so a machine with a fresh managed
+/// copy is upgraded even if nothing else could be written.
+///
+/// Every other path is then written from the same verified bytes, and each is written
+/// with the same rename-aside dance rather than through `ensure_alias`. That matters on
+/// Windows: `ensure_alias` deletes the twin before relinking, and the delete fails when
+/// the twin is the running image — which is exactly the case when the user typed `devp
+/// update --install`. Renaming a running executable is allowed where deleting it is not,
+/// so this route leaves no copy behind on the previous release.
+fn install_directly(latest: &str, exe: &Path, managed: Option<&Path>) -> Result<()> {
+    let bytes = fetch_release_binary(latest)?;
+    let primary = managed.unwrap_or(exe);
+    install_bytes_at(&bytes, primary)?;
+
+    // Every other file that is a copy of the binary just replaced. Left alone they would
+    // keep running the previous release — silently, because the scheduler and the hooks
+    // both discard their own output by design.
+    let mut also: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = primary.parent() {
+        also.push(dir.join(if cfg!(windows) { "devp.exe" } else { "devp" }));
+    }
+    if primary != exe && exe.is_file() {
+        also.push(exe.to_path_buf());
+    }
+    for path in also {
+        if path == primary {
+            continue;
+        }
+        if let Err(e) = install_bytes_at(&bytes, &path) {
+            output::print_warning(&format!(
+                "The managed copy is now v{latest}, but {} could not be replaced ({e:#}).                  Until it is, that copy runs the previous version whenever it is the one                  invoked.",
+                path.display()
+            ));
+        }
+    }
+
+    // The windowless scheduler twin is a *patched* copy, not a plain one, so it is
+    // rebuilt rather than written — from the managed binary that was just replaced.
+    crate::daemon::refresh_hidden_twin();
+    Ok(())
+}
+
+/// Name the channel's own upgrade command after a direct install, for the one thing the
+/// direct route deliberately leaves untouched: the manager's record of what it installed.
+fn report_channel_bookkeeping(channel: Channel) {
+    let resync = match channel {
+        Channel::Cargo => "cargo install dev-prune --force",
+        Channel::Npm => "npm install -g dev-prune@latest",
+        Channel::UvTool => "uv tool upgrade dev-prune",
+        Channel::Pipx => "pipx upgrade dev-prune",
+        // Nothing else keeps a version record to disagree with the binary.
+        Channel::Installer | Channel::Unknown => return,
+    };
+    output::print_info(&format!(
+        "The binaries are up to date. `{resync}` also updates that manager's own record \
+         of the version, which still reads v{}.",
+        constants::VERSION
+    ));
+}
+
+/// Download release `version`'s binary for this platform and put it at `target`.
+///
+/// The direct route, and the reason `devp update --install` no longer depends on the
+/// package manager that happened to deliver the first copy. Whatever installed it, the
+/// binary the hooks, the scheduler and `PATH` all point at is one file in the config
+/// directory, and this replaces that file. `uv`, `npm` and `cargo` are delivery
+/// channels; they are not the source of truth, and asking one of them to upgrade a file
+/// living under another one's directory was never going to work.
+///
+/// Refuses to install anything whose SHA-256 does not match the sidecar published beside
+/// it. That check is the entire safety story for this path: the bytes are about to
+/// become the binary the machine runs on a schedule.
+fn fetch_release_binary(version: &str) -> Result<Vec<u8>> {
+    let asset = constants::release_asset_name(version).with_context(|| {
+        format!(
+            "no published binary for {}-{}; upgrade through the channel that installed \
+             this copy instead",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        )
+    })?;
+    let base = format!("{}/v{version}/{asset}", constants::RELEASE_DOWNLOAD_BASE);
+
+    let expected = fetch_expected_hash(&format!("{base}.sha256"))?;
+    output::print_info(&format!("Downloading {asset} …"));
+    let bytes = fetch_bytes(&base)?;
+
+    let actual = {
+        use sha2::{Digest, Sha256};
+        use std::fmt::Write as _;
+        let mut h = Sha256::new();
+        h.update(&bytes);
+        // Hex-encoded by hand: sha2 0.11 returns a `hybrid_array::Array`, which has no
+        // `LowerHex`, and the sidecar is lower-case hex either way.
+        h.finalize().iter().fold(String::new(), |mut s, b| {
+            let _ = write!(s, "{b:02x}");
+            s
+        })
+    };
+    if actual != expected {
+        anyhow::bail!(
+            "checksum mismatch for {asset}\n  expected {expected}\n  got      {actual}\n\
+             The download was corrupted or tampered with; nothing was installed."
+        );
+    }
+
+    Ok(bytes)
+}
+
+/// Write already-verified bytes over one binary.
+///
+/// Separate from the download so a single transfer can serve every copy that has to be
+/// replaced — the managed binary, its `devp` twin, and whatever the user is running —
+/// instead of fetching the same megabytes once per path.
+fn install_bytes_at(bytes: &[u8], target: &Path) -> Result<()> {
+    // Staged beside the target and renamed in, so a write that dies half-way leaves the
+    // working binary untouched rather than a truncated file where the scheduler expects
+    // an executable.
+    let staging = target.with_extension("new");
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(&staging, bytes).with_context(|| format!("could not write {}", staging.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Downloaded files are 0644; the scheduler needs to be able to run this.
+        let _ = fs::set_permissions(&staging, fs::Permissions::from_mode(0o755));
+    }
+
+    replace_binary(&staging, target)
+}
+
+/// Read the hash out of a `.sha256` sidecar published beside a release asset.
+fn fetch_expected_hash(url: &str) -> Result<String> {
+    let body = String::from_utf8(fetch_bytes(url)?).context("the checksum sidecar was not text")?;
+    parse_sha256_sidecar(&body)
+}
+
+/// The parsing half of [`fetch_expected_hash`], which is `sha256sum` format: the hex
+/// digest, two spaces, the file name.
+///
+/// Validated rather than trusted, because the failure this guards against is not a
+/// malformed checksum — it is a 404 page or a proxy error blob arriving where the sidecar
+/// should be. Comparing a digest against `<!DOCTYPE html>` would report a checksum
+/// mismatch, which reads as "someone tampered with the download" and sends the user
+/// somewhere alarming and wrong.
+fn parse_sha256_sidecar(body: &str) -> Result<String> {
+    let hash = body
+        .split_whitespace()
+        .next()
+        .context("the checksum sidecar was empty")?
+        .to_ascii_lowercase();
+    if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        anyhow::bail!("the checksum sidecar did not contain a SHA-256 digest");
+    }
+    Ok(hash)
+}
+
+fn fetch_bytes(url: &str) -> Result<Vec<u8>> {
+    let mut body = ureq::get(url)
+        .header("User-Agent", &format!("dev-prune/{}", constants::VERSION))
+        .config()
+        .timeout_global(Some(Duration::from_secs(
+            constants::UPDATE_DOWNLOAD_TIMEOUT_SECS,
+        )))
+        .build()
+        .call()
+        .with_context(|| format!("could not download {url}"))?;
+    let mut buf = Vec::new();
+    body.body_mut()
+        .as_reader()
+        .read_to_end(&mut buf)
+        .with_context(|| format!("could not read {url}"))?;
+    Ok(buf)
+}
+
+/// Move `staged` onto `target`, working around the one platform that will not overwrite
+/// a file it is executing.
+fn replace_binary(staged: &Path, target: &Path) -> Result<()> {
+    // On Windows a running image is locked against replacement but not against rename,
+    // so the live file steps aside and the new one takes its name. The `.old` is swept
+    // by the next run, when nothing holds it open any more.
+    #[cfg(windows)]
+    let aside = {
+        let aside = target.with_extension("exe.old");
+        let _ = fs::remove_file(&aside);
+        target
+            .exists()
+            .then(|| fs::rename(target, &aside).ok().map(|_| aside))
+            .flatten()
+    };
+
+    match fs::rename(staged, target) {
+        Ok(()) => {
+            #[cfg(windows)]
+            if let Some(aside) = aside {
+                let _ = fs::remove_file(&aside);
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let _ = fs::remove_file(staged);
+            #[cfg(windows)]
+            if let Some(aside) = aside
+                && !target.exists()
+            {
+                // Put the working binary back rather than leaving the machine with no
+                // `dev-prune` at all.
+                let _ = fs::rename(&aside, target);
+            }
+            Err(e).with_context(|| format!("could not install {}", target.display()))
+        }
+    }
 }
 
 /// Run one channel's own upgrade command, wired to the terminal so its progress and
@@ -405,7 +663,7 @@ fn latest_release(timeout_secs: u64) -> Result<String> {
 /// Returns `None` when either side is not `major.minor.patch` — better to say "could not
 /// compare" than to claim an upgrade exists because `1.0.0` sorts before `1.0.0-rc.1`
 /// as a string.
-fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
+pub(crate) fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
     let parse = |v: &str| -> Option<[u64; 3]> {
         let core = v.split(['-', '+']).next()?;
         let mut parts = core.split('.');
@@ -519,5 +777,76 @@ mod tests {
         // No network call, so the stamp survives untouched and nothing needs saving.
         assert!(!notify_if_outdated(&mut registry));
         assert_eq!(registry.last_update_check, Some(stamp));
+    }
+
+    #[test]
+    fn the_asset_name_matches_what_the_release_workflow_builds() {
+        // This string is a contract with `.github/workflows/release.yml`. Getting it
+        // wrong is not a compile error and not a test failure anywhere else — it is a
+        // self-update that 404s for every user on the day of a release.
+        let name = constants::release_asset_name("1.4.0");
+        let expected = match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("windows", "x86_64") => Some("dev-prune-v1.4.0-windows-x64.exe"),
+            ("windows", "aarch64") => Some("dev-prune-v1.4.0-windows-arm64.exe"),
+            ("windows", "x86") => Some("dev-prune-v1.4.0-windows-x86.exe"),
+            ("linux", "x86_64") => Some("dev-prune-v1.4.0-linux-x64"),
+            ("linux", "aarch64") => Some("dev-prune-v1.4.0-linux-arm64"),
+            ("macos", "x86_64") => Some("dev-prune-v1.4.0-darwin-x64"),
+            ("macos", "aarch64") => Some("dev-prune-v1.4.0-darwin-arm64"),
+            // A platform the release does not build for must decline the direct route
+            // rather than download some other platform's binary.
+            _ => None,
+        };
+        assert_eq!(name.as_deref(), expected);
+    }
+
+    #[test]
+    fn only_windows_has_a_32_bit_asset() {
+        // The matrix builds `x86` for Windows alone. On a 32-bit Linux there is nothing
+        // to download, and guessing `x64` would install a binary that cannot run.
+        let name = constants::release_asset_name("9.9.9");
+        if std::env::consts::ARCH == "x86" {
+            assert_eq!(name.is_some(), std::env::consts::OS == "windows");
+        }
+    }
+
+    #[test]
+    fn a_sidecar_is_read_as_the_first_field_of_sha256sum_format() {
+        let digest = "a".repeat(64);
+        assert_eq!(
+            parse_sha256_sidecar(&format!("{digest}  dev-prune-v1.4.0-linux-x64\n")).unwrap(),
+            digest
+        );
+        // The Windows step writes it with no trailing newline, and GitHub may serve
+        // either line ending.
+        assert_eq!(
+            parse_sha256_sidecar(&format!("{digest}  asset.exe")).unwrap(),
+            digest
+        );
+        assert_eq!(
+            parse_sha256_sidecar(&format!("{}  asset\r\n", digest.to_uppercase())).unwrap(),
+            digest,
+            "an upper-case digest must compare equal to the one we compute"
+        );
+    }
+
+    #[test]
+    fn anything_that_is_not_a_digest_is_refused_before_it_is_compared() {
+        // A 404 page, an error blob or a truncated read must fail as "not a digest"
+        // rather than as a mismatch — the two send the user to very different places.
+        for bad in [
+            "",
+            "   ",
+            "<!DOCTYPE html>",
+            "not-a-hash  asset",
+            &"a".repeat(63),
+            &"a".repeat(65),
+            &format!("{}g  asset", "a".repeat(63)),
+        ] {
+            assert!(
+                parse_sha256_sidecar(bad).is_err(),
+                "{bad:?} must not be accepted as a digest"
+            );
+        }
     }
 }

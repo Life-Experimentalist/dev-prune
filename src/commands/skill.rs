@@ -28,11 +28,69 @@ pub enum AgentEditor {
     Antigravity,
     /// `.clinerules/dev-prune.md`
     Cline,
+    /// `.roo/rules/dev-prune.md` (Roo Code)
+    Roo,
+    /// `.kilocode/rules/dev-prune.md` (Kilo Code)
+    Kilocode,
+    /// `.continue/rules/dev-prune.md` (Continue)
+    Continue,
+    /// `.amazonq/rules/dev-prune.md` (Amazon Q Developer)
+    AmazonQ,
+    /// `.kiro/steering/dev-prune.md` (Kiro)
+    Kiro,
+    /// `.trae/rules/dev-prune.md` (Trae)
+    Trae,
+    /// `.junie/guidelines.md`, as a marked block (JetBrains Junie)
+    Junie,
+    /// `GEMINI.md`, as a marked block (Gemini CLI)
+    Gemini,
+    /// `.rules`, as a marked block (Zed — read ahead of every other convention)
+    Zed,
     /// `.github/copilot-instructions.md`, as a marked block
     Copilot,
     /// `AGENTS.md`, as a marked block — the cross-tool convention (Codex, Jules,
     /// Amp, OpenCode, Antigravity and others read it)
     AgentsMd,
+}
+
+/// How the rules go into the file.
+enum Style {
+    /// dev-prune owns the whole file.
+    OwnFile,
+    /// Cursor's `.mdc` format, which needs frontmatter above the rules.
+    CursorMdc,
+    /// The file belongs to somebody else, so dev-prune owns a marked block inside it
+    /// and leaves every byte outside the markers exactly as found.
+    MarkedBlock,
+}
+
+impl AgentEditor {
+    /// The repository-relative file this editor's agent actually reads, and how to
+    /// write into it.
+    ///
+    /// One table rather than one match arm each: an editor whose agent reads a
+    /// directory of rule files is the same three lines every time, and the only thing
+    /// a contributor should have to establish is the path.
+    fn target(self) -> (&'static str, Style) {
+        use crate::constants as c;
+        match self {
+            AgentEditor::Cursor => (c::CURSOR_RULES_FILE, Style::CursorMdc),
+            AgentEditor::Windsurf => (c::WINDSURF_RULES_FILE, Style::OwnFile),
+            AgentEditor::Antigravity => (c::ANTIGRAVITY_RULES_FILE, Style::OwnFile),
+            AgentEditor::Cline => (c::CLINE_RULES_FILE, Style::OwnFile),
+            AgentEditor::Roo => (c::ROO_RULES_FILE, Style::OwnFile),
+            AgentEditor::Kilocode => (c::KILOCODE_RULES_FILE, Style::OwnFile),
+            AgentEditor::Continue => (c::CONTINUE_RULES_FILE, Style::OwnFile),
+            AgentEditor::AmazonQ => (c::AMAZON_Q_RULES_FILE, Style::OwnFile),
+            AgentEditor::Kiro => (c::KIRO_STEERING_FILE, Style::OwnFile),
+            AgentEditor::Trae => (c::TRAE_RULES_FILE, Style::OwnFile),
+            AgentEditor::Junie => (c::JUNIE_GUIDELINES_FILE, Style::MarkedBlock),
+            AgentEditor::Gemini => (c::GEMINI_MD_FILE, Style::MarkedBlock),
+            AgentEditor::Zed => (c::ZED_RULES_FILE, Style::MarkedBlock),
+            AgentEditor::Copilot => (c::COPILOT_INSTRUCTIONS_FILE, Style::MarkedBlock),
+            AgentEditor::AgentsMd => (c::AGENTS_MD_FILE, Style::MarkedBlock),
+        }
+    }
 }
 
 /// Run `devp skill` to export SKILL.md and display AI Agent onboarding prompts, or
@@ -117,49 +175,22 @@ fn write_agent_rules(editor: AgentEditor) -> Result<()> {
         );
     }
 
-    let written = match editor {
-        AgentEditor::Cursor => {
-            let target = cwd.join(crate::constants::CURSOR_RULES_FILE);
-            let content = format!(
-                "---\ndescription: dev-prune (devp) — reclaiming disk space from idle \
-                 repositories safely\nalwaysApply: false\n---\n\n{EMBEDDED_RULES_MD}"
-            );
-            write_rules_file(&target, &content)?;
-            target
-        }
-        AgentEditor::Windsurf => {
-            let target = cwd.join(crate::constants::WINDSURF_RULES_FILE);
-            write_rules_file(&target, EMBEDDED_RULES_MD)?;
-            target
-        }
-        AgentEditor::Antigravity => {
-            let target = cwd.join(crate::constants::ANTIGRAVITY_RULES_FILE);
-            write_rules_file(&target, EMBEDDED_RULES_MD)?;
-            target
-        }
-        AgentEditor::Cline => {
-            let target = cwd.join(crate::constants::CLINE_RULES_FILE);
-            write_rules_file(&target, EMBEDDED_RULES_MD)?;
-            target
-        }
-        // These two formats are one shared file, so dev-prune owns a marked block
-        // inside it rather than the file: replace the block if a previous run left
-        // one, append it otherwise, and touch nothing outside the markers.
-        AgentEditor::Copilot => {
-            let target = cwd.join(crate::constants::COPILOT_INSTRUCTIONS_FILE);
+    let (relative, style) = editor.target();
+    let target = cwd.join(relative);
+    let content = match style {
+        Style::OwnFile => EMBEDDED_RULES_MD.to_string(),
+        Style::CursorMdc => format!(
+            "---\ndescription: dev-prune (devp) — reclaiming disk space from idle \
+             repositories safely\nalwaysApply: false\n---\n\n{EMBEDDED_RULES_MD}"
+        ),
+        Style::MarkedBlock => {
             let existing = fs::read_to_string(&target).unwrap_or_default();
-            write_rules_file(&target, &upsert_marked_block(&existing))?;
-            target
-        }
-        AgentEditor::AgentsMd => {
-            let target = cwd.join(crate::constants::AGENTS_MD_FILE);
-            let existing = fs::read_to_string(&target).unwrap_or_default();
-            write_rules_file(&target, &upsert_marked_block(&existing))?;
-            target
+            upsert_marked_block(&existing)
         }
     };
+    write_rules_file(&target, &content)?;
 
-    output::print_success(&format!("Rules written: {}", output::clean_path(&written)));
+    output::print_success(&format!("Rules written: {}", output::clean_path(&target)));
     output::print_info(
         "Commit the file if the whole team's agents should have it; it is inert data \
          and safe to share.",
@@ -201,4 +232,36 @@ fn write_rules_file(target: &std::path::Path, content: &str) -> Result<()> {
     }
     fs::write(target, content)
         .with_context(|| format!("could not write {}", output::clean_path(target)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::ValueEnum;
+
+    #[test]
+    fn every_editor_writes_to_its_own_file() {
+        // A copy-pasted path would make one editor silently overwrite another's rules,
+        // and nothing else in the program would notice.
+        let mut paths: Vec<&str> = AgentEditor::value_variants()
+            .iter()
+            .map(|e| e.target().0)
+            .collect();
+        let total = paths.len();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(paths.len(), total, "two editors share a path");
+    }
+
+    #[test]
+    fn a_shared_file_is_only_ever_edited_inside_the_markers() {
+        // The whole reason `MarkedBlock` exists: these files belong to the user, and a
+        // second run must not stack a second copy of the rules on top of the first.
+        let theirs = "# Our conventions\n\nUse tabs.\n";
+        let once = upsert_marked_block(theirs);
+        let twice = upsert_marked_block(&once);
+        assert_eq!(once, twice, "a second write duplicated the block");
+        assert!(once.starts_with(theirs));
+        assert_eq!(once.matches(crate::constants::RULES_BLOCK_START).count(), 1);
+    }
 }

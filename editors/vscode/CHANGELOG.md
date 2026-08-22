@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - 2026-08-22
+
+- **The status bar item now wears the dev-prune mark.** Every state is prefixed with
+  the product glyph rather than a borrowed codicon, so the item is findable at a
+  glance in a status bar that already holds a dozen others. The glyph is registered
+  through `contributes.icons` and ships as a one-character font, which means VS Code
+  paints it in the theme's own foreground colour and it stays legible on light and
+  dark alike. The missing-CLI state keeps its warning background — that was always
+  the signal there, and the triangle beside it was saying the same thing twice.
+
 ## 0.3.0 - 2026-08-21
 
 - **The status bar now walks your workspace through dev-prune's whole lifecycle**,

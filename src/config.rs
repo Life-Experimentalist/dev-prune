@@ -102,7 +102,13 @@ pub struct Settings {
     /// same reason as `enable_gradle`. See [`crate::adapters::maven`].
     #[serde(default)]
     pub enable_maven: bool,
-    /// Idle days required before *build-tool* directories (gradle, maven) are pruned.
+    /// Whether the opt-in Swift Package Manager adapter is active. Off by default, for
+    /// the same reason as `enable_gradle`: `.build/` holds compiled modules and comes
+    /// back through `swift build`. See [`crate::adapters::swift`].
+    #[serde(default)]
+    pub enable_swift: bool,
+    /// Idle days required before *build-tool* directories (gradle, maven, swift) are
+    /// pruned.
     ///
     /// Separate from `idle_days` because the cost of being wrong is different: a
     /// deleted `node_modules` is one `npm ci` away, a deleted Android `build/` is a
@@ -114,6 +120,20 @@ pub struct Settings {
     /// channel-specific behaviour the user opts into.
     #[serde(default)]
     pub auto_update: bool,
+    /// Adapters switched off by name, whatever their lockfiles say.
+    ///
+    /// A deny-list rather than eighteen `enable_*` booleans, because the answer for
+    /// almost everyone is "none of them" and a list of exceptions says that in one
+    /// place. It is a *preference*, and the opposite of `enable_gradle` and friends:
+    /// those are off until asked for because deleting a build tree is expensive to
+    /// undo, whereas `node_modules` is safe to prune and merely something a particular
+    /// person may not want touched.
+    ///
+    /// Names are the adapter names `--only`/`--skip` take. Applied in
+    /// [`crate::adapters::detect_adapters`], so a disabled adapter is invisible to
+    /// every command at once rather than listed by `status` and skipped by `run`.
+    #[serde(default)]
+    pub disabled_adapters: Vec<String>,
 }
 
 fn default_build_idle_days() -> u64 {
@@ -188,10 +208,26 @@ impl Default for Settings {
             auto_hooks_chain: constants::DEFAULT_AUTO_HOOKS_CHAIN,
             enable_gradle: false,
             enable_maven: false,
+            enable_swift: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: false,
+            disabled_adapters: Vec::new(),
         }
     }
+}
+
+/// Outcome of recording a repository's identity when it was registered.
+///
+/// Reported rather than silent: a registration that quietly absorbed another entry's
+/// prune history would be indistinguishable from one that lost it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Adoption {
+    /// No dead entry claimed this identity.
+    Nothing,
+    /// This registration took over the history of a path that no longer exists.
+    Moved(PathBuf),
+    /// More than one dead entry claims the identity, so none was chosen.
+    Ambiguous,
 }
 
 /// Metadata for a single registered repository.
@@ -212,6 +248,14 @@ pub struct RepoEntry {
     /// implying a repository pruned last March never freed anything.
     #[serde(default)]
     pub total_freed_bytes: u64,
+    /// The repository's root commit, recorded when it was registered.
+    ///
+    /// A repository that is moved keeps this; its path does not. Without it a moved
+    /// workspace registers as a brand new repository and its prune history is stranded
+    /// on a path that will never exist again. Registries written before 1.4.0 have none,
+    /// and re-registering the repository is what fills it in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<String>,
 }
 
 impl RepoEntry {
@@ -223,6 +267,7 @@ impl RepoEntry {
             override_idle_days: None,
             enabled: true,
             total_freed_bytes: 0,
+            identity: None,
         }
     }
 }
@@ -536,6 +581,15 @@ pub struct PrunedDir {
     pub adapter: String,
     /// Bytes reclaimed.
     pub size_freed: u64,
+    /// The language runtime the deleted directory was built against — `"3.12"` for a
+    /// virtual environment created by Python 3.12 — so a restore can rebuild on that
+    /// interpreter instead of on whatever happens to be first on `PATH` today.
+    ///
+    /// `None` for every manager that pins its own toolchain in the lockfile (cargo, npm,
+    /// go) and for anything pruned before 1.4.0. Optional rather than required for that
+    /// second reason: a `registry.json` written by an older version has to keep loading.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
 }
 
 /// What the most recent prune pass deleted, for `devp restore --last-run`.
@@ -745,6 +799,75 @@ impl Registry {
         true
     }
 
+    /// Record `identity` against a registered repository, and hand it the history of the
+    /// entry it moved away from.
+    ///
+    /// Called after `add_repo` from both `link` and `init`. When exactly one registered
+    /// path no longer exists on disk and carries the same root commit, that entry is the
+    /// same repository at its old location: its `added_at`, prune history and settings
+    /// move across and the dead row is removed. Two dead entries claiming one identity
+    /// is a clone, not a move, so nothing is guessed — the caller says so instead.
+    ///
+    /// Also the backfill path. Entries registered before 1.4.0 have no identity, so
+    /// nothing they do can be recognised as a move; re-registering them records one, and
+    /// a single `devp init ~/code` backfills the whole registry.
+    pub fn adopt_moved_entry(&mut self, path: &Path, identity: Option<String>) -> Adoption {
+        let key = canonical_key(path);
+        let Some(identity) = identity else {
+            return Adoption::Nothing;
+        };
+
+        let mut claimants: Vec<PathBuf> = self
+            .repositories
+            .iter()
+            .filter(|(p, e)| {
+                **p != key && e.identity.as_deref() == Some(identity.as_str()) && !p.exists()
+            })
+            .map(|(p, _)| p.clone())
+            .collect();
+        // Deterministic: two dead entries with one identity is a report, not a coin toss,
+        // and the report must read the same twice.
+        claimants.sort();
+
+        let adopted = match claimants.len() {
+            0 => Adoption::Nothing,
+            1 => Adoption::Moved(claimants.remove(0)),
+            _ => Adoption::Ambiguous,
+        };
+
+        if let Adoption::Moved(ref old) = adopted
+            && let Some(previous) = self.repositories.remove(old)
+        {
+            if let Some(entry) = self.repositories.get_mut(&key) {
+                // Everything the old path had earned. `enabled` and the idle override
+                // come across too: a repository the user had switched off did not switch
+                // itself back on by being moved.
+                entry.added_at = previous.added_at;
+                entry.last_pruned_at = previous.last_pruned_at;
+                entry.override_idle_days = previous.override_idle_days;
+                entry.enabled = previous.enabled;
+                entry.total_freed_bytes = previous.total_freed_bytes;
+            }
+            self.last_added_repos.retain(|p| p != old);
+        }
+
+        if let Some(entry) = self.repositories.get_mut(&key) {
+            entry.identity = Some(identity);
+        }
+        adopted
+    }
+
+    /// Whether a registered repository still has no recorded identity.
+    ///
+    /// The global Git hook runs `devp link --quiet` on every commit, and backfilling
+    /// unconditionally would shell out to git and rewrite the registry once per commit
+    /// forever. This makes it once per repository.
+    pub fn needs_identity(&self, path: &Path) -> bool {
+        self.repositories
+            .get(&canonical_key(path))
+            .is_some_and(|e| e.identity.is_none())
+    }
+
     /// Removes a repository from the registry. Returns `true` if it was present.
     ///
     /// A repository that has been deleted from disk cannot be canonicalised any more,
@@ -872,6 +995,7 @@ mod tests {
             bloat_dir: label.to_string(),
             adapter: "npm".to_string(),
             size_freed: 42,
+            runtime: None,
         }
     }
 
@@ -1343,5 +1467,102 @@ mod tests {
 
         assert!(!tmp.path().join(".git").exists());
         assert!(!tmp.path().join(".gitignore").exists());
+    }
+    /// A repository that moved is recognised, and arrives with everything it had earned.
+    #[test]
+    fn adopt_moved_entry_transfers_history() {
+        let mut reg = Registry::default();
+        let old = PathBuf::from("/nowhere/old-home/project");
+        let mut entry = RepoEntry::new();
+        entry.identity = Some("abc1234def".into());
+        entry.total_freed_bytes = 4096;
+        entry.enabled = false;
+        entry.override_idle_days = Some(90);
+        reg.repositories.insert(old.clone(), entry);
+
+        let new = std::env::temp_dir().join("devprune-adopt-live");
+        reg.repositories.insert(new.clone(), RepoEntry::new());
+
+        let outcome = reg.adopt_moved_entry(&new, Some("abc1234def".into()));
+        assert_eq!(outcome, Adoption::Moved(old.clone()));
+        assert!(!reg.repositories.contains_key(&old));
+
+        let moved = &reg.repositories[&canonical_key(&new)];
+        assert_eq!(moved.total_freed_bytes, 4096);
+        // A repository the user had switched off did not switch itself back on by
+        // being moved.
+        assert!(!moved.enabled);
+        assert_eq!(moved.override_idle_days, Some(90));
+        assert_eq!(moved.identity.as_deref(), Some("abc1234def"));
+    }
+
+    /// Two dead entries with one root commit are clones, not a move. Nothing is guessed.
+    #[test]
+    fn adopt_moved_entry_refuses_to_guess_between_two() {
+        let mut reg = Registry::default();
+        for name in ["/nowhere/a", "/nowhere/b"] {
+            let mut entry = RepoEntry::new();
+            entry.identity = Some("shared".into());
+            reg.repositories.insert(PathBuf::from(name), entry);
+        }
+        let new = std::env::temp_dir().join("devprune-adopt-ambiguous");
+        reg.repositories.insert(new.clone(), RepoEntry::new());
+
+        assert_eq!(
+            reg.adopt_moved_entry(&new, Some("shared".into())),
+            Adoption::Ambiguous
+        );
+        assert_eq!(reg.repositories.len(), 3);
+        // The identity is still recorded, so the next registration can recognise it
+        // once the duplicates are cleared.
+        assert_eq!(
+            reg.repositories[&canonical_key(&new)].identity.as_deref(),
+            Some("shared")
+        );
+    }
+
+    /// An entry whose path still exists is not a move, however matching its history.
+    #[test]
+    fn adopt_moved_entry_never_takes_from_a_live_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("live");
+        std::fs::create_dir(&live).unwrap();
+
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.identity = Some("same".into());
+        entry.total_freed_bytes = 999;
+        reg.repositories.insert(canonical_key(&live), entry);
+
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        reg.repositories
+            .insert(canonical_key(&other), RepoEntry::new());
+
+        assert_eq!(
+            reg.adopt_moved_entry(&other, Some("same".into())),
+            Adoption::Nothing
+        );
+        assert_eq!(
+            reg.repositories[&canonical_key(&live)].total_freed_bytes,
+            999
+        );
+    }
+
+    /// A repository with no commits has no identity, so nothing is adopted and nothing
+    /// is recorded — a guess would be worse than the dead entry it replaced.
+    #[test]
+    fn adopt_moved_entry_ignores_a_missing_identity() {
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.identity = Some("orphan".into());
+        reg.repositories
+            .insert(PathBuf::from("/nowhere/gone"), entry);
+        let new = std::env::temp_dir().join("devprune-adopt-unborn");
+        reg.repositories.insert(new.clone(), RepoEntry::new());
+
+        assert_eq!(reg.adopt_moved_entry(&new, None), Adoption::Nothing);
+        assert_eq!(reg.repositories.len(), 2);
+        assert!(reg.needs_identity(&new));
     }
 }

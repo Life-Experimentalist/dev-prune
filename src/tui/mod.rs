@@ -18,6 +18,7 @@ use crossterm::terminal::{
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
+pub mod config_view;
 pub mod selection_view;
 pub mod status_view;
 

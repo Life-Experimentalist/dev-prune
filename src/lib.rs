@@ -33,6 +33,31 @@ pub mod exit_code {
     pub const USAGE: i32 = 2;
 }
 
+/// The machine's own architecture, reported only when it differs from this build's.
+///
+/// `std::env::consts::ARCH` is baked in at compile time, so a 32-bit build on a 64-bit
+/// machine reports `x86` and looks, to anyone reading it, like a claim about the
+/// hardware. Windows sets [`constants::ENV_NATIVE_ARCH`] under WOW64 and under ARM64
+/// emulation; it is the only thing an emulated process can ask. The names are mapped to
+/// Rust's spellings so the two halves of "x86, but this machine is x86_64" match.
+///
+/// `None` means the build and the machine agree, or the question cannot be answered —
+/// both of which are reported as nothing at all rather than as a guess.
+pub fn native_arch_if_emulated() -> Option<String> {
+    let native = std::env::var(constants::ENV_NATIVE_ARCH).ok()?;
+    let native = native.trim();
+    if native.is_empty() {
+        return None;
+    }
+    let mapped = match native.to_ascii_uppercase().as_str() {
+        "AMD64" => "x86_64".to_string(),
+        "ARM64" => "aarch64".to_string(),
+        "X86" => "x86".to_string(),
+        other => other.to_ascii_lowercase(),
+    };
+    (mapped != std::env::consts::ARCH).then_some(mapped)
+}
+
 /// Marker for errors that are usage mistakes rather than runtime failures.
 ///
 /// clap exits `USAGE` for conflicts it can see at parse time; combinations only the
@@ -276,6 +301,14 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Report what dev-prune is allowed to do on this machine, and what it has been given permission to do.
+    #[command(long_about = help::TRUST_LONG, after_long_help = help::TRUST_EXAMPLES)]
+    Trust {
+        /// Emit the report as one JSON document instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Print a shell completion script for bash, zsh, fish, PowerShell or elvish.
     #[command(long_about = help::COMPLETIONS_LONG, after_long_help = help::COMPLETIONS_EXAMPLES)]
     Completions {
@@ -292,12 +325,18 @@ pub enum Commands {
         dir: Option<String>,
     },
 
-    /// Report the size of every package manager cache on this machine (read-only, deletes nothing).
+    /// Report the size of every package manager cache on this machine (read-only unless you ask for `clear`).
     #[command(long_about = help::CACHES_LONG, after_long_help = help::CACHES_EXAMPLES)]
     Caches {
         /// Emit the report as one JSON document instead of the table.
-        #[arg(long)]
+        ///
+        /// Global within `caches` so it can be written after the subcommand too —
+        /// `devp caches clear npm --json` is what everyone types.
+        #[arg(long, global = true)]
         json: bool,
+
+        #[command(subcommand)]
+        action: Option<CachesAction>,
     },
 
     /// Manage global settings, background daemon, Git hooks, custom icons, or per-project .devprune.json.
@@ -338,12 +377,11 @@ pub enum Commands {
     /// Export SKILL.md and display ready-to-copy AI Agent onboarding & skill import prompts.
     #[command(long_about = help::SKILL_LONG, after_long_help = help::SKILL_EXAMPLES)]
     Skill {
-        /// Write rules for one editor's agent into the current repository instead:
-        /// `cursor` (.cursor/rules/), `windsurf` (.windsurf/rules/), `antigravity`
-        /// (.agent/rules/), `cline` (.clinerules/), `copilot`
-        /// (.github/copilot-instructions.md, as a marked block) or `agents-md`
-        /// (AGENTS.md, as a marked block — the cross-tool convention Codex, Jules,
-        /// Amp, OpenCode and others read). Claude Code needs no per-repo file —
+        /// Write rules for one editor's agent into the current repository instead.
+        /// Each value below names the exact file it writes. Five of them —
+        /// `agents-md`, `copilot`, `gemini`, `junie`, `zed` — share a file with
+        /// other tools, so dev-prune owns a marked block inside it and leaves every
+        /// byte outside the markers as found. Claude Code needs no per-repo file:
         /// plain `devp skill` installs its skill globally.
         #[arg(long, value_enum, value_name = "EDITOR")]
         agent: Option<commands::skill::AgentEditor>,
@@ -400,11 +438,23 @@ impl Commands {
             Commands::Run { json, .. }
             | Commands::Status { json, .. }
             | Commands::Stats { json }
-            | Commands::Caches { json } => *json,
+            | Commands::Trust { json }
+            | Commands::Caches { json, .. } => *json,
             Commands::Link { quiet, .. } => *quiet,
             _ => false,
         }
     }
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CachesAction {
+    /// Empty one manager's cache, or every one of them, after showing what goes and asking.
+    #[command(long_about = help::CACHES_CLEAR_LONG, after_long_help = help::CACHES_CLEAR_EXAMPLES)]
+    Clear {
+        /// Which cache to empty: a manager name (npm, go, cargo, gradle, …) or `all`.
+        #[arg(value_name = "MANAGER")]
+        target: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -468,7 +518,11 @@ pub enum ConfigAction {
     Icon,
     /// Walk through every global setting, confirming or changing each one.
     #[command(long_about = help::CONFIG_WIZARD_LONG, after_long_help = help::CONFIG_WIZARD_EXAMPLES)]
-    Wizard,
+    Wizard {
+        /// Ask one question per line instead of opening the full-screen configurator.
+        #[arg(long)]
+        no_tui: bool,
+    },
 }
 
 /// Create the `devp` executable alias next to `dev-prune`, and keep it current.
@@ -521,7 +575,19 @@ pub fn print_version_info() {
         constants::HOMEPAGE_URL.cyan().underline()
     );
     println!("  Target OS:       {}", std::env::consts::OS);
-    println!("  Architecture:    {}", std::env::consts::ARCH);
+    match native_arch_if_emulated() {
+        // Without this the line reads as a statement about the machine, and a 32-bit
+        // build on a 64-bit laptop looks like the laptop is 32-bit.
+        Some(native) => println!(
+            "  Architecture:    {} {}",
+            std::env::consts::ARCH,
+            format!(
+                "(this build — the machine is {native}; `devp update` installs the native one)"
+            )
+            .yellow()
+        ),
+        None => println!("  Architecture:    {}", std::env::consts::ARCH),
+    }
     println!(
         "  Compiler:        Rust {}+ (edition 2024)",
         constants::MSRV
@@ -734,7 +800,13 @@ pub fn run_cli() {
         Commands::Stats { json } => commands::stats::run(json),
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Man { dir } => commands::man::run(dir.as_deref()),
-        Commands::Caches { json } => commands::caches::run(json),
+        Commands::Trust { json } => commands::trust::run(json),
+        Commands::Caches { json, action } => match action {
+            Some(CachesAction::Clear { target }) => {
+                commands::caches::run_clear(&target, cli.yes, cli.dry_run, json)
+            }
+            None => commands::caches::run(json),
+        },
         Commands::Config { action } => match action {
             Some(ConfigAction::Get { key }) => commands::config::run_get(&key),
             Some(ConfigAction::Set { key, value }) => commands::config::run_set(&key, &value),
@@ -774,7 +846,7 @@ pub fn run_cli() {
                 commands::config::run_hook_toggle(path, action, chain)
             }
             Some(ConfigAction::Icon) => commands::icon::run_install(),
-            Some(ConfigAction::Wizard) => commands::config::run_wizard(),
+            Some(ConfigAction::Wizard { no_tui }) => commands::config::run_wizard(no_tui),
         },
         Commands::Restore { path, last_run } => {
             if last_run {

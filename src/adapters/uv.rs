@@ -177,7 +177,28 @@ impl PackageManager for Uv {
     }
 
     fn restore(&self, path: &Path, timeout: std::time::Duration) -> Result<()> {
-        run_command_with_timeout("uv", &["sync"], path, timeout)
+        self.restore_named(path, ".venv", None, timeout)
+    }
+
+    /// `uv sync --python 3.12` rebuilds on that interpreter and, unlike every other
+    /// route here, *downloads* it when the machine does not have it — which is why the
+    /// tag is passed straight through without an availability check first.
+    fn restore_named(
+        &self,
+        path: &Path,
+        _dir_name: &str,
+        runtime: Option<&str>,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        match runtime.filter(|tag| super::is_valid_runtime_tag(tag)) {
+            Some(tag) => run_command_with_timeout("uv", &["sync", "--python", tag], path, timeout),
+            None => run_command_with_timeout("uv", &["sync"], path, timeout),
+        }
+    }
+
+    /// The interpreter `.venv` was built with, so a restore can rebuild on it.
+    fn runtime_tag(&self, path: &Path, dir_name: &str) -> Option<String> {
+        super::venv_runtime_tag(&path.join(dir_name))
     }
 
     fn lockfiles(&self) -> &'static [&'static str] {

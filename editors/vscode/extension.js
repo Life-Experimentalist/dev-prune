@@ -160,7 +160,7 @@ function showCliMissing(context) {
 			statusItem.hide();
 			return;
 		}
-		statusItem.text = '$(warning) devp not found';
+		statusItem.text = '$(devprune-logo) devp not found';
 		statusItem.tooltip = hasConfig
 			? 'This workspace has a .devprune.json, but the dev-prune CLI (devp) is not on your PATH — nothing is acting on that file.'
 			: 'The dev-prune CLI (devp) is not installed. It reclaims disk space from idle repositories — click to install it.';
@@ -226,7 +226,7 @@ function renderState(doc, root) {
 	if (!isGitRepo(root)) {
 		currentState = 'no-git';
 		currentEntry = undefined;
-		statusItem.text = '$(source-control) devp: no git repo';
+		statusItem.text = '$(devprune-logo) devp: no git repo';
 		statusItem.tooltip = new vscode.MarkdownString(
 			'**dev-prune** works per Git repository, and this folder is not one yet.\n\n' +
 				'Click to run `git init` — everything else follows from there.',
@@ -239,7 +239,7 @@ function renderState(doc, root) {
 	if (!entry) {
 		currentState = 'unlinked';
 		currentEntry = undefined;
-		statusItem.text = '$(plug) devp: not linked';
+		statusItem.text = '$(devprune-logo) devp: not linked';
 		statusItem.tooltip = new vscode.MarkdownString(
 			'**dev-prune** does not have this repository registered.\n\n' +
 				'Click to run `devp link .` so its dependency folders are tracked and pruned when idle.',
@@ -255,7 +255,7 @@ function renderState(doc, root) {
 
 	if (entry.state === 'candidate') {
 		currentState = 'candidate';
-		statusItem.text = `$(trash) ${formatBytes(occupied)} reclaimable`;
+		statusItem.text = `$(devprune-logo) ${formatBytes(occupied)} reclaimable`;
 		statusItem.tooltip = new vscode.MarkdownString(
 			`**dev-prune** — this repository is idle: ${formatBytes(occupied)} is ready to prune.\n\n` +
 				`Package managers in use: ${managers}.` +
@@ -268,7 +268,7 @@ function renderState(doc, root) {
 
 	if ((entry.bytes_freed || 0) > 0 && occupied === 0) {
 		currentState = 'cleaned';
-		statusItem.text = `$(check) devp saved ${formatBytes(entry.bytes_freed)}`;
+		statusItem.text = `$(devprune-logo) devp saved ${formatBytes(entry.bytes_freed)}`;
 		const when = entry.last_pruned_at ? ` (last pruned ${entry.last_pruned_at.slice(0, 10)})` : '';
 		statusItem.tooltip = new vscode.MarkdownString(
 			`**dev-prune** has freed ${formatBytes(entry.bytes_freed)} from this repository${when}. ` +
@@ -280,7 +280,7 @@ function renderState(doc, root) {
 
 	if (entry.state === 'active') {
 		currentState = 'active';
-		statusItem.text = `$(package) ${formatBytes(occupied)} in use`;
+		statusItem.text = `$(devprune-logo) ${formatBytes(occupied)} in use`;
 		statusItem.tooltip = new vscode.MarkdownString(
 			`**dev-prune** — this repository is active, so nothing will be pruned.\n\n` +
 				`Dependency and build folders currently occupy ${formatBytes(occupied)}.\n\n` +
@@ -294,7 +294,7 @@ function renderState(doc, root) {
 
 	// Ignored, path-missing, config-error, no-bloat: state the fact plainly.
 	currentState = 'other';
-	statusItem.text = `$(circle-slash) devp: ${entry.state.replace(/_/g, ' ')}`;
+	statusItem.text = `$(devprune-logo) devp: ${entry.state.replace(/_/g, ' ')}`;
 	statusItem.tooltip = new vscode.MarkdownString(
 		`**dev-prune** — this repository is in state \`${entry.state}\`.\n\n` +
 			`Package managers in use: ${managers}.\n\nClick for actions.`,

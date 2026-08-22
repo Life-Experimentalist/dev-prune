@@ -60,6 +60,17 @@ jobs:
             runner: windows-latest
             os_name: windows
             arch: arm64
+          # The only 32-bit target published, and only because Windows is the only
+          # platform where 32-bit is still something people run: locked-down corporate
+          # images, industrial control machines and the odd Atom netbook. There is no
+          # 32-bit Linux or macOS build — 32-bit macOS cannot run at all since Catalina,
+          # and i686 Linux would need a cross musl toolchain to serve a desktop
+          # population that has effectively gone. This one is a plain rustup target on
+          # the same x64 runner, so it costs one more build and nothing else.
+          - target: i686-pc-windows-msvc
+            runner: windows-latest
+            os_name: windows
+            arch: x86
 
     steps:
       # Explicitly the tag. On a `workflow_dispatch` run the default checkout is the
@@ -76,8 +87,8 @@ jobs:
           ref="${{ github.event.inputs.tag || github.ref_name }}"
           echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
 
-      # Before the build, not after: a mismatch fails all six matrix jobs, and there is
-      # no reason to spend six release builds discovering it. A tag that does not match
+      # Before the build, not after: a mismatch fails all seven matrix jobs, and there is
+      # no reason to spend seven release builds discovering it. A tag that does not match
       # Cargo.toml ships a binary whose `--version` lies and whose release check compares
       # against the wrong value.
       - name: Verify Cargo.toml version matches the tag
@@ -90,7 +101,7 @@ jobs:
           fi
 
       # Same reasoning, one step later: the release body comes out of CHANGELOG.md, so
-      # a missing section should stop the release before six builds run, not after.
+      # a missing section should stop the release before seven builds run, not after.
       - name: Verify CHANGELOG.md documents this version
         shell: bash
         run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > /dev/null
@@ -147,6 +158,18 @@ jobs:
             shasum -a 256 "$asset" > "$asset.sha256"
           fi
 
+          # The same binary again, uncompressed, for `devp update --install`. Self-update
+          # needs one download and one hash check; unpacking a tarball inside the binary
+          # would mean compiling gzip and tar into it purely to undo what this step did.
+          # The archive stays because it is what a human downloads from the release page.
+          raw="dev-prune-v${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}"
+          cp "target/${{ matrix.target }}/release/dev-prune" "$raw"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$raw" > "$raw.sha256"
+          else
+            shasum -a 256 "$raw" > "$raw.sha256"
+          fi
+
       - name: Package (windows)
         if: matrix.os_name == 'windows'
         shell: pwsh
@@ -157,13 +180,17 @@ jobs:
           # Two spaces: the sha256sum format the install scripts parse.
           "$hash  $asset" | Out-File -FilePath "$asset.sha256" -Encoding ascii -NoNewline
 
+          # Uncompressed twin for `devp update --install` — see the unix step for why.
+          $raw = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.exe"
+          Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" $raw
+          $rawHash = (Get-FileHash -Path $raw -Algorithm SHA256).Hash.ToLower()
+          "$rawHash  $raw" | Out-File -FilePath "$raw.sha256" -Encoding ascii -NoNewline
+
       - uses: actions/upload-artifact@v7
         with:
           name: dev-prune-${{ matrix.os_name }}-${{ matrix.arch }}
           path: |
-            dev-prune-v*.tar.gz
-            dev-prune-v*.zip
-            dev-prune-v*.sha256
+            dev-prune-v*
           if-no-files-found: error
 
   # The VS Code extension is declarative (a schema mapping, no code), so packaging it
@@ -233,6 +260,10 @@ jobs:
       # release archives had nothing, and they are what the install scripts download.
       #
       # Sidecars are deliberately not attested: they are a checksum of an attested file.
+      # The uncompressed binaries are listed by their exact platform names rather than a
+      # wildcard, because they carry no extension on unix and any looser glob would sweep
+      # up the sidecars beside them. They matter as much as the archives here: they are
+      # what `devp update --install` downloads and runs.
       - name: Attest the release binaries
         uses: actions/attest-build-provenance@v4
         with:
@@ -240,6 +271,11 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
             dist/*.vsix
+            dist/*.exe
+            dist/dev-prune-v*-linux-x64
+            dist/dev-prune-v*-linux-arm64
+            dist/dev-prune-v*-darwin-x64
+            dist/dev-prune-v*-darwin-arm64
 
       # The release body is the changelog entry, not a generated commit list. The commit
       # list is still appended by `generate_release_notes` below, so nothing is lost —
@@ -295,6 +331,7 @@ jobs:
           |---|---|
           | \`dev-prune-v${VERSION}-windows-x64.zip\` | Windows on Intel/AMD — almost every Windows PC |
           | \`dev-prune-v${VERSION}-windows-arm64.zip\` | Windows on ARM — Surface Pro X, Snapdragon laptops, Windows in a Mac VM |
+          | \`dev-prune-v${VERSION}-windows-x86.zip\` | 32-bit Windows — locked-down corporate images, older industrial machines |
           | \`dev-prune-v${VERSION}-darwin-arm64.tar.gz\` | Apple Silicon Macs — M1 and later |
           | \`dev-prune-v${VERSION}-darwin-x64.tar.gz\` | Intel Macs — 2020 and earlier |
           | \`dev-prune-v${VERSION}-linux-x64.tar.gz\` | Linux on Intel/AMD |
@@ -303,8 +340,9 @@ jobs:
           Both Linux builds are statically linked against musl, so they run on any
           distribution including Alpine, with no glibc floor.
 
-          Every build is 64-bit. There is no 32-bit x86 or 32-bit ARM release on any
-          platform, and the install scripts refuse rather than guess when they meet one.
+          32-bit is published for Windows only. There is no 32-bit Linux, no 32-bit
+          macOS and no 32-bit ARM build on any platform; the install scripts refuse
+          rather than guess when they meet one.
 
           The \`dev-prune-vscode-*.vsix\` is the VS Code extension (schema
           IntelliSense for \`.devprune.json\`), for editors that cannot reach the
@@ -367,10 +405,10 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
 
-  # npm carries the binaries themselves, not a postinstall downloader. Seven packages go
-  # out: six platform packages holding one executable each, marked with `os`/`cpu` so npm
-  # resolves exactly one of them, and the `dev-prune` dispatcher that lists all six as
-  # optionalDependencies. A postinstall download would break `npm ci --ignore-scripts`,
+  # npm carries the binaries themselves, not a postinstall downloader. Eight packages go
+  # out: seven platform packages holding one executable each, marked with `os`/`cpu` so
+  # npm resolves exactly one of them, and the `dev-prune` dispatcher that lists all seven
+  # as optionalDependencies. A postinstall download would break `npm ci --ignore-scripts`,
   # offline installs and every locked-down CI runner; this layout does not.
   #
   # Order matters and is not an optimisation: the dispatcher is published last, because
@@ -499,7 +537,7 @@ jobs:
           # Same reasoning as the `npm view` check in publish-npm: re-running a release
           # after fixing one failed channel is normal, and without this the second run
           # dies on "File already exists" for wheels the first run uploaded. There are
-          # six wheels here, so a partial upload is a real state to recover from.
+          # seven wheels here, so a partial upload is a real state to recover from.
           skip-existing: true
 
   # crates.io is published only after every platform built and the release exists, so a
@@ -555,9 +593,55 @@ jobs:
   # whatever happened above and turns each channel's result into a sentence on the run
   # summary page. `skipped` is reported as "not published" in words, because the failure
   # this guards against is not a job going red — it is a human reading green and stopping.
+  # Homebrew, Scoop and WinGet are all "a URL, a SHA-256 and a version" in three
+  # different syntaxes, and all three are wrong the moment a release ships without them
+  # being regenerated. Nobody notices, because a stale manifest installs perfectly — it
+  # just installs the previous version, silently, for as long as it takes someone to
+  # report it. So this runs from the release itself, reads the sidecars that were just
+  # attested, and commits the result to `main`.
+  #
+  # It does not open the `winget-pkgs` pull request: that submission is reviewed by a
+  # human at Microsoft and needs an account and a fork, so the manifests are rendered
+  # ready to copy and the PR stays a deliberate act. Same for a tap or bucket repository
+  # — see docs/RELEASING.md.
+  packaging:
+    name: Refresh packaging manifests
+    needs: publish
+    runs-on: ubuntu-latest
+    # A pre-release must not move the manifests: `brew install` and `scoop install` have
+    # no notion of a release channel, so an rc tag would hand every user a pre-release.
+    if: ${{ !contains(github.event.inputs.tag || github.ref_name, '-') }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `main`, not the tag: a tag checkout is detached and has nowhere to push.
+          ref: main
+
+      - name: Render from the published sidecars
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: sh scripts/render-packaging.sh "$VERSION"
+
+      - name: Commit if anything changed
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -eu
+          if git diff --quiet -- packaging; then
+            echo "Manifests already describe v${VERSION}."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packaging
+          git commit -m "Packaging manifests for v${VERSION}"
+          git push origin main
+
   summary:
     name: What actually shipped
-    needs: [publish, publish-npm, publish-pypi, publish-crate]
+    needs: [publish, publish-npm, publish-pypi, publish-crate, packaging]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -567,6 +651,7 @@ jobs:
           NPM: ${{ needs.publish-npm.result }}
           PYPI: ${{ needs.publish-pypi.result }}
           CRATE: ${{ needs.publish-crate.result }}
+          PKG: ${{ needs.packaging.result }}
         run: |
           set -eu
           describe() {
@@ -586,6 +671,13 @@ jobs:
             echo "| npm | $(describe "$NPM" NPM_PUBLISH) |"
             echo "| PyPI | $(describe "$PYPI" PYPI_PUBLISH) |"
             echo "| crates.io | $(describe "$CRATE" CRATES_PUBLISH) |"
+            # Not `describe`: "channel not enabled" is the wrong story here — a
+            # skip means the tag was a pre-release, which is the correct outcome.
+            case "$PKG" in
+              success) echo "| Homebrew/Scoop/WinGet manifests | ✅ refreshed on \`main\` |" ;;
+              skipped) echo "| Homebrew/Scoop/WinGet manifests | ⚠️ skipped — pre-release tags never move the manifests |" ;;
+              *)       echo "| Homebrew/Scoop/WinGet manifests | ❌ **failed** — see the job log |" ;;
+            esac
           } >> "$GITHUB_STEP_SUMMARY"
 
           # A release where every registry sat out is almost always a misconfiguration

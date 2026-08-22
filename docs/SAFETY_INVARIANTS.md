@@ -117,7 +117,7 @@ flowchart TD
 *Figure 2: `enforce_two_tier`, the one shape every adapter follows. Tier 2 — the "binary
 missing, lockfile present" path — is the same in all of them.*
 
-Two adapters sit slightly outside it:
+Some adapters sit outside it:
 
 - **yarn** runs the shape, then downgrades a failure to `Ok` when `yarn.lock` exists. It
   only errors when verification failed *and* there is no lockfile, because
@@ -134,6 +134,14 @@ Two adapters sit slightly outside it:
   `pdm.lock` or a `[tool.poetry]` table are not claimed at all: their
   `requirements.txt` is usually a stale export of the real lockfile, and rebuilding
   from it would quietly produce a different environment than the one deleted.
+- **cocoapods, mix, gradle, maven** and **swift** run no command either, for a
+  different reason: their ecosystems have no read-only "is this in sync?" verb.
+  `pod install`, `mix deps.get` and `gradle --write-locks` all *fix* drift by
+  rewriting the lockfile and re-downloading — a write and a network round trip in the
+  middle of a delete pass. So the proof is offline instead: the lockfile is
+  structurally complete and no older than the manifest it came from (cocoapods, mix),
+  or the manifest that `build/`, `target/` and `.build/` are entirely derived from is
+  present and parses (gradle, maven, swift).
 
 The verification command per ecosystem, and the writing form it refuses to run for you:
 
@@ -144,9 +152,19 @@ The verification command per ecosystem, and the writing form it refuses to run f
 | yarn      | `yarn install --immutable --mode update-lockfile`          | no      | `yarn install --mode update-lockfile` |
 | bun       | `bun install --frozen-lockfile --dry-run --ignore-scripts` | no      | *(none — bun's natural check is already read-only)* |
 | uv        | `uv lock --locked`                                         | no      | `uv lock` |
+| poetry    | `poetry check --lock`, plus no installed package the lockfile never recorded | no      | `poetry lock` |
+| pdm       | `pdm lock --check`                                         | no      | `pdm lock` |
+| pipenv    | `pipenv verify`                                            | no      | `pipenv lock` |
 | venv      | `requirements.txt` lists ≥1 package; no installed package is unrecorded | no      | *(none — nothing is executed)* |
 | cargo     | `cargo metadata --locked --format-version 1`               | no      | `cargo generate-lockfile` |
 | go        | `go mod download`                                          | no      | `go mod tidy` |
+| composer  | `composer validate --no-check-publish --no-check-all`       | no      | `composer update --no-install` |
+| bundler   | `bundle lock --check`                                      | no      | `bundle lock` |
+| cocoapods | `Podfile.lock` has a `SPEC CHECKSUMS` section and is no older than the `Podfile` | no      | *(none — nothing is executed)* |
+| mix       | `mix.lock` is a complete Elixir map and no older than `mix.exs` | no      | *(none — nothing is executed)* |
+| gradle    | a Gradle manifest is present and readable                  | no      | *(none — nothing is executed)* |
+| maven     | `pom.xml` contains a `<project` element                     | no      | *(none — nothing is executed)* |
+| swift     | `Package.swift` declares a `Package(`                      | no      | *(none — nothing is executed)* |
 
 The rule behind that table: **verification never writes, and a lockfile that has drifted
 from its manifest is a refusal, not something to quietly fix.** A stale lockfile cannot

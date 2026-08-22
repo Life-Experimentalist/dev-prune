@@ -1,3 +1,6 @@
 .vscodeignore
 *.vsix
 sync-schema.mjs
+build-icon-font.mjs
+node_modules/**
+package-lock.json

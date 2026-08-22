@@ -79,11 +79,17 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         "bun" => "bun install",
         "uv" => "uv lock",
         "poetry" => "poetry lock",
+        "pdm" => "pdm lock",
+        "pipenv" => "pipenv lock",
         "cargo" => "cargo generate-lockfile",
         "go" => "go mod tidy",
+        "composer" => "composer update --no-install",
+        "bundler" => "bundle lock",
+        "cocoapods" => "pod install",
+        "mix" => "mix deps.get",
         // venv has no lockfile to regenerate — the fix is to write `requirements.txt`,
-        // which is authoring work, not a command we can hand over. gradle and maven
-        // verify manifest presence, not lockfile sync — a missing manifest has no
+        // which is authoring work, not a command we can hand over. gradle, maven and
+        // swift verify manifest presence, not lockfile sync — a missing manifest has no
         // mechanical fix either.
         _ => return None,
     })
@@ -345,6 +351,109 @@ pub fn caches_document(reports: &[crate::commands::caches::CacheReport]) -> Valu
         },
     })
 }
+/// `caches clear --dry-run --json`: what would be emptied, and nothing touched.
+pub fn caches_clear_plan_document(reports: &[crate::commands::caches::CacheReport]) -> Value {
+    let total: u64 = reports.iter().map(|r| r.bytes).sum();
+
+    let caches: Vec<Value> = reports
+        .iter()
+        .map(|r| {
+            json!({
+                "manager": r.manager,
+                "kind": r.kind,
+                "path": clean_path(&r.path),
+                "bytes": r.bytes,
+                "clear_command": r.clear_command,
+            })
+        })
+        .collect();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "caches clear",
+        "dry_run": true,
+        "caches": caches,
+        "summary": {
+            "total_bytes": total,
+            "count": reports.len(),
+        },
+    })
+}
+
+/// `caches clear --json`: what actually went.
+///
+/// `freed_bytes` is measured, not assumed — a `prune` keeps what is still referenced,
+/// and a clear that failed half-way still freed part of it.
+pub fn caches_clear_document(outcomes: &[crate::commands::caches::ClearOutcome]) -> Value {
+    let freed: u64 = outcomes.iter().map(|o| o.freed()).sum();
+    let failed = outcomes.iter().filter(|o| o.problem.is_some()).count();
+
+    let caches: Vec<Value> = outcomes
+        .iter()
+        .map(|o| {
+            let mut obj = json!({
+                "manager": o.manager,
+                "kind": o.kind,
+                "path": clean_path(&o.path),
+                "bytes_before": o.before,
+                "bytes_after": o.after,
+                "freed_bytes": o.freed(),
+                "cleared": o.problem.is_none(),
+            });
+            if let Some(problem) = &o.problem {
+                obj["error"] = json!(problem);
+            }
+            obj
+        })
+        .collect();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "caches clear",
+        "dry_run": false,
+        "caches": caches,
+        "summary": {
+            "freed_bytes": freed,
+            "count": outcomes.len(),
+            "failed": failed,
+        },
+    })
+}
+/// `devp trust --json`: what the tool guarantees, and what this machine has switched on.
+///
+/// Guarantees and machine state stay in separate arrays because they are different kinds
+/// of claim — one is structural and one is a reading — and flattening them would let a
+/// consumer treat a setting as a promise.
+pub fn trust_document(report: &crate::commands::trust::TrustReport) -> Value {
+    let rows = |rows: &[crate::commands::trust::TrustRow]| -> Vec<Value> {
+        rows.iter()
+            .map(|r| {
+                json!({
+                    "key": r.key,
+                    "subject": r.subject,
+                    "state": r.state,
+                    "verdict": r.verdict_key(),
+                })
+            })
+            .collect()
+    };
+
+    let widened = report.widened();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "trust",
+        "guarantees": rows(&report.guarantees),
+        "machine": rows(&report.machine),
+        "summary": {
+            "widened": widened,
+            "widened_count": widened.len(),
+        },
+    })
+}
 
 /// The document emitted by `devp status --drift --json`.
 ///
@@ -470,6 +579,7 @@ mod tests {
             bloat_dir: "node_modules".to_string(),
             size_freed: bytes,
             shared_bytes: 0,
+            runtime: None,
             status,
         }
     }
@@ -592,7 +702,7 @@ mod tests {
 
     #[test]
     fn the_cache_report_totals_what_it_lists() {
-        use crate::commands::caches::CacheReport;
+        use crate::commands::caches::{CacheReport, Clear};
 
         let doc = caches_document(&[
             CacheReport {
@@ -601,6 +711,7 @@ mod tests {
                 path: PathBuf::from("/home/dev/go/pkg/mod"),
                 bytes: 4_000,
                 clear_command: "go clean -modcache",
+                clear: Clear::Command("go", &["clean", "-modcache"]),
                 note: None,
             },
             CacheReport {
@@ -609,6 +720,7 @@ mod tests {
                 path: PathBuf::from("/home/dev/.pnpm-store"),
                 bytes: 1_000,
                 clear_command: "pnpm store prune",
+                clear: Clear::Command("pnpm", &["store", "prune"]),
                 note: Some("hardlinked"),
             },
         ]);
@@ -635,9 +747,9 @@ mod tests {
     #[test]
     fn every_adapter_with_a_lockfile_has_a_fix_command() {
         for adapter in crate::adapters::get_all_adapters() {
-            // venv, gradle and maven verify without a lockfile-sync step — see
+            // venv, gradle, maven and swift verify without a lockfile-sync step — see
             // `lockfile_fix_command` for why each has nothing mechanical to hand over.
-            if matches!(adapter.name(), "venv" | "gradle" | "maven") {
+            if matches!(adapter.name(), "venv" | "gradle" | "maven" | "swift") {
                 continue;
             }
             assert!(

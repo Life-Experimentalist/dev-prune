@@ -23,6 +23,7 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
 
     let mut registry = Registry::load()?;
     let mut total_found = 0;
+    let mut skipped_throwaway = 0;
     let mut newly_added_repos: Vec<PathBuf> = Vec::new();
 
     for path_str in paths {
@@ -39,6 +40,14 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
         total_found += repos.len();
 
         for repo in repos {
+            // A plugin manager's throwaway clone is not a workspace. Skipped quietly and
+            // counted, rather than listed: on the scan that motivated this there were
+            // twenty-eight of them, and twenty-eight lines of explanation would have
+            // buried the repositories the user actually wanted registered.
+            if super::link::is_throwaway_checkout(&path, &repo) {
+                skipped_throwaway += 1;
+                continue;
+            }
             if registry.add_repo(repo.clone()) {
                 newly_added_repos.push(repo.clone());
                 let verb = if dry_run {
@@ -47,11 +56,22 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
                     "Registered"
                 };
                 output::print_success(&format!("{verb}: {}", output::clean_path(&repo)));
+                let adoption =
+                    registry.adopt_moved_entry(&repo, scanner::git::repo_identity(&repo));
+                super::link::report_adoption(&adoption);
             } else {
                 output::print_info(&format!(
                     "Already registered: {}",
                     output::clean_path(&repo)
                 ));
+                // Backfill, so one `devp init ~/code` teaches the whole registry to
+                // recognise a move later. Only when it is missing: this scan visits
+                // every repository under the path, every time it is run.
+                if registry.needs_identity(&repo) {
+                    let adoption =
+                        registry.adopt_moved_entry(&repo, scanner::git::repo_identity(&repo));
+                    super::link::report_adoption(&adoption);
+                }
             }
         }
     }
@@ -70,6 +90,14 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
         if dry_run { "would add" } else { "added" },
         newly_added_repos.len()
     ));
+    if skipped_throwaway > 0 {
+        // Named, not silent. A scan that quietly drops repositories is one the user
+        // cannot debug when it drops one they wanted — and `devp link` is the way back.
+        output::print_info(&format!(
+            "Skipped {skipped_throwaway} disposable {} (plugin-manager clones, temp              directories). `devp link <path>` registers one anyway.",
+            output::plural(skipped_throwaway, "checkout", "checkouts"),
+        ));
+    }
     // After a dry run the in-memory count includes repositories that were never
     // written; "would be tracked" is the honest phrasing for it.
     output::print_info(&format!(

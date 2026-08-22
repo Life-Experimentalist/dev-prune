@@ -1,6 +1,6 @@
 # `dev-prune` (`devp`) Multi-Ecosystem Distribution & Packaging Manual
 
-Every way to install **`dev-prune`** (`devp`) v1.3.0, what each channel actually ships, and the security guarantees behind them. For the maintainer's side — credentials, registry policies, what to do when a release fails — see [RELEASING.md](RELEASING.md).
+Every way to install **`dev-prune`** (`devp`), what each channel actually ships, and the security guarantees behind them. For the maintainer's side — credentials, registry policies, what to do when a release fails — see [RELEASING.md](RELEASING.md).
 
 ---
 
@@ -53,27 +53,30 @@ iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
   The install is identical. The one thing `cmd` loses is the current-session PATH update above — a parent shell cannot inherit the environment of the child it spawned — so `devp` resolves in the next Command Prompt rather than immediately. `-ExecutionPolicy Bypass` is defensive rather than required: the policy governs script *files*, and `iwr … | iex` never creates one.
 
 ### 3. Pre-Compiled GitHub Release Binaries
-Six single-binary archives are built automatically for every tagged release and attached to [GitHub Releases](https://github.com/Life-Experimentalist/dev-prune/releases), each with a `.sha256` sidecar in `sha256sum` format:
+Seven single-binary archives are built automatically for every tagged release and attached to [GitHub Releases](https://github.com/Life-Experimentalist/dev-prune/releases), each with a `.sha256` sidecar in `sha256sum` format:
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.3.1-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.3.1-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.3.1-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.3.1-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.3.1-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.3.1-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.4.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.4.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.4.0-windows-x86.zip` | `i686-pc-windows-msvc` |
+| `dev-prune-v1.4.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.4.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.4.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.4.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
-**Every target is 64-bit.** `x64` is x86-64 (Intel/AMD, also called AMD64) and `arm64` is AArch64; there is no 32-bit build for any platform, and "x86" in the 32-bit sense is not published. A 32-bit *process* on 64-bit Windows is fine — `install.ps1` reads the machine's architecture, not the shell's — but a machine with no 64-bit mode gets a refusal rather than a download that cannot run. Building one is a `cargo install dev-prune` away on a 32-bit toolchain; nothing in the source is 64-bit-only.
+**32-bit is published for Windows only.** `x64` is x86-64 (Intel/AMD, also called AMD64), `arm64` is AArch64, and `x86` is 32-bit x86 — the `i686-pc-windows-msvc` build, for machines with no 64-bit mode at all: locked-down corporate images, industrial control PCs, the last generation of Atom netbooks. There is no 32-bit Linux, no 32-bit macOS (Apple removed the ability to run one in Catalina) and no 32-bit ARM build anywhere.
+
+A 32-bit *process* on 64-bit Windows still gets the x64 archive: `install.ps1` reads `PROCESSOR_ARCHITEW6432`, which is the machine's architecture rather than the shell's, so the `x86` asset goes only to hardware that can run nothing else. For anything else 32-bit, `cargo install dev-prune` on that toolchain works — nothing in the source is 64-bit-only.
 
 The install scripts construct these filenames by hand and refuse to install without the matching `.sha256`, so the naming is a contract rather than a convention.
 
 Each archive is additionally signed with GitHub build provenance, which ties it to this repository, the release workflow and the commit it was built from — something a checksum cannot do, because whoever produces an archive also produces its checksum. Verify with no key and no account:
 
 ```bash
-gh attestation verify dev-prune-v1.3.1-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+gh attestation verify dev-prune-v1.4.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
 ```
 
 ### 4. NPM — packaging exists, channel currently off
@@ -111,6 +114,30 @@ crates.io hosts source, not binaries — there is no executable on the registry 
 Every channel — including `cargo install` and a bare unzipped archive — is complete on its own. On Windows the windowless scheduler binary (`devpw.exe`, see [Background Automation](BACKGROUND_AUTOMATION.md)) is generated locally beside the installed binary on first setup, so no channel has to package a second executable for it.
 
 [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes the from-source gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target — the same six archives listed above — so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
+
+### 7. Homebrew (macOS & Linux)
+
+```bash
+brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/homebrew/dev-prune.rb
+```
+
+Installing a formula by URL needs no tap and no review — Homebrew fetches the file, checks the archive against the `sha256` in it, and installs. The formula covers macOS x64/arm64 and Linux x64/arm64, installs `devp` as a symlink to the same binary, and generates the shell completions from the binary itself.
+
+The formula is regenerated by the release, so the URL above always describes the newest release. A named tap (`brew install Life-Experimentalist/tap/dev-prune`) is the same file in a `homebrew-tap` repository and is a maintainer step, not a code one — see [RELEASING.md](RELEASING.md). Plain `brew install dev-prune` means homebrew-core, which has a notability bar and stays on [FUTURE.md](FUTURE.md).
+
+### 8. Scoop (Windows)
+
+```powershell
+scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json
+```
+
+Scoop installs a manifest by URL for the same reason Homebrew does: the manifest carries the download URL and its hash, so there is nothing left to trust. It covers x64, arm64 and 32-bit Windows, and registers both `dev-prune` and `devp` as commands.
+
+The manifest carries `checkver` and `autoupdate`, so a bucket that adopts it can bump itself from the release tag and the published `.sha256` sidecars without waiting for anyone.
+
+### 9. WinGet — manifests rendered, submission pending
+
+`winget-pkgs` has no popularity requirement, but every version is a pull request reviewed by a person, so it is not something a release job can do unattended. What the release *does* do is render the three manifests it needs — version, installer and locale — against the assets it just published, in [`packaging/winget/`](../packaging/winget/). Submitting them is a maintainer step documented in [RELEASING.md](RELEASING.md); until it happens, `winget install dev-prune` does not resolve.
 
 ---
 

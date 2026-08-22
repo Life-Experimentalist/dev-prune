@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -15,7 +16,25 @@ fn devp() -> Command {
     cmd.env("DEV_PRUNE_NO_AUTO_SETUP", "1");
     // A fresh config dir makes the release check "due"; tests stay off the network.
     cmd.env("DEV_PRUNE_OFFLINE", "1");
+    // The floor, not the choice: a case that cares about registry state sets its own
+    // `DEV_PRUNE_CONFIG_DIR` after this and wins. What this stops is the case that does
+    // not care and therefore writes to the developer's real registry — which is how six
+    // temporary fixtures ended up permanently registered on the author's machine, listed
+    // as `Path missing` forever, with nothing anywhere reporting a fault.
+    cmd.env("DEV_PRUNE_CONFIG_DIR", scratch_config_dir());
     cmd
+}
+
+/// A throwaway config directory under `target/`, shared by every case in this file that
+/// does not name one of its own.
+///
+/// `CARGO_TARGET_TMPDIR` rather than `std::env::temp_dir()`: it is inside the build
+/// directory, so `cargo clean` removes it and a test run leaves nothing behind anywhere
+/// else on the machine.
+fn scratch_config_dir() -> PathBuf {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("integration-scratch-config");
+    std::fs::create_dir_all(&dir).expect("create scratch config dir");
+    dir
 }
 
 #[test]

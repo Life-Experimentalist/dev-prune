@@ -74,6 +74,9 @@ TARGETS = {
     ("darwin", "arm64"): ["macosx_11_0_arm64"],
     ("windows", "x64"): ["win_amd64"],
     ("windows", "arm64"): ["win_arm64"],
+    # `win32` is pip's tag for 32-bit x86 Windows, not for Windows in general — the
+    # name predates 64-bit and has never meant what it looks like it means.
+    ("windows", "x86"): ["win32"],
 }
 
 CLASSIFIERS = [

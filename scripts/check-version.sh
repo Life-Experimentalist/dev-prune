@@ -44,12 +44,39 @@ expect scripts/install.sh "FALLBACK_VERSION=\"$version\""
 expect scripts/install.ps1 "\$fallbackVersion = '$version'"
 expect site/src/App.jsx "const VERSION = \"$version\";"
 expect site/public/llms.txt "Version $version."
+# The site's JSON-LD carries the version too, and nothing renders it: a stale one is
+# invisible to every reader and served to every crawler. It was found two releases
+# behind, which is how it got here.
+expect site/index.html "\"softwareVersion\": \"$version\""
 
 # Docs that spell out a whole asset name, so the reader can copy it. These were found
 # two releases stale, which is the same failure as the fallbacks: nothing runs a doc.
 expect docs/DISTRIBUTION.md "dev-prune-v$version-linux-x64.tar.gz"
 expect docs/RELEASES_AND_MANUAL_INSTALL.md "dev-prune-v$version-linux-x64.tar.gz"
 expect docs/troubleshooting/INSTALLATION_ISSUES.md "dev-prune-v$version-windows-x64.zip"
+
+# npm/package.json is a template — scripts/npm-prepare.sh rewrites every version in it
+# from the tag before publishing, and asserts it rewrote exactly eight. So a stale number
+# here never reaches the registry; it reaches the reader, and it sat at 1.1.0 for three
+# releases because nothing looked. Checking it also pins the count the prepare script
+# asserts: add a platform package here and forget the `-ne 8`, and the release fails
+# loudly at packaging time rather than quietly at install time.
+npm_stale="$(grep -n '": "[0-9]' npm/package.json | grep -vF "\"$version\"" || true)"
+if [ -n "$npm_stale" ]; then
+    echo "check-version: npm/package.json must say \"$version\" everywhere:" >&2
+    echo "$npm_stale" >&2
+    status=1
+fi
+
+# The `--json` samples in the CLI reference each carry a "version" field. `expect` would
+# pass on one correct sample among six stale ones, so this checks every line instead —
+# they were found a release behind, which is how the rule got here.
+stale="$(grep -n '^  "version": ' docs/CLI_REFERENCE.md | grep -vF "\"version\": \"$version\"," || true)"
+if [ -n "$stale" ]; then
+    echo "check-version: docs/CLI_REFERENCE.md JSON samples must say \"$version\":" >&2
+    echo "$stale" >&2
+    status=1
+fi
 
 if [ "$status" -eq 0 ]; then
     echo "Every file that restates the version agrees with Cargo.toml."

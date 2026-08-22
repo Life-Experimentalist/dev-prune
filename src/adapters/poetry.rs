@@ -153,7 +153,33 @@ impl PackageManager for Poetry {
     }
 
     fn restore(&self, path: &Path, timeout: std::time::Duration) -> Result<()> {
+        self.restore_named(path, ".venv", None, timeout)
+    }
+
+    /// Poetry picks its own interpreter, so the recorded one is pointed at it first with
+    /// `poetry env use` — the same command a user would type.
+    fn restore_named(
+        &self,
+        path: &Path,
+        _dir_name: &str,
+        runtime: Option<&str>,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        if let Some(exe) = runtime.and_then(super::python_executable) {
+            // Best effort, deliberately. If poetry will not adopt that interpreter the
+            // right answer is still to install the dependencies into the environment it
+            // *will* use — that is what this command did before the version was recorded
+            // at all, and a restore that refuses to run is worse than one that runs on
+            // 3.14. `run_last_run` has already said out loud which interpreter it asked
+            // for, so a mismatch is not silent.
+            let _ = run_command_with_timeout("poetry", &["env", "use", &exe], path, timeout);
+        }
         run_command_with_timeout("poetry", &["install"], path, timeout)
+    }
+
+    /// The interpreter the in-project `.venv` was built with.
+    fn runtime_tag(&self, path: &Path, dir_name: &str) -> Option<String> {
+        super::venv_runtime_tag(&path.join(dir_name))
     }
 
     fn lockfiles(&self) -> &'static [&'static str] {

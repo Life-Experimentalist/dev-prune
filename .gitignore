@@ -14,6 +14,7 @@ node_modules/
 .vscode/
 *.swp
 *.swo
+temp/
 
 # OS
 .DS_Store

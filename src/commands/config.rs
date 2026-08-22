@@ -21,16 +21,42 @@ use crate::output;
 /// line in `config show`.
 struct Setting {
     key: &'static str,
+    /// The release this key first appeared in.
+    ///
+    /// Not decoration: the first-run marker records the version it was written at, so
+    /// comparing the two is how an upgrade knows which settings the user has never been
+    /// shown — without keeping a second list of "new in this version" to forget to
+    /// update. See [`settings_added_since_review`].
+    since: &'static str,
+    /// What kind of value this is, so a picker can offer the right control.
+    kind: Kind,
     /// One line, shown by the walkthrough and by `config show --help-text`.
     help: &'static str,
     get: fn(&Settings) -> String,
     set: fn(&mut Settings, &str) -> Result<()>,
 }
 
+/// How a setting should be *asked* about, as opposed to how it is stored.
+///
+/// Every value round-trips through `get`/`set` as a string either way — this only
+/// decides whether the configurator offers a toggle, a number to type, or the adapter
+/// checklist. Validation stays in the setters, which are the one place that owns it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    /// `true` or `false`.
+    Toggle,
+    /// A whole number, bounded by whatever its own setter enforces.
+    Number,
+    /// A comma-separated list of adapter names.
+    Adapters,
+}
+
 /// Every global setting, in the order a person would want to be asked about them.
 const SETTINGS: &[Setting] = &[
     Setting {
         key: "idle_days",
+        since: "1.0.0",
+        kind: Kind::Number,
         help: "Days a repository must sit untouched before it is eligible for pruning.",
         get: |s| s.idle_days.to_string(),
         set: |s, v| {
@@ -42,6 +68,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "min_size_mb",
+        since: "1.0.0",
+        kind: Kind::Number,
         help: "Smallest bloat directory worth deleting, in MiB. 0 removes the floor.",
         get: |s| s.min_size_mb.to_string(),
         set: |s, v| {
@@ -53,6 +81,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "scan_depth",
+        since: "1.0.0",
+        kind: Kind::Number,
         help: "How many directory levels below a repo root project discovery descends.",
         get: |s| s.scan_depth.to_string(),
         set: |s, v| {
@@ -77,6 +107,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "require_confirmation",
+        since: "1.0.0",
+        kind: Kind::Toggle,
         help: "Ask before deleting anything. Turning this off makes every run unattended.",
         get: |s| s.require_confirmation.to_string(),
         set: |s, v| {
@@ -86,6 +118,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "allow_manifest_rewrite",
+        since: "1.0.0",
+        kind: Kind::Toggle,
         help: "Let cargo and go run the sync command that rewrites tracked manifests.",
         get: |s| s.allow_manifest_rewrite.to_string(),
         set: |s, v| {
@@ -95,6 +129,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "command_timeout_secs",
+        since: "1.0.0",
+        kind: Kind::Number,
         help: "How long a lockfile command may run before it is killed.",
         get: |s| s.command_timeout_secs.to_string(),
         set: |s, v| {
@@ -116,6 +152,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_setup",
+        since: "1.0.0",
+        kind: Kind::Toggle,
         help: "Install missing integrations by itself, once per installed version.",
         get: |s| s.auto_setup.to_string(),
         set: |s, v| {
@@ -125,6 +163,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_config",
+        since: "1.3.0",
+        kind: Kind::Toggle,
         help: "Write a default .devprune.json into repositories that link/init register.",
         get: |s| s.auto_config.to_string(),
         set: |s, v| {
@@ -134,6 +174,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_daemon",
+        since: "1.0.0",
+        kind: Kind::Toggle,
         help: "Register the OS scheduler so passes run without being remembered.",
         get: |s| s.auto_daemon.to_string(),
         set: |s, v| {
@@ -143,6 +185,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "check_interval_days",
+        since: "1.0.0",
+        kind: Kind::Number,
         help: "Days between scheduled background passes.",
         get: |s| s.check_interval_days.to_string(),
         set: |s, v| {
@@ -159,6 +203,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_hooks",
+        since: "1.0.0",
+        kind: Kind::Toggle,
         help: "Install the Git hooks that register repositories as you clone them.",
         get: |s| s.auto_hooks.to_string(),
         set: |s, v| {
@@ -168,6 +214,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_hooks_chain",
+        since: "1.0.0",
+        kind: Kind::Toggle,
         help: "If another tool owns core.hooksPath, install in front of it and forward.",
         get: |s| s.auto_hooks_chain.to_string(),
         set: |s, v| {
@@ -177,6 +225,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "update_check",
+        since: "1.0.0",
+        kind: Kind::Toggle,
         help: "Ask GitHub for the latest release from time to time. Sends nothing but the request.",
         get: |s| s.update_check.to_string(),
         set: |s, v| {
@@ -186,6 +236,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "update_check_interval_days",
+        since: "1.0.0",
+        kind: Kind::Number,
         help: "Days between automatic release checks.",
         get: |s| s.update_check_interval_days.to_string(),
         set: |s, v| {
@@ -201,6 +253,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "update_check_timeout_secs",
+        since: "1.0.0",
+        kind: Kind::Number,
         help: "Seconds the release check waits for GitHub. Raise it behind a slow proxy.",
         get: |s| s.update_check_timeout_secs.to_string(),
         set: |s, v| {
@@ -216,6 +270,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_gradle",
+        since: "1.3.0",
+        kind: Kind::Toggle,
         help: "Turn on the opt-in Gradle adapter (build/ and .gradle/ come back by recompiling).",
         get: |s| s.enable_gradle.to_string(),
         set: |s, v| {
@@ -225,6 +281,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_maven",
+        since: "1.3.0",
+        kind: Kind::Toggle,
         help: "Turn on the opt-in Maven adapter (target/ comes back by recompiling).",
         get: |s| s.enable_maven.to_string(),
         set: |s, v| {
@@ -233,8 +291,21 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "enable_swift",
+        since: "1.4.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in SwiftPM adapter (.build/ comes back by recompiling).",
+        get: |s| s.enable_swift.to_string(),
+        set: |s, v| {
+            s.enable_swift = parse_bool("enable_swift", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "build_idle_days",
-        help: "Idle days before gradle/maven build trees are pruned. Applied as max(this, idle_days).",
+        since: "1.3.0",
+        kind: Kind::Number,
+        help: "Idle days before gradle/maven/swift build trees are pruned. Applied as max(this, idle_days).",
         get: |s| s.build_idle_days.to_string(),
         set: |s, v| {
             let days: u64 = v
@@ -246,6 +317,8 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_update",
+        since: "1.3.0",
+        kind: Kind::Toggle,
         help: "Run `devp update --install` by itself after a prune pass when a newer release exists.",
         get: |s| s.auto_update.to_string(),
         set: |s, v| {
@@ -253,7 +326,56 @@ const SETTINGS: &[Setting] = &[
             Ok(())
         },
     },
+    Setting {
+        key: "disabled_adapters",
+        since: "1.4.0",
+        kind: Kind::Adapters,
+        help: "Adapters to leave alone entirely, by name. Empty means every one of them is active.",
+        get: |s| {
+            if s.disabled_adapters.is_empty() {
+                "(none)".to_string()
+            } else {
+                s.disabled_adapters.join(",")
+            }
+        },
+        set: |s, v| {
+            s.disabled_adapters = parse_adapter_list(v)?;
+            Ok(())
+        },
+    },
 ];
+
+/// Parse the comma-separated adapter deny-list, rejecting names that do not exist.
+///
+/// An unknown name is an error listing the valid ones rather than a no-op, for the same
+/// reason `--only nmp` is: a silently ignored typo reads as "npm is protected" right up
+/// until the pass that deletes `node_modules`.
+fn parse_adapter_list(value: &str) -> Result<Vec<String>> {
+    let trimmed = value.trim();
+    // The spellings that mean "clear it". `(none)` closes the loop with the getter, so
+    // whatever `config get` prints can be handed straight back to `config set`.
+    if trimmed.is_empty() || matches!(trimmed.to_lowercase().as_str(), "none" | "(none)" | "-") {
+        return Ok(Vec::new());
+    }
+
+    let mut names: Vec<String> = Vec::new();
+    for raw in trimmed.split(',') {
+        let name = raw.trim().to_lowercase();
+        if name.is_empty() {
+            continue;
+        }
+        if !crate::adapters::is_adapter_name(&name) {
+            bail!(
+                "`{name}` is not an adapter. Valid names: {}",
+                crate::adapters::all_adapter_names().join(", ")
+            );
+        }
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    Ok(names)
+}
 
 fn parse_bool(key: &str, value: &str) -> Result<bool> {
     match value.trim().to_lowercase().as_str() {
@@ -412,15 +534,173 @@ pub fn run_show() -> Result<()> {
     Ok(())
 }
 
-/// Walk the global settings, offering each current value for confirmation.
+/// Put every global setting in front of the user, and let them change any of it.
 ///
-/// Run once by hand as `devp config wizard`, and once automatically the first time a
-/// human types a command on a fresh install — the point at which every default is about
-/// to start applying to their machine, and the only point at which they can be told so
-/// before rather than after.
+/// Run by hand as `devp config wizard`, and once automatically — the first time a human
+/// types a command on a fresh install, and again after an upgrade that added a setting
+/// they have never been shown. Both are the moment a default starts applying to their
+/// machine, and the only moment they can be told so before rather than after.
+///
+/// Two implementations, one meaning. [`run_wizard_tui`] is the full-screen one; the
+/// line-by-line [`run_wizard_prompts`] runs wherever that cannot, which is less a
+/// degraded mode than the only honest option on a pipe.
+pub fn run_wizard(no_tui: bool) -> Result<()> {
+    if !no_tui && full_screen_is_usable() {
+        return run_wizard_tui();
+    }
+    run_wizard_prompts()
+}
+
+/// Whether a full-screen view can be opened, and should be.
+///
+/// The terminal test answers "is there a screen to draw on". `DEV_PRUNE_NO_TUI` answers
+/// the one it cannot: whether the thing holding that terminal is a person. An agent
+/// driving `devp` through a pty passes every terminal check and will never press a key,
+/// so it sets the variable and gets the prompts — or, better, skips this command
+/// altogether for `devp config set`, which needs no interaction at all.
+fn full_screen_is_usable() -> bool {
+    use std::io::IsTerminal;
+    if std::env::var_os(crate::constants::ENV_NO_TUI).is_some() {
+        return false;
+    }
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+/// The full-screen configurator: declaration, then every setting, then the summary.
+fn run_wizard_tui() -> Result<()> {
+    use crate::tui::config_view::{ConfigRow, ConfigSession, Control, Outcome};
+
+    let mut registry = Registry::load()?;
+    let new_keys = settings_added_since_review();
+
+    let rows: Vec<ConfigRow> = SETTINGS
+        .iter()
+        .map(|setting| {
+            let value = (setting.get)(&registry.settings);
+            ConfigRow {
+                key: setting.key,
+                help: setting.help,
+                control: match setting.kind {
+                    Kind::Toggle => Control::Toggle,
+                    Kind::Number => Control::Number,
+                    Kind::Adapters => Control::Adapters,
+                },
+                original: value.clone(),
+                value,
+                is_new: new_keys.contains(&setting.key),
+            }
+        })
+        .collect();
+
+    // The view validates through the real setters against a throwaway copy, so a value it
+    // accepts is a value that will save, and the rules stay in exactly one place.
+    let base = registry.settings.clone();
+    let validate = move |key: &str, value: &str| -> std::result::Result<(), String> {
+        let setting = find_setting(key).map_err(|e| e.to_string())?;
+        let mut probe = base.clone();
+        (setting.set)(&mut probe, value).map_err(|e| format!("{e}"))
+    };
+
+    let report = crate::commands::trust::build(&registry);
+    let adapters = crate::adapters::all_adapter_names();
+    let opt_in = crate::adapters::opt_in_adapter_names();
+
+    let outcome = crate::tui::config_view::run(ConfigSession {
+        declaration: declaration_lines(&report),
+        standing: NOTHING_DELETED_YET.to_string(),
+        rows,
+        adapters: &adapters,
+        opt_in_adapters: &opt_in,
+        validate: &validate,
+        title: "dev-prune configuration",
+    })?;
+
+    match outcome {
+        // Deliberately not marked reviewed here — the caller decides. The first run marks
+        // it anyway, because being asked again on every command is worse than being asked
+        // once and walking away; `devp config wizard` typed by hand changes nothing.
+        Outcome::Cancelled => {
+            output::print_info("Cancelled — nothing was changed.");
+            Ok(())
+        }
+        Outcome::KeepAll => {
+            mark_reviewed();
+            output::print_success(
+                "Keeping the current values. `devp config set <key> <value>` changes any.",
+            );
+            Ok(())
+        }
+        Outcome::Save(changed) => {
+            for row in &changed {
+                (find_setting(row.key)?.set)(&mut registry.settings, &row.value)?;
+            }
+            registry.save()?;
+            mark_reviewed();
+
+            // Reprinted into the scrollback on purpose: the summary screen left with the
+            // alternate screen, and what was just written to a config file should still be
+            // readable after the view that wrote it has closed.
+            output::print_header("Saved");
+            let width = changed.iter().map(|r| r.key.len()).max().unwrap_or(0);
+            for row in &changed {
+                println!(
+                    "  {:<width$} = {}  (was {})",
+                    row.key, row.value, row.original
+                );
+            }
+            println!();
+            output::print_success(&format!(
+                "{} {} saved. `devp config show` lists every setting.",
+                changed.len(),
+                output::plural(changed.len(), "change", "changes")
+            ));
+            Ok(())
+        }
+    }
+}
+
+/// What is true at the moment the configurator opens, and stays true while it is open.
+const NOTHING_DELETED_YET: &str =
+    "Nothing has been deleted, and nothing will be until a lockfile proves it comes back.";
+
+/// The declaration screen's contents: `devp trust`, shown before rather than after.
+///
+/// Read off the same report that command prints rather than written out again here. A
+/// second copy of these promises is a second copy free to drift, and the copy a new user
+/// reads first is the worst one to have drift.
+fn declaration_lines(
+    report: &crate::commands::trust::TrustReport,
+) -> Vec<crate::tui::config_view::DeclarationLine> {
+    use crate::commands::trust::{TrustRow, Verdict};
+    use crate::tui::config_view::DeclarationLine;
+
+    let heading = |text: &str| DeclarationLine {
+        mark: '#',
+        subject: text.to_string(),
+        state: String::new(),
+    };
+    let row = |r: &TrustRow| DeclarationLine {
+        mark: match r.verdict {
+            Verdict::Guaranteed | Verdict::Safe => '+',
+            Verdict::Widened => '!',
+            Verdict::Neutral => ' ',
+        },
+        subject: r.subject.to_string(),
+        state: r.state.clone(),
+    };
+
+    let mut lines = vec![heading("Guaranteed by the code")];
+    lines.extend(report.guarantees.iter().map(&row));
+    lines.push(heading(""));
+    lines.push(heading("On this machine"));
+    lines.extend(report.machine.iter().map(&row));
+    lines
+}
+
+/// Walk the global settings one line at a time, offering each current value.
 ///
 /// Refuses without a terminal instead of hanging on a read that will never return.
-pub fn run_wizard() -> Result<()> {
+fn run_wizard_prompts() -> Result<()> {
     use std::io::{self, IsTerminal, Write};
 
     if !io::stdin().is_terminal() {
@@ -433,13 +713,21 @@ pub fn run_wizard() -> Result<()> {
 
     let mut registry = Registry::load()?;
     let width = key_column_width();
+    let new_keys = settings_added_since_review();
 
     output::print_header("dev-prune configuration");
     output::print_info("These are the defaults every run will use. Nothing has been changed yet.");
     println!();
     for setting in SETTINGS {
+        // A setting that arrived in an upgrade has been applying its default since the
+        // upgrade, so naming those is the whole reason this reopened.
+        let badge = if new_keys.contains(&setting.key) {
+            "   (new in this version)"
+        } else {
+            ""
+        };
         println!(
-            "  {:<width$} = {}",
+            "  {:<width$} = {}{badge}",
             setting.key,
             (setting.get)(&registry.settings)
         );
@@ -509,16 +797,52 @@ pub fn run_wizard() -> Result<()> {
 /// Marker recording that the settings have been put in front of the user once.
 const REVIEW_MARKER: &str = "config-reviewed";
 
-/// Whether the first-run walkthrough is still owed.
+/// Whether the walkthrough is owed: on a fresh install, or after an upgrade that added a
+/// setting this machine has never been shown.
 ///
-/// Keyed on the marker file rather than on the version stamp: an upgrade should not
-/// re-ask about settings that were confirmed once. A `devp uninstall --purge` removes the
-/// config directory and with it this marker, which is what makes a genuine reinstall ask
-/// again.
+/// An upgrade does not re-ask about settings already confirmed — being made to reconfirm
+/// `idle_days` every release is a nuisance, and a nuisance is something people learn to
+/// dismiss without reading. It reopens only when something is genuinely new, and then
+/// says which. A `devp uninstall --purge` removes the config directory and with it this
+/// marker, which is what makes a real reinstall ask about everything again.
 pub fn config_review_is_due() -> bool {
-    Registry::config_dir()
-        .map(|dir| !dir.join(REVIEW_MARKER).exists())
-        .unwrap_or(false)
+    let Ok(dir) = Registry::config_dir() else {
+        return false;
+    };
+    if !dir.join(REVIEW_MARKER).exists() {
+        return true;
+    }
+    !settings_added_since_review().is_empty()
+}
+
+/// The release recorded the last time the settings were put in front of the user.
+fn reviewed_version() -> Option<String> {
+    let dir = Registry::config_dir().ok()?;
+    let recorded = std::fs::read_to_string(dir.join(REVIEW_MARKER)).ok()?;
+    let recorded = recorded.trim().to_string();
+    (!recorded.is_empty()).then_some(recorded)
+}
+
+/// The settings that did not exist the last time this machine was asked.
+///
+/// Derived from each setting's own `since` rather than from a hand-kept "new in this
+/// version" list, because that list is one more thing to forget when adding a setting and
+/// its failure mode is silent: a new default starts applying and nothing ever says so.
+///
+/// Empty when the marker is missing or unreadable — that is the fresh-install case, where
+/// every setting is new and [`config_review_is_due`] has already said so.
+pub fn settings_added_since_review() -> Vec<&'static str> {
+    let Some(reviewed) = reviewed_version() else {
+        return Vec::new();
+    };
+    SETTINGS
+        .iter()
+        .filter(|s| {
+            crate::commands::update::compare_versions(s.since, &reviewed)
+                == Some(std::cmp::Ordering::Greater)
+        })
+        .map(|s| s.key)
+        .collect()
 }
 
 fn mark_reviewed() {
@@ -863,12 +1187,14 @@ mod tests {
         let mut settings = Settings::default();
         for setting in SETTINGS {
             let before = (setting.get)(&settings);
-            let probe = match before.as_str() {
-                "true" => "false".to_string(),
-                "false" => "true".to_string(),
+            let probe = match setting.kind {
+                Kind::Toggle => if before == "true" { "false" } else { "true" }.to_string(),
                 // A number every numeric setting accepts: above every minimum, below
                 // `scan_depth`'s ceiling.
-                _ => "7".to_string(),
+                Kind::Number => "7".to_string(),
+                // A real adapter name, so the round trip also proves the list prints
+                // back in the spelling `config set` takes.
+                Kind::Adapters => "cargo".to_string(),
             };
             (setting.set)(&mut settings, &probe)
                 .unwrap_or_else(|e| panic!("{} rejected `{probe}`: {e}", setting.key));

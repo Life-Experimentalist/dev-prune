@@ -333,6 +333,7 @@ mod tests {
             bloat_dir: "node_modules".to_string(),
             size_freed: 1024,
             shared_bytes: 0,
+            runtime: None,
             status: crate::engine::PruneStatus::SkippedDryRun,
         };
         let selectable = SelectableCandidate {

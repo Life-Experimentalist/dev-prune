@@ -253,17 +253,9 @@ fn declared_dependencies(dist_info: &Path) -> Vec<String> {
 
 /// The `major.minor` of the Python a venv was built with, from its `pyvenv.cfg`.
 fn venv_python_version(venv: &Path) -> Option<(u64, u64)> {
-    let cfg = fs::read_to_string(venv.join(PYVENV_CFG)).ok()?;
-    for line in cfg.lines() {
-        let Some((key, value)) = line.split_once('=') else {
-            continue;
-        };
-        if matches!(key.trim(), "version" | "version_info") {
-            let mut parts = value.trim().split('.');
-            return Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?));
-        }
-    }
-    None
+    let tag = super::venv_runtime_tag(venv)?;
+    let (major, minor) = tag.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
 /// The `major.minor` of whatever `python` is on PATH — the interpreter a restore would
@@ -298,7 +290,7 @@ fn warn_about_restore_surprises(path: &Path, venvs: &[PathBuf]) {
             "`{}` has {} virtual environments, all rebuilt from one requirements.txt. \
              Each restores under its own recorded name; a plain `devp restore` with no \
              record rebuilds only `.venv`.",
-            path.display(),
+            crate::output::clean_path(path),
             venvs.len()
         ));
     } else if let Some(venv) = venvs.first() {
@@ -309,7 +301,7 @@ fn warn_about_restore_surprises(path: &Path, venvs: &[PathBuf]) {
             crate::output::print_info(&format!(
                 "The environment at `{}` is named `{name}` — `devp restore --last-run` \
                      recreates that name, but a restore with no record creates `.venv`.",
-                venv.display()
+                crate::output::clean_path(venv)
             ));
         }
     }
@@ -321,13 +313,26 @@ fn warn_about_restore_surprises(path: &Path, venvs: &[PathBuf]) {
         {
             crate::output::print_warning(&format!(
                 "`{}` was built with Python {}.{}, but `python` on PATH is {}.{} — a \
-                     restore would rebuild it on that interpreter instead, and pinned \
-                     wheels may not exist for it.",
-                venv.display(),
+                 restore would rebuild it on that interpreter instead, and pinned \
+                 wheels may not exist for it.",
+                crate::output::clean_path(venv),
                 built_with.0,
                 built_with.1,
                 available.0,
                 available.1
+            ));
+            // A warning that only names the problem leaves the reader to work out the
+            // fix, and the fix is one command. `uv venv` is offered first because it
+            // downloads the interpreter if the machine no longer has it; the launcher
+            // and `pythonX.Y` forms only work if it is already installed.
+            let dir = crate::output::clean_path(venv);
+            let (major, minor) = built_with;
+            #[cfg(windows)]
+            let native = format!("py -{major}.{minor} -m venv \"{dir}\"");
+            #[cfg(not(windows))]
+            let native = format!("python{major}.{minor} -m venv \"{dir}\"");
+            crate::output::print_info(&format!(
+                "  Rebuild on {major}.{minor}:  uv venv --python {major}.{minor} \"{dir}\"   (or `{native}`)"
             ));
         }
     }
@@ -487,7 +492,12 @@ impl PackageManager for Venv {
     /// original one. `devp restore --last-run` knows better and calls
     /// [`PackageManager::restore_named`] with the folder name the prune deleted.
     fn restore(&self, path: &Path, timeout: std::time::Duration) -> Result<()> {
-        self.restore_named(path, ".venv", timeout)
+        self.restore_named(path, ".venv", None, timeout)
+    }
+
+    /// The interpreter this environment was built with, so a restore can rebuild on it.
+    fn runtime_tag(&self, path: &Path, dir_name: &str) -> Option<String> {
+        super::venv_runtime_tag(&path.join(dir_name))
     }
 
     /// Recreate the environment under the folder name it had before the prune, so
@@ -496,6 +506,7 @@ impl PackageManager for Venv {
         &self,
         path: &Path,
         dir_name: &str,
+        runtime: Option<&str>,
         timeout: std::time::Duration,
     ) -> Result<()> {
         // The recorded name comes from the registry file; a mangled entry must not be
@@ -509,7 +520,25 @@ impl PackageManager for Venv {
         } else {
             dir_name
         };
-        run_command_with_timeout("python", &["-m", "venv", dir_name], path, timeout)?;
+        // Rebuild on the interpreter the environment was *created* with when the prune
+        // recorded one and this machine still has it. A venv is a copy of one specific
+        // interpreter; rebuilding a 3.12 environment on 3.14 changes which wheels
+        // resolve, and the failure shows up later as an import error nobody connects
+        // back to a restore. `run_last_run` has already checked availability and cleared
+        // the tag if it was not there, so this only re-checks the single-project path.
+        let launcher = runtime
+            .filter(|tag| super::python_runtime_available(tag))
+            .and_then(super::python_launcher);
+        match launcher {
+            Some((program, prefix)) => {
+                let mut args: Vec<&str> = prefix.iter().map(String::as_str).collect();
+                args.extend_from_slice(&["-m", "venv", dir_name]);
+                run_command_with_timeout(&program, &args, path, timeout)?;
+            }
+            None => {
+                run_command_with_timeout("python", &["-m", "venv", dir_name], path, timeout)?;
+            }
+        }
         // Absolute, because a relative program path is resolved against the parent
         // process's working directory, not the `current_dir` handed to the child.
         #[cfg(windows)]

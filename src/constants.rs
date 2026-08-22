@@ -145,6 +145,54 @@ pub const DEFAULT_SCAN_DEPTH: usize = 6;
 /// a multi-minute stall on a background pass nobody is watching.
 pub const MAX_SCAN_DEPTH_LIMIT: usize = 32;
 
+/// Ceiling on the threads `devp status` uses to size repositories.
+///
+/// The scan is one independent file-system walk per repository, so it is bound by the
+/// disk rather than the CPU and oversubscribing the cores is what makes it fast. The
+/// ceiling exists anyway: past this point a spinning disk spends its time seeking
+/// between trees instead of reading them, and a laptop under a background pass should
+/// still be usable.
+pub const STATUS_SCAN_MAX_THREADS: usize = 32;
+
+/// Threads per reported core for the status scan. Above one because the scan waits on
+/// the disk far more than on the CPU; well below what the disk will queue, because past
+/// that point the extra threads only take turns.
+pub const STATUS_SCAN_THREADS_PER_CORE: usize = 2;
+
+/// Overrides the computed status-scan thread count. Clamped to
+/// [`STATUS_SCAN_MAX_THREADS`]; `1` forces a sequential scan.
+pub const STATUS_SCAN_THREADS_ENV: &str = "DEV_PRUNE_SCAN_THREADS";
+
+/// How many lines of a failed command's output are relayed into a report.
+///
+/// A failing `npm ci` prints its whole usage screen. Six lines is enough for the error
+/// and its cause, and short enough that the prune report around it is still readable;
+/// the rest is reachable through the log file the condensed output still names.
+pub const TOOL_OUTPUT_MAX_LINES: usize = 6;
+
+/// Directory names that mean "the contents of this are disposable".
+///
+/// Matched against a repository's *ancestors*, never against the repository directory
+/// itself: a project may legitimately be called `cache`, but a checkout sitting inside
+/// one is something a tool put there. Editor and agent plugin managers clone into
+/// directories like `~/.claude/plugins/cache/temp_git_<id>`, which is nowhere near the OS
+/// temp directory and is deleted just as fast; twenty-eight of those reached one
+/// registry before this list existed.
+pub const EPHEMERAL_ANCESTORS: &[&str] = &["cache", ".cache", "Cache", "Caches", "tmp", ".tmp"];
+
+/// Repository directory *names* that mean the same thing, wherever they are.
+///
+/// The ancestor list above only catches a throwaway clone that a tool was polite enough
+/// to put under a directory called `cache`. These prefixes catch the clone itself:
+/// `temp_git_1787245534782` is a checkout some plugin manager made, named after the
+/// millisecond it made it, and it will be gone before the next prune pass. Registering
+/// one strands a dead entry in the registry the moment the tool cleans up after itself.
+///
+/// A prefix rather than a substring, and deliberately narrow: `temporary-fixes` and
+/// `my-temp-git-notes` are real repositories somebody named badly, and refusing to track
+/// a real workspace is the worse of the two errors.
+pub const EPHEMERAL_REPO_PREFIXES: &[&str] = &["temp_git_", "tmp_git_"];
+
 /// Whether an adapter whose sync command edits tracked manifests may run it.
 ///
 /// Off. `cargo generate-lockfile` re-resolves every dependency and rewrites
@@ -181,6 +229,46 @@ pub const INSTALL_PS1_URL: &str = "https://devprune.vkrishna04.me/install.ps1";
 pub const LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/Life-Experimentalist/dev-prune/releases/latest";
 
+/// Where a release's assets live, with `{tag}` standing in for `v1.4.0`.
+///
+/// Used by `devp update --install` to fetch the uncompressed binary and its `.sha256`
+/// sidecar. Deliberately the plain `releases/download` path rather than an API endpoint:
+/// it needs no token, is not rate-limited per-IP the way `api.github.com` is, and is the
+/// same URL a person would click on the release page.
+pub const RELEASE_DOWNLOAD_BASE: &str =
+    "https://github.com/Life-Experimentalist/dev-prune/releases/download";
+
+/// The release-asset name for one platform, without the `.sha256` suffix.
+///
+/// This is a contract with the packaging steps in `.github/workflows/release.yml`, which
+/// build these exact names. A mismatch is not a compile error and not a test failure —
+/// it is a self-update that 404s on the day of a release — so the two are commented as
+/// referring to each other.
+///
+/// `None` on a platform the release does not build for, which is how a source build on,
+/// say, FreeBSD declines the direct route instead of downloading a Linux binary.
+pub fn release_asset_name(version: &str) -> Option<String> {
+    let os = match std::env::consts::OS {
+        "windows" => "windows",
+        "macos" => "darwin",
+        "linux" => "linux",
+        _ => return None,
+    };
+    // The release publishes `x64`/`arm64`/`x86`, not Rust's target-arch spellings.
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        "x86" => "x86",
+        _ => return None,
+    };
+    // Only Windows ships a 32-bit build; on any other OS `x86` has no asset.
+    if arch == "x86" && os != "windows" {
+        return None;
+    }
+    let ext = if os == "windows" { ".exe" } else { "" };
+    Some(format!("dev-prune-v{version}-{os}-{arch}{ext}"))
+}
+
 /// Whether the periodic release check runs. On by default — see `Settings::update_check`.
 pub const DEFAULT_UPDATE_CHECK: bool = true;
 
@@ -195,6 +283,12 @@ pub const UPDATE_CHECK_INTERVAL_DAYS: i64 = 7;
 /// and a user waiting on a hung socket is worse than not knowing. Override with
 /// `devp config set update_check_timeout_secs` when a proxy needs longer.
 pub const UPDATE_CHECK_TIMEOUT_SECS: u64 = 5;
+
+/// Timeout for downloading a release binary in `devp update --install`.
+///
+/// Far longer than [`UPDATE_CHECK_TIMEOUT_SECS`], which only reads a few hundred bytes
+/// of JSON: this pulls several megabytes, and a slow connection is not an error.
+pub const UPDATE_DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 
 /// Name of the registry JSON file.
 pub const REGISTRY_FILENAME: &str = "registry.json";
@@ -217,6 +311,23 @@ pub const ENV_NO_AUTO_SETUP: &str = "DEV_PRUNE_NO_AUTO_SETUP";
 /// `devp config set update_check false`.
 pub const ENV_OFFLINE: &str = "DEV_PRUNE_OFFLINE";
 
+/// Set to any value to keep every full-screen view from opening, so the line-by-line
+/// fallback runs instead.
+///
+/// For agents and wrappers that hold a real terminal — the terminal test alone cannot
+/// tell them apart from a person, and a full-screen view waiting on a keypress from
+/// something that will never send one is a hang.
+pub const ENV_NO_TUI: &str = "DEV_PRUNE_NO_TUI";
+
+/// Windows environment variable that carries the *machine's* architecture when the
+/// running process is emulated.
+///
+/// `std::env::consts::ARCH` is baked in at compile time and only ever describes the
+/// binary. Windows sets this one under WOW64 and under ARM64 emulation, which is the
+/// only way a 32-bit build can tell that it is running on a 64-bit machine.
+/// `scripts/install.ps1` reads the same variable to choose which asset to download.
+pub const ENV_NATIVE_ARCH: &str = "PROCESSOR_ARCHITEW6432";
+
 /// Filename that, when present in a repo root, causes dev-prune to skip that repo entirely.
 ///
 /// Create this file with: `touch ignore.devprune.json`
@@ -232,6 +343,15 @@ pub const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 600;
 /// has not answered in five seconds is a broken installation, and the report is better
 /// off falling back to the conventional path than waiting ten minutes for it.
 pub const CACHE_QUERY_TIMEOUT_SECS: u64 = 5;
+
+/// Ceiling for one `devp caches clear` step.
+///
+/// Ten minutes, not the five seconds a query gets: `go clean -modcache` and deleting a
+/// multi-gigabyte `~/.gradle/caches` are genuinely slow, and on Windows every file in a
+/// module cache is read-only, so the delete is a chmod-and-unlink per file. A clear that
+/// has not finished in ten minutes is wedged, and killing it leaves a partially emptied
+/// cache the manager refills on its own.
+pub const CACHE_CLEAR_TIMEOUT_SECS: u64 = 600;
 
 /// Documentation URL for troubleshooting lockfile and pruning failures.
 pub const TROUBLESHOOTING_URL: &str = "https://devprune.vkrishna04.me/docs/troubleshooting";
@@ -295,6 +415,43 @@ pub const CLINE_RULES_FILE: &str = ".clinerules/dev-prune.md";
 /// Where `devp skill --agent agents-md` writes its marked block — the cross-tool
 /// convention read by Codex, Jules, Amp, Antigravity and others.
 pub const AGENTS_MD_FILE: &str = "AGENTS.md";
+
+/// Where `devp skill --agent roo` writes its rules (Roo Code reads every file in
+/// `.roo/rules/`).
+pub const ROO_RULES_FILE: &str = ".roo/rules/dev-prune.md";
+
+/// Where `devp skill --agent kilocode` writes its rules (Kilo Code reads every file in
+/// `.kilocode/rules/`).
+pub const KILOCODE_RULES_FILE: &str = ".kilocode/rules/dev-prune.md";
+
+/// Where `devp skill --agent continue` writes its rules (Continue reads every file in
+/// `.continue/rules/`).
+pub const CONTINUE_RULES_FILE: &str = ".continue/rules/dev-prune.md";
+
+/// Where `devp skill --agent amazon-q` writes its rules (Amazon Q Developer reads every
+/// file in `.amazonq/rules/`).
+pub const AMAZON_Q_RULES_FILE: &str = ".amazonq/rules/dev-prune.md";
+
+/// Where `devp skill --agent kiro` writes its rules (Kiro reads every file in
+/// `.kiro/steering/`).
+pub const KIRO_STEERING_FILE: &str = ".kiro/steering/dev-prune.md";
+
+/// Where `devp skill --agent trae` writes its rules (Trae reads every file in
+/// `.trae/rules/`).
+pub const TRAE_RULES_FILE: &str = ".trae/rules/dev-prune.md";
+
+/// The shared file `devp skill --agent junie` owns a marked block inside — JetBrains
+/// Junie reads one guidelines file, not a directory.
+pub const JUNIE_GUIDELINES_FILE: &str = ".junie/guidelines.md";
+
+/// The shared file `devp skill --agent gemini` owns a marked block inside — the Gemini
+/// CLI reads one context file per repository.
+pub const GEMINI_MD_FILE: &str = "GEMINI.md";
+
+/// The shared file `devp skill --agent zed` owns a marked block inside. Zed reads
+/// `.rules` ahead of every other convention, so a repository that also has an
+/// `AGENTS.md` still needs this one.
+pub const ZED_RULES_FILE: &str = ".rules";
 
 /// The shared file `devp skill --agent copilot` owns a marked block inside.
 pub const COPILOT_INSTRUCTIONS_FILE: &str = ".github/copilot-instructions.md";

@@ -20,6 +20,7 @@ pub mod setup;
 pub mod skill;
 pub mod stats;
 pub mod status;
+pub mod trust;
 pub mod undo;
 pub mod uninstall;
 pub mod update;

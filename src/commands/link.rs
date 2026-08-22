@@ -7,7 +7,8 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 
-use crate::config::{PerRepoConfig, Registry};
+use crate::config::{Adoption, PerRepoConfig, Registry};
+use crate::constants;
 use crate::output;
 use crate::scanner;
 
@@ -34,13 +35,13 @@ pub fn run_link(path_str: &str, quiet: bool) -> Result<()> {
         );
     }
 
-    // A repository under the OS temporary directory is scratch by definition: a test
-    // fixture, a `git clone` into `mktemp -d`, a build step. The hook fires on its first
-    // commit, the directory is gone minutes later, and the registry keeps an entry that
-    // can never be pruned and never be found again. Registering those is how a registry
-    // fills with dead paths. An explicit `devp link` still works — this only declines to
-    // do it *unasked*.
-    if quiet && is_under_temp_dir(&path) {
+    // A repository in a scratch location is scratch by definition: a test fixture, a
+    // `git clone` into `mktemp -d`, a plugin manager's checkout, a build step. The hook
+    // fires on its first commit, the directory is gone minutes later, and the registry
+    // keeps an entry that can never be pruned and never be found again. Registering those
+    // is how a registry fills with dead paths. An explicit `devp link` still works — this
+    // only declines to do it *unasked*.
+    if quiet && is_ephemeral_location(&path) {
         return Ok(());
     }
 
@@ -62,19 +63,53 @@ pub fn run_link(path_str: &str, quiet: bool) -> Result<()> {
     let mut registry = Registry::load()?;
 
     if registry.add_repo(path.clone()) {
+        let adoption = registry.adopt_moved_entry(&path, scanner::git::repo_identity(&path));
         registry.last_added_repos = vec![path.clone()];
         registry.save()?;
         if !quiet {
             output::print_success(&format!("Linked: {}", output::clean_path(&path)));
+            report_adoption(&adoption);
             if registry.settings.auto_config {
                 ensure_default_repo_config(&path);
             }
         }
-    } else if !quiet {
-        output::print_info(&format!("Already linked: {}", output::clean_path(&path)));
+    } else {
+        // Backfill only when it is missing. The global Git hook runs this on every
+        // commit, and shelling out to git plus rewriting the registry each time would
+        // be a real cost for a value that never changes once written.
+        if registry.needs_identity(&path) {
+            let adoption = registry.adopt_moved_entry(&path, scanner::git::repo_identity(&path));
+            registry.save()?;
+            if !quiet {
+                report_adoption(&adoption);
+            }
+        }
+        if !quiet {
+            output::print_info(&format!("Already linked: {}", output::clean_path(&path)));
+        }
     }
 
     Ok(())
+}
+
+/// Say when a registration recognised a repository that had moved.
+///
+/// Silence here would be worse than noise: the entry the user was staring at in
+/// `devp status` as `Path missing` has just disappeared, and its lifetime total has
+/// turned up on a different row. That is the right outcome, but only if it is stated.
+pub(crate) fn report_adoption(adoption: &Adoption) {
+    match adoption {
+        Adoption::Nothing => {}
+        Adoption::Moved(old) => output::print_info(&format!(
+            "  Recognised as the repository registered at {} — that path is gone, so its \
+             prune history came with it.",
+            output::clean_path(old)
+        )),
+        Adoption::Ambiguous => output::print_warning(
+            "  More than one missing repository shares this root commit, so none was \
+             adopted — they are clones, not a move. Clear them with `devp unlink --missing`.",
+        ),
+    }
 }
 
 /// Write a default `.devprune.json` into a newly registered repository, when
@@ -99,16 +134,65 @@ pub(crate) fn ensure_default_repo_config(path: &Path) {
     }
 }
 
-/// Is `path` inside the OS temporary directory?
+/// Is this directory called something only a tool would call a checkout?
+///
+/// See [`constants::EPHEMERAL_REPO_PREFIXES`] for why the match is a narrow prefix.
+fn has_ephemeral_name(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        let name = name.to_string_lossy();
+        constants::EPHEMERAL_REPO_PREFIXES
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+    })
+}
+
+/// Is `path` somewhere a tool keeps disposable checkouts?
 ///
 /// `path` is expected to be canonical already; the temp directory is canonicalised here
 /// because macOS reports it as `/var/folders/…`, a symlink to `/private/var/folders/…`.
 /// A temp directory that cannot be resolved is treated as no match: declining to register
 /// a real workspace would be the worse error of the two.
-fn is_under_temp_dir(path: &Path) -> bool {
-    std::env::temp_dir()
+fn is_ephemeral_location(path: &Path) -> bool {
+    if has_ephemeral_name(path) {
+        return true;
+    }
+    let under_temp = std::env::temp_dir()
         .canonicalize()
-        .is_ok_and(|tmp| path.starts_with(tmp))
+        .is_ok_and(|tmp| path.starts_with(tmp));
+    if under_temp {
+        return true;
+    }
+    is_under_ephemeral_ancestor(path, None)
+}
+
+/// The ancestor half of [`is_ephemeral_location`], stopping at `root`.
+///
+/// `devp init <dir>` names a directory outright, and second-guessing the path somebody
+/// typed is not this function's job — `devp init ~/.cache/things` must still find the
+/// repositories in it. So when a scan root is given, only the directories *below* it are
+/// examined. Without a root, every ancestor is.
+fn is_under_ephemeral_ancestor(path: &Path, root: Option<&Path>) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    parent
+        .ancestors()
+        .take_while(|ancestor| root != Some(*ancestor))
+        .any(|ancestor| {
+            ancestor.file_name().is_some_and(|name| {
+                constants::EPHEMERAL_ANCESTORS.contains(&&*name.to_string_lossy())
+            })
+        })
+}
+
+/// Would registering `repo`, found by scanning `root`, be registering a throwaway?
+///
+/// The check `devp init` applies. One `devp init` in a home directory added twenty-eight
+/// plugin-manager checkouts to a real registry, every one of which was deleted within the
+/// week — leaving twenty-eight `Path missing` rows on the dashboard and no way to tell
+/// them apart from a workspace that was genuinely lost.
+pub(crate) fn is_throwaway_checkout(root: &Path, repo: &Path) -> bool {
+    has_ephemeral_name(repo) || is_under_ephemeral_ancestor(repo, Some(root))
 }
 
 /// Run `unlink --missing`: drop every registered path that no longer exists.
@@ -182,7 +266,7 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
 
         assert!(
-            is_under_temp_dir(&repo),
+            is_ephemeral_location(&repo),
             "{} should be seen as scratch — TempDir builds under std::env::temp_dir()",
             repo.display()
         );
@@ -194,6 +278,67 @@ mod tests {
         let here = Path::new(env!("CARGO_MANIFEST_DIR"))
             .canonicalize()
             .unwrap();
-        assert!(!is_under_temp_dir(&here));
+        assert!(!is_ephemeral_location(&here));
+    }
+
+    #[test]
+    fn a_plugin_managers_checkout_is_recognised_as_scratch() {
+        // The shape that filled a real registry: an agent plugin manager clones into
+        // `~/.claude/plugins/cache/temp_git_<id>`, nowhere near the OS temp directory.
+        let home = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let clone = home
+            .join(".claude")
+            .join("plugins")
+            .join("cache")
+            .join("temp_git_1787245534782_8o55r2");
+        assert!(is_ephemeral_location(&clone));
+    }
+
+    #[test]
+    fn a_project_of_that_name_is_still_a_project() {
+        // Only ancestors are matched. A repository *called* `cache` is somebody's work.
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("cache");
+        assert!(!is_ephemeral_location(&repo));
+    }
+
+    #[test]
+    fn a_throwaway_clone_is_recognised_by_its_name_alone() {
+        // The registry that motivated this held twenty-eight of these. The prefix has to
+        // be enough on its own: not every tool is polite enough to put its scratch
+        // checkouts under a directory called `cache`.
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("temp_git_1787320293656");
+        assert!(is_ephemeral_location(&repo));
+        assert!(is_throwaway_checkout(
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            &repo
+        ));
+    }
+
+    #[test]
+    fn a_repository_merely_named_after_temporary_work_is_not() {
+        // A prefix, not a substring, and the underscore-and-git shape is required: these
+        // are all somebody's actual work.
+        for name in [
+            "temporary-fixes",
+            "template-git",
+            "my-temp-git-notes",
+            "tempo",
+        ] {
+            let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join(name);
+            assert!(!is_ephemeral_location(&repo), "{name} is a real repository");
+        }
+    }
+
+    #[test]
+    fn init_does_not_second_guess_the_directory_it_was_pointed_at() {
+        // `devp init ~/.cache/things` names a directory outright. Refusing to scan it
+        // because of its own name would make the command silently do nothing — but a
+        // cache directory *below* the root is still a tool's doing.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("cache");
+        let inside = root.join("project");
+        assert!(!is_throwaway_checkout(&root, &inside));
+
+        let deeper = root.join("nested").join("cache").join("project");
+        assert!(is_throwaway_checkout(&root, &deeper));
     }
 }

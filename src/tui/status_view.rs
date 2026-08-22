@@ -30,12 +30,108 @@ enum ViewMode {
     PruneSelect,
 }
 
+/// Which column the table is ordered by.
+///
+/// `Default` is the order [`crate::engine::get_full_status`] produced — actionable
+/// first, then everything merely present, then everything gone. It is first in the
+/// cycle and it is where the view starts, because that ordering is the one answer to
+/// "what should I look at" and no sort the user picks should be hard to get back to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortKey {
+    Default,
+    /// Largest reclaim first.
+    Size,
+    /// Least recently touched first — the repositories nobody has opened in months.
+    Activity,
+    /// By path, A to Z.
+    Name,
+}
+
+impl SortKey {
+    fn next(self) -> Self {
+        match self {
+            SortKey::Default => SortKey::Size,
+            SortKey::Size => SortKey::Activity,
+            SortKey::Activity => SortKey::Name,
+            SortKey::Name => SortKey::Default,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            SortKey::Default => "relevance",
+            SortKey::Size => "size ↓",
+            SortKey::Activity => "idle longest ↓",
+            SortKey::Name => "name ↑",
+        }
+    }
+}
+
+/// Which rows the table shows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Filter {
+    All,
+    /// Only what a prune would act on.
+    Candidates,
+    /// Anything holding reclaimable bytes, candidate or not — including the repositories
+    /// still active, which is the list you want before deciding to wait.
+    WithBloat,
+    /// The rows that need a decision rather than a prune: a path that is gone, a config
+    /// file that does not parse.
+    Problems,
+}
+
+impl Filter {
+    fn next(self) -> Self {
+        match self {
+            Filter::All => Filter::Candidates,
+            Filter::Candidates => Filter::WithBloat,
+            Filter::WithBloat => Filter::Problems,
+            Filter::Problems => Filter::All,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Filter::All => "all",
+            Filter::Candidates => "candidates",
+            Filter::WithBloat => "has bloat",
+            Filter::Problems => "problems",
+        }
+    }
+
+    fn accepts(self, repo: &RepoStatusEntry) -> bool {
+        match self {
+            Filter::All => true,
+            Filter::Candidates => matches!(repo.reason, SkipReason::Candidate),
+            Filter::WithBloat => repo.reclaimable_bytes > 0,
+            Filter::Problems => matches!(
+                repo.reason,
+                SkipReason::PathMissing | SkipReason::ConfigError(_)
+            ),
+        }
+    }
+}
+
 struct StatusApp<'a> {
     repos: &'a [RepoStatusEntry],
+    /// Indices into `repos`, filtered and sorted — the rows actually on screen.
+    ///
+    /// The table addresses this, everything else addresses `repos`. Keeping the two
+    /// apart is what lets a filter hide a row without disturbing which repositories are
+    /// checked for pruning, and what stops the confirmed selection from meaning
+    /// something different depending on how the table happened to be sorted.
+    view: Vec<usize>,
     table_state: TableState,
     /// Which rows are checked for prune (indexed to `repos`).
     selected: Vec<bool>,
     mode: ViewMode,
+    sort: SortKey,
+    filter: Filter,
+    /// Case-insensitive substring matched against the path and the adapter names.
+    search: String,
+    /// True while keystrokes are going into `search` rather than being commands.
+    searching: bool,
     /// If `Some`, the user confirmed and we return these indices.
     confirmed_indices: Option<Vec<usize>>,
     /// Set to true when the user toggles ignore config in .devprune.json or presence of ignore.devprune.json so caller can reload.
@@ -47,21 +143,98 @@ impl<'a> StatusApp<'a> {
         let selected = vec![false; repos.len()];
         let mut table_state = TableState::default();
         table_state.select(Some(0));
-        Self {
+        let mut app = Self {
             repos,
+            view: Vec::new(),
             table_state,
             selected,
             mode: ViewMode::Browse,
+            sort: SortKey::Default,
+            filter: Filter::All,
+            search: String::new(),
+            searching: false,
             confirmed_indices: None,
             should_reload: false,
+        };
+        app.rebuild_view();
+        app
+    }
+
+    /// Recompute the visible rows after a change to the sort, the filter or the query.
+    ///
+    /// Keeps the cursor on the same *repository* rather than the same row number. A
+    /// filter that removes four rows above the cursor would otherwise slide the
+    /// selection onto a different repository under the user's hands — and `i` and the
+    /// prune toggle both act on whatever is selected.
+    fn rebuild_view(&mut self) {
+        let anchor = self.cursor_repo();
+        let needle = self.search.to_lowercase();
+
+        let mut view: Vec<usize> = (0..self.repos.len())
+            .filter(|&i| {
+                let repo = &self.repos[i];
+                if !self.filter.accepts(repo) {
+                    return false;
+                }
+                if needle.is_empty() {
+                    return true;
+                }
+                // Adapters as well as the path, so `/uv` finds every Python project
+                // without anyone having to remember where they live.
+                repo.path.to_string_lossy().to_lowercase().contains(&needle)
+                    || repo
+                        .adapters
+                        .iter()
+                        .any(|a| a.to_lowercase().contains(&needle))
+            })
+            .collect();
+
+        match self.sort {
+            // Already in this order: `get_full_status` sorted the slice before it got
+            // here, and `view` was built by walking it forwards.
+            SortKey::Default => {}
+            SortKey::Size => view.sort_by(|&a, &b| {
+                self.repos[b]
+                    .reclaimable_bytes
+                    .cmp(&self.repos[a].reclaimable_bytes)
+                    .then_with(|| self.repos[a].path.cmp(&self.repos[b].path))
+            }),
+            // `None` is a repository whose activity could not be read at all, which is
+            // not evidence of being idle — so it sorts last rather than first.
+            SortKey::Activity => view.sort_by(|&a, &b| {
+                let key = |i: usize| {
+                    self.repos[i]
+                        .last_activity
+                        .map(|t| (0, t))
+                        .unwrap_or((1, chrono::DateTime::<chrono::Utc>::MIN_UTC))
+                };
+                key(a)
+                    .cmp(&key(b))
+                    .then_with(|| self.repos[a].path.cmp(&self.repos[b].path))
+            }),
+            SortKey::Name => view.sort_by(|&a, &b| self.repos[a].path.cmp(&self.repos[b].path)),
         }
+
+        self.view = view;
+        let row = anchor
+            .and_then(|repo_idx| self.view.iter().position(|&i| i == repo_idx))
+            .unwrap_or(0);
+        // `then`, not `then_some`: the argument to `then_some` is evaluated whether the
+        // condition holds or not, and on an empty view that subtraction underflows.
+        self.table_state
+            .select((!self.view.is_empty()).then(|| row.min(self.view.len() - 1)));
+    }
+
+    /// Index into `repos` of the highlighted row, or `None` when the view is empty.
+    fn cursor_repo(&self) -> Option<usize> {
+        self.view.get(self.table_state.selected()?).copied()
     }
 
     fn move_up(&mut self) {
         let i = match self.table_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.repos.len().saturating_sub(1)
+                    self.view.len().saturating_sub(1)
                 } else {
                     i - 1
                 }
@@ -74,7 +247,7 @@ impl<'a> StatusApp<'a> {
     fn move_down(&mut self) {
         let i = match self.table_state.selected() {
             Some(i) => {
-                if i >= self.repos.len().saturating_sub(1) {
+                if i >= self.view.len().saturating_sub(1) {
                     0
                 } else {
                     i + 1
@@ -86,7 +259,7 @@ impl<'a> StatusApp<'a> {
     }
 
     fn toggle_current(&mut self) {
-        if let Some(i) = self.table_state.selected() {
+        if let Some(i) = self.cursor_repo() {
             // Only allow toggling candidate repos for pruning
             if matches!(self.repos[i].reason, SkipReason::Candidate) {
                 self.selected[i] = !self.selected[i];
@@ -94,17 +267,21 @@ impl<'a> StatusApp<'a> {
         }
     }
 
+    /// Check, or uncheck, every candidate currently on screen.
+    ///
+    /// Deliberately scoped to the view: with a filter or a search active, "all" has to
+    /// mean the rows the user can see. Selecting thirty repositories they filtered out
+    /// on a keypress labelled *Toggle All* is how a prune becomes a surprise.
     fn toggle_all_candidates(&mut self) {
-        let any_candidate_selected = self
-            .repos
+        let visible: Vec<usize> = self
+            .view
             .iter()
-            .enumerate()
-            .any(|(i, r)| matches!(r.reason, SkipReason::Candidate) && self.selected[i]);
-
-        for (i, repo) in self.repos.iter().enumerate() {
-            if matches!(repo.reason, SkipReason::Candidate) {
-                self.selected[i] = !any_candidate_selected;
-            }
+            .copied()
+            .filter(|&i| matches!(self.repos[i].reason, SkipReason::Candidate))
+            .collect();
+        let any_selected = visible.iter().any(|&i| self.selected[i]);
+        for i in visible {
+            self.selected[i] = !any_selected;
         }
     }
 
@@ -138,6 +315,26 @@ impl<'a> StatusApp<'a> {
             .filter(|r| matches!(r.reason, SkipReason::Candidate))
             .count()
     }
+}
+
+/// Split the reclaimable total into what a prune would free *now* and everything.
+///
+/// Two very different numbers that were being shown as one. The grand total counts the
+/// dependency directories in every registered repository, including the ones worked in
+/// this morning — a figure nothing is going to act on. What people are reading the
+/// dashboard for is the other one: the repositories that have gone idle long enough to
+/// be candidates, whose bytes `devp run` would reclaim on its next pass.
+///
+/// Always over the whole registry, never over the filtered view. A header that shrank
+/// when a filter was applied would make the machine look tidier than it is.
+fn reclaimable_split(repos: &[RepoStatusEntry]) -> (u64, u64) {
+    let ready = repos
+        .iter()
+        .filter(|r| matches!(r.reason, SkipReason::Candidate))
+        .map(|r| r.reclaimable_bytes)
+        .sum();
+    let total = repos.iter().map(|r| r.reclaimable_bytes).sum();
+    (ready, total)
 }
 
 /// Render the full interactive status view.
@@ -202,13 +399,39 @@ fn run_status_loop(
             {
                 return Ok(());
             }
+            // While the query line is open every printable key is text, not a command.
+            // Checked before the command table below, because otherwise typing `q` in a
+            // search would quit and typing `p` would arm a prune.
+            if app.searching {
+                match key.code {
+                    KeyCode::Char(c) => {
+                        app.search.push(c);
+                        app.rebuild_view();
+                    }
+                    KeyCode::Backspace => {
+                        app.search.pop();
+                        app.rebuild_view();
+                    }
+                    // Enter keeps the filter and hands the keyboard back; Esc abandons
+                    // it. A query you cannot undo in one key is a query people restart
+                    // the whole command to escape.
+                    KeyCode::Enter => app.searching = false,
+                    KeyCode::Esc => {
+                        app.searching = false;
+                        app.search.clear();
+                        app.rebuild_view();
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => app.move_up(),
                 KeyCode::Down | KeyCode::Char('j') => app.move_down(),
                 KeyCode::Home | KeyCode::Char('g') => app.table_state.select(Some(0)),
                 KeyCode::End | KeyCode::Char('G') => {
                     app.table_state
-                        .select(Some(app.repos.len().saturating_sub(1)));
+                        .select(Some(app.view.len().saturating_sub(1)));
                 }
                 KeyCode::PageUp => {
                     let i = app.table_state.selected().unwrap_or(0).saturating_sub(10);
@@ -216,9 +439,18 @@ fn run_status_loop(
                 }
                 KeyCode::PageDown => {
                     let i = (app.table_state.selected().unwrap_or(0) + 10)
-                        .min(app.repos.len().saturating_sub(1));
+                        .min(app.view.len().saturating_sub(1));
                     app.table_state.select(Some(i));
                 }
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    app.sort = app.sort.next();
+                    app.rebuild_view();
+                }
+                KeyCode::Char('f') | KeyCode::Char('F') => {
+                    app.filter = app.filter.next();
+                    app.rebuild_view();
+                }
+                KeyCode::Char('/') => app.searching = true,
                 KeyCode::Char(' ') => {
                     if matches!(app.mode, ViewMode::PruneSelect) {
                         app.toggle_current();
@@ -231,16 +463,18 @@ fn run_status_loop(
                 }
                 KeyCode::Char('p') | KeyCode::Char('P') => {
                     app.mode = ViewMode::PruneSelect;
-                    // Auto-select all candidates
-                    for (i, repo) in app.repos.iter().enumerate() {
-                        if matches!(repo.reason, SkipReason::Candidate) {
+                    // Auto-select the candidates on screen — not every candidate in the
+                    // registry. Someone who filtered or searched their way down to four
+                    // repositories asked for those four.
+                    for i in app.view.clone() {
+                        if matches!(app.repos[i].reason, SkipReason::Candidate) {
                             app.selected[i] = true;
                         }
                     }
                 }
                 KeyCode::Char('i') | KeyCode::Char('I') => {
                     // Toggle ignore in .devprune.json on the current repo
-                    if let Some(idx) = app.table_state.selected() {
+                    if let Some(idx) = app.cursor_repo() {
                         let repo = &app.repos[idx];
                         // A missing repository has no directory to write the config
                         // into; propagating that write error would tear the whole TUI
@@ -338,7 +572,9 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
             Constraint::Min(5),    // table
             // Four content lines plus the border: the keybindings, the mode-specific
             // line, and the credit line that closes both footers.
-            Constraint::Length(6), // footer
+            // Five content lines plus the border: the sort/filter/search line, the
+            // keybindings, the mode-specific line, and the credit line.
+            Constraint::Length(7), // footer
         ])
         .split(frame.area());
 
@@ -361,6 +597,7 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
         )
     };
 
+    let (ready, total) = reclaimable_split(app.repos);
     let header_line = Line::from(vec![
         Span::styled(
             " dev-prune ",
@@ -373,11 +610,29 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
         mode_label,
         Span::styled(
             format!(
-                "  {} repos  |  {} candidates  |  {} reclaimable",
-                app.repos.len(),
+                "  {}  |  {} candidates  |  ",
+                // "showing 4 of 80" only when they differ — on an unfiltered view the
+                // qualifier is noise, and it is the filtered view that needs to say
+                // plainly that the numbers beside it are not the whole machine.
+                if app.view.len() == app.repos.len() {
+                    format!("{} repos", app.repos.len())
+                } else {
+                    format!("showing {} of {} repos", app.view.len(), app.repos.len())
+                },
                 app.candidate_count(),
-                format_bytes(app.repos.iter().map(|r| r.reclaimable_bytes).sum::<u64>())
             ),
+            Style::default().fg(Color::DarkGray),
+        ),
+        // The actionable figure, and the only coloured one in the header: this is what
+        // pressing `p` right now would free.
+        Span::styled(
+            format!("{} ready now", format_bytes(ready)),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  |  {} reclaimable in all", format_bytes(total)),
             Style::default().fg(Color::DarkGray),
         ),
     ]);
@@ -421,10 +676,11 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
     let all_paths: Vec<_> = app.repos.iter().map(|r| r.path.clone()).collect();
 
     let rows: Vec<Row> = app
-        .repos
+        .view
         .iter()
         .enumerate()
-        .map(|(i, repo)| {
+        .map(|(row, &i)| {
+            let repo = &app.repos[i];
             let is_selected = app.selected[i];
             let color = reason_color(&repo.reason);
 
@@ -443,7 +699,7 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                     Cell::from(" — ").style(Style::default().fg(Color::DarkGray))
                 }
             } else {
-                Cell::from(format!("{}", i + 1)).style(Style::default().fg(Color::DarkGray))
+                Cell::from(format!("{}", row + 1)).style(Style::default().fg(Color::DarkGray))
             };
 
             let path_str = crate::engine::compute_display_name(&repo.path, &all_paths);
@@ -640,6 +896,67 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
         ]
     };
 
+    // The state of the view, on both footers. Without it a filtered or searched table is
+    // indistinguishable from a machine that simply has fewer repositories on it — and
+    // the count in the header would then read as a fact about the machine.
+    let mut state_line = vec![
+        Span::styled(
+            "[s]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Sort: "),
+        Span::styled(app.sort.label(), Style::default().fg(Color::Green)),
+        Span::raw("   "),
+        Span::styled(
+            "[f]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Filter: "),
+        Span::styled(app.filter.label(), Style::default().fg(Color::Green)),
+        Span::raw("   "),
+        Span::styled(
+            "[/]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Search: "),
+    ];
+    if app.searching {
+        // A block for the caret, because raw mode gives the terminal's own cursor
+        // nowhere useful to sit — the table has it.
+        state_line.push(Span::styled(
+            format!("{}█", app.search),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        state_line.push(Span::styled(
+            "  (Enter to keep, Esc to clear)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else if app.search.is_empty() {
+        state_line.push(Span::styled("—", Style::default().fg(Color::DarkGray)));
+    } else {
+        state_line.push(Span::styled(
+            app.search.clone(),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    if app.view.is_empty() {
+        // The one state where the table itself says nothing at all. Silence here reads
+        // as a crash, so the footer has to explain what hid the rows.
+        state_line.push(Span::styled(
+            "   no repositories match",
+            Style::default().fg(Color::Red),
+        ));
+    }
+    footer_lines.push(Line::from(state_line));
+
     // The credit, on both footers, in the dimmest colour the theme has. It is one
     // constant and one push — a fork that does not want it deletes these two lines and
     // nothing else in the binary cares.
@@ -753,18 +1070,20 @@ pub fn render_status_plain(repos: &[RepoStatusEntry]) {
     }
     println!("  {}", "─".repeat(122));
 
-    let total: u64 = repos.iter().map(|r| r.reclaimable_bytes).sum();
+    let (ready, total) = reclaimable_split(repos);
     let candidates = repos
         .iter()
         .filter(|r| matches!(r.reason, SkipReason::Candidate))
         .count();
-    // The one bold figure on the screen. Each row's own bloat is plain green; bolding
-    // the grand total is what makes it the line the eye lands on.
+    // The one bold figure on the screen — and it is the *actionable* one, not the grand
+    // total. Each row's own bloat is plain green; bolding what a prune would free right
+    // now is what makes it the line the eye lands on.
     output::print_info(&format!(
-        "Total: {} repos  |  {} candidates  |  {} reclaimable",
+        "Total: {} repos  |  {} candidates  |  {} ready now  |  {} reclaimable in all",
         repos.len(),
         candidates,
-        output::format_bytes_styled(total)
+        output::format_bytes_styled(ready),
+        output::format_bytes(total)
     ));
 
     // Reclaimable is what a prune actually frees, which for pnpm and bun is less than
@@ -792,7 +1111,8 @@ mod tests {
 
     use crate::engine::SkipReason;
 
-    use super::reason_color;
+    use super::*;
+    use crate::engine::RepoStatusEntry;
 
     #[test]
     fn test_row_style_logic() {
@@ -805,5 +1125,148 @@ mod tests {
             reason_color(&SkipReason::ConfigError(String::new())),
             Color::Yellow
         );
+    }
+
+    /// One entry, with only the fields the view actually orders and filters on.
+    fn entry(path: &str, reason: SkipReason, bytes: u64, days_idle: i64) -> RepoStatusEntry {
+        RepoStatusEntry {
+            path: std::path::PathBuf::from(path),
+            entry: crate::config::RepoEntry::new(),
+            reason,
+            adapters: vec!["uv".to_string()],
+            bloat_dirs: Vec::new(),
+            reclaimable_bytes: bytes,
+            last_activity: Some(chrono::Utc::now() - chrono::Duration::days(days_idle)),
+            idle_days: 30,
+        }
+    }
+
+    fn sample() -> Vec<RepoStatusEntry> {
+        vec![
+            entry("/code/alpha", SkipReason::Candidate, 500, 90),
+            entry("/code/beta", SkipReason::Active, 9_000, 1),
+            entry("/code/gamma", SkipReason::PathMissing, 0, 400),
+            entry("/code/delta", SkipReason::Candidate, 2_000, 40),
+        ]
+    }
+
+    #[test]
+    fn the_default_view_is_every_row_in_the_order_it_arrived() {
+        let repos = sample();
+        let app = StatusApp::new(&repos);
+        assert_eq!(app.view, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn sorting_by_size_puts_the_biggest_reclaim_first() {
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+        app.sort = SortKey::Size;
+        app.rebuild_view();
+        assert_eq!(app.view, vec![1, 3, 0, 2]);
+    }
+
+    #[test]
+    fn sorting_by_activity_puts_the_longest_untouched_first() {
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+        app.sort = SortKey::Activity;
+        app.rebuild_view();
+        assert_eq!(app.view, vec![2, 0, 3, 1]);
+    }
+
+    #[test]
+    fn filters_narrow_the_view_without_disturbing_the_selection() {
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+        app.mode = ViewMode::PruneSelect;
+        app.selected[3] = true;
+
+        app.filter = Filter::Candidates;
+        app.rebuild_view();
+        assert_eq!(app.view, vec![0, 3]);
+
+        app.filter = Filter::Problems;
+        app.rebuild_view();
+        assert_eq!(app.view, vec![2]);
+
+        // The checked repository is filtered off screen, and stays checked: a filter is
+        // a way to look, not a way to silently un-arm a prune.
+        assert!(app.selected[3]);
+        assert_eq!(app.selected_count(), 1);
+    }
+
+    #[test]
+    fn a_search_matches_the_path_and_the_adapters() {
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+
+        app.search = "ELT".to_string();
+        app.rebuild_view();
+        assert_eq!(app.view, vec![3], "the match is case-insensitive");
+
+        app.search = "uv".to_string();
+        app.rebuild_view();
+        assert_eq!(app.view, vec![0, 1, 2, 3], "every sample repo reports uv");
+
+        app.search = "nothing-matches-this".to_string();
+        app.rebuild_view();
+        assert!(app.view.is_empty());
+        // Nothing on screen means nothing highlighted — the `i` and prune keys read the
+        // cursor, and a cursor pointing into an empty view would index out of bounds.
+        assert_eq!(app.cursor_repo(), None);
+    }
+
+    #[test]
+    fn the_cursor_follows_its_repository_through_a_filter() {
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+        app.table_state.select(Some(3)); // `/code/delta`
+        assert_eq!(app.cursor_repo(), Some(3));
+
+        app.filter = Filter::Candidates;
+        app.rebuild_view();
+        // Row 1 of the two-row view — a different row number, the same repository.
+        assert_eq!(app.cursor_repo(), Some(3));
+    }
+
+    #[test]
+    fn toggle_all_is_scoped_to_what_is_on_screen() {
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+        app.search = "alpha".to_string();
+        app.rebuild_view();
+        app.toggle_all_candidates();
+
+        assert!(app.selected[0]);
+        assert!(
+            !app.selected[3],
+            "delta was filtered out and must not be armed"
+        );
+    }
+
+    #[test]
+    fn the_header_separates_what_is_prunable_now_from_everything() {
+        // The whole point of the split: `beta` is 9 KB of dependencies in a repository
+        // somebody worked in yesterday. It counts towards the machine's footprint and
+        // towards nothing a prune would do today.
+        let repos = sample();
+        let (ready, total) = reclaimable_split(&repos);
+        assert_eq!(ready, 2_500, "alpha + delta, the two candidates");
+        assert_eq!(total, 11_500, "every registered repository");
+    }
+
+    #[test]
+    fn a_filter_never_changes_the_header_totals() {
+        // A dashboard that shrank its own totals when a filter was applied would make
+        // the machine look tidier than it is.
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+        let before = reclaimable_split(app.repos);
+
+        app.filter = Filter::Problems;
+        app.rebuild_view();
+        assert_eq!(app.view.len(), 1);
+        assert_eq!(reclaimable_split(app.repos), before);
     }
 }

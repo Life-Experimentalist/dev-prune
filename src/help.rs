@@ -103,10 +103,11 @@ and a directory is deleted only when every check passes:
 Interactively, a selection TUI shows what would be deleted before anything is; `-y` \
 skips the confirmation, and `--dry-run` reports what a pass would do without deleting \
 anything at all. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
-venv, poetry, cargo, go, gradle, maven — an unknown name is an error listing the \
-valid ones, not a silently empty pass. gradle and maven are opt-in (`devp config set \
-enable_gradle true`) and idle-gated separately by `build_idle_days`, because a build \
-directory takes far longer to get back than a dependency directory.
+venv, poetry, pdm, pipenv, cargo, go, composer, bundler, cocoapods, mix, gradle, \
+maven, swift — an unknown name is an error listing the valid ones, not a silently \
+empty pass. gradle, maven and swift are opt-in (`devp config set enable_gradle \
+true`) and idle-gated separately by `build_idle_days`, because a build directory \
+takes far longer to get back than a dependency directory.
 
 `--except` is the safe spelling of \"clean up but keep the API project\": the named \
 repositories are never verified, never deleted and never restored, which beats \
@@ -174,12 +175,7 @@ pub const STATS_LONG: &str = "\
 What dev-prune has already done, as opposed to what it could do next: lifetime space \
 reclaimed, how many prune passes there have been, the most recent pass and how to \
 undo it, the last passes, and the repositories that have given back the most. \
-Read-only — it reads the registry and touches nothing.
-
-On a machine upgraded from before 1.1.0 the lifetime total has been accumulating \
-since 1.0.0, but per-repository figures and the pass history only start at 1.1.0 — \
-the report (and `history_starts_at` in the JSON) says so rather than implying \
-nothing ever happened.";
+Read-only — it reads the registry and touches nothing.";
 
 pub const STATS_EXAMPLES: &str = "\
 EXAMPLES:
@@ -223,11 +219,14 @@ EXAMPLES:
 
 pub const CACHES_LONG: &str = "\
 Find every package-manager cache and store on the machine, size each one, and print \
-the command that clears it — largest first, with a total. It deletes nothing, and no \
-flag makes it delete anything: a cache is shared by every repository, so no single \
-lockfile can prove its contents recoverable, which is the bar every dev-prune \
-deletion has to clear. Clearing a cache also turns the next `devp restore` into a \
-download — so the clear command is printed for you to run deliberately.
+the command that clears it — largest first, with a total. On its own it deletes \
+nothing, and nothing that runs on a schedule ever will: a cache is shared by every \
+repository, so no single lockfile can prove its contents recoverable, which is the \
+bar every dev-prune deletion has to clear. Clearing one also turns the next `devp \
+restore` into a download.
+
+`devp caches clear <manager>` runs the command this table prints, after showing you \
+what goes and asking.
 
 Covered: npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg and \
 conan. Each manager is asked where its cache is (`npm config get cache`, `go env \
@@ -241,6 +240,66 @@ EXAMPLES:
   devp caches                     The table, largest first, with clear commands
   devp caches --json | jq '.summary.total_bytes'
                                   Machine-readable
+  devp caches clear npm           Empty one, after asking
+  devp caches clear all --dry-run What would go, and nothing touched
+
+Run interactively with a terminal, `--json` also copies the document to the clipboard.";
+
+pub const CACHES_CLEAR_LONG: &str = "\
+Empty one manager's cache, or every one of them. What is about to go is listed and \
+sized first, and unless `--yes` answers for you, it asks.
+
+This is a convenience, not automation. No scheduler, no Git hook and no `devp run` \
+will ever clear a cache — this only runs when you type it.
+
+Wherever the manager ships its own subcommand, that is what runs: `npm cache clean \
+--force`, `pnpm store prune`, `go clean -modcache`. The manager knows what is still \
+referenced, which a directory delete cannot work out, and its own bookkeeping stays \
+consistent. cargo, maven, gradle and vcpkg ship nothing equivalent, so those are \
+cleared by removing the directory this command resolved and sized — never a string \
+handed to a shell.
+
+Nothing in a cache is lost; every manager re-downloads what it needs. What it costs \
+is time, in every project on the machine, on the next install and the next `devp \
+restore`. The freed size reported afterwards is measured rather than assumed, because \
+a `prune` keeps what is still in use.";
+
+pub const CACHES_CLEAR_EXAMPLES: &str = "\
+EXAMPLES:
+  devp caches clear npm           One manager, after confirming
+  devp caches clear cargo         Both cargo rows: the registry cache and its sources
+  devp caches clear all --dry-run Everything that would go, and nothing touched
+  devp caches clear all --yes     No prompt, for a script
+  devp caches clear go --json --yes
+                                  Machine-readable (`--json` requires `--yes`)
+
+Exit code 1 if any cache could not be cleared; the rows are printed either way.";
+
+pub const TRUST_LONG: &str = "\
+What dev-prune is allowed to do on this machine, on one screen. Read-only — it reads \
+the registry and the OS and changes nothing.
+
+Two sections, and the split is the point. The first is guaranteed by the code: the \
+seven safety invariants plus the two questions asked as often as any of them — there \
+is no telemetry endpoint, and build output is never deleted. Those rows read the same \
+on every machine and have no setting and no flag behind them. The second is read live \
+off this machine: whether the scheduler is installed, whether the Git hooks register \
+repositories on their own, how many repositories are registered, and the settings that \
+widen what may happen without you asking for it.
+
+There is no letter grade. A report that says `trust level: MEDIUM` tells you nothing \
+you can act on, so the widened settings are named instead — `devp config show` has \
+every one of them, and `devp config set <key> <value>` puts one back.
+
+The long form of the guarantees is docs/SAFETY_INVARIANTS.md.";
+
+pub const TRUST_EXAMPLES: &str = "\
+EXAMPLES:
+  devp trust                      The report
+  devp trust --json | jq '.summary.widened'
+                                  Just the settings that widen what may happen
+  devp trust --json | jq -e '.summary.widened_count == 0'
+                                  Exit 1 from jq if this machine has widened anything
 
 Run interactively with a terminal, `--json` also copies the document to the clipboard.";
 
@@ -397,14 +456,32 @@ EXAMPLES:
   devp icon                       Same command, without the leading `config`";
 
 pub const CONFIG_WIZARD_LONG: &str = "\
-Walk through every global setting one at a time, showing the current value and the \
-default; Enter keeps what is there. It runs itself once on a first install — so the \
-defaults are something you agreed to, not something you inherited — and never runs \
-unattended: no TTY means skipped, not guessed at.";
+Open every global setting in a full-screen configurator, with the `devp trust` \
+declaration in front of it: what this tool is allowed to do is on screen before any \
+of it is configurable.
+
+Arrows move; Space changes the highlighted setting — a toggle flips, a number opens \
+a field, `disabled_adapters` opens the adapter checklist; `r` puts one back; `y` \
+accepts everything as shown. The last screen lists exactly what will be written, \
+before it is written. `q` leaves without saving anything.
+
+It runs itself once on a first install — so the defaults are something you agreed \
+to, not something you inherited — and again after an upgrade adds a setting this \
+machine has never been shown, which it marks NEW and opens on. Settings you have \
+already confirmed are never re-asked.
+
+It never runs unattended: no TTY means skipped, not guessed at. `--no-tui`, and the \
+DEV_PRUNE_NO_TUI environment variable, ask one question per line instead — for \
+terminals the full-screen view cannot drive, and for agents, which hold a real \
+terminal and will never press a key. To configure this tool from a script, use \
+`devp config set <key> <value>`, which needs no terminal at all.";
 
 pub const CONFIG_WIZARD_EXAMPLES: &str = "\
 EXAMPLES:
-  devp config wizard";
+  devp config wizard
+  devp config wizard --no-tui              One question per line
+  devp config set disabled_adapters go     Leave Go projects alone entirely
+  devp config set disabled_adapters -      Every adapter active again";
 
 pub const RESTORE_LONG: &str = "\
 Put dependencies back: detect each project's lockfile and run its manager's install \
@@ -456,12 +533,13 @@ ready-to-copy onboarding prompts for assistants without one (Gemini Antigravity,
 Cursor, Windsurf, Copilot, OpenClaw).
 
 `--agent <EDITOR>` instead writes per-repository rules into the current repository, \
-in the file that editor's agent reads: cursor (`.cursor/rules/dev-prune.mdc`), \
-windsurf (`.windsurf/rules/dev-prune.md`), antigravity (`.agent/rules/dev-prune.md`), \
-cline (`.clinerules/dev-prune.md`), copilot (`.github/copilot-instructions.md`, as a \
-marked block) and agents-md (`AGENTS.md`, as a marked block — the cross-tool \
-convention Codex, Jules, Amp, OpenCode and others read). The two shared files are \
-edited inside dev-prune's markers only; every byte outside them is left as found. \
+in the file that editor's agent reads. Ten editors get a file of their own — cursor, \
+windsurf, antigravity, cline, roo, kilocode, continue, amazon-q, kiro, trae — and five \
+share a file with other tools, so dev-prune owns a marked block inside it: agents-md \
+(`AGENTS.md`, the cross-tool convention Codex, Jules, Amp and OpenCode read), copilot \
+(`.github/copilot-instructions.md`), gemini (`GEMINI.md`), junie \
+(`.junie/guidelines.md`) and zed (`.rules`). Every byte outside the markers is left as \
+found. `devp skill --help` lists each value with its exact path. \
 Claude Code needs no per-repository file — its skill installs globally.";
 
 pub const SKILL_EXAMPLES: &str = "\

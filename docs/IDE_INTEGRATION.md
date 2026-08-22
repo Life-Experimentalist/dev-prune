@@ -148,8 +148,21 @@ editor's agent actually reads:
 | `windsurf` | `.windsurf/rules/dev-prune.md` |
 | `antigravity` | `.agent/rules/dev-prune.md` (Gemini Antigravity) |
 | `cline` | `.clinerules/dev-prune.md` |
+| `roo` | `.roo/rules/dev-prune.md` (Roo Code) |
+| `kilocode` | `.kilocode/rules/dev-prune.md` (Kilo Code) |
+| `continue` | `.continue/rules/dev-prune.md` |
+| `amazon-q` | `.amazonq/rules/dev-prune.md` (Amazon Q Developer) |
+| `kiro` | `.kiro/steering/dev-prune.md` |
+| `trae` | `.trae/rules/dev-prune.md` |
+| `junie` | `.junie/guidelines.md` — a marked block (JetBrains Junie) |
+| `gemini` | `GEMINI.md` — a marked block (Gemini CLI) |
+| `zed` | `.rules` — a marked block; Zed reads it ahead of every other convention |
 | `copilot` | `.github/copilot-instructions.md` — a marked block |
 | `agents-md` | `AGENTS.md` — a marked block; read by Codex, Jules, Amp, OpenCode and others |
+
+The first ten own their file outright. The last five share one with other tools, so
+dev-prune writes only inside its `<!-- dev-prune:rules:start -->`…`<!-- dev-prune:rules:end -->`
+markers — a re-run replaces that block and leaves every byte outside it as found.
 
 Claude Code is deliberately absent: its skill installs globally (`devp skill`,
 `devp setup`), so there is nothing to write per repository.
@@ -162,10 +175,11 @@ Claude Code is deliberately absent: its skill installs globally (`devp skill`,
    file or directory — that fact is the whole contribution).
 2. Add the path as a constant in `src/constants.rs`.
 3. Add a variant to `AgentEditor` in `src/commands/skill.rs` with a doc comment naming
-   the file (clap turns the variant into the `--agent` value), and a match arm that
-   writes `EMBEDDED_RULES_MD` there. If the editor shares a file other tools also own
-   (as Copilot and `AGENTS.md` do), write through `upsert_marked_block` so only
-   dev-prune's marked block is ever touched.
+   the file (clap turns the variant into the `--agent` value), and one row in
+   `AgentEditor::target()` pairing it with the constant. Pick `Style::OwnFile` if the
+   editor reads a directory of rule files, or `Style::MarkedBlock` if it reads one
+   file other tools also write to — the block writer touches nothing outside the
+   markers.
 4. Mention the new value in `SKILL_LONG` in `src/help.rs` and in
    [`docs/CLI_REFERENCE.md`](CLI_REFERENCE.md) §13 — plus `site/public/llms.txt` and
    the skill's own `SKILL.md`, which restate the list.

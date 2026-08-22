@@ -20,9 +20,11 @@ const HOOKS: [&str; 3] = ["post-commit", "post-checkout", "post-merge"];
 
 /// Every hook name Git will look for inside `core.hooksPath`.
 ///
-/// Used only to decide which files in *another* tool's hooks directory are hooks worth
-/// forwarding. Without it a chained install would happily shim husky's `_/` helper
-/// directory, its `.gitignore` and its README.
+/// Two uses. It decides which files in *another* tool's hooks directory are hooks worth
+/// forwarding — without it a chained install would happily shim husky's `_/` helper
+/// directory, its `.gitignore` and its README. And it is the set of shims an unchained
+/// install writes, so that setting `core.hooksPath` does not silently disable every
+/// repository's own `.git/hooks`; see [`SHADOWING_HOOKS`].
 const GIT_HOOK_NAMES: [&str; 28] = [
     "applypatch-msg",
     "pre-applypatch",
@@ -53,6 +55,26 @@ const GIT_HOOK_NAMES: [&str; 28] = [
     "p4-pre-submit",
     "post-index-change",
 ];
+
+/// Hook names an unchained install does *not* shim, despite Git looking for them there.
+///
+/// Setting `core.hooksPath` makes Git ignore `.git/hooks` in every repository on the
+/// machine, so dev-prune writes a passthrough for each name to put that behaviour back —
+/// but not for these. `reference-transaction` fires once per ref per transaction, which
+/// on a fetch of a busy remote is hundreds of times; `post-index-change` fires on
+/// routine index refreshes. Neither is a hook anyone reaches for in a working
+/// repository, and spawning a shell that many times to discover there is nothing to run
+/// is a cost users would feel and never attribute to this.
+const NO_SHADOW_SHIM: [&str; 2] = ["reference-transaction", "post-index-change"];
+
+/// The names an unchained install writes: everything Git looks for, minus the two above.
+fn shadowing_hooks() -> Vec<&'static str> {
+    GIT_HOOK_NAMES
+        .iter()
+        .copied()
+        .filter(|name| !NO_SHADOW_SHIM.contains(name))
+        .collect()
+}
 
 /// Marker file recording the `core.hooksPath` a chained install displaced.
 ///
@@ -161,6 +183,33 @@ fn hook_names_in(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// Whether an unchained install is missing shims it should have.
+///
+/// Every install before 1.4.0 wrote three files and left `core.hooksPath` shadowing each
+/// repository's own `.git/hooks`. Upgrading has to repair that, and the upgrade path only
+/// reinstalls when something tells it to — [`state`] reports such an install as perfectly
+/// `Active`, because as far as registration goes it is.
+///
+/// Only meaningful for an unchained install: a chained one writes exactly the names the
+/// other tool has, which is a different and correct set. `chain_drift` covers that case.
+pub fn shims_incomplete() -> bool {
+    let Ok(dir) = hooks_dir() else {
+        return false;
+    };
+    if chain_target().is_some() {
+        return false;
+    }
+    shims_missing_in(&dir)
+}
+
+/// The directory-inspecting half of [`shims_incomplete`], split out so the rule can be
+/// tested against a scratch directory rather than the machine's real config directory.
+fn shims_missing_in(dir: &Path) -> bool {
+    shadowing_hooks()
+        .into_iter()
+        .any(|name| !dir.join(name).exists())
+}
+
 /// Read the current global `core.hooksPath`, if any.
 fn global_hooks_path() -> Option<String> {
     let out = crate::spawn::command("git")
@@ -181,13 +230,47 @@ fn global_hooks_path() -> Option<String> {
 /// (`C:\Users\a$b\...`), where the hook runs under Git for Windows' bundled `sh`.
 /// Single quotes are literal all the way through, so only an embedded single quote
 /// needs handling — done the POSIX way, by closing and reopening the string.
-fn build_hook_script(exe: &str) -> String {
+fn build_hook_script(exe: &str, hook: &str, register: bool) -> String {
+    let registration = if register {
+        format!("('{}' link . --quiet >/dev/null 2>&1 &)\n", sq(exe))
+    } else {
+        String::new()
+    };
     format!(
         r#"#!/usr/bin/env sh
-# dev-prune automatic workspace registration hook (non-blocking)
-('{}' link . --quiet >/dev/null 2>&1 &)
+# dev-prune hook shim. Rebuild with `devp hook install`.
+{registration}{}"#,
+        local_passthrough(hook)
+    )
+}
+
+/// The tail every unchained shim ends with: run this repository's own hook, if it has
+/// one, exactly as Git would have.
+///
+/// `core.hooksPath` replaces `.git/hooks` rather than adding to it, so without this a
+/// machine-wide install silently stops every repo-local `pre-commit`, `commit-msg` and
+/// `pre-push` on the machine — lint gates, secret scanners, conventional-commit checks —
+/// and nothing reports it. That is not a trade dev-prune gets to make on someone's
+/// behalf for the sake of registering a workspace.
+///
+/// `--git-common-dir` and not `--git-path hooks/<name>`, which looks like the obvious
+/// call and is a trap: `--git-path` resolves hook paths *through* `core.hooksPath`, so it
+/// hands back this very shim and the script execs itself until the machine gives up. It
+/// is also not simply `$GIT_DIR/hooks`, because in a linked worktree `$GIT_DIR` is
+/// `.git/worktrees/<name>` while the hooks live in the common directory. The `$GIT_DIR`
+/// arm is the fallback for the case where `git` is somehow not on the hook's own PATH.
+///
+/// `exec`, so the real hook inherits stdin — `pre-push` reads its refs from it — and its
+/// exit code is the hook's exit code, with no wrapper left to swallow a rejection.
+fn local_passthrough(hook: &str) -> String {
+    format!(
+        r#"common=$(git rev-parse --git-common-dir 2>/dev/null) || common="${{GIT_DIR:-.git}}"
+next="$common/hooks/{0}"
+if [ -x "$next" ]; then exec "$next" "$@"; fi
+if [ -f "$next" ]; then exec sh "$next" "$@"; fi
+exit 0
 "#,
-        sq(exe)
+        hook
     )
 }
 
@@ -374,9 +457,17 @@ pub fn install_with(chain: bool) -> Result<()> {
 
     match &previous {
         None => {
-            let hook_content = build_hook_script(&exe);
-            for hook in HOOKS {
-                write_hook(&dir.join(hook), &hook_content)?;
+            let names = shadowing_hooks();
+            for hook in &names {
+                let content = build_hook_script(&exe, hook, HOOKS.contains(hook));
+                write_hook(&dir.join(hook), &content)?;
+            }
+            // Left over from a chained install, or from a Git version that had a name
+            // this one does not. Either way they are shims for hooks nothing runs.
+            for stale in hook_names_in(&dir) {
+                if !names.contains(&stale.as_str()) {
+                    let _ = fs::remove_file(dir.join(&stale));
+                }
             }
             // Any stale chain is gone now, and a marker left behind would make
             // `devp hook uninstall` restore a path nothing forwards to any more.
@@ -624,26 +715,26 @@ mod tests {
 
     #[test]
     fn hook_script_single_quotes_the_executable_path() {
-        let script = build_hook_script("/usr/local/bin/dev-prune");
+        let script = build_hook_script("/usr/local/bin/dev-prune", "post-commit", true);
         assert!(script.contains("('/usr/local/bin/dev-prune' link . --quiet"));
     }
 
     #[test]
     fn hook_script_neutralises_shell_metacharacters_in_the_path() {
         // All legal in a Windows path, and all live inside sh double quotes.
-        let script = build_hook_script(r"C:\Users\a$b\`whoami`\dev-prune.exe");
+        let script = build_hook_script(r"C:\Users\a$b\`whoami`\dev-prune.exe", "post-commit", true);
         assert!(script.contains(r"('C:\Users\a$b\`whoami`\dev-prune.exe' link ."));
     }
 
     #[test]
     fn hook_script_escapes_an_embedded_single_quote() {
-        let script = build_hook_script("/home/o'brien/dev-prune");
+        let script = build_hook_script("/home/o'brien/dev-prune", "post-commit", true);
         assert!(script.contains(r"('/home/o'\''brien/dev-prune' link ."));
     }
 
     #[test]
     fn hook_script_starts_with_a_shebang_and_backgrounds_the_call() {
-        let script = build_hook_script("devp");
+        let script = build_hook_script("devp", "post-commit", true);
         assert!(script.starts_with("#!/usr/bin/env sh\n"));
         // Backgrounded in a subshell so a commit never waits on registration.
         assert!(script.contains(">/dev/null 2>&1 &)"));
@@ -687,7 +778,7 @@ mod tests {
 
     #[test]
     fn the_binary_is_recoverable_from_a_plain_hook() {
-        let script = build_hook_script("/usr/local/bin/dev-prune");
+        let script = build_hook_script("/usr/local/bin/dev-prune", "post-commit", true);
         assert_eq!(
             parse_hook_exe(&script),
             Some(PathBuf::from("/usr/local/bin/dev-prune"))
@@ -714,7 +805,7 @@ mod tests {
     fn a_quote_in_the_path_survives_the_round_trip() {
         // `sq` escapes it as `'\''`; splitting on the first quote instead of the one
         // before ` link` would cut the path in half here.
-        let script = build_hook_script("/home/o'brien/dev-prune");
+        let script = build_hook_script("/home/o'brien/dev-prune", "post-commit", true);
         assert_eq!(
             parse_hook_exe(&script),
             Some(PathBuf::from("/home/o'brien/dev-prune"))
@@ -776,5 +867,89 @@ mod tests {
         // A pre-* hook can abort a commit; none of ours may.
         assert!(HOOKS.iter().all(|hook| hook.starts_with("post-")));
         assert_eq!(HOOKS.len(), 3);
+    }
+
+    #[test]
+    fn every_shim_hands_control_back_to_the_repositorys_own_hook() {
+        // `core.hooksPath` replaces `.git/hooks` rather than adding to it. Without this
+        // line an install silently kills every repo-local pre-commit on the machine.
+        for hook in shadowing_hooks() {
+            let script = build_hook_script("/usr/local/bin/dev-prune", hook, false);
+            assert!(
+                script.contains(&format!("hooks/{hook}")),
+                "{hook} does not forward to the repository's own hook"
+            );
+            assert!(script.contains("exec"), "{hook} must exec, not call");
+            // `--git-path hooks/<name>` resolves through `core.hooksPath` and so points
+            // back at this shim: the script would exec itself forever.
+            assert!(
+                !script.contains("--git-path"),
+                "{hook} must not resolve its target through core.hooksPath"
+            );
+            assert!(
+                script.trim_end().ends_with("exit 0"),
+                "{hook} must succeed when the repository has no hook of that name"
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_three_registration_hooks_register() {
+        // A shim for `pre-push` exists to stop dev-prune breaking someone's push, not to
+        // run `devp link` on every push.
+        let registering = build_hook_script("/bin/devp", "post-commit", true);
+        assert!(registering.contains("link . --quiet"));
+        let passthrough = build_hook_script("/bin/devp", "pre-push", false);
+        assert!(!passthrough.contains("link . --quiet"));
+    }
+
+    #[test]
+    fn the_high_frequency_hooks_are_left_alone() {
+        // `reference-transaction` fires once per ref per transaction. Shimming it means
+        // spawning a shell hundreds of times on a single fetch, to discover there is
+        // nothing to run.
+        let names = shadowing_hooks();
+        assert!(!names.contains(&"reference-transaction"));
+        assert!(!names.contains(&"post-index-change"));
+        // Everything anyone actually writes by hand is still covered.
+        for expected in ["pre-commit", "commit-msg", "pre-push", "prepare-commit-msg"] {
+            assert!(names.contains(&expected), "{expected} must be shimmed");
+        }
+    }
+
+    #[test]
+    fn a_pre_1_4_0_hook_set_is_recognised_as_incomplete() {
+        // Exactly what an install from 1.3.1 left behind: three registration hooks and
+        // nothing forwarding, which `state()` still reports as a healthy `Active`.
+        let tmp = tempfile::tempdir().unwrap();
+        for name in HOOKS {
+            std::fs::write(
+                tmp.path().join(name),
+                "#!/bin/sh
+",
+            )
+            .unwrap();
+        }
+        assert!(
+            shims_missing_in(tmp.path()),
+            "a three-file hooks directory must be reported as needing repair"
+        );
+    }
+
+    #[test]
+    fn a_full_shim_set_needs_no_repair() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in shadowing_hooks() {
+            std::fs::write(
+                tmp.path().join(name),
+                "#!/bin/sh
+",
+            )
+            .unwrap();
+        }
+        assert!(!shims_missing_in(tmp.path()));
+        // And one missing name is enough to bring it back.
+        std::fs::remove_file(tmp.path().join("pre-commit")).unwrap();
+        assert!(shims_missing_in(tmp.path()));
     }
 }

@@ -35,7 +35,7 @@ case "$mode" in
         set -- --dry-run
         ;;
     --local)
-        # Publishing from a workstation, which is how the seven names are created in the
+        # Publishing from a workstation, which is how the eight names are created in the
         # first place: npm will only let you attach a trusted publisher to a package that
         # already exists, so the very first publish cannot come from OIDC and cannot come
         # from CI without a long-lived token. An interactive `npm login` session answers
@@ -57,7 +57,7 @@ esac
 for pkg in \
     dev-prune-linux-x64 dev-prune-linux-arm64 \
     dev-prune-darwin-x64 dev-prune-darwin-arm64 \
-    dev-prune-win32-x64 dev-prune-win32-arm64 \
+    dev-prune-win32-x64 dev-prune-win32-arm64 dev-prune-win32-ia32 \
     dev-prune
 do
     dir="$packages/$pkg"
@@ -75,6 +75,6 @@ do
     # --access public is redundant for an unscoped package that already exists, and
     # mandatory for one that does not: `--provenance` refuses to sign a package it cannot
     # confirm is public, and a package with no published versions has no access setting to
-    # read. All seven were new at 1.0.0, so every one of them hit this.
+    # read. All seven were new at 1.0.0, and dev-prune-win32-ia32 was new at 1.4.0.
     npm publish "$dir" "$@" --tag "$dist_tag" --access public
 done

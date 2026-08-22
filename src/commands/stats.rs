@@ -142,10 +142,6 @@ fn print_biggest_repositories(registry: &Registry) {
             output::styled_path(path),
         );
     }
-
-    output::print_info(&format!(
-        "Per-repository totals are recorded from {HISTORY_STARTS_AT} onward."
-    ));
 }
 
 /// "3 days ago", in the coarsest unit that is not a lie.

@@ -23,6 +23,7 @@
 // `cargo` and friends, which is minutes of work and, for the opted-in adapters, writes
 // to tracked files. The doctor reports what it can see.
 
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -204,6 +205,7 @@ fn check_installation(fix: bool) -> Result<()> {
     let mut f = Findings::default();
 
     check_binary(&mut f);
+    check_other_copies(&mut f);
     let registry = check_configuration(&mut f);
     check_integrations(&mut f, registry.as_ref());
     check_package_managers(&mut f, registry.as_ref());
@@ -379,6 +381,21 @@ fn check_binary(f: &mut Findings) {
     f.section("Installation");
     f.note("Version", constants::VERSION);
 
+    // A 32-bit build runs fine on a 64-bit machine, so this is a warning and never a
+    // problem — but nothing else on the machine would ever mention it, and the only
+    // symptom is a 4 GB address-space ceiling and a slower binary.
+    match crate::native_arch_if_emulated() {
+        Some(native) => f.warn(
+            "Architecture",
+            &format!(
+                "this is the {} build, but the machine is {native} — reinstall to get the \
+                 native one: `devp update`",
+                std::env::consts::ARCH
+            ),
+        ),
+        None => f.ok("Architecture", std::env::consts::ARCH),
+    }
+
     let Ok(exe) = std::env::current_exe() else {
         f.warn("Executable", "the running binary's own path is unavailable");
         return;
@@ -460,6 +477,172 @@ fn check_binary(f: &mut Findings) {
             ),
         );
     }
+}
+
+/// Find every *other* `dev-prune` on the machine and report the ones running a
+/// different version.
+///
+/// dev-prune ships through five channels and each one keeps its own copy. Upgrading via
+/// `devp update --install` replaces the copy that matters — the managed one the hooks
+/// and the scheduler invoke — and deliberately leaves the channel's own file alone,
+/// because rewriting another manager's directory is how installations end up
+/// unrepairable. The cost of that choice is a stale binary sitting on `PATH`, and if it
+/// comes first the user types `devp` and silently gets the old release, with every
+/// symptom pointing at dev-prune rather than at which copy answered.
+///
+/// So the copies are named. Nothing is deleted: which of them the user wants is a
+/// question only they can answer, and the manager that installed one is the only thing
+/// that should remove it.
+fn check_other_copies(f: &mut Findings) {
+    let mine = std::env::current_exe().ok();
+    let managed_dir = setup::managed_exe_path()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf));
+
+    let search = copy_search_dirs(
+        &std::env::var("PATH").unwrap_or_default(),
+        dirs::home_dir().as_deref(),
+    );
+    let copies = binaries_in(&search, managed_dir.as_deref());
+
+    // Asking each copy its own version, rather than comparing bytes: two channels can
+    // hold byte-identical files of the same release, and a differing byte is just as
+    // likely to be a different target triple as a different version. The question here
+    // is only ever "would running this give me a different dev-prune".
+    let stale: Vec<String> = copies
+        .iter()
+        .filter(|path| mine.as_deref() != Some(path.as_path()))
+        .filter_map(|path| {
+            // A file under this name that cannot state a version is left alone: it is
+            // far more likely to be something else entirely — a shell wrapper, a
+            // package-manager proxy that refuses to run under another name — than a
+            // dev-prune, and naming it would send the user to delete an unrelated file.
+            let version = setup::binary_version(path)?;
+            let ours = setup::parse_version(constants::VERSION)?;
+            (version != ours).then(|| {
+                format!(
+                    "{} (v{}.{}.{})",
+                    output::clean_path(path),
+                    version.0,
+                    version.1,
+                    version.2
+                )
+            })
+        })
+        .collect();
+
+    if stale.is_empty() {
+        f.ok("Other copies", "none on PATH running a different version");
+        return;
+    }
+    f.warn(
+        "Other copies",
+        &format!(
+            "{} — whichever comes first on PATH is the one `devp` runs. \
+             Remove or upgrade each through the manager that installed it; \
+             `devp update --install` only replaces the managed copy.",
+            stale.join(", ")
+        ),
+    );
+}
+
+/// Every directory that could hold a `dev-prune` this machine might run: `PATH`, plus
+/// the fixed per-channel directories.
+///
+/// The channel directories are searched even when they are not on `PATH`, because that
+/// is the case that matters most — a copy nobody can see is also a copy nobody
+/// upgrades, and it becomes the one that runs the day the user adds the directory to
+/// `PATH` or a script calls it by absolute path.
+///
+/// Lexical and non-existent entries included; [`binaries_in`] does the filtering. Split
+/// from it so the directory list can be tested without a home directory full of package
+/// managers.
+fn copy_search_dirs(path_var: &str, home: Option<&Path>) -> Vec<PathBuf> {
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let mut dirs: Vec<PathBuf> = path_var
+        .split(sep)
+        .filter(|p| !p.is_empty())
+        .map(PathBuf::from)
+        .collect();
+
+    if let Some(home) = home {
+        // `bin` on unix, `Scripts` on Windows — the same venv layout under both uv and
+        // pipx, and the reason a Windows uv copy is missed by a unix-shaped guess.
+        let scripts = if cfg!(windows) { "Scripts" } else { "bin" };
+        dirs.push(home.join(".cargo").join("bin"));
+        dirs.push(home.join(".local").join("bin"));
+        dirs.push(
+            home.join(".local")
+                .join("share")
+                .join("uv")
+                .join("tools")
+                .join("dev-prune")
+                .join(scripts),
+        );
+        dirs.push(
+            home.join(".local")
+                .join("pipx")
+                .join("venvs")
+                .join("dev-prune")
+                .join(scripts),
+        );
+        dirs.push(
+            home.join("pipx")
+                .join("venvs")
+                .join("dev-prune")
+                .join(scripts),
+        );
+        if cfg!(windows) {
+            // uv keeps its tool environments under `%APPDATA%` on Windows, which is not
+            // under `.local` at all.
+            dirs.push(
+                home.join("AppData")
+                    .join("Roaming")
+                    .join("uv")
+                    .join("tools")
+                    .join("dev-prune")
+                    .join(scripts),
+            );
+        }
+    }
+    dirs
+}
+
+/// The `dev-prune` and `devp` files that actually exist in `dirs`, minus everything in
+/// `skip_dir`.
+///
+/// `skip_dir` is the managed `bin` directory, whose contents — the canonical binary, its
+/// alias and the windowless twin — are already reported one by one by
+/// [`check_binary`] and [`check_scheduler_target`]. Listing them again as "other copies"
+/// would report a healthy install as having three stale binaries.
+fn binaries_in(dirs: &[PathBuf], skip_dir: Option<&Path>) -> Vec<PathBuf> {
+    let names: [&str; 2] = if cfg!(windows) {
+        ["dev-prune.exe", "devp.exe"]
+    } else {
+        ["dev-prune", "devp"]
+    };
+    let mut found: Vec<PathBuf> = Vec::new();
+    for dir in dirs {
+        if skip_dir.is_some_and(|skip| same_dir(dir, skip)) {
+            continue;
+        }
+        for name in names {
+            let candidate = dir.join(name);
+            // `PATH` routinely lists the same directory twice, spelled differently, and
+            // on Windows `dev-prune.exe` and `devp.exe` are usually hard links to one
+            // file — so a copy would otherwise be reported once per name and per
+            // spelling.
+            if candidate.is_file()
+                && !found.iter().any(|seen| {
+                    seen == &candidate
+                        || (seen.parent() == candidate.parent() && same_binary(seen, &candidate))
+                })
+            {
+                found.push(candidate);
+            }
+        }
+    }
+    found
 }
 
 /// Whether a PATH entry names the directory the binary lives in.
@@ -593,6 +776,22 @@ fn check_integrations(f: &mut Findings, registry: Option<&Registry>) {
         );
     } else {
         match hook::state() {
+            // Reported before the target check because it is the worse of the two: a
+            // hook set installed before 1.4.0 looks perfectly healthy from here — the
+            // files exist and name a live binary — while Git, which reads
+            // `core.hooksPath` instead of `.git/hooks`, is silently running none of the
+            // repository's own hooks.
+            Ok(HookState::Active) if hook::shims_incomplete() => {
+                f.warn(
+                    "Git hooks",
+                    concat!(
+                        "active, but installed without passthrough shims — ",
+                        "every repository's own `.git/hooks` is being ignored ",
+                        "machine-wide. `devp hook install` rewrites them to forward."
+                    ),
+                );
+                f.fixable(Repair::Hooks);
+            }
             Ok(HookState::Active) => check_hook_target(f, "active"),
             Ok(HookState::Absent) => f.warn("Git hooks", "not installed — run `devp hook install`"),
             Ok(HookState::Chained { previous, drifted }) if drifted.is_empty() => {
@@ -773,10 +972,14 @@ fn check_package_managers(f: &mut Findings, registry: Option<&Registry>) {
         match (status.available, status.version) {
             (true, Some(v)) => f.ok(&status.name, &v),
             (true, None) => f.ok(&status.name, "available"),
-            (false, _) if required => f.warn(
-                &status.name,
-                "not on PATH — projects using it cannot be verified, pruned or restored",
-            ),
+            (false, _) if required => {
+                let detail =
+                    "not on PATH — projects using it cannot be verified, pruned or restored";
+                match adapters::install_hint(&status.name) {
+                    Some(hint) => f.warn(&status.name, &format!("{detail}. Install it: {hint}")),
+                    None => f.warn(&status.name, detail),
+                }
+            }
             (false, _) => f.note(&status.name, "not installed"),
         }
     }
@@ -786,7 +989,8 @@ fn check_package_managers(f: &mut Findings, registry: Option<&Registry>) {
     if required && needed.iter().any(|n| n == "venv") && !adapters::binary_available("python") {
         f.warn(
             "python",
-            "not on PATH — `devp restore` cannot rebuild a plain virtual environment",
+            "not on PATH — `devp restore` cannot rebuild a plain virtual environment. \
+             Install it: https://www.python.org/downloads/",
         );
     }
 }
@@ -914,12 +1118,29 @@ fn check_release_state(f: &mut Findings, registry: Option<&Registry>) {
         None => f.note("Last checked", "never"),
     }
 
+    // Compared as versions, not as strings. `!=` reported the *cached* release as an
+    // upgrade whenever it differed at all, so a machine running 1.2.0 with 1.1.0 still in
+    // the cache was told to upgrade to 1.1.0 — and a development build one commit ahead of
+    // the tag was told the same. Only "strictly newer" is an upgrade.
     match registry.latest_known_version.as_deref() {
-        Some(latest) if latest.trim_start_matches('v') != constants::VERSION => f.warn(
-            "Latest release",
-            &format!("{latest} is available — `devp update` shows how to upgrade"),
-        ),
-        Some(latest) => f.ok("Latest release", &format!("{latest} — up to date")),
+        Some(latest) => {
+            let latest_core = latest.trim_start_matches('v');
+            match super::update::compare_versions(constants::VERSION, latest_core) {
+                Some(Ordering::Less) => f.warn(
+                    "Latest release",
+                    &format!("{latest} is available — `devp update` shows how to upgrade"),
+                ),
+                Some(Ordering::Greater) => f.ok(
+                    "Latest release",
+                    &format!("{latest} — this build is newer than the last published one"),
+                ),
+                Some(Ordering::Equal) => f.ok("Latest release", &format!("{latest} — up to date")),
+                None => f.note(
+                    "Latest release",
+                    &format!("{latest} — could not be compared to {}", constants::VERSION),
+                ),
+            }
+        }
         None => f.note("Latest release", "not known yet"),
     }
 }
@@ -1492,5 +1713,75 @@ mod tests {
         std::fs::write(&b, b"short").unwrap();
         assert!(!same_binary(&a, &b));
         assert!(!same_binary(&a, &dir.path().join("missing")));
+    }
+
+    #[test]
+    fn the_channel_directories_are_searched_even_when_they_are_not_on_path() {
+        // The whole point of this check: a copy nobody can see is a copy nobody
+        // upgrades, and it becomes the one that runs the day PATH changes.
+        let home = Path::new(if cfg!(windows) {
+            "C:\\home\\u"
+        } else {
+            "/home/u"
+        });
+        let dirs = copy_search_dirs("", Some(home));
+        let joined = dirs
+            .iter()
+            .map(|d| d.to_string_lossy().to_lowercase())
+            .collect::<Vec<_>>()
+            .join("|");
+        for marker in ["cargo", "uv", "pipx"] {
+            assert!(
+                joined.contains(marker),
+                "{marker} directory missing from {joined}"
+            );
+        }
+    }
+
+    #[test]
+    fn path_entries_are_searched_and_empty_ones_dropped() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let a = if cfg!(windows) { "C:\\a" } else { "/a" };
+        let b = if cfg!(windows) { "C:\\b" } else { "/b" };
+        let dirs = copy_search_dirs(&format!("{a}{sep}{sep}{b}"), None);
+        assert_eq!(dirs, vec![PathBuf::from(a), PathBuf::from(b)]);
+    }
+
+    #[test]
+    fn the_managed_directory_is_never_reported_as_another_copy() {
+        // Its three files are each reported by name elsewhere; listing them here would
+        // tell a healthy install it has stale binaries.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let managed = tmp.path().join("bin");
+        std::fs::create_dir_all(&managed).expect("create");
+        let name = if cfg!(windows) {
+            "dev-prune.exe"
+        } else {
+            "dev-prune"
+        };
+        std::fs::write(managed.join(name), b"binary").expect("write");
+
+        assert!(binaries_in(std::slice::from_ref(&managed), Some(&managed)).is_empty());
+        assert_eq!(binaries_in(std::slice::from_ref(&managed), None).len(), 1);
+    }
+
+    #[test]
+    fn one_binary_under_both_names_is_reported_once() {
+        // `dev-prune` and `devp` in the same directory are the same binary — on Windows
+        // usually literally the same file — so a single install must not read as two.
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let dir = tmp.path().to_path_buf();
+        let (a, b) = if cfg!(windows) {
+            ("dev-prune.exe", "devp.exe")
+        } else {
+            ("dev-prune", "devp")
+        };
+        std::fs::write(dir.join(a), b"same bytes").expect("write");
+        std::fs::write(dir.join(b), b"same bytes").expect("write");
+        assert_eq!(binaries_in(std::slice::from_ref(&dir), None).len(), 1);
+
+        // A genuinely different binary under the second name is a second copy.
+        std::fs::write(dir.join(b), b"a different build").expect("write");
+        assert_eq!(binaries_in(&[dir], None).len(), 2);
     }
 }

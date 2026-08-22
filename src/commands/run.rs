@@ -227,9 +227,7 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
                     "{clean} is currently active (not idle). Use `devp --ignore-idle run` to override."
                 ));
             }
-            PruneStatus::LockfileError(e) => {
-                output::print_error(&format!("{clean} lockfile sync failed:\n    {}", e.trim()));
-            }
+            PruneStatus::LockfileError(e) => report_lockfile_failure(&result, e),
             PruneStatus::ActivityCheckError(e) => {
                 output::print_error(&format!(
                     "{clean} skipped — its activity could not be determined:\n    {}",
@@ -290,6 +288,7 @@ fn record_targeted_prune(path: &std::path::Path, results: &[PruneResult], dry_ru
             bloat_dir: r.bloat_dir.clone(),
             adapter: r.adapter_name.clone(),
             size_freed: r.size_freed,
+            runtime: r.runtime.clone(),
         })
         .collect();
 
@@ -729,6 +728,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                         bloat_dir: result.bloat_dir.clone(),
                         adapter: result.adapter_name.clone(),
                         size_freed: result.size_freed,
+                        runtime: result.runtime.clone(),
                     });
                     if !args.json {
                         output::print_success(&format!(
@@ -769,6 +769,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                             bloat_dir: result.bloat_dir.clone(),
                             adapter: result.adapter_name.clone(),
                             size_freed: result.size_freed,
+                            runtime: result.runtime.clone(),
                         });
                     }
                     if !args.json {
@@ -982,23 +983,31 @@ fn report_candidates(candidates: &[PruneResult]) {
     }
 }
 
-fn report_lockfile_failure(result: &PruneResult, error: &str) {
-    let clean_p = output::clean_path(&result.repo_path);
-    let sync_cmd_help =
-        json::lockfile_fix_command(&result.adapter_name).unwrap_or("check the adapter's docs");
-
-    #[cfg(windows)]
-    let manual_cmd = format!("cd \"{}\"; {}", clean_p, sync_cmd_help);
-    #[cfg(not(windows))]
-    let manual_cmd = format!("cd \"{}\" && {}", clean_p, sync_cmd_help);
+pub(crate) fn report_lockfile_failure(result: &PruneResult, error: &str) {
+    // The project directory, not the repository root: a monorepo reports
+    // `backend/.venv`, and `uv lock` at the root would not fix it.
+    let project = output::clean_path(result.project_dir());
 
     output::print_error(&format!(
         "{} → {} lockfile sync failed:\n    {}",
-        clean_p,
+        project,
         result.adapter_name,
         error.trim(),
     ));
-    output::print_info(&format!("  Fix command:       {}", manual_cmd));
+    match json::lockfile_fix_command(&result.adapter_name) {
+        Some(sync_cmd) => {
+            // `;` on PowerShell, `&&` on a POSIX shell — pasted, either has to work as
+            // typed or the `cd` is decoration.
+            #[cfg(windows)]
+            let manual_cmd = format!("cd \"{project}\"; {sync_cmd}");
+            #[cfg(not(windows))]
+            let manual_cmd = format!("cd \"{project}\" && {sync_cmd}");
+            output::print_info(&format!("  Fix command:       {manual_cmd}"));
+        }
+        // venv, gradle, maven and swift have no mechanical fix — saying where still
+        // beats sending someone to the repository root to go looking.
+        None => output::print_info(&format!("  Fix it in:         {project}")),
+    }
     output::print_info(&format!(
         "  Troubleshooting:   {}",
         constants::TROUBLESHOOTING_URL

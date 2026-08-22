@@ -273,8 +273,28 @@ pub struct PruneResult {
     /// The store keeps them, so they are excluded from `size_freed` — this carries
     /// them separately so reports can say why the number is smaller than `du` says.
     pub shared_bytes: u64,
+    /// The language runtime the directory was built against, captured before the delete.
+    /// Only the Python managers set it; see [`crate::config::PrunedDir::runtime`].
+    pub runtime: Option<String>,
     /// What happened.
     pub status: PruneStatus,
+}
+
+impl PruneResult {
+    /// The directory a fix command has to be run from.
+    ///
+    /// `bloat_dir` is the label relative to the repository root, so in a monorepo it is
+    /// `backend/.venv`, not `.venv` — and `uv lock` run at the repository root would
+    /// rebuild a different project, or find nothing at all. Its parent is the project
+    /// directory the adapter actually detected. A fix command you can only run after
+    /// working out which directory it meant is not a fix command.
+    pub fn project_dir(&self) -> PathBuf {
+        self.repo_path
+            .join(&self.bloat_dir)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.repo_path.clone())
+    }
 }
 
 /// Prune a single repository. Returns results for each bloat directory found.
@@ -337,6 +357,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             bloat_dir: "-".to_string(),
             size_freed: 0,
             shared_bytes: 0,
+            runtime: None,
             status: PruneStatus::PathMissing,
         });
         return results;
@@ -352,6 +373,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             bloat_dir: "-".to_string(),
             size_freed: 0,
             shared_bytes: 0,
+            runtime: None,
             status: PruneStatus::ActivityCheckError(format!(
                 "`{}` is no longer a git repository — nothing was touched. \
                  `devp unlink` removes it from the registry.",
@@ -369,6 +391,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             bloat_dir: "-".to_string(),
             size_freed: 0,
             shared_bytes: 0,
+            runtime: None,
             status: PruneStatus::SkippedIgnored,
         });
         return results;
@@ -386,6 +409,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                 bloat_dir: "-".to_string(),
                 size_freed: 0,
                 shared_bytes: 0,
+                runtime: None,
                 status: PruneStatus::ConfigError(e),
             });
             return results;
@@ -398,6 +422,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             bloat_dir: "-".to_string(),
             size_freed: 0,
             shared_bytes: 0,
+            runtime: None,
             status: PruneStatus::SkippedIgnored,
         });
         return results;
@@ -431,6 +456,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     bloat_dir: "-".to_string(),
                     size_freed: 0,
                     shared_bytes: 0,
+                    runtime: None,
                     status: PruneStatus::SkippedActive,
                 });
                 return results;
@@ -443,6 +469,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     bloat_dir: "-".to_string(),
                     size_freed: 0,
                     shared_bytes: 0,
+                    runtime: None,
                     status: PruneStatus::ActivityCheckError(e.to_string()),
                 });
                 return results;
@@ -529,6 +556,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                         bloat_dir: label,
                         size_freed: 0,
                         shared_bytes: 0,
+                        runtime: None,
                         status: PruneStatus::SkippedSymlink(format!(
                             "`{}` is a symlink to storage dev-prune does not own — \
                              left alone. Remove the link yourself if you really want \
@@ -550,6 +578,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                         bloat_dir: label,
                         size_freed: 0,
                         shared_bytes: 0,
+                        runtime: None,
                         status: PruneStatus::SkippedSymlink(format!(
                             "`{}` is a mount point — it is on a different filesystem \
                              than the repository around it, so its contents are shared \
@@ -571,6 +600,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                         bloat_dir: label,
                         size_freed: 0,
                         shared_bytes: 0,
+                        runtime: None,
                         status: PruneStatus::DeleteError(format!(
                             "`{}` contains a git repository at `{}` — refusing to \
                              delete it. Move or remove that checkout yourself if it \
@@ -603,6 +633,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             bloat_dir: label.clone(),
                             size_freed: 0,
                             shared_bytes: 0,
+                            runtime: None,
                             status: PruneStatus::LockfileError(e.to_string()),
                         });
                     }
@@ -618,12 +649,17 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                         bloat_dir: label,
                         size_freed: bd.size_bytes,
                         shared_bytes: bd.shared_bytes,
+                        runtime: None,
                         status: PruneStatus::SkippedDryRun,
                     });
                     continue;
                 }
 
                 let size = bd.size_bytes;
+                // Asked *before* the delete: the record of which interpreter built a
+                // virtual environment lives inside the environment, so a moment later
+                // there is nothing left to ask.
+                let runtime = adapter.runtime_tag(&project.path, &bd.name);
                 // `remove_dir_all` is not atomic: one locked file — an antivirus scan,
                 // an editor's file watcher — aborts it half-way, leaving a directory
                 // that is neither usable nor gone. Retry once after a beat, because
@@ -644,6 +680,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             bloat_dir: label,
                             size_freed: size,
                             shared_bytes: bd.shared_bytes,
+                            runtime: runtime.clone(),
                             status: PruneStatus::Pruned,
                         });
                     }
@@ -654,6 +691,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             bloat_dir: label,
                             size_freed: size,
                             shared_bytes: bd.shared_bytes,
+                            runtime: runtime.clone(),
                             status: PruneStatus::Pruned,
                         });
                     }
@@ -683,6 +721,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                             bloat_dir: label,
                             size_freed: freed,
                             shared_bytes: 0,
+                            runtime,
                             status: PruneStatus::DeleteError(message),
                         });
                     }
@@ -699,6 +738,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             bloat_dir: "-".to_string(),
             size_freed: 0,
             shared_bytes: 0,
+            runtime: None,
             status: PruneStatus::NoBloat,
         });
     }
@@ -832,6 +872,7 @@ pub fn prune_all_with(registry: &mut Registry, opts: &PruneOptions) -> Vec<Prune
                 bloat_dir: "-".to_string(),
                 size_freed: 0,
                 shared_bytes: 0,
+                runtime: None,
                 status: PruneStatus::Disabled,
             });
             continue;
@@ -934,7 +975,7 @@ fn owning_project(bloat_label: &str) -> &str {
 /// work is the failure mode this whole command exists to avoid.
 pub fn restore_deleted(
     repo_path: &Path,
-    deleted: &[(String, String)],
+    deleted: &[crate::config::PrunedDir],
     global_depth: usize,
     timeout: std::time::Duration,
 ) -> Vec<(String, Result<()>)> {
@@ -942,7 +983,9 @@ pub fn restore_deleted(
     let projects = workspace::discover_to_depth(repo_path, depth);
 
     let mut results = Vec::new();
-    for (bloat_label, adapter_name) in deleted {
+    for dir in deleted {
+        let (bloat_label, adapter_name) = (&dir.bloat_dir, &dir.adapter);
+        let runtime = dir.runtime.as_deref();
         let wanted = owning_project(bloat_label);
         let label = format!("{adapter_name} ({bloat_label})");
         // The deleted directory's own name, so an adapter that supports several
@@ -960,7 +1003,7 @@ pub fn restore_deleted(
         if let Some((project, adapter)) = found {
             results.push((
                 label,
-                adapter.restore_named(&project.path, dir_name, timeout),
+                adapter.restore_named(&project.path, dir_name, runtime, timeout),
             ));
             continue;
         }
@@ -982,7 +1025,7 @@ pub fn restore_deleted(
             Some(adapter) if project_dir.is_dir() => {
                 results.push((
                     label,
-                    adapter.restore_named(&project_dir, dir_name, timeout),
+                    adapter.restore_named(&project_dir, dir_name, runtime, timeout),
                 ));
             }
             _ => results.push((
@@ -1055,124 +1098,249 @@ pub struct RepoStatusEntry {
 ///
 /// Unlike `get_space_summary`, this includes every repo — active, disabled,
 /// ignored, or missing — with a human-readable reason for each.
-pub fn get_full_status(registry: &Registry) -> Vec<RepoStatusEntry> {
-    let mut entries: Vec<RepoStatusEntry> = Vec::new();
+/// Everything `status` needs to say about one registered repository.
+///
+/// Split out of [`get_full_status`] so the scan can run several at once; it reads the
+/// registry and the file system and writes nothing, which is what makes that safe.
+fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> RepoStatusEntry {
+    let registry_idle_days = reg_entry
+        .override_idle_days
+        .unwrap_or(registry.settings.idle_days);
 
-    for (path, reg_entry) in &registry.repositories {
-        let registry_idle_days = reg_entry
-            .override_idle_days
-            .unwrap_or(registry.settings.idle_days);
-
-        // Path missing? Checked before the config is read, because a directory that is
-        // gone has no config to read.
-        if !path.exists() {
-            entries.push(RepoStatusEntry {
-                path: path.clone(),
-                entry: reg_entry.clone(),
-                reason: SkipReason::PathMissing,
-                adapters: Vec::new(),
-                bloat_dirs: Vec::new(),
-                reclaimable_bytes: 0,
-                last_activity: None,
-                idle_days: registry_idle_days,
-            });
-            continue;
-        }
-
-        // The same refusal-to-guess the prune pass makes. Reading this with
-        // `load_from_repo` treated a broken file as "no config", so a repo that
-        // `devp run` would refuse to touch showed up in the dashboard as a healthy
-        // candidate with a reclaimable size next to it.
-        let per_repo_config = match crate::config::PerRepoConfig::load_with_diagnostics(path) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                entries.push(RepoStatusEntry {
-                    path: path.clone(),
-                    entry: reg_entry.clone(),
-                    reason: SkipReason::ConfigError(e),
-                    adapters: Vec::new(),
-                    bloat_dirs: Vec::new(),
-                    reclaimable_bytes: 0,
-                    last_activity: last_activity_time(path),
-                    idle_days: registry_idle_days,
-                });
-                continue;
-            }
+    // Path missing? Checked before the config is read, because a directory that is
+    // gone has no config to read.
+    if !path.exists() {
+        return RepoStatusEntry {
+            path: path.to_path_buf(),
+            entry: reg_entry.clone(),
+            reason: SkipReason::PathMissing,
+            adapters: Vec::new(),
+            bloat_dirs: Vec::new(),
+            reclaimable_bytes: 0,
+            last_activity: None,
+            idle_days: registry_idle_days,
         };
-        let idle_days = per_repo_config
-            .as_ref()
-            .and_then(|c| c.override_idle_days)
-            .unwrap_or(registry_idle_days);
+    }
 
-        // Disabled in registry, ignore.devprune.json present, OR .devprune.json ignore=true
-        let is_ignored = !reg_entry.enabled
-            || path.join(constants::DEVPRUNE_IGNORE_FILE).exists()
-            || per_repo_config.as_ref().map(|c| c.ignore).unwrap_or(false);
-        if is_ignored {
-            entries.push(RepoStatusEntry {
-                path: path.clone(),
+    // The same refusal-to-guess the prune pass makes. Reading this with
+    // `load_from_repo` treated a broken file as "no config", so a repo that
+    // `devp run` would refuse to touch showed up in the dashboard as a healthy
+    // candidate with a reclaimable size next to it.
+    let per_repo_config = match crate::config::PerRepoConfig::load_with_diagnostics(path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return RepoStatusEntry {
+                path: path.to_path_buf(),
                 entry: reg_entry.clone(),
-                reason: SkipReason::Ignored,
+                reason: SkipReason::ConfigError(e),
                 adapters: Vec::new(),
                 bloat_dirs: Vec::new(),
                 reclaimable_bytes: 0,
                 last_activity: last_activity_time(path),
-                idle_days,
-            });
-            continue;
+                idle_days: registry_idle_days,
+            };
         }
+    };
+    let idle_days = per_repo_config
+        .as_ref()
+        .and_then(|c| c.override_idle_days)
+        .unwrap_or(registry_idle_days);
 
-        // Activity check. One computation drives both the column and the decision —
-        // they used to be computed separately, from different rules, so a repo with
-        // uncommitted edits was correctly held back as "Active" while the column next
-        // to it showed the last *commit*, months earlier.
-        let activity = git::get_last_activity(path).ok().flatten();
-        let activity_time = to_utc(activity);
-        let is_idle = git::is_idle_at(activity, idle_days);
-
-        // Detect adapters & bloat across every project in the repository
-        let min_size_bytes = per_repo_config
-            .as_ref()
-            .and_then(|c| c.min_size_mb)
-            .unwrap_or(registry.settings.min_size_mb)
-            .saturating_mul(BYTES_PER_MIB);
-        // Same resolution order as the size floor just above: the repository's own
-        // config first, the global setting otherwise. The dashboard and a run must walk
-        // to the same depth or `status` will list projects `run` never sees.
-        let depth = workspace::clamp_depth(
-            per_repo_config
-                .as_ref()
-                .and_then(|c| c.scan_depth)
-                .unwrap_or(registry.settings.scan_depth),
-        );
-        let (adapter_names, all_bloat) = collect_bloat(path, min_size_bytes, depth);
-        let reclaimable: u64 = all_bloat.iter().map(|b| b.size_bytes).sum();
-
-        let reason = if !is_idle {
-            SkipReason::Active
-        } else if all_bloat.is_empty() {
-            SkipReason::NoBloat
-        } else {
-            SkipReason::Candidate
-        };
-
-        entries.push(RepoStatusEntry {
-            path: path.clone(),
+    // Disabled in registry, ignore.devprune.json present, OR .devprune.json ignore=true
+    let is_ignored = !reg_entry.enabled
+        || path.join(constants::DEVPRUNE_IGNORE_FILE).exists()
+        || per_repo_config.as_ref().map(|c| c.ignore).unwrap_or(false);
+    if is_ignored {
+        return RepoStatusEntry {
+            path: path.to_path_buf(),
             entry: reg_entry.clone(),
-            reason,
-            adapters: adapter_names,
-            bloat_dirs: all_bloat,
-            reclaimable_bytes: reclaimable,
-            last_activity: activity_time,
+            reason: SkipReason::Ignored,
+            adapters: Vec::new(),
+            bloat_dirs: Vec::new(),
+            reclaimable_bytes: 0,
+            last_activity: last_activity_time(path),
             idle_days,
-        });
+        };
     }
 
-    // Sort: candidates first, then by path name
+    // Activity check. One computation drives both the column and the decision —
+    // they used to be computed separately, from different rules, so a repo with
+    // uncommitted edits was correctly held back as "Active" while the column next
+    // to it showed the last *commit*, months earlier.
+    let activity = git::get_last_activity(path).ok().flatten();
+    let activity_time = to_utc(activity);
+    let is_idle = git::is_idle_at(activity, idle_days);
+
+    // Detect adapters & bloat across every project in the repository
+    let min_size_bytes = per_repo_config
+        .as_ref()
+        .and_then(|c| c.min_size_mb)
+        .unwrap_or(registry.settings.min_size_mb)
+        .saturating_mul(BYTES_PER_MIB);
+    // Same resolution order as the size floor just above: the repository's own
+    // config first, the global setting otherwise. The dashboard and a run must walk
+    // to the same depth or `status` will list projects `run` never sees.
+    let depth = workspace::clamp_depth(
+        per_repo_config
+            .as_ref()
+            .and_then(|c| c.scan_depth)
+            .unwrap_or(registry.settings.scan_depth),
+    );
+    let (adapter_names, all_bloat) = collect_bloat(path, min_size_bytes, depth);
+    let reclaimable: u64 = all_bloat.iter().map(|b| b.size_bytes).sum();
+
+    let reason = if !is_idle {
+        SkipReason::Active
+    } else if all_bloat.is_empty() {
+        SkipReason::NoBloat
+    } else {
+        SkipReason::Candidate
+    };
+
+    RepoStatusEntry {
+        path: path.to_path_buf(),
+        entry: reg_entry.clone(),
+        reason,
+        adapters: adapter_names,
+        bloat_dirs: all_bloat,
+        reclaimable_bytes: reclaimable,
+        last_activity: activity_time,
+        idle_days,
+    }
+}
+
+/// How many threads the status scan should use for `total` repositories.
+///
+/// Each repository is an independent read of the file system and the pass is bound by
+/// I/O, not by the CPU — so oversubscribing the cores still helps, up to the point where
+/// the disk becomes the queue rather than the processor. The multiplier is the ramp:
+/// a machine that reports more parallelism gets proportionally more, and the ceiling
+/// stops a 64-core box from starting more threads than any disk can usefully serve.
+///
+/// Never more threads than there are repositories: a registry of three should not start
+/// thirty-two of them to do nothing. Never fewer than one, because the calling thread is
+/// itself the first worker.
+///
+/// [`constants::STATUS_SCAN_THREADS_ENV`] overrides the whole calculation, clamped the
+/// same way — the escape hatch for a machine where the guess is wrong in either
+/// direction: a network filesystem that wants far more requests in flight, or a spinning
+/// disk that is fastest with one.
+fn scan_thread_count(total: usize) -> usize {
+    let requested = std::env::var(constants::STATUS_SCAN_THREADS_ENV)
+        .ok()
+        .and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(std::num::NonZeroUsize::get)
+                .unwrap_or(4)
+                .saturating_mul(constants::STATUS_SCAN_THREADS_PER_CORE)
+        });
+    clamp_scan_threads(requested, total)
+}
+
+/// The clamping half of [`scan_thread_count`], without the environment read, so the
+/// bounds can be tested without mutating process-wide state.
+fn clamp_scan_threads(requested: usize, total: usize) -> usize {
+    requested
+        .clamp(1, constants::STATUS_SCAN_MAX_THREADS)
+        .min(total.max(1))
+}
+
+pub fn get_full_status(registry: &Registry) -> Vec<RepoStatusEntry> {
+    get_full_status_reporting(registry, &|_done, _total| {})
+}
+
+/// [`get_full_status`], reporting each repository as it finishes.
+///
+/// The scan is dominated by `collect_bloat`, which walks and sizes every dependency tree
+/// it finds; on a registry of eighty repositories that was half a minute of silence
+/// before anything appeared. The callback is what lets `devp status` draw a progress bar
+/// over it instead — a dashboard that looks hung is one people kill before it renders.
+///
+/// The callback is invoked from several threads at once, and its first argument is the
+/// number of repositories finished, not the index of this one: workers finish out of
+/// order.
+pub fn get_full_status_reporting(
+    registry: &Registry,
+    progress: &(dyn Fn(usize, usize) + Sync),
+) -> Vec<RepoStatusEntry> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let repos: Vec<(&PathBuf, &RepoEntry)> = registry.repositories.iter().collect();
+    let total = repos.len();
+    let workers = scan_thread_count(total);
+
+    // Work-stealing off a shared cursor rather than a fixed slice per thread, because the
+    // cost per repository varies by orders of magnitude — one repository in a real
+    // registry held a 2 GiB virtualenv while thirty others held nothing at all. A static
+    // split leaves every other thread idle waiting for whichever one drew that repo.
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+
+    let take_work = || {
+        let mut mine = Vec::new();
+        loop {
+            let i = next.fetch_add(1, Ordering::Relaxed);
+            if i >= total {
+                break;
+            }
+            let (path, reg_entry) = repos[i];
+            mine.push(status_for_repo(registry, path, reg_entry));
+            progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+        }
+        mine
+    };
+
+    let chunks: Vec<Vec<RepoStatusEntry>> = std::thread::scope(|scope| {
+        // `Builder::spawn_scoped` rather than `scope.spawn`, which panics when the OS
+        // refuses a thread — under a low `ulimit -u`, in a constrained container, on a
+        // machine already at its process limit. Refusing to draw a dashboard because the
+        // system was busy is not an acceptable outcome, so a refusal here just means
+        // fewer workers: whatever did start keeps pulling off the same cursor, and the
+        // calling thread below is always one of them. In the worst case — nothing at all
+        // would start — the scan runs single-threaded and still finishes.
+        let mut handles = Vec::with_capacity(workers.saturating_sub(1));
+        for n in 1..workers {
+            match std::thread::Builder::new()
+                .name(format!("devp-scan-{n}"))
+                .spawn_scoped(scope, take_work)
+            {
+                Ok(handle) => handles.push(handle),
+                Err(_) => break,
+            }
+        }
+
+        // The calling thread is a worker too, not a supervisor waiting on them. That is
+        // what makes zero spawned threads a slow scan rather than a hung one.
+        let mut chunks = vec![take_work()];
+        chunks.extend(
+            handles
+                .into_iter()
+                // A panicking worker takes the whole scan down with it. A dashboard for a
+                // tool that deletes things must never quietly return a short list.
+                .map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e))),
+        );
+        chunks
+    });
+
+    let mut entries: Vec<RepoStatusEntry> = chunks.into_iter().flatten().collect();
+
+    // Sort: what you can act on, then what is merely there, then what is gone — and by
+    // path within each band. Path order alone put thirty-four dead entries at the top of
+    // one dashboard, because `C:\Users\…\Temp` sorts before `V:\Code`, and the rows
+    // that mattered started below the fold.
+    fn rank(reason: &SkipReason) -> u8 {
+        match reason {
+            SkipReason::Candidate => 0,
+            SkipReason::PathMissing => 2,
+            _ => 1,
+        }
+    }
     entries.sort_by(|a, b| {
-        let a_cand = matches!(a.reason, SkipReason::Candidate);
-        let b_cand = matches!(b.reason, SkipReason::Candidate);
-        b_cand.cmp(&a_cand).then_with(|| a.path.cmp(&b.path))
+        rank(&a.reason)
+            .cmp(&rank(&b.reason))
+            .then_with(|| a.path.cmp(&b.path))
     });
 
     entries
@@ -1336,7 +1504,13 @@ mod tests {
             fs::write(dir.join("package-lock.json"), "{}").unwrap();
         }
 
-        let deleted = vec![("frontend/node_modules".to_string(), "npm".to_string())];
+        let deleted = vec![crate::config::PrunedDir {
+            repo_path: root.to_path_buf(),
+            bloat_dir: "frontend/node_modules".to_string(),
+            adapter: "npm".to_string(),
+            size_freed: 0,
+            runtime: None,
+        }];
         let results = restore_deleted(root, &deleted, 4, TEST_TIMEOUT);
 
         assert_eq!(results.len(), 1, "one recorded directory, one attempt");
@@ -1348,7 +1522,13 @@ mod tests {
         // Recorded at prune time, gone by restore time. Reported, never dropped: a
         // restore that quietly skips half its work is the failure this command prevents.
         let tmp = TempDir::new().unwrap();
-        let deleted = vec![("services/api/.venv".to_string(), "uv".to_string())];
+        let deleted = vec![crate::config::PrunedDir {
+            repo_path: tmp.path().to_path_buf(),
+            bloat_dir: "services/api/.venv".to_string(),
+            adapter: "uv".to_string(),
+            size_freed: 0,
+            runtime: None,
+        }];
         let results = restore_deleted(tmp.path(), &deleted, 4, TEST_TIMEOUT);
 
         assert_eq!(results.len(), 1);
@@ -1620,7 +1800,13 @@ mod tests {
         fs::write(api.join("requirements.txt"), "requests==2.32.3\n").unwrap();
         // No .venv on disk — the prune already removed it.
 
-        let deleted = vec![("api/.venv".to_string(), "venv".to_string())];
+        let deleted = vec![crate::config::PrunedDir {
+            repo_path: tmp.path().to_path_buf(),
+            bloat_dir: "api/.venv".to_string(),
+            adapter: "venv".to_string(),
+            size_freed: 0,
+            runtime: None,
+        }];
         // A zero timeout kills the rebuild the moment it starts; the test is about
         // which branch routes, not whether python can build an environment here.
         let results = restore_deleted(tmp.path(), &deleted, 4, std::time::Duration::ZERO);
@@ -1709,5 +1895,29 @@ mod tests {
         let results = results.unwrap();
         assert!(!results.is_empty());
         assert_eq!(results[0].0, "npm");
+    }
+
+    #[test]
+    fn the_scan_never_starts_more_threads_than_there_is_work() {
+        // A registry of three should not start thirty-two of them to do nothing.
+        assert_eq!(clamp_scan_threads(32, 3), 3);
+        // Nor fewer than one on an empty registry: the calling thread is worker zero, and
+        // a count of zero would mean the work loop never ran at all.
+        assert_eq!(clamp_scan_threads(0, 0), 1);
+        assert_eq!(clamp_scan_threads(0, 50), 1);
+    }
+
+    #[test]
+    fn an_absurd_thread_request_is_clamped_rather_than_honoured() {
+        // `DEV_PRUNE_SCAN_THREADS=9999` is a typo, not an instruction.
+        assert_eq!(
+            clamp_scan_threads(9_999, 500),
+            constants::STATUS_SCAN_MAX_THREADS
+        );
+    }
+
+    #[test]
+    fn a_registry_of_one_repository_is_scanned_on_the_calling_thread_alone() {
+        assert_eq!(clamp_scan_threads(16, 1), 1);
     }
 }

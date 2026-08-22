@@ -78,29 +78,33 @@ jobs:
       - name: Build against the declared MSRV
         run: cargo check --locked --all-targets --all-features
 
-  # Five of the six release targets are native builds on their own runner, and the test
-  # matrix already proves those compile. aarch64-pc-windows-msvc is the exception: it is
-  # cross-compiled from an x64 host, and `ring` — the crypto backend under the release
-  # check's HTTPS client — builds C and assembly, so it needs the ARM64 MSVC tools rather
-  # than just a rustup target. Nothing else here would notice if that broke, and the
-  # first run would otherwise be the release itself, after the tag exists.
+  # Five of the seven release targets are native builds on their own runner, and the test
+  # matrix already proves those compile. The two Windows cross-compiles are the
+  # exception, and `ring` — the crypto backend under the release check's HTTPS client —
+  # is why: it builds C and assembly, so each needs the matching MSVC toolset rather than
+  # just a rustup target. Nothing else here would notice if either broke, and the first
+  # run would otherwise be the release itself, after the tag exists.
   #
   # `check` rather than `build`: it still runs ring's build script and compiles its
   # native code, which is the part that can fail, without linking six crates' worth of
   # release codegen on every push.
   cross:
-    name: Cross-compile (aarch64-pc-windows-msvc)
+    name: Cross-compile (${{ matrix.target }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-pc-windows-msvc, i686-pc-windows-msvc]
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-pc-windows-msvc
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: aarch64-pc-windows-msvc
-      - name: Check the ARM64 Windows target
-        run: cargo check --locked --target aarch64-pc-windows-msvc
+          key: ${{ matrix.target }}
+      - name: Check the target
+        run: cargo check --locked --target ${{ matrix.target }}
 
   package:
     name: Publishable crate
@@ -171,7 +175,7 @@ jobs:
           for t in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
             tar -czf "fake/assets/dev-prune-v9.9.9-$t.tar.gz" -C fake dev-prune
           done
-          for t in windows-x64 windows-arm64; do
+          for t in windows-x64 windows-arm64 windows-x86; do
             (cd fake && zip -q "assets/dev-prune-v9.9.9-$t.zip" dev-prune.exe)
           done
           ls fake/assets
@@ -181,7 +185,7 @@ jobs:
 
       # `npm pack --dry-run` applies the same manifest validation as `npm publish`, so a
       # malformed `os`/`cpu` field or unparseable JSON fails here rather than partway
-      # through publishing seven packages.
+      # through publishing eight packages.
       - name: Validate every generated manifest
         run: |
           for dir in fake/npm/*/; do

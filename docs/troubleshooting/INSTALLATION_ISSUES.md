@@ -125,8 +125,8 @@ Unblock-File "$env:APPDATA\dev-prune\bin\dev-prune.exe","$env:APPDATA\dev-prune\
 listed here for the hand-downloaded path — where unblocking the **archive before
 extracting** means nothing inside it is ever marked:
 ```powershell
-Unblock-File .\dev-prune-v1.3.1-windows-x64.zip
-Expand-Archive .\dev-prune-v1.3.1-windows-x64.zip -DestinationPath .
+Unblock-File .\dev-prune-v1.4.0-windows-x64.zip
+Expand-Archive .\dev-prune-v1.4.0-windows-x64.zip -DestinationPath .
 ```
 
 If you are standing in front of the dialog right now, you do not need any of the above:

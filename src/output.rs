@@ -93,6 +93,65 @@ pub fn clean_path<P: AsRef<Path>>(path: P) -> String {
     format!("{head}{tail}")
 }
 
+/// Reduce a package manager's failure output to the part that says what went wrong.
+///
+/// A failing `npm ci` prints its entire usage screen — around a hundred and twenty lines
+/// of flags — and dev-prune used to relay every one of them into the middle of a prune
+/// report. The three lines that identified the problem were somewhere in there, and the
+/// report they were in became unreadable.
+///
+/// So: if any line looks like a diagnostic, show only those; otherwise show the first
+/// few lines, which is where a tool that is not npm usually puts its complaint. The
+/// count of what was dropped is always printed, and the line naming a full log file is
+/// always kept — the whole point of condensing is that the full text stays reachable.
+pub fn condense_tool_output(raw: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = raw
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    if lines.len() <= max_lines {
+        return lines.join("\n");
+    }
+
+    let is_diagnostic = |l: &&str| {
+        let low = l.to_lowercase();
+        low.contains("error")
+            || low.contains("err!")
+            || low.contains("fatal")
+            || low.contains("failed")
+            || low.contains("cannot")
+            || low.contains("unable to")
+            || low.contains("not found")
+            || low.contains("warn")
+    };
+    // The log-file pointer is the escape hatch, so it survives even when it is neither a
+    // diagnostic nor near the top.
+    let is_log_pointer = |l: &&str| l.to_lowercase().contains("log of this run can be found");
+
+    let diagnostics: Vec<&str> = lines.iter().copied().filter(is_diagnostic).collect();
+    let mut kept: Vec<&str> = if diagnostics.is_empty() {
+        lines.iter().copied().take(max_lines).collect()
+    } else {
+        diagnostics.into_iter().take(max_lines).collect()
+    };
+    for line in lines.iter().copied().filter(is_log_pointer) {
+        if !kept.contains(&line) {
+            kept.push(line);
+        }
+    }
+
+    let dropped = lines.len().saturating_sub(kept.len());
+    let mut out = kept.join("\n");
+    if dropped > 0 {
+        out.push_str(&format!(
+            "\n… {dropped} more {} of output",
+            plural(dropped, "line", "lines")
+        ));
+    }
+    out
+}
+
 /// Create an animated terminal loading spinner for long-running operations.
 pub fn create_spinner(msg: &'static str) -> ProgressBar {
     let pb = ProgressBar::new_spinner();
@@ -103,6 +162,34 @@ pub fn create_spinner(msg: &'static str) -> ProgressBar {
             .expect("Invalid progress bar template"),
     );
     pb.set_message(msg);
+    pb.enable_steady_tick(Duration::from_millis(80));
+    pb
+}
+
+/// A determinate progress bar for a pass whose total is known up front.
+///
+/// A spinner says only "still going". Sizing eighty repositories takes long enough that
+/// the difference matters: `41/80` and a bar that visibly moves is the difference
+/// between waiting and reaching for Ctrl-C. Use it wherever the count is known before
+/// the work starts, and [`create_spinner`] only where it genuinely is not.
+///
+/// Safe to advance from several threads at once — `indicatif` synchronises internally,
+/// which is what lets the parallel status scan report from every worker.
+pub fn create_progress_bar(msg: &'static str, total: u64) -> ProgressBar {
+    let pb = ProgressBar::new(total);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            // Eighth-block partials, so the bar advances smoothly at one repository per
+            // step instead of jumping a whole cell every third one.
+            .progress_chars("█▉▊▋▌▍▎▏ ")
+            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+            .template("{spinner:.cyan} {msg} {bar:28.green/dim} {pos}/{len}  {elapsed}")
+            .expect("Invalid progress bar template"),
+    );
+    pb.set_message(msg);
+    // The spinner has to keep turning between updates: a repository holding a multi-
+    // gigabyte dependency tree can hold its worker for seconds, and a frozen bar during
+    // that is exactly the impression this is here to avoid.
     pb.enable_steady_tick(Duration::from_millis(80));
     pb
 }
@@ -364,5 +451,49 @@ mod tests {
         // separators inside the path collapse.
         assert_eq!(clean_path(r"//server//share//repo"), r"//server/share/repo");
         assert_eq!(clean_path(r"/home//user///repo"), r"/home/user/repo");
+    }
+
+    #[test]
+    fn short_output_is_relayed_whole() {
+        let raw = "npm error code EUSAGE\nnpm error requires an existing package-lock.json";
+        assert_eq!(condense_tool_output(raw, 6), raw);
+    }
+
+    #[test]
+    fn a_usage_screen_is_reduced_to_its_diagnostics() {
+        // The shape that motivated this: `npm ci` failed, printed its whole usage
+        // screen, and dev-prune relayed all of it into the middle of a prune report.
+        let mut raw = String::from("npm error code EUSAGE\nnpm error\n");
+        raw.push_str("Usage:\nnpm ci\n");
+        for i in 0..120 {
+            raw.push_str(&format!("  --flag-{i} <value>\n"));
+        }
+        raw.push_str("npm error A complete log of this run can be found in: /tmp/log\n");
+
+        let out = condense_tool_output(&raw, 6);
+        assert!(out.contains("EUSAGE"), "{out}");
+        // The escape hatch survives even though it is the very last line.
+        assert!(out.contains("complete log of this run"), "{out}");
+        assert!(!out.contains("--flag-50"), "{out}");
+        assert!(out.contains("more lines of output"), "{out}");
+    }
+
+    #[test]
+    fn output_with_no_diagnostics_keeps_the_top_of_it() {
+        // Not every tool marks its complaint. Falling back to the first few lines beats
+        // dropping everything, and the count still says what was hidden.
+        let raw: String = (0..40).map(|i| format!("line {i}\n")).collect();
+        let out = condense_tool_output(&raw, 3);
+        assert!(out.starts_with("line 0\nline 1\nline 2\n…"), "{out}");
+        assert!(out.contains("37 more lines"), "{out}");
+    }
+
+    #[test]
+    fn the_dropped_count_never_claims_more_than_there_was() {
+        // Blank lines are removed before counting, so a command that padded its output
+        // must not be reported as having said more than it did.
+        let raw = "a\n\n\nb\n\n\nc\n\n\nd\n";
+        let out = condense_tool_output(raw, 2);
+        assert!(out.contains("2 more lines"), "{out}");
     }
 }

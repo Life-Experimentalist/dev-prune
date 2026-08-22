@@ -5,9 +5,10 @@ remotely, not in aggregate, not anonymised. There is no opt-out to configure, be
 there is nothing to opt out of.
 
 It does make exactly one network request on its own initiative: asking GitHub what the
-latest release is. One other request exists — downloading the VS Code extension's
-`.vsix` from GitHub Releases — and it only ever happens after you explicitly say yes to
-the one-time editor-extension offer. Both are described below.
+latest release is. Two others exist and neither happens unless you ask for it —
+downloading a release binary when you run `devp update --install`, and downloading the
+VS Code extension's `.vsix` after you say yes to the one-time editor-extension offer.
+All three are described below.
 
 ---
 
@@ -53,6 +54,28 @@ install channel. It does not download or replace its own binary. Doing that woul
 writing to a directory on `PATH` with whatever privileges the user happened to have, and
 fetching an executable over a channel with no signature verification of its own. Your
 package manager already does this correctly; dev-prune defers to it.
+
+---
+
+## The download, if you run `devp update --install`
+
+`devp update --install` fetches the release binary for this platform, and the SHA-256
+sidecar published beside it, from GitHub's release-download host.
+
+| | |
+|---|---|
+| **Endpoint** | `https://github.com/Life-Experimentalist/dev-prune/releases/download/v<version>/<asset>` and the same URL plus `.sha256` |
+| **Method** | `GET`, unauthenticated |
+| **Headers sent** | `User-Agent: dev-prune/<version>` |
+| **Body sent** | none |
+| **Timeout** | 300 seconds |
+| **Frequency** | only when you run `devp update --install` — or, if you switched `auto_update` on yourself, at the end of a prune pass that already knows a newer release exists |
+| **Turn it off** | don't run it; `DEV_PRUNE_OFFLINE=1` refuses it outright |
+
+The asset name encodes the operating system and CPU architecture, because that is which
+file to send — it is the same URL a person would click on the release page, and it
+carries no identifier of any kind. The download is rejected unless its SHA-256 matches
+the sidecar, and nothing is written when it does not match.
 
 ---
 
