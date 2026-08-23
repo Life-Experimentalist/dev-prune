@@ -90,9 +90,10 @@ the one above:
    gh secret list; gh variable list
    ```
 
-   You want `NPM_TOKEN` and `CARGO_REGISTRY_TOKEN` in the first list, and
-   `NPM_PUBLISH`, `CRATES_PUBLISH` and `PYPI_PUBLISH` in the second. Empty output means
-   nothing is configured, and the release will reach the GitHub release page only.
+   You want `CARGO_REGISTRY_TOKEN` in the first list — it is the only long-lived
+   credential left, because npm and PyPI both publish over OIDC — and `NPM_PUBLISH`,
+   `CRATES_PUBLISH` and `PYPI_PUBLISH` in the second. Empty output means nothing is
+   configured, and the release will reach the GitHub release page only.
 6. **Check the changelog date.** `CHANGELOG.md` dates the section for the version being
    released, and the date should be the day it actually ships. Fix it in place if the
    calendar has moved on.
@@ -129,7 +130,8 @@ the one above:
    ```
 
    `npx dev-prune@<version> -V` joins this list only once npm publishing is switched on
-   — `NPM_PUBLISH` is currently `false` and nothing has ever shipped to npm.
+   — `NPM_PUBLISH` is currently `false`, and the `dev-prune` dispatcher that `npx` would
+   resolve does not exist on the registry yet.
 
    `cargo binstall` is the one worth watching: it reads
    `[package.metadata.binstall]` from the published crate and downloads a release asset
@@ -145,10 +147,10 @@ the one above:
    iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
    ```
 
-The `dev-prune` name is now held on crates.io and PyPI, where 1.0.0 through 1.2.0 are
-published. On npm it is still unclaimed — see [Name availability](#name-availability) —
-and "unclaimed" has a shelf life, so switching `NPM_PUBLISH` on is also what secures the
-name there.
+The `dev-prune` name is held on crates.io and PyPI. On npm four of the eight names are
+held and the other four, the dispatcher among them, are not — see [Name
+availability](#name-availability). "Unclaimed" has a shelf life, so finishing that list
+is also what secures the name there.
 
 ---
 
@@ -170,7 +172,7 @@ instead of quietly skipping it.
 | Channel | Credential | Variable to set | Off ⇒ |
 |---|---|---|---|
 | GitHub Release | `GITHUB_TOKEN` | — always runs | n/a |
-| npm | `NPM_TOKEN` secret | `NPM_PUBLISH` = `true` | Job reports `skipped` |
+| npm | *no secret* — Trusted Publishing | `NPM_PUBLISH` = `true` | Job reports `skipped` |
 | PyPI | *no secret* — Trusted Publishing | `PYPI_PUBLISH` = `true` | Job reports `skipped` |
 | crates.io | `CARGO_REGISTRY_TOKEN` secret | `CRATES_PUBLISH` = `true` | Job reports `skipped` |
 | GitHub Pages (site) | Automatic | — Settings → Pages → "GitHub Actions" | Site does not deploy |
@@ -184,21 +186,34 @@ run summary, and warns if the release reached the GitHub release page and no reg
 
 ### npm
 
+There is no npm secret. The `publish-npm` job authenticates with the same OIDC token it
+uses for provenance, so nothing long-lived exists in this repository for anyone to steal
+and nothing has an expiry date to forget.
+
+That leaves exactly one manual step per package name, once, forever:
+
 1. Create an account on [npmjs.com](https://www.npmjs.com/) and enable 2FA.
-2. Create a **Granular Access Token** (Access Tokens → Generate New Token → Granular).
-   - Permissions: **Read and write** on packages.
-   - Scope it to the eight package names below, or leave it account-wide before the
-     first publish — granular tokens cannot name a package that does not exist yet.
-   - **Tick "Bypass two-factor authentication".** Without it the registry answers
-     `403 ... Two-factor authentication or granular access token with bypass 2fa enabled
-     is required to publish packages`, because the account requires 2FA for writes and a
-     workflow has no way to answer an OTP prompt. The box can only be ticked when the
-     token is created; an existing token cannot be edited to add it.
-   - Set an expiry you will actually remember. 90 days is the default; a year is fine
-     for a personal project.
-3. Save it as the repository secret **`NPM_TOKEN`**.
+2. **Claim each of the eight names by publishing its first version from a workstation.**
+   Trusted publishing cannot do this — a trusted publisher is configured *on a package*,
+   and a package with no versions has nowhere to hold one
+   ([npm/cli#8544](https://github.com/npm/cli/issues/8544), open since September 2025).
+   See [Bootstrapping the eight names without a token at
+   all](#bootstrapping-the-eight-names-without-a-token-at-all) for the commands.
+3. **Add a trusted publisher to each package**: npmjs.com → the package → Settings →
+   Trusted Publisher → GitHub Actions → repository `Life-Experimentalist/dev-prune`,
+   workflow `release.yml`, environment blank.
 4. Set the repository **variable** **`NPM_PUBLISH`** to `true`. Without it the publish
    job does not run at all, and the release reports `skipped` for npm.
+
+Step 2 is the one that bites, and not for the reason you expect. Creating several new
+package names from one account in quick succession trips the registry's spam heuristic:
+`403 Package name triggered spam detection`. It is a throttle on the rate, not a verdict
+on the names — wait and retry, and open a ticket at
+[npmjs.com/support](https://www.npmjs.com/support) if it does not clear.
+
+The `publish-npm` job refuses to start publishing if any of the eight names is missing
+from the registry, and names all of them in the error. A partial release is worse than
+no release.
 
 The eight packages the release publishes — the same eight `npm/package.json` names,
 which is where this list has to keep agreeing with reality:
@@ -214,15 +229,14 @@ dev-prune-win32-arm64
 dev-prune-win32-ia32
 ```
 
-Nothing needs to be reserved in advance — the first publish creates all eight. The seven
-platform packages are published *before* the dispatcher, because npm resolves the
-dispatcher's `optionalDependencies` as soon as it exists.
+The seven platform packages are published *before* the dispatcher, because npm resolves
+the dispatcher's `optionalDependencies` as soon as it exists.
 
-**A `404 Not Found` on the `PUT` is this token being wrong, not the package being
-missing.** A granular token that names packages can only see the ones it names, so a name
-that does not exist yet is not "forbidden" to it — it is invisible, and npm says so with
-a 404. v1.6.0 hit exactly this. The fix is a classic automation token, or a granular one
-with read/write on *all* packages, held only until the eight names exist.
+**A `404 Not Found` on the `PUT` means the name does not exist yet**, not that the
+network failed. It is what npm answers a credential that cannot see a name — a trusted
+publisher that has nothing to attach to, or a granular token scoped to packages that do
+not exist. v1.6.0 hit the token version of this. There is no credential that fixes it;
+the name has to be claimed first.
 
 Publishes use `--provenance --access public`, which requires the repository to be
 **public** and the workflow to have `id-token: write`. It attaches a signed attestation
@@ -237,16 +251,20 @@ fails with `EUSAGE ... you must set access to public` without it.
 
 #### Bootstrapping the eight names without a token at all
 
-The token above is one way past the chicken-and-egg. The better way is to publish the
-first version from a workstation, because an interactive `npm login` session answers the
-2FA challenge itself:
+Publish the first version of each name from a workstation. An interactive `npm login`
+session answers the 2FA challenge itself, so no token has to exist even for this:
 
 ```sh
-gh release download v1.2.0 --dir /tmp/rel
+gh release download v1.6.0 --dir /tmp/rel
 cd /tmp/rel && sha256sum -c ./*.sha256          # publish the CI binaries, not local ones
-sh scripts/npm-prepare.sh 1.2.0 /tmp/rel /tmp/npm-dist
-sh scripts/npm-publish.sh 1.2.0 /tmp/npm-dist latest --local
+sh scripts/npm-prepare.sh 1.6.0 /tmp/rel /tmp/npm-dist
+sh scripts/npm-publish.sh 1.6.0 /tmp/npm-dist latest --local
 ```
+
+If this returns `403 Package name triggered spam detection`, the account has created too
+many new names too quickly. Nothing about the names is wrong and nothing about the
+account is in trouble — wait, retry, and escalate to
+[npmjs.com/support](https://www.npmjs.com/support) if hours of retrying do not clear it.
 
 `--local` drops `--provenance`, which is not a preference: the attestation is signed
 against a CI OIDC identity and a workstation has none. **The version published this way
@@ -254,28 +272,29 @@ carries no provenance badge.** Every later version, published by CI, does.
 
 Re-run the command as often as you like — the `npm view` check skips whatever already
 made it to the registry, which matters here because a 2FA code expires partway through
-seven publishes more often than not.
+seven publishes more often than not, and because the throttle above tends to let names
+through a few at a time.
 
 Always prepare from the downloaded release assets rather than a local `cargo build`.
 The npm packages must contain the same executables the tarballs, wheels and installers
 ship, and the `.sha256` files next to the assets are what proves it.
 
-#### Move to Trusted Publishing once the names exist
+#### Why there is no token
 
-The `NPM_TOKEN` above is a bridge, not the destination. **npm removes direct publish
-access from bypass-2FA tokens in January 2027**, and a long-lived token that can publish
-eight packages is the exact thing the 2025 supply-chain attacks abused.
+**npm removes direct publish access from bypass-2FA tokens in January 2027**, and a
+long-lived token that can publish eight packages is the exact thing the 2025
+supply-chain attacks abused. Trusted publishing has no such token: the job asks GitHub
+for a short-lived OIDC assertion, npm exchanges it for a publish grant, and the same
+assertion produces the provenance attestation.
 
-The reason it is still here is bootstrapping: npm can only trust a publisher that is
-configured *on a package*, and a package that has never been published does not exist to
-configure. PyPI solves this with pending publishers; npm has no equivalent. So the first
-publish of a new name must use a token, and every later one need not.
+PyPI solves the bootstrap problem with pending publishers, which let a project be
+configured before it exists. npm has no equivalent, which is why claiming the names is
+still a manual step and why it is the *only* one.
 
-Once a first version is on the registry, for **each of the eight packages**: npmjs.com → the
-package → Settings → Trusted Publisher → GitHub Actions → repository
-`Life-Experimentalist/dev-prune`, workflow `release.yml`. Then delete the `NPM_TOKEN`
-secret and drop the `NODE_AUTH_TOKEN` guard from `publish-npm`; OIDC replaces it, and
-provenance is generated automatically rather than by the flag.
+The job also runs `npm install -g npm@latest` before publishing. Exchanging an OIDC
+token needs npm 11.5.1 or newer, and the npm bundled with a Node release is whatever
+shipped the day that Node was cut — a release that silently loses its authentication to
+a Node patch is not one anyone would think to look at.
 
 ### PyPI (Trusted Publishing — no token anywhere)
 
@@ -311,13 +330,20 @@ provenance is generated automatically rather than by the flag.
 
 ### Name availability
 
-As of 2026-08-20, `dev-prune` is published (1.0.0 through 1.2.0) on PyPI and crates.io,
-which is what holds a name on those registries. Nothing has been published to npm —
-`NPM_PUBLISH` is `false` — so every name there is still unclaimed:
+As of 2026-08-23, `dev-prune` is published on PyPI and crates.io, which is what holds a
+name on those registries. On npm the eight names are being claimed one at a time, against
+the registry's new-name throttle, and `NPM_PUBLISH` stays `false` until all eight exist:
 
 | Name | npm | PyPI | crates.io |
 |---|---|---|---|
-| `dev-prune` | free | **held (published)** | **held (published)** |
+| `dev-prune` | not yet claimed | **held (published)** | **held (published)** |
+| `dev-prune-linux-x64` | **held** (1.6.0) | n/a | n/a |
+| `dev-prune-linux-arm64` | **held** (1.6.0) | n/a | n/a |
+| `dev-prune-darwin-x64` | **held** (1.6.0) | n/a | n/a |
+| `dev-prune-darwin-arm64` | **held** (1.6.0) | n/a | n/a |
+| `dev-prune-win32-x64` | not yet claimed | n/a | n/a |
+| `dev-prune-win32-arm64` | not yet claimed | n/a | n/a |
+| `dev-prune-win32-ia32` | not yet claimed | n/a | n/a |
 | `devp` | free | free | free |
 | `devprune` | free | free | free |
 

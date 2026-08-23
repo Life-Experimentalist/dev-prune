@@ -95,6 +95,18 @@ the tool keeps itself up to date.
   version, it was a branch whose copy of the action defaults that input, and a branch is
   the one reference a compromised account can move without leaving a tag behind.
 
+- **npm publishing moved to trusted publishing — there is no `NPM_TOKEN` any more.** The
+  release job authenticates with the same OIDC assertion it already used for the
+  provenance attestation, so the one long-lived credential that could publish all eight
+  packages no longer exists, and npm's January 2027 removal of direct publish access for
+  bypass-2FA tokens is a date this project can ignore. The job now upgrades npm before
+  publishing — exchanging an OIDC token needs 11.5.1 or newer, and the npm inside a Node
+  release is whatever shipped that day — and refuses to publish anything if any of the
+  eight names is missing from the registry, naming all of them at once. Trusted
+  publishing cannot create a name ([npm/cli#8544](https://github.com/npm/cli/issues/8544)),
+  so a missing one is a job for a workstation and `npm login`, and finding that out
+  halfway through eight publishes is how a release ends up half-shipped.
+
 - **Two check-then-use file races are gone.** `site/prerender.js` tested for its inputs
   with `existsSync` and then read them; it now reads them and reports the failure it
   actually got. The VS Code extension's `devprune.createConfig` tested for `.devprune.json`

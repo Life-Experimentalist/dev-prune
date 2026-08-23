@@ -434,8 +434,10 @@ jobs:
   # release of this project reported "Publish to npm: success" while publishing nothing,
   # because that is exactly what an early `exit 0` looks like from the outside.
   #
-  # Set NPM_PUBLISH to "true" once NPM_TOKEN exists; see docs/RELEASING.md. Until then
-  # the job reports `skipped`, which is a different word in the UI and in the API.
+  # Set NPM_PUBLISH to "true" once every one of the eight names exists on the registry
+  # and each has a trusted publisher pointing at this workflow; see docs/RELEASING.md.
+  # Until then the job reports `skipped`, which is a different word in the UI and in the
+  # API.
   publish-npm:
     name: Publish to npm
     needs: publish
@@ -461,8 +463,36 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # The npm bundled with a Node release is whatever shipped the day that Node was
+      # cut. Exchanging the OIDC token for a publish credential needs npm 11.5.1 or
+      # newer, and a job that is one Node patch away from silently losing its
+      # authentication is not a job anyone will think to look at.
+      - name: Use the current npm
+        run: npm install -g npm@latest
+
       - name: Build the packages from the release assets
         run: sh scripts/npm-prepare.sh "${{ needs.publish.outputs.version }}" dist npm-dist
+
+      # Trusted publishing cannot create a name. A trusted publisher is configured on a
+      # package, so a package with no versions has nowhere to hold one, and npm answers
+      # the attempt with a bare `E404 ... PUT` that reads like a network fault. See
+      # https://github.com/npm/cli/issues/8544, open since September 2025.
+      #
+      # Checked here rather than left to fail inside the loop: this way the error names
+      # every missing package at once, and it fires before any of the others have been
+      # published, so a rerun is not a partial release.
+      - name: Every package name must already exist
+        run: |
+          set -eu
+          missing=""
+          for dir in npm-dist/*/; do
+            pkg=$(basename "$dir")
+            npm view "$pkg" version >/dev/null 2>&1 || missing="$missing $pkg"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Not on the registry:$missing. Trusted publishing cannot create a package name — publish each one once from a workstation with \`npm login\`, then add a trusted publisher for it (GitHub Actions, Life-Experimentalist/dev-prune, release.yml)."
+            exit 1
+          fi
 
       # A prerelease published as `latest` becomes what every `npm install dev-prune`
       # gets. Tags with a `-` go out under `next` instead, which is what the dist-tag
@@ -476,32 +506,20 @@ jobs:
             *)   echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      # No token, by design. The `id-token: write` above is the whole credential: npm
+      # exchanges it for a short-lived publish grant and for the provenance attestation
+      # in the same step, so there is nothing in this repository's secrets for anyone to
+      # steal and nothing to rotate.
       - name: npm publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.publish.outputs.version }}
           DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
         run: |
           set -eu
-          # NPM_PUBLISH said this channel is configured, so a missing token is a
-          # mistake, not a state to tiptoe around. Failing here is the only way the
-          # tag's author finds out before someone tries `npx dev-prune`.
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::NPM_PUBLISH is 'true' but the NPM_TOKEN secret is empty or unset."
-            exit 1
-          fi
           # The loop lives in the script so CI can dry-run this exact command. See the
           # "Dry-run the publish that release.yml will run" step in ci.yml.
-          #
-          # A 404 on the PUT means the token cannot create a package name that does not
-          # exist yet, which is what a granular access token scoped to selected packages
-          # does — npm answers "not found" rather than "forbidden" because to that token
-          # the name is invisible. The first publish of the eight package names therefore
-          # needs a classic automation token; trusted publishing cannot do it either,
-          # because a trusted publisher is configured on a package that already exists.
-          # v1.6.0 is where this was found, with all eight names unclaimed.
           if ! sh scripts/npm-publish.sh "$VERSION" npm-dist "$DIST_TAG"; then
-            echo "::error::npm publish failed. If the log shows 'E404 ... PUT', NPM_TOKEN cannot create new package names — use a classic automation token, or a granular token with read/write on all packages."
+            echo "::error::npm publish failed. An E404 on the PUT for a name that the preflight said exists means that package has no trusted publisher for this workflow — add one under the package's Settings on npmjs.com."
             exit 1
           fi
 
