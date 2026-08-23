@@ -86,7 +86,7 @@ still builds on every release and is described here so it can be turned back on 
 re-deriving it — the bootstrap steps are in [RELEASING.md](RELEASING.md).
 
 - The tarball **contains the binary**. There is no `postinstall` download step, so the package installs correctly under `npm ci --ignore-scripts`, behind a corporate registry mirror, and with no network access to GitHub.
-- Seven packages make that work: six platform packages (`dev-prune-linux-x64`, `dev-prune-darwin-arm64`, `dev-prune-win32-x64`, …), each carrying one executable and declaring `os`/`cpu`, plus the `dev-prune` dispatcher that lists all six as `optionalDependencies`. npm resolves exactly the one that matches the machine and skips the rest.
+- Eight packages make that work: seven platform packages (`dev-prune-linux-x64`, `dev-prune-darwin-arm64`, `dev-prune-win32-x64`, …), each carrying one executable and declaring `os`/`cpu`, plus the `dev-prune` dispatcher that lists all seven as `optionalDependencies`. npm resolves exactly the one that matches the machine and skips the rest.
 - Both `dev-prune` and `devp` are registered as `bin` entries.
 - When publishing is on, every tarball carries [npm provenance](https://docs.npmjs.com/generating-provenance-statements) — a signed attestation tying it to the workflow run, commit and tag that produced it.
 

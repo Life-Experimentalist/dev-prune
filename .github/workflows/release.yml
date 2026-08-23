@@ -491,7 +491,18 @@ jobs:
           fi
           # The loop lives in the script so CI can dry-run this exact command. See the
           # "Dry-run the publish that release.yml will run" step in ci.yml.
-          sh scripts/npm-publish.sh "$VERSION" npm-dist "$DIST_TAG"
+          #
+          # A 404 on the PUT means the token cannot create a package name that does not
+          # exist yet, which is what a granular access token scoped to selected packages
+          # does — npm answers "not found" rather than "forbidden" because to that token
+          # the name is invisible. The first publish of the eight package names therefore
+          # needs a classic automation token; trusted publishing cannot do it either,
+          # because a trusted publisher is configured on a package that already exists.
+          # v1.6.0 is where this was found, with all eight names unclaimed.
+          if ! sh scripts/npm-publish.sh "$VERSION" npm-dist "$DIST_TAG"; then
+            echo "::error::npm publish failed. If the log shows 'E404 ... PUT', NPM_TOKEN cannot create new package names — use a classic automation token, or a granular token with read/write on all packages."
+            exit 1
+          fi
 
   # PyPI, for `uv tool install dev-prune`, `uvx dev-prune` and `pipx run dev-prune`.
   # Nothing about dev-prune is Python; PyPI is simply where those three installers look,

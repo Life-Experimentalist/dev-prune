@@ -35,7 +35,7 @@ Work that exists and is waiting on a party that is not this repository.
 ## Next
 
 - **The npm channel.** The packaging is written and CI dry-runs the exact publish command
-  on every push — seven packages, six platform binaries plus a dispatcher. The release
+  on every push — eight packages, seven platform binaries plus a dispatcher. The release
   job is gated on the `NPM_PUBLISH` variable and an `NPM_TOKEN` secret, and reports
   `skipped` rather than `success` until both exist, so switching it on is one variable
   and one secret. See [`RELEASING.md`](RELEASING.md).

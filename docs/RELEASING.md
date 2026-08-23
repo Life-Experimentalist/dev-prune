@@ -187,7 +187,7 @@ run summary, and warns if the release reached the GitHub release page and no reg
 1. Create an account on [npmjs.com](https://www.npmjs.com/) and enable 2FA.
 2. Create a **Granular Access Token** (Access Tokens → Generate New Token → Granular).
    - Permissions: **Read and write** on packages.
-   - Scope it to the seven package names below, or leave it account-wide before the
+   - Scope it to the eight package names below, or leave it account-wide before the
      first publish — granular tokens cannot name a package that does not exist yet.
    - **Tick "Bypass two-factor authentication".** Without it the registry answers
      `403 ... Two-factor authentication or granular access token with bypass 2fa enabled
@@ -200,7 +200,8 @@ run summary, and warns if the release reached the GitHub release page and no reg
 4. Set the repository **variable** **`NPM_PUBLISH`** to `true`. Without it the publish
    job does not run at all, and the release reports `skipped` for npm.
 
-The seven packages the release publishes:
+The eight packages the release publishes — the same eight `npm/package.json` names,
+which is where this list has to keep agreeing with reality:
 
 ```
 dev-prune                  ← the dispatcher everyone installs
@@ -210,11 +211,18 @@ dev-prune-darwin-x64
 dev-prune-darwin-arm64
 dev-prune-win32-x64
 dev-prune-win32-arm64
+dev-prune-win32-ia32
 ```
 
-Nothing needs to be reserved in advance — the first publish creates all seven. The six
+Nothing needs to be reserved in advance — the first publish creates all eight. The seven
 platform packages are published *before* the dispatcher, because npm resolves the
 dispatcher's `optionalDependencies` as soon as it exists.
+
+**A `404 Not Found` on the `PUT` is this token being wrong, not the package being
+missing.** A granular token that names packages can only see the ones it names, so a name
+that does not exist yet is not "forbidden" to it — it is invisible, and npm says so with
+a 404. v1.6.0 hit exactly this. The fix is a classic automation token, or a granular one
+with read/write on *all* packages, held only until the eight names exist.
 
 Publishes use `--provenance --access public`, which requires the repository to be
 **public** and the workflow to have `id-token: write`. It attaches a signed attestation
@@ -227,7 +235,7 @@ generate provenance for a package it cannot confirm is public, and a package wit
 published versions has no access setting to read, so the first publish of each name
 fails with `EUSAGE ... you must set access to public` without it.
 
-#### Bootstrapping the seven names without a token at all
+#### Bootstrapping the eight names without a token at all
 
 The token above is one way past the chicken-and-egg. The better way is to publish the
 first version from a workstation, because an interactive `npm login` session answers the
@@ -256,14 +264,14 @@ ship, and the `.sha256` files next to the assets are what proves it.
 
 The `NPM_TOKEN` above is a bridge, not the destination. **npm removes direct publish
 access from bypass-2FA tokens in January 2027**, and a long-lived token that can publish
-seven packages is the exact thing the 2025 supply-chain attacks abused.
+eight packages is the exact thing the 2025 supply-chain attacks abused.
 
 The reason it is still here is bootstrapping: npm can only trust a publisher that is
 configured *on a package*, and a package that has never been published does not exist to
 configure. PyPI solves this with pending publishers; npm has no equivalent. So the first
 publish of a new name must use a token, and every later one need not.
 
-Once a first version is on the registry, for **each of the seven packages**: npmjs.com → the
+Once a first version is on the registry, for **each of the eight packages**: npmjs.com → the
 package → Settings → Trusted Publisher → GitHub Actions → repository
 `Life-Experimentalist/dev-prune`, workflow `release.yml`. Then delete the `NPM_TOKEN`
 secret and drop the `NODE_AUTH_TOKEN` guard from `publish-npm`; OIDC replaces it, and
@@ -527,7 +535,7 @@ npm it is [still free](#name-availability) until `NPM_PUBLISH` is switched on.
 The flip side of "no review" is that **nothing is reversible**. crates.io versions are
 permanent; npm allows unpublishing only within 72 hours and only if nothing depends on
 the package; PyPI lets you delete a release but never reuse that version number. This is
-why every publish job is gated behind a successful build of all six platforms, and why
+why every publish job is gated behind a successful build of all seven targets, and why
 the version/changelog checks run *before* compilation rather than after.
 
 ---
@@ -709,7 +717,7 @@ a fixed patch version.
 
 **A bad version reached npm.** `npm unpublish dev-prune@1.1.0` works within 72 hours if
 nothing depends on it. Otherwise `npm deprecate dev-prune@1.1.0 "reason"` and publish a
-patch. Remember the six platform packages need the same treatment.
+patch. Remember the seven platform packages need the same treatment.
 
 **A bad version reached PyPI.** Delete the release from the project page. The version
 number is burned permanently — publish a patch.
