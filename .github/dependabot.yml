@@ -53,9 +53,11 @@ updates:
   # one — but the version was the MSRV the job exists to prove, so "upgrading" it
   # deleted the test rather than updating it. Dependabot opened exactly that PR
   # (1.85.0 -> 1.100.0) within an hour of this file landing. The job now reads the
-  # toolchain from Cargo.toml's `rust-version` instead of a pin, but the ignore below
-  # stays: the action's remaining refs (`@stable`, `@master`) are channels, not
-  # versions, and there is still nothing there a bot should be bumping.
+  # toolchain from Cargo.toml's `rust-version`, and every reference to that action is a
+  # commit digest with `toolchain:` passed explicitly. The ignore below stays for a new
+  # reason: the repository publishes no releases — its tags are toolchain names like
+  # `stable` and `1.75.0` — so there is no version for Dependabot to compare a digest
+  # against, and anything it opened would be guesswork. That pin is a human's job.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

@@ -115,8 +115,9 @@ jobs:
         shell: bash
         run: sh scripts/check-version.sh
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, 2026-08
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -585,7 +586,9 @@ jobs:
           # Check out the tag being released, not the default branch. A dispatch run
           # would otherwise publish whatever is on `main` under the tag's name.
           ref: ${{ github.event.inputs.tag || github.ref_name }}
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, 2026-08
+        with:
+          toolchain: stable
       - name: cargo publish
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

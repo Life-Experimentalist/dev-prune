@@ -91,8 +91,9 @@ the tool keeps itself up to date.
   `Swatinem/rust-cache`, which can poison a build cache, and `softprops/action-gh-release`
   and `pypa/gh-action-pypi-publish`, which carry `contents: write` and the PyPI identity.
   Dependabot updates a digest pin the same way it updates a tag. `dtolnay/rust-toolchain`
-  stays on `@stable` and `@master`: that action reads the toolchain to install out of its
-  own ref, so a digest there would name a toolchain that does not exist.
+  is pinned too, with `toolchain: stable` passed explicitly — `@stable` was never a
+  version, it was a branch whose copy of the action defaults that input, and a branch is
+  the one reference a compromised account can move without leaving a tag behind.
 
 - **Two check-then-use file races are gone.** `site/prerender.js` tested for its inputs
   with `existsSync` and then read them; it now reads them and reports the failure it
