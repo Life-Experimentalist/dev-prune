@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { useState, useEffect, useRef } from "react";
+import { useInView, useReducedMotion } from "framer-motion";
 import {
   Check,
   Copy,
@@ -23,6 +24,9 @@ import {
   ChevronDown,
   Puzzle,
 } from "lucide-react";
+
+import ReclaimLedger from "./ledger.jsx";
+import Languages from "./languages.jsx";
 
 const REPO = "https://github.com/Life-Experimentalist/dev-prune";
 const PORTFOLIO = "https://vkrishna04.me";
@@ -59,9 +63,15 @@ function ThemeToggle() {
 
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta)
-      meta.setAttribute("content", resolved === "light" ? "#ffffff" : "#0b0f17");
+      meta.setAttribute(
+        "content",
+        resolved === "light" ? "#fbfcff" : "#10131e",
+      );
     if (switchRef.current)
-      switchRef.current.setAttribute("aria-checked", String(resolved === "light"));
+      switchRef.current.setAttribute(
+        "aria-checked",
+        String(resolved === "light"),
+      );
     if (autoRef.current)
       autoRef.current.setAttribute("aria-pressed", String(choice === "system"));
   };
@@ -140,27 +150,12 @@ function Reveal({
   ...rest
 }) {
   const ref = useRef(null);
-  const [shown, setShown] = useState(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setShown(true);
-      return;
-    }
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setShown(true);
-          io.disconnect();
-        }
-      },
-      { rootMargin: "0px 0px -10% 0px", threshold: 0.05 },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, []);
+  // Framer Motion's viewport hook, not a hand-rolled observer: it already
+  // handles the once-only latch, the SSR pass (false on the server, which is
+  // what `.js .reveal` in sections.css expects), and teardown.
+  const inView = useInView(ref, { once: true, margin: "0px 0px -10% 0px" });
+  const reduce = useReducedMotion();
+  const shown = inView || reduce;
 
   return (
     <Tag
@@ -322,12 +317,12 @@ const ECOSYSTEMS = [
     tieBreak: (
       <>
         <strong>uv and Poetry win over plain venv</strong> whenever their
-        lockfile or <code>pyproject.toml</code> table is present, because a
-        real lockfile rebuilds the environment exactly and a{" "}
+        lockfile or <code>pyproject.toml</code> table is present, because a real
+        lockfile rebuilds the environment exactly and a{" "}
         <code>requirements.txt</code> only approximates it. When uv and Poetry
-        both describe the same project — usually a half-finished migration —
-        the one whose lockfile is actually on disk owns the environment. A
-        project with none of that falls back to venv, and a venv with an empty{" "}
+        both describe the same project — usually a half-finished migration — the
+        one whose lockfile is actually on disk owns the environment. A project
+        with none of that falls back to venv, and a venv with an empty{" "}
         <code>requirements.txt</code> is refused outright — there would be
         nothing to reinstall from. Pipenv is claimed only when its environment
         is <em>inside</em> the repository — the <code>.venv</code> you get from{" "}
@@ -380,9 +375,9 @@ const ECOSYSTEMS = [
         <strong>Cargo ships off.</strong> <code>target/</code> is compiler
         output: the lockfile proves it comes back, but it comes back by
         recompiling rather than downloading, which on a real workspace is
-        minutes rather than seconds. <code>devp config set enable_cargo
-        true</code> turns it on, under the same{" "}
-        <code>build_idle_days</code> gate as the build tools below.
+        minutes rather than seconds.{" "}
+        <code>devp config set enable_cargo true</code> turns it on, under the
+        same <code>build_idle_days</code> gate as the build tools below.
       </>
     ),
   },
@@ -436,11 +431,11 @@ const ECOSYSTEMS = [
         and nothing else — and <code>.bundle/</code> is deliberately left alone,
         because it holds the path configuration that sends the next{" "}
         <code>bundle install</code> back there. Composer declines{" "}
-        <code>vendor/</code> outright when a <code>vendor/bundle</code> is sitting
-        inside it: deleting it would take gems with it under a proof that says
-        nothing about them. Mix takes <code>deps/</code> and never{" "}
-        <code>_build/</code>, which is compiled output. CocoaPods and Mix are also
-        the two adapters whose proof is offline — neither ecosystem has a
+        <code>vendor/</code> outright when a <code>vendor/bundle</code> is
+        sitting inside it: deleting it would take gems with it under a proof
+        that says nothing about them. Mix takes <code>deps/</code> and never{" "}
+        <code>_build/</code>, which is compiled output. CocoaPods and Mix are
+        also the two adapters whose proof is offline — neither ecosystem has a
         read-only in-sync check, and the write-side commands fix drift by
         re-downloading, so what is verified instead is that the lockfile is
         structurally complete and no older than the manifest it came from.
@@ -471,17 +466,20 @@ const ECOSYSTEMS = [
     ],
     tieBreak: (
       <>
-        <strong>Providers only, never the rest of <code>.terraform/</code>.</strong>{" "}
-        <code>environment</code> records the workspace you selected, and losing it
-        silently returns you to <code>default</code> — so the next{" "}
+        <strong>
+          Providers only, never the rest of <code>.terraform/</code>.
+        </strong>{" "}
+        <code>environment</code> records the workspace you selected, and losing
+        it silently returns you to <code>default</code> — so the next{" "}
         <code>apply</code> somebody runs without looking targets the wrong
-        environment. <code>terraform.tfstate</code> in there is the backend&apos;s
-        initialisation record, and rebuilding it needs the backend&apos;s
-        credentials. <code>modules/</code> is fetched from module sources that{" "}
-        <code>.terraform.lock.hcl</code> says nothing about, so an unpinned{" "}
-        <code>git::</code> source can come back as something else. The providers
-        are the bulk anyway — a few hundred megabytes of plugin binaries per root
-        module, times every environment directory in the repository.
+        environment. <code>terraform.tfstate</code> in there is the
+        backend&apos;s initialisation record, and rebuilding it needs the
+        backend&apos;s credentials. <code>modules/</code> is fetched from module
+        sources that <code>.terraform.lock.hcl</code> says nothing about, so an
+        unpinned <code>git::</code> source can come back as something else. The
+        providers are the bulk anyway — a few hundred megabytes of plugin
+        binaries per root module, times every environment directory in the
+        repository.
       </>
     ),
   },
@@ -555,16 +553,31 @@ const ECOSYSTEMS = [
           </>
         ),
       },
+      {
+        name: "Mix _build",
+        detect: <code>mix.exs</code>,
+        deletes: <code>_build</code>,
+        verify: (
+          <>
+            <code>mix.exs</code> and <code>mix.lock</code> both present
+          </>
+        ),
+        restore: (
+          <>
+            next <code>mix compile</code>
+          </>
+        ),
+      },
     ],
     tieBreak: (
       <>
         <strong>Off until you switch them on.</strong> A build directory takes
         far longer to get back than a dependency directory — a full recompile,
-        not a download — so these four, and Cargo above, ship disabled and
-        invisible.{" "}
-        <code>devp config set enable_gradle true</code> /{" "}
+        not a download — so these five, and Cargo above, ship disabled and
+        invisible. <code>devp config set enable_gradle true</code> /{" "}
         <code>enable_maven true</code> / <code>enable_swift true</code> /{" "}
-        <code>enable_dart true</code> turns them on, and their candidates wait
+        <code>enable_dart true</code> / <code>enable_mix_build true</code> turns
+        them on, and their candidates wait
         for <code>build_idle_days</code> (45 by default), applied as the{" "}
         <em>maximum</em> of it and <code>idle_days</code> — the build-tool gate
         can only ever make pruning later, never earlier. One adapter can be made
@@ -573,11 +586,11 @@ const ECOSYSTEMS = [
         that adapter&apos;s window and never lowers it. The dependencies
         themselves never lived in the repository: <code>~/.m2</code>,{" "}
         <code>~/.gradle</code> and <code>~/.pub-cache</code> are machine-wide
-        stores, which is <code>devp caches</code> territory. Dart is here for the
-        same reason as the others and not an obvious one:{" "}
-        <code>.dart_tool/</code> holds a second&apos;s worth of pub metadata and,
-        beside it, the <code>build_runner</code> and <code>flutter_build</code>{" "}
-        caches, which come back only by recompiling.
+        stores, which is <code>devp caches</code> territory. Dart is here for
+        the same reason as the others and not an obvious one:{" "}
+        <code>.dart_tool/</code> holds a second&apos;s worth of pub metadata
+        and, beside it, the <code>build_runner</code> and{" "}
+        <code>flutter_build</code> caches, which come back only by recompiling.
       </>
     ),
   },
@@ -655,7 +668,8 @@ function useMotion() {
       const doc = document.documentElement;
       const max = doc.scrollHeight - window.innerHeight;
       const y = window.scrollY;
-      if (bar) bar.style.setProperty("--sp", max > 0 ? (y / max).toFixed(4) : "0");
+      if (bar)
+        bar.style.setProperty("--sp", max > 0 ? (y / max).toFixed(4) : "0");
       if (nav) nav.classList.toggle("is-condensed", y > 80);
     };
     const onScroll = () => {
@@ -793,7 +807,7 @@ export default function App() {
     powershell: {
       group: "script",
       label: "Windows",
-      note: "Installs to %APPDATA%\dev-prune\bin and registers devp for PowerShell and cmd alike.",
+      note: "Installs to %APPDATA%\\dev-prune\\bin and registers devp for PowerShell and cmd alike.",
       cmd: "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex",
     },
     cmdexe: {
@@ -929,15 +943,27 @@ Notes you should rely on, not work around:
             <span className="version-tag">v{VERSION}</span>
           </a>
           <nav className="nav-links" aria-label="Primary">
+            {/* `nav-sec` marks the anchors that get dropped first as the
+                header narrows. Nine links plus the toggle plus the GitHub
+                button did not fit a 1200px container, so the brand wrapped
+                and the version pill landed in the middle of the nav. */}
             <a href="#how">How it works</a>
             <a href="#safety">Safety</a>
-            <a href="#ecosystems">Ecosystems</a>
-            <a href="#commands">Commands</a>
-            <a href="#ai">AI agents</a>
-            <a href="#editors">Editors</a>
-            <a href="/blog/">Guides</a>
-            <a href="/reference/">Reference</a>
-            <a href="#faq">FAQ</a>
+            <a href="#ecosystems" className="nav-sec">
+              Ecosystems
+            </a>
+            <a href="#commands" className="nav-ter">Commands</a>
+            <a href="#ai" className="nav-sec">
+              AI agents
+            </a>
+            <a href="#editors" className="nav-sec">
+              Editors
+            </a>
+            <a href="/blog/" className="nav-ter">Guides</a>
+            <a href="/reference/" className="nav-ter">Reference</a>
+            <a href="#faq" className="nav-sec">
+              FAQ
+            </a>
             <ThemeToggle />
             <a
               href={REPO}
@@ -974,7 +1000,9 @@ Notes you should rely on, not work around:
               </p>
 
               <p className="hero-alias">
-                <strong>The command is <code>dev-prune</code>.</strong>{" "}
+                <strong>
+                  The command is <code>dev-prune</code>.
+                </strong>{" "}
                 <code>devp</code> is an alias for it — the same executable
                 installed under a shorter name, purely for ease of use. Use
                 either, anywhere, interchangeably; every example below works
@@ -1043,350 +1071,375 @@ Notes you should rely on, not work around:
                   {installCommands[installTab].note}
                 </p>
               </div>
+            </div>
 
-              <div className="ai-install" id="ai-setup">
-                <div className="ai-install-head">
-                  <span className="ai-install-title">
-                    Or let an AI assistant do it
-                  </span>
-                  <CopyButton
-                    id="ai-prompt"
-                    text={aiInstallPrompt}
-                    copied={copiedKey}
-                    onCopy={handleCopy}
-                  />
-                </div>
-                <p className="ai-install-note">
-                  Copy this prompt and paste it to Claude Code, Cursor, Copilot,
-                  Windsurf, or any terminal-capable agent — it installs, verifies
-                  and registers your repos for you.{" "}
-                  <a href="https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/AI_SETUP_PROMPT.md">
-                    Details
-                  </a>
-                  .
-                </p>
-                <pre className="ai-install-prompt">{aiInstallPrompt}</pre>
-              </div>
+            {/* --------------------------- the proof --------------------------- */}
+            {/* The ledger first, the terminal under it. On a wide screen this
+                column used to begin roughly 500px below the headline, which
+                left the most interesting thing on the page under the fold. */}
+            <div className="hero-proof">
+              <ReclaimLedger />
 
-              <div className="hero-stats">
-                <div>
-                  <strong>18</strong>
-                  <span>package managers</span>
+              <div className="terminal-container" id="terminal">
+                <div className="terminal-header">
+                  <div className="t-dots">
+                    <span className="t-dot t-red"></span>
+                    <span className="t-dot t-yellow"></span>
+                    <span className="t-dot t-green"></span>
+                  </div>
+                  <div
+                    className="t-cmd-tabs"
+                    role="group"
+                    aria-label="Example command"
+                  >
+                    {[
+                      ["run", "devp run"],
+                      ["status", "devp status"],
+                      ["stats", "devp stats"],
+                      ["restore", "devp restore"],
+                      ["doctor", "devp doctor"],
+                      ["setup", "devp setup --status"],
+                    ].map(([key, label]) => (
+                      <button
+                        key={key}
+                        aria-pressed={termTab === key}
+                        className={termTab === key ? "active" : ""}
+                        onClick={() => setTermTab(key)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div>
-                  <strong>0</strong>
-                  <span>analytics or telemetry</span>
-                </div>
-                <div>
-                  <strong>3</strong>
-                  <span>platforms, one binary each</span>
+
+                <div className="terminal-window">
+                  {termTab === "run" && (
+                    <div className="term-body">
+                      <div className="term-line">$ devp run --dry-run</div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line">
+                        <span className="c-blue">→</span> Required package
+                        managers:
+                      </div>
+                      <div className="term-line c-green">
+                        {" "}
+                        ✓ pnpm ✓ uv ✓ cargo
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line">
+                        <span className="c-yellow">•</span> MyMonorepo →
+                        frontend/node_modules (412.7 MB) [pnpm]
+                      </div>
+                      <div className="term-line">
+                        <span className="c-yellow">•</span> MyMonorepo →
+                        services/api/.venv (188.2 MB) [uv]
+                      </div>
+                      <div className="term-line">
+                        <span className="c-yellow">•</span> MyMonorepo →
+                        tools/cli/target (1.41 GB) [cargo]
+                      </div>
+                      <div className="term-line">
+                        <span className="c-dim">•</span>{" "}
+                        <span className="c-dim">
+                          ActiveService — skipped (last commit 2 days ago)
+                        </span>
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-bold">
+                        Total reclaimable: 2.00 GB across 3 directories
+                      </div>
+                      <div className="term-line c-dim">
+                        Dry run — nothing was deleted.
+                      </div>
+                    </div>
+                  )}
+
+                  {termTab === "status" && (
+                    <div className="term-body">
+                      <div className="term-line c-bold">
+                        dev-prune — registered repositories
+                      </div>
+                      <div className="term-line c-dim">
+                        ──────────────────────────────────────────────────────────
+                      </div>
+                      <div className="term-line c-bold">
+                        {" "}
+                        Repository Status Reclaimable Last activity
+                      </div>
+                      <div className="term-line">
+                        <span className="c-green"> ▸ MyMonorepo</span> Candidate
+                        2.00 GB 41 days ago
+                      </div>
+                      <div className="term-line">
+                        {" "}
+                        PyDataLab Candidate 850.0 MB 66 days ago
+                      </div>
+                      <div className="term-line c-dim">
+                        {" "}
+                        ArchivedApp Ignored 320.0 MB —
+                      </div>
+                      <div className="term-line c-cyan">
+                        {" "}
+                        ActiveService Active 3.10 GB 2 days ago
+                      </div>
+                      <div className="term-line c-dim">
+                        ──────────────────────────────────────────────────────────
+                      </div>
+                      <div className="term-line c-yellow">
+                        [↑/↓/j/k] Navigate [s] Sort [f] Filter [/] Search [p]
+                        Prune [i] Ignore [q] Quit
+                      </div>
+                      <div className="term-line c-dim">
+                        dev-prune · made with ♥ by VKrishna04 ·
+                        github.com/Life-Experimentalist/dev-prune
+                      </div>
+                    </div>
+                  )}
+
+                  {termTab === "stats" && (
+                    <div className="term-body">
+                      <div className="term-line">$ devp stats</div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-bold">Lifetime</div>
+                      <div className="term-line">
+                        <span className="c-blue">→</span> Space reclaimed:
+                        {"   "}12.41 GB
+                      </div>
+                      <div className="term-line">
+                        <span className="c-blue">→</span> Prune passes:
+                        {"      "}9
+                      </div>
+                      <div className="term-line">
+                        <span className="c-blue">→</span> Repositories:
+                        {"      "}14 tracked
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-bold">Most recent pass</div>
+                      <div className="term-line">
+                        <span className="c-blue">→</span> 2026-08-11 06:00 UTC
+                        (2 days ago) — 2.00 GB from 3 directories
+                      </div>
+                      <div className="term-line">
+                        <span className="c-blue">→</span> Put it back with: devp
+                        restore --last-run
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-bold">Biggest reclaims</div>
+                      <div className="term-line">
+                        {"     "}4.20 GB ~/Code/MyMonorepo
+                        <span className="c-dim">
+                          {"   "}(last pruned 2 days ago)
+                        </span>
+                      </div>
+                      <div className="term-line">
+                        {"     "}2.90 GB ~/Code/PyDataLab
+                        <span className="c-dim">
+                          {"   "}(last pruned 12 days ago)
+                        </span>
+                      </div>
+                      <div className="term-line">
+                        {"    "}850.0 MB ~/Code/ArchivedApp
+                        <span className="c-dim">
+                          {"   "}(last pruned 30 days ago)
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {termTab === "restore" && (
+                    <div className="term-body">
+                      <div className="term-line">
+                        $ devp restore ~/Code/MyMonorepo
+                      </div>
+                      <div className="term-line">
+                        <span className="c-blue">→</span> frontend — pnpm
+                        install --frozen-lockfile
+                      </div>
+                      <div className="term-line c-green">
+                        {" "}
+                        ✓ 1,240 packages restored
+                      </div>
+                      <div className="term-line">
+                        <span className="c-blue">→</span> services/api — uv sync
+                      </div>
+                      <div className="term-line c-green">
+                        {" "}
+                        ✓ environment recreated from uv.lock
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-green">
+                        ✓ Every project in the tree is back.
+                      </div>
+                    </div>
+                  )}
+
+                  {termTab === "doctor" && (
+                    <div className="term-body">
+                      <div className="term-line">$ devp doctor .</div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-blue">
+                        dev-prune doctor (~/Code/acme)
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-dim">Repository</div>
+                      <div className="term-line">
+                        {"  Git repository        "}
+                        <span className="c-green">✓</span> yes
+                      </div>
+                      <div className="term-line">
+                        {"  Registered            "}
+                        <span className="c-green">✓</span> yes
+                      </div>
+                      <div className="term-line c-dim">
+                        {
+                          "  .devprune.json          absent — global settings apply"
+                        }
+                      </div>
+                      <div className="term-line c-dim">
+                        {
+                          "  Activity                2026-04-11 (31 days ago), threshold 15 — idle"
+                        }
+                      </div>
+                      <div className="term-line c-dim">
+                        {"  Scan depth              6 levels below the root"}
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-dim">Projects</div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line">{"  frontend (pnpm)"}</div>
+                      <div className="term-line">
+                        {"    Lockfile            "}
+                        <span className="c-green">✓</span> pnpm-lock.yaml
+                        present
+                      </div>
+                      <div className="term-line">
+                        {"    Bloat               "}
+                        <span className="c-green">✓</span> frontend/node_modules
+                        (412.08 MiB)
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line">{"  services/api (uv)"}</div>
+                      <div className="term-line">
+                        {"    Lockfile            "}
+                        <span className="c-red">✗</span> uv.lock missing —
+                        nothing can prove
+                      </div>
+                      <div className="term-line">
+                        {
+                          "                          the directory is rebuildable, so it will never"
+                        }
+                      </div>
+                      <div className="term-line">
+                        {"                          be pruned"}
+                      </div>
+                      <div className="term-line">
+                        {"    Bloat               "}
+                        <span className="c-green">✓</span> services/api/.venv
+                        (218.44 MiB)
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-dim">Verdict</div>
+                      <div className="term-line">
+                        {"  "}
+                        <span className="c-green">✓</span> Would `devp run`
+                        prune this? Yes — frontend has verifiable bloat.
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line">
+                        {"  "}
+                        <span className="c-red">✗</span> services/api: uv.lock
+                        missing …
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-dim">
+                        {
+                          "  Troubleshooting: .../docs/troubleshooting/README.md"
+                        }
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-red">
+                        {"  Error: 1 problem found."}
+                        <span className="c-dim">{"   (exit 1)"}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {termTab === "setup" && (
+                    <div className="term-body">
+                      <div className="term-line">$ devp setup --status</div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-green">
+                        {" "}
+                        ✓ devp alias matches the installed binary
+                      </div>
+                      <div className="term-line c-green">
+                        {" "}
+                        ✓ SKILL.md exported and current
+                      </div>
+                      <div className="term-line c-green">
+                        {" "}
+                        ✓ Git hooks post-commit, post-checkout, post-merge
+                      </div>
+                      <div className="term-line c-green">
+                        {" "}
+                        ✓ OS scheduler every 2 days
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-dim">
+                        {" "}
+                        auto_setup=true auto_hooks=true auto_daemon=true
+                      </div>
+                      <div className="term-line c-dim">
+                        {" "}
+                        Nothing was changed.
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* ---------------------------- terminal ---------------------------- */}
-            <div className="terminal-container" id="terminal">
-              <div className="terminal-header">
-                <div className="t-dots">
-                  <span className="t-dot t-red"></span>
-                  <span className="t-dot t-yellow"></span>
-                  <span className="t-dot t-green"></span>
-                </div>
-                <div
-                  className="t-cmd-tabs"
-                  role="group"
-                  aria-label="Example command"
-                >
-                  {[
-                    ["run", "devp run"],
-                    ["status", "devp status"],
-                    ["stats", "devp stats"],
-                    ["restore", "devp restore"],
-                    ["doctor", "devp doctor"],
-                    ["setup", "devp setup --status"],
-                  ].map(([key, label]) => (
-                    <button
-                      key={key}
-                      aria-pressed={termTab === key}
-                      className={termTab === key ? "active" : ""}
-                      onClick={() => setTermTab(key)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+          {/* The setup prompt and the headline numbers are full-width: in the
+              left column they stretched it past the ledger, and on a tall,
+              narrow screen the three-up stats grid broke to 2 + 1. */}
+          <div className="container hero-tail">
+            <div className="ai-install" id="ai-setup">
+              <div className="ai-install-head">
+                <span className="ai-install-title">
+                  Or let an AI assistant do it
+                </span>
+                <CopyButton
+                  id="ai-prompt"
+                  text={aiInstallPrompt}
+                  copied={copiedKey}
+                  onCopy={handleCopy}
+                />
               </div>
+              <p className="ai-install-note">
+                Copy this prompt and paste it to Claude Code, Cursor, Copilot,
+                Windsurf, or any terminal-capable agent — it installs, verifies
+                and registers your repos for you.{" "}
+                <a href="https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/AI_SETUP_PROMPT.md">
+                  Details
+                </a>
+                .
+              </p>
+              <pre className="ai-install-prompt">{aiInstallPrompt}</pre>
+            </div>
 
-              <div className="terminal-window">
-                {termTab === "run" && (
-                  <div className="term-body">
-                    <div className="term-line">$ devp run --dry-run</div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line">
-                      <span className="c-blue">→</span> Required package
-                      managers:
-                    </div>
-                    <div className="term-line c-green">
-                      {" "}
-                      ✓ pnpm ✓ uv ✓ cargo
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line">
-                      <span className="c-yellow">•</span> MyMonorepo →
-                      frontend/node_modules (412.7 MB) [pnpm]
-                    </div>
-                    <div className="term-line">
-                      <span className="c-yellow">•</span> MyMonorepo →
-                      services/api/.venv (188.2 MB) [uv]
-                    </div>
-                    <div className="term-line">
-                      <span className="c-yellow">•</span> MyMonorepo →
-                      tools/cli/target (1.4 GB) [cargo]
-                    </div>
-                    <div className="term-line">
-                      <span className="c-dim">•</span>{" "}
-                      <span className="c-dim">
-                        ActiveService — skipped (last commit 2 days ago)
-                      </span>
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-bold">
-                      Total reclaimable: 2.00 GB across 3 directories
-                    </div>
-                    <div className="term-line c-dim">
-                      Dry run — nothing was deleted.
-                    </div>
-                  </div>
-                )}
-
-                {termTab === "status" && (
-                  <div className="term-body">
-                    <div className="term-line c-bold">
-                      dev-prune — registered repositories
-                    </div>
-                    <div className="term-line c-dim">
-                      ──────────────────────────────────────────────────────────
-                    </div>
-                    <div className="term-line c-bold">
-                      {" "}
-                      Repository Status Reclaimable Last activity
-                    </div>
-                    <div className="term-line">
-                      <span className="c-green"> ▸ MyMonorepo</span> Candidate
-                      2.00 GB 41 days ago
-                    </div>
-                    <div className="term-line">
-                      {" "}
-                      PyDataLab Candidate 850.0 MB 66 days ago
-                    </div>
-                    <div className="term-line c-dim">
-                      {" "}
-                      ArchivedApp Ignored 320.0 MB —
-                    </div>
-                    <div className="term-line c-cyan">
-                      {" "}
-                      ActiveService Active 3.10 GB 2 days ago
-                    </div>
-                    <div className="term-line c-dim">
-                      ──────────────────────────────────────────────────────────
-                    </div>
-                    <div className="term-line c-yellow">
-                      [↑/↓/j/k] Navigate [s] Sort [f] Filter [/] Search [p]
-                      Prune [i] Ignore [q] Quit
-                    </div>
-                    <div className="term-line c-dim">
-                      dev-prune · made with ♥ by VKrishna04 ·
-                      github.com/Life-Experimentalist/dev-prune
-                    </div>
-                  </div>
-                )}
-
-                {termTab === "stats" && (
-                  <div className="term-body">
-                    <div className="term-line">$ devp stats</div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-bold">Lifetime</div>
-                    <div className="term-line">
-                      <span className="c-blue">→</span> Space reclaimed:
-                      {"   "}12.41 GB
-                    </div>
-                    <div className="term-line">
-                      <span className="c-blue">→</span> Prune passes:
-                      {"      "}9
-                    </div>
-                    <div className="term-line">
-                      <span className="c-blue">→</span> Repositories:
-                      {"      "}14 tracked
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-bold">Most recent pass</div>
-                    <div className="term-line">
-                      <span className="c-blue">→</span> 2026-08-11 06:00 UTC (2
-                      days ago) — 2.00 GB from 3 directories
-                    </div>
-                    <div className="term-line">
-                      <span className="c-blue">→</span> Put it back with: devp
-                      restore --last-run
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-bold">Biggest reclaims</div>
-                    <div className="term-line">
-                      {"     "}4.20 GB   ~/Code/MyMonorepo
-                      <span className="c-dim">
-                        {"   "}(last pruned 2 days ago)
-                      </span>
-                    </div>
-                    <div className="term-line">
-                      {"     "}2.90 GB   ~/Code/PyDataLab
-                      <span className="c-dim">
-                        {"   "}(last pruned 12 days ago)
-                      </span>
-                    </div>
-                    <div className="term-line">
-                      {"    "}850.0 MB   ~/Code/ArchivedApp
-                      <span className="c-dim">
-                        {"   "}(last pruned 30 days ago)
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                {termTab === "restore" && (
-                  <div className="term-body">
-                    <div className="term-line">
-                      $ devp restore ~/Code/MyMonorepo
-                    </div>
-                    <div className="term-line">
-                      <span className="c-blue">→</span> frontend — pnpm install
-                      --frozen-lockfile
-                    </div>
-                    <div className="term-line c-green">
-                      {" "}
-                      ✓ 1,240 packages restored
-                    </div>
-                    <div className="term-line">
-                      <span className="c-blue">→</span> services/api — uv sync
-                    </div>
-                    <div className="term-line c-green">
-                      {" "}
-                      ✓ environment recreated from uv.lock
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-green">
-                      ✓ Every project in the tree is back.
-                    </div>
-                  </div>
-                )}
-
-                {termTab === "doctor" && (
-                  <div className="term-body">
-                    <div className="term-line">$ devp doctor .</div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-blue">
-                      dev-prune doctor (~/Code/acme)
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-dim">Repository</div>
-                    <div className="term-line">
-                      {"  Git repository        "}
-                      <span className="c-green">✓</span> yes
-                    </div>
-                    <div className="term-line">
-                      {"  Registered            "}
-                      <span className="c-green">✓</span> yes
-                    </div>
-                    <div className="term-line c-dim">
-                      {"  .devprune.json          absent — global settings apply"}
-                    </div>
-                    <div className="term-line c-dim">
-                      {"  Activity                2026-04-11 (31 days ago), threshold 15 — idle"}
-                    </div>
-                    <div className="term-line c-dim">
-                      {"  Scan depth              6 levels below the root"}
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-dim">Projects</div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line">{"  frontend (pnpm)"}</div>
-                    <div className="term-line">
-                      {"    Lockfile            "}
-                      <span className="c-green">✓</span> pnpm-lock.yaml present
-                    </div>
-                    <div className="term-line">
-                      {"    Bloat               "}
-                      <span className="c-green">✓</span> frontend/node_modules
-                      (412.08 MiB)
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line">{"  services/api (uv)"}</div>
-                    <div className="term-line">
-                      {"    Lockfile            "}
-                      <span className="c-red">✗</span> uv.lock missing — nothing can
-                      prove
-                    </div>
-                    <div className="term-line">
-                      {"                          the directory is rebuildable, so it will never"}
-                    </div>
-                    <div className="term-line">
-                      {"                          be pruned"}
-                    </div>
-                    <div className="term-line">
-                      {"    Bloat               "}
-                      <span className="c-green">✓</span> services/api/.venv (218.44
-                      MiB)
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-dim">Verdict</div>
-                    <div className="term-line">
-                      {"  "}
-                      <span className="c-green">✓</span> Would `devp run` prune this?
-                      Yes — frontend has verifiable bloat.
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line">
-                      {"  "}
-                      <span className="c-red">✗</span> services/api: uv.lock missing …
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-dim">
-                      {"  Troubleshooting: .../docs/troubleshooting/README.md"}
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-red">
-                      {"  Error: 1 problem found."}
-                      <span className="c-dim">{"   (exit 1)"}</span>
-                    </div>
-                  </div>
-                )}
-
-                {termTab === "setup" && (
-                  <div className="term-body">
-                    <div className="term-line">$ devp setup --status</div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-green">
-                      {" "}
-                      ✓ devp alias matches the installed binary
-                    </div>
-                    <div className="term-line c-green">
-                      {" "}
-                      ✓ SKILL.md exported and current
-                    </div>
-                    <div className="term-line c-green">
-                      {" "}
-                      ✓ Git hooks post-commit, post-checkout, post-merge
-                    </div>
-                    <div className="term-line c-green">
-                      {" "}
-                      ✓ OS scheduler every 2 days
-                    </div>
-                    <div className="term-line">&nbsp;</div>
-                    <div className="term-line c-dim">
-                      {" "}
-                      auto_setup=true auto_hooks=true auto_daemon=true
-                    </div>
-                    <div className="term-line c-dim"> Nothing was changed.</div>
-                  </div>
-                )}
+            <div className="hero-stats">
+              <div>
+                <strong>21</strong>
+                <span>package managers</span>
+              </div>
+              <div>
+                <strong>0</strong>
+                <span>analytics or telemetry</span>
+              </div>
+              <div>
+                <strong>3</strong>
+                <span>platforms, one binary each</span>
               </div>
             </div>
           </div>
@@ -1541,8 +1594,8 @@ Notes you should rely on, not work around:
                   that check finds a newer release, dev-prune installs it after
                   the next pass — verified against its published SHA-256, and
                   never by handing your machine to a package manager.{" "}
-                  <code>devp config set auto_update false</code> leaves upgrading
-                  to you.
+                  <code>devp config set auto_update false</code> leaves
+                  upgrading to you.
                 </p>
               </div>
               <div className="f-card">
@@ -1641,11 +1694,11 @@ Notes you should rely on, not work around:
               </h3>
               <p>
                 Adding a manager is deliberately small: implement one{" "}
-                <code>PackageManager</code> trait — detect, list bloat directories,
-                verify the lockfile, restore — register it in one array, and add
-                its fixtures to the adapter test suite. Nothing else in the
-                codebase has to know it exists. Composer, Bundler, CocoaPods,
-                Nix, pdm and Gems are all natural fits.
+                <code>PackageManager</code> trait — detect, list bloat
+                directories, verify the lockfile, restore — register it in one
+                array, and add its fixtures to the adapter test suite. Nothing
+                else in the codebase has to know it exists. Composer, Bundler,
+                CocoaPods, Nix, pdm and Gems are all natural fits.
               </p>
               <p className="muted">
                 The walkthrough, with the trait signature and a worked example,
@@ -1769,11 +1822,10 @@ Notes you should rely on, not work around:
                 <code>unlink</code>, <code>restore</code> and the{" "}
                 <code>config</code> per-repo actions, and <code>run</code>{" "}
                 accepts it as its target — so <code>devp run .</code> prunes
-                this repository and nothing else.
-                Worth saying out loud because <code>.</code> is usually treated
-                as a shell detail rather than an argument: here it is a real
-                path, it works on every platform, and it works the same in every
-                command that takes one.
+                this repository and nothing else. Worth saying out loud because{" "}
+                <code>.</code> is usually treated as a shell detail rather than
+                an argument: here it is a real path, it works on every platform,
+                and it works the same in every command that takes one.
               </p>
             </div>
 
@@ -1837,11 +1889,11 @@ Notes you should rely on, not work around:
                     </td>
                     <td>
                       Interactive dashboard; a plain table when there is no TTY.{" "}
-                      <code>--top N</code> lists only the N repositories with the
-                      most reclaimable space — the totals above the table still
-                      cover every one of them. Once a restore has been timed on
-                      this machine, the header also estimates how long putting it
-                      all back would take
+                      <code>--top N</code> lists only the N repositories with
+                      the most reclaimable space — the totals above the table
+                      still cover every one of them. Once a restore has been
+                      timed on this machine, the header also estimates how long
+                      putting it all back would take
                     </td>
                   </tr>
                   <tr>
@@ -1890,10 +1942,11 @@ Notes you should rely on, not work around:
                       <code>devp caches clear &lt;manager&gt;</code>
                     </td>
                     <td>
-                      Empty one cache, or <code>all</code> of them, after listing
-                      and sizing what goes. Runs the manager's own clear command
-                      and measures what was actually freed. Only ever when you
-                      type it — no pass, schedule or hook clears a cache
+                      Empty one cache, or <code>all</code> of them, after
+                      listing and sizing what goes. Runs the manager's own clear
+                      command and measures what was actually freed. Only ever
+                      when you type it — no pass, schedule or hook clears a
+                      cache
                     </td>
                   </tr>
                   <tr>
@@ -1917,8 +1970,8 @@ Notes you should rely on, not work around:
                       <code>devp restore --last-run</code>
                     </td>
                     <td>
-                      Put back exactly what the last prune pass deleted, in every
-                      repository it touched
+                      Put back exactly what the last prune pass deleted, in
+                      every repository it touched
                     </td>
                   </tr>
                   <tr>
@@ -1926,8 +1979,8 @@ Notes you should rely on, not work around:
                       <code>devp doctor [PATH]</code>
                     </td>
                     <td>
-                      Check the installation, or one repository — ending with the
-                      single reason a pass would or would not touch it
+                      Check the installation, or one repository — ending with
+                      the single reason a pass would or would not touch it
                     </td>
                   </tr>
                   <tr>
@@ -1967,8 +2020,9 @@ Notes you should rely on, not work around:
                     </td>
                     <td>
                       Export <code>SKILL.md</code> and install it into your AI
-                      agent's skills directory; <code>--agent &lt;editor&gt;</code>{" "}
-                      writes per-repository rules for any of fifteen editors
+                      agent's skills directory;{" "}
+                      <code>--agent &lt;editor&gt;</code> writes per-repository
+                      rules for any of fifteen editors
                     </td>
                   </tr>
                   <tr>
@@ -1978,17 +2032,29 @@ Notes you should rely on, not work around:
                     <td>
                       Print the installed version and the upgrade command;{" "}
                       <code>--install</code> downloads the release binary,
-                      verifies its checksum and replaces every copy this
-                      install runs
+                      verifies its checksum and replaces every copy this install
+                      runs
                     </td>
                   </tr>
                   <tr>
                     <td className="td-name">
-                      <code>devp man [--dir]</code>
+                      <code>devp install [--channel]</code>
                     </td>
                     <td>
-                      The manual as man pages, generated from the same
-                      definitions <code>--help</code> prints
+                      Move this install to another package manager — installs
+                      through the one you name, then removes the old copy
+                      through the one that put it there; <code>--dry-run</code>{" "}
+                      prints the plan and runs none of it
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
+                      <code>devp man [command]</code>
+                    </td>
+                    <td>
+                      The contents page: every command grouped by what it is
+                      for. <code>devp man run</code> for one page, roff when
+                      redirected, <code>--dir</code> for the full set
                     </td>
                   </tr>
                   <tr>
@@ -2151,6 +2217,31 @@ Notes you should rely on, not work around:
                   prints ready-to-paste onboarding prompts for Claude Code,
                   Cursor, Windsurf, Copilot, Antigravity and anything else that
                   reads a skill file.
+                </p>
+              </div>
+              <div className="info-card">
+                <h3>
+                  <Bot size={18} /> Rules for your editor
+                </h3>
+                <div className="cmd-line small">
+                  <span className="cmd-prompt">$</span>
+                  <code className="cmd-code">devp skill --agent antigravity</code>
+                  <CopyButton
+                    id="skill-agent"
+                    text="devp skill --agent antigravity"
+                    copied={copiedKey}
+                    onCopy={handleCopy}
+                  />
+                </div>
+                <p className="muted">
+                  Writes the per-repository rules file that editor actually
+                  reads — <code>.agent/rules/</code> for Gemini Antigravity,
+                  <code>.cursor/rules/</code> for Cursor, and so on. Fifteen
+                  targets: Antigravity, Cursor, Windsurf, Cline, Roo, Kilo Code,
+                  Continue, Amazon Q, Kiro and Trae get their own file; Copilot,
+                  Gemini CLI, Junie, Zed and <code>AGENTS.md</code> get a marked
+                  block inside a file they already share. Run{" "}
+                  <code>devp skill --help</code> for the exact paths.
                 </p>
               </div>
               <div className="info-card">
@@ -2360,8 +2451,8 @@ Notes you should rely on, not work around:
                 so rather than silently taking the slot. When you want both,{" "}
                 <code>devp hook install --chain</code> claims the slot and
                 writes a shim for every hook the displaced directory has, each
-                one running dev-prune's registration and then{" "}
-                <code>exec</code>-ing the original — so husky still fires, and{" "}
+                one running dev-prune's registration and then <code>exec</code>
+                -ing the original — so husky still fires, and{" "}
                 <code>devp hook uninstall</code> puts the old path back exactly
                 as it was. If the other tool later adds a hook, the next setup
                 pass notices the drift and rebuilds the shims.
@@ -2393,18 +2484,20 @@ Notes you should rely on, not work around:
               <Faq q="Does it delete build output — dist/, .next/, target/?">
                 Not by default, and never on a rule of its own. A prune only
                 removes a directory a lockfile can prove comes back, and a build
-                output has no lockfile: nothing can promise{" "}
-                <code>dist/</code> rebuilds byte-for-byte, so it is out of scope
-                permanently. The five exceptions are opt-in and say so —{" "}
+                output has no lockfile: nothing can promise <code>dist/</code>{" "}
+                rebuilds byte-for-byte, so it is out of scope permanently. The
+                six exceptions are opt-in and say so —{" "}
                 <code>devp config set enable_cargo true</code> (
                 <code>target/</code>), <code>enable_gradle</code> (
                 <code>build/</code>, <code>.gradle/</code>),{" "}
                 <code>enable_maven</code> (<code>target/</code>),{" "}
                 <code>enable_swift</code> (<code>.build/</code>) and{" "}
-                <code>enable_dart</code> (<code>.dart_tool/</code>) — whose
-                claim is rebuild-from-source rather than reinstall-from-lockfile,
-                which is why they ship off and wait an extra{" "}
-                <code>build_idle_days</code> (45) before they touch anything.
+                <code>enable_dart</code> (<code>.dart_tool/</code>) and{" "}
+                <code>enable_mix_build</code> (<code>_build/</code>) — whose
+                claim is rebuild-from-source rather than
+                reinstall-from-lockfile, which is why they ship off and wait an
+                extra <code>build_idle_days</code> (45) before they touch
+                anything.
               </Faq>
               <Faq q="Can I turn one ecosystem off for good?">
                 <code>devp config set disabled_adapters go,composer</code> makes
@@ -2439,19 +2532,44 @@ Notes you should rely on, not work around:
                 for your platform, checks it against the SHA-256 published
                 beside it, and installs nothing if that does not match.
               </Faq>
+              <Faq q="Does it work with Chinese, Japanese or Korean paths?">
+                Yes, on all three platforms. Paths are handled as real
+                filesystem paths, never as byte strings, so a repository at{" "}
+                <code>ワークスペース/项目目录名称测试</code> is scanned, pruned
+                and restored exactly like an ASCII one. The terminal output
+                measures display <em>columns</em> rather than characters, which
+                is what keeps the tables in <code>devp status</code> and{" "}
+                <code>devp doctor</code> aligned when a name is full-width — one
+                CJK character occupies two columns, and padding it by character
+                count is the usual reason a tool's columns go crooked. The same
+                holds for accented Latin, Cyrillic, Arabic and emoji directory
+                names.
+              </Faq>
               <Faq q="How do I remove it?">
                 <code>devp uninstall</code> removes the program: the scheduler,
                 hooks, the installed agent skill, the PATH entry and the
-                binaries themselves — then finds every other copy that pip,
-                npm, cargo or uv left behind and removes them all after one
-                confirmation, printing each manager's own uninstall line so
-                its records clear too. On Windows the last files disappear a
-                few seconds after the command exits — no reboot needed. Add{" "}
+                binaries themselves — then finds every other copy that pip, npm,
+                cargo or uv left behind and removes them all after one
+                confirmation, printing each manager's own uninstall line so its
+                records clear too. On Windows the last files disappear a few
+                seconds after the command exits — no reboot needed. Add{" "}
                 <code>--deep</code> to also wipe the configuration directory and
                 every registered repository's <code>.devprune.json</code> — it
                 asks first.
               </Faq>
             </div>
+          </div>
+        </Reveal>
+
+        {/* ----------------------------- Languages ---------------------------- */}
+        <Reveal as="section" className="section" id="languages">
+          <div className="container narrow">
+            <h2 className="section-title">Everywhere developers have disks</h2>
+            <p className="section-subtitle">
+              Paths in any script prune and restore the same way — the pitch, at
+              least, is in your language.
+            </p>
+            <Languages />
           </div>
         </Reveal>
 
@@ -2497,12 +2615,7 @@ Notes you should rely on, not work around:
       <footer className="footer">
         <div className="container footer-content">
           <div className="footer-brand">
-            <img
-              src="/assets/icon_small.png"
-              alt=""
-              width="24"
-              height="24"
-            />
+            <img src="/assets/icon_small.png" alt="" width="24" height="24" />
             <span>dev-prune (devp)</span>
             <span className="footer-tagline">
               · lockfile-safe workspace pruner

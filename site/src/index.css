@@ -10,31 +10,50 @@
 :root {
   color-scheme: dark;
 
-  --bg-dark: #0b0f17;
-  --bg-card: #111827;
-  --bg-card-hover: #1f2937;
-  --bg-deep: #0e131f;
-  --border-color: #1f293d;
-  --text-main: #f9fafb;
-  --text-muted: #9ca3af;
+  /* Ground is slate-indigo, not neutral black: a faint violet cast keeps the
+     page from reading as the default "near-black plus one acid accent" that
+     every other CLI landing page already is. */
+  --bg-dark: #10131e;
+  --bg-card: #171b2a;
+  --bg-card-hover: #1f2436;
+  --bg-deep: #0d101a;
+  --border-color: #262c40;
+  --text-main: #e8ecf7;
+  --text-muted: #9aa3bd;
   --primary: #10b981;
   --primary-glow: rgba(16, 185, 129, 0.35);
-  --secondary: #3b82f6;
-  --purple: #8b5cf6;
-  --yellow: #facc15;
-  --cyan: #38bdf8;
-  --red: #f87171;
+  --secondary: #4c9aff;
+  --purple: #9f7aea;
+  --yellow: #f0b429;
+  --cyan: #2bd9d9;
+  --red: #ff5c7a;
+
+  /* Green is the brand colour and it means one thing here: this directory was
+     proven rebuildable. Gold is the other half of that sentence — the space
+     you get back. Nothing else on the page is allowed to be gold. */
+  --verified: var(--primary);
+  --reclaimed: #ffc857;
+  --reclaimed-soft: rgba(255, 200, 87, 0.14);
+
+  /* Ecosystem hues, used as data and never as decoration — the vernacular of
+     a disk analyser, where colour tells you what the bytes are. */
+  --eco-js: #f0b429;
+  --eco-py: #4c9aff;
+  --eco-rust: #ff7a45;
+  --eco-go: #2bd9d9;
+  --eco-php: #9f7aea;
+  --eco-ruby: #ff5c7a;
 
   /* Text that sits on top of a --primary fill. */
   --on-primary: #04120c;
 
-  --nav-bg: rgba(11, 15, 23, 0.85);
-  --table-head: rgba(22, 32, 49, 0.55);
-  --table-hover: rgba(22, 32, 49, 0.35);
+  --nav-bg: rgba(16, 19, 30, 0.82);
+  --table-head: rgba(31, 36, 54, 0.55);
+  --table-hover: rgba(31, 36, 54, 0.35);
   --shadow-md: 0 10px 30px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.6);
-  --glow-1: rgba(16, 185, 129, 0.15);
-  --glow-2: rgba(59, 130, 246, 0.12);
+  --glow-1: rgba(16, 185, 129, 0.14);
+  --glow-2: rgba(159, 122, 234, 0.12);
 
   /* The terminal mock and the JSON sample stay dark in both themes — they
      depict a terminal, and a white one would be a lie about the thing being
@@ -50,9 +69,44 @@
   --term-red: #f87171;
   --code-bg: #090d14;
 
+  /* Three roles, deliberately not one family doing all three work.
+     Display carries the personality, body gets out of the way, and anything a
+     terminal would actually print is set in the terminal's own face. Each
+     stack ends in the system font it most resembles, so a blocked or slow
+     Google Fonts request degrades to a near-miss rather than to Times. */
+  /* Every stack ends in the platform's CJK faces. None of the three Latin
+     faces above carries a Han, Kana or Hangul glyph, and a repository named
+     in Chinese has to render in the page's own examples — falling through to
+     the browser's last-resort font would set it in a different weight and
+     size from the line it sits on. */
+  --cjk:
+    "PingFang SC", "Hiragino Sans", "Yu Gothic UI", "Microsoft YaHei",
+    "Malgun Gothic", "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans JP",
+    "Noto Sans KR";
+  --font-display:
+    "Bricolage Grotesque", "Segoe UI", -apple-system, BlinkMacSystemFont,
+    var(--cjk), sans-serif;
   --font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    var(--cjk), sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    var(--cjk), monospace;
+
+  /* Sizes, counts and totals must not jitter as their digits change. */
+  --num: tabular-nums;
+}
+
+/* Sizes, counts and totals change while the reader is looking at them, so
+   every digit gets the same advance width and nothing shifts sideways. */
+.hero-stats strong,
+.cmd-code,
+.term-body,
+.ledger,
+.calculator-box output,
+code,
+pre {
+  font-variant-numeric: var(--num);
 }
 
 /* Custom Sleek Scrollbar */
@@ -95,6 +149,10 @@ body {
   font-family: var(--font-family);
   line-height: 1.6;
   overflow-x: hidden;
+}
+
+html {
+  overflow-x: clip;
 }
 
 .container {
@@ -150,6 +208,8 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 1rem;
+  min-width: 0;
 }
 
 .brand {
@@ -158,8 +218,14 @@ body {
   gap: 0.6rem;
   text-decoration: none;
   color: var(--text-main);
+  font-family: var(--font-display);
   font-weight: 700;
   font-size: 1.3rem;
+  letter-spacing: -0.02em;
+  /* The header is a single row that must never become two: the brand is the
+     part that wrapped at 1920 and pushed the version pill into the nav. */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .logo-box {
@@ -187,13 +253,18 @@ body {
 .nav-links {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  gap: 1.15rem;
+  min-width: 0;
+  /* Never wrap: a wrapped header pushed the version pill into the middle of
+     the link row. Links are dropped by breakpoint instead. */
+  flex-wrap: nowrap;
 }
 
 .nav-links a {
   color: var(--text-muted);
   text-decoration: none;
-  font-size: 0.95rem;
+  font-size: 0.92rem;
+  white-space: nowrap;
   transition: color 0.2s;
 }
 
@@ -234,21 +305,39 @@ body {
 
 .hero-grid {
   display: grid;
-  grid-template-columns: 1fr 1.1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
   gap: 3rem;
-  align-items: center;
+  /* Top-aligned, not centred: the two columns are different heights, and
+     centring them was what left ~500px of nothing above the terminal. */
+  align-items: start;
 }
 
 /* Grid items also default to min-width:auto. The terminal mock renders
    `white-space: pre` lines, so without this the column is as wide as the
    longest line and the whole hero overflows a phone. */
 .hero-text,
+.hero-proof,
 .terminal-container {
   min-width: 0;
 }
 
+.hero-proof {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.hero-tail {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 2.5rem;
+  align-items: start;
+  margin-top: 3.5rem;
+}
+
 @media (max-width: 968px) {
-  .hero-grid {
+  .hero-grid,
+  .hero-tail {
     grid-template-columns: 1fr;
   }
 }
@@ -272,16 +361,22 @@ body {
 }
 
 .hero-title {
-  font-size: 3rem;
-  font-weight: 800;
-  line-height: 1.15;
+  font-family: var(--font-display);
+  font-size: clamp(2.4rem, 4.2vw, 4rem);
+  font-weight: 700;
+  line-height: 1.04;
+  letter-spacing: -0.025em;
   margin-bottom: 1.25rem;
+  text-wrap: balance;
 }
 
+/* Was a two-stop gradient across the second line. A gradient headline is the
+   one thing every generated landing page does, and it also made the most
+   important sentence the least legible one. Solid green instead — the same
+   green that means "proven rebuildable" everywhere else on the page, so the
+   headline states the promise in the page's own colour vocabulary. */
 .gradient-text {
-  background: linear-gradient(135deg, var(--primary), var(--secondary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--verified);
 }
 
 .hero-description {
@@ -608,9 +703,13 @@ body {
 }
 
 .section-title {
-  font-size: 2.25rem;
+  font-family: var(--font-display);
+  font-size: clamp(1.8rem, 2.6vw, 2.5rem);
   font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
   margin-bottom: 0.5rem;
+  text-wrap: balance;
 }
 
 .section-subtitle {
@@ -865,23 +964,42 @@ body {
 
 /* Narrow screens
    ------------------------------------------------------------------
-   The six in-page anchors are the only part of the header that cannot fit on a
-   phone. They are hidden rather than folded into a hamburger: every one of them
-   points at a section of this same page, so scrolling already reaches them, and
-   a menu button would be a control that exists only to restore what scrolling
-   does. The theme toggle and the GitHub link stay — neither has an equivalent
-   further down the page. */
-@media (max-width: 860px) {
-  .nav-links > a[href^="#"] {
+   The in-page anchors are the only part of the header that cannot always
+   fit. They are dropped by priority rather than folded into a hamburger:
+   every one of them points at a section of this same page, so scrolling
+   already reaches them, and a menu button would be a control that exists
+   only to restore what scrolling does. The theme toggle and the GitHub
+   link stay at every width — neither has an equivalent further down. */
+@media (max-width: 1180px) {
+  .nav-links > a.nav-sec {
+    display: none;
+  }
+}
+
+/* A tablet at 834px still has room for a couple of anchors: hiding all of
+   them left a header with a brand and two buttons and nothing else, which
+   read as broken rather than compact. "How it works" and "Safety" are the
+   two the page is actually about, so they are the last to go. */
+@media (max-width: 1024px) {
+  .nav-links > a.nav-ter {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  /* Below this the remaining anchors go too, including the two that point
+     off-page — those are ordinary links, not hash links, and leaving them
+     in is what clipped "Guides" against the left edge of a phone. */
+  .nav-links > a:not(.nav-github) {
     display: none;
   }
 }
 
 @media (max-width: 600px) {
-  /* Brand, theme toggle and GitHub button together are wider than a phone even
-     with the anchors gone, so the header wraps onto a second row — and stops
-     being sticky, because two rows of chrome pinned to the top of a 375px
-     screen costs more than it gives. */
+  /* Brand, theme toggle and GitHub button together are wider than a phone
+     even with the anchors gone, so the header wraps onto a second row — and
+     stops being sticky, because two rows of chrome pinned to the top of a
+     375px screen costs more than it gives. */
   .navbar {
     position: static;
   }
@@ -890,14 +1008,6 @@ body {
     flex-wrap: wrap;
     justify-content: center;
     row-gap: 0.6rem;
-  }
-
-  .hero-title {
-    font-size: 2.1rem;
-  }
-
-  .section-title {
-    font-size: 1.7rem;
   }
 
   .hero,
@@ -911,5 +1021,41 @@ body {
 
   .calculator-box {
     padding: 1.5rem;
+  }
+}
+
+/* Tall and narrow — a monitor in portrait, or a tablet stood on its end.
+   Every other breakpoint here is a width, and a 1080x1920 screen is wider
+   than all of them while having less room across than a laptop. Without
+   this it kept the two-column hero and the page ran to ~600px of empty
+   space beside a stranded stats grid. */
+@media (max-aspect-ratio: 4/5) and (min-width: 700px) {
+  .hero-grid,
+  .hero-tail,
+  .split-grid,
+  .calculator-box {
+    grid-template-columns: 1fr;
+  }
+
+  .hero {
+    padding: 3.5rem 0 3rem;
+  }
+
+  /* A portrait monitor has the vertical room to read at a larger size and
+     the horizontal room for none of the extra columns. */
+  .hero-title {
+    font-size: clamp(2.6rem, 5.5vw, 3.6rem);
+  }
+
+  .container {
+    max-width: 100%;
+    padding: 0 clamp(1.5rem, 5vw, 4rem);
+  }
+}
+
+/* Very wide screens: hold the measure, do not stretch the prose. */
+@media (min-width: 1560px) {
+  .container {
+    max-width: 1320px;
   }
 }

@@ -1,0 +1,69 @@
+/* Copyright 2026 VKrishna04 */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.langs {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 1.75rem;
+}
+
+.langs-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.langs-tab {
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0.5rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color 0.18s,
+    border-color 0.18s,
+    background 0.18s;
+}
+
+.langs-tab:hover {
+  color: var(--text-main);
+  border-color: var(--text-muted);
+}
+
+.langs-tab.is-on {
+  color: var(--on-primary, var(--bg-dark));
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.langs-pitch {
+  margin: 0;
+  border-left: 2px solid var(--primary);
+  padding: 0.15rem 0 0.15rem 1.25rem;
+  min-height: 7.5rem;
+}
+
+.langs-pitch p {
+  margin: 0;
+  font-size: clamp(1.05rem, 1.6vw, 1.3rem);
+  line-height: 1.65;
+  color: var(--text-main);
+  text-wrap: pretty;
+}
+
+.langs-pitch footer {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+@media (max-width: 600px) {
+  .langs-pitch {
+    min-height: 10rem;
+  }
+}

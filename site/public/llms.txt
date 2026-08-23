@@ -169,7 +169,7 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   repository count, idle window, managed binary path, and the three settings that widen
   anything: `require_confirmation=false`, `allow_manifest_rewrite`, and
   any opt-in adapter: `enable_cargo`, `enable_gradle`, `enable_maven`,
-  `enable_swift`, `enable_dart`). No letter grade — the widened settings are named, because
+  `enable_swift`, `enable_dart`, `enable_mix_build`). No letter grade — the widened settings are named, because
   "trust level: MEDIUM" tells nobody which switch to look at. Read-only, always exit 0.
   `--fix-ownership` is the one exception: it adds every registered repository Git
   currently refuses to read — the "detected dubious ownership" refusal, routine after a
@@ -205,9 +205,15 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   (`.github/copilot-instructions.md`), gemini (`GEMINI.md`), junie
   (`.junie/guidelines.md`) and zed (`.rules`)
 - `devp update [--offline | --install]` — print the installed version, check GitHub for a newer release, and show the upgrade command. `--install` downloads the release binary for this platform from GitHub Releases, refuses it unless its SHA-256 matches the published sidecar, and writes it to every copy this installation runs: the managed binary under the config directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary. The package manager that delivered the first copy is deliberately not run — its version record goes stale and the single command that resyncs it is printed — and its own upgrade command is the fallback when no binary is published for this platform or the download fails. `auto_update`, on by default, does the verified-download half by itself at the end of a prune pass — never the package-manager half, which can prompt, and nothing at all on WinGet, Scoop and Homebrew, where the manager owns the upgrade; `devp config set auto_update false` stops it. An upgrade never interrupts the scheduler. `DEV_PRUNE_OFFLINE=1` in the environment keeps the process off the network entirely, regardless of any setting
-- `devp man [--dir <dir>]` — the manual as man pages, generated from the same clap
-  definitions `--help` uses. Alone: the `devp(1)` page to stdout (pipe into `man -l -`);
-  `--dir` writes the full set, one page per subcommand
+- `devp install [--channel <NAME>] [--dry-run]` — move this installation from one package manager to another. `devp update` upgrades the copy that is running, through whichever channel installed it; this changes *which* channel owns it. It installs through the manager named first and removes the old copy through the manager that put it there second, so a failed install leaves the working copy untouched. Removing the old copy through its own manager rather than deleting the file is the point: a manager whose record still says dev-prune is present will put the old binary back. Names: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`. With no `--channel` it reports which manager owns the running copy; `--dry-run` prints the numbered plan and runs none of it; `--yes` skips the confirmation. Nothing is migrated because nothing needs to be — settings, the registry and the undo history live in the config directory, which no package manager owns
+- `devp man [command] [--dir <dir>] [--roff]` — the manual, generated from the same clap
+  definitions `--help` uses. At a terminal, `devp man` prints the contents page: every
+  command grouped by what it is for with one line each, the flags that go before the
+  command, and the exit codes. `devp man <command>` prints one command's page — the same
+  text `devp <command> --help` prints. Roff appears only where something can format it:
+  a redirect or a pipe gets roff (`devp man | man -l -`, `devp man > devp.1`), and
+  `--roff` forces it at a terminal too. `--dir` writes the full set, one page per
+  subcommand plus `devp.1` and `dev-prune.1`
 - `devp uninstall [--deep]` — remove the program: scheduler, hooks, agent skill, PATH
   entry and the binaries themselves, then a sweep over PATH and the well-known install
   dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) removes every other
@@ -286,17 +292,28 @@ with a `git clone` of possibly-untrusted code.
 - Never phones home: no analytics, no telemetry; the single network request is the
   opt-out update check against GitHub's public API (no body, no identifier).
 
+## Unicode and non-English paths
+
+Paths are handled as real filesystem paths, never as byte strings, so a repository at
+`ワークスペース/项目目录名称测试/프론트엔드` is scanned, verified, pruned and restored
+exactly like an ASCII one, on Windows, macOS and Linux alike. Terminal output measures
+display *columns* rather than characters, so the tables in `devp status` and
+`devp doctor` stay aligned when a directory name is full-width — one CJK character
+occupies two columns, and padding by character count is the usual reason a CLI's
+columns go crooked. The same applies to accented Latin, Cyrillic, Arabic and emoji
+directory names. Program messages themselves are English.
+
 ## Supported ecosystems
 
-Twenty adapters. npm, pnpm, yarn, bun (`node_modules`); uv, poetry, pdm, pipenv and
+Twenty-one adapters. npm, pnpm, yarn, bun (`node_modules`); uv, poetry, pdm, pipenv and
 pip/venv (`.venv`, `__pypackages__`, any directory holding `pyvenv.cfg`); go
 (`vendor`); composer (`vendor`); bundler (`vendor/bundle`); cocoapods (`Pods`); mix
 (`deps`); terraform (`.terraform/providers`); and, opt-in, cargo (`target/`), gradle
-(`build/`, `.gradle/`), maven (`target/`), swift (`.build/`) and dart (`.dart_tool/`).
+(`build/`, `.gradle/`), maven (`target/`), swift (`.build/`), dart (`.dart_tool/`) and mix_build (`_build/`).
 The build-tool adapters ship disabled — a build tree is regenerated by recompiling, not
 downloading, so they cost more to get back: `devp config set enable_cargo true` /
-`enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true`
-turns them on, and their candidates wait for `build_idle_days`
+`enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true` /
+`enable_mix_build true` turns them on, and their candidates wait for `build_idle_days`
 (45 by default, applied as the maximum of it and `idle_days`). `adapter_idle_days`
 (`cargo=90,npm=30`) raises one named adapter's window further still, never lowering it. .NET and C/C++ are covered by `devp caches` (their
 dependencies live in machine-wide stores; their in-repo build directories are outputs,
@@ -308,20 +325,21 @@ that appears under `PIPENV_VENV_IN_PROJECT`. Both tools default to a shared stor
 the user's home directory, which dev-prune never touches — neither as a prune nor
 through `devp caches`, because that directory is where other projects' dependencies are
 installed rather than a cache. Composer declines `vendor/` entirely when a
-`vendor/bundle` is inside it, because no `composer install` puts those gems back. Mix
-takes `deps/` and never `_build/`; swift takes `.build/` and never `.swiftpm/`; dart
+`vendor/bundle` is inside it, because no `composer install` puts those gems back. The always-on mix adapter
+takes `deps/` and never `_build/`, and the opt-in mix_build adapter takes `_build/` and
+never `deps/`; swift takes `.build/` and never `.swiftpm/`; dart
 takes `.dart_tool/` and never `build/`. Terraform takes `.terraform/providers` and
 nothing else under `.terraform/` — `environment` records the selected workspace and
 losing it silently returns you to `default`, `terraform.tfstate` is the backend's
 initialisation record, and `modules/` comes from sources the lock file says nothing
 about.
 
-cocoapods, mix, dart, terraform, gradle, maven and swift verify offline: their ecosystems have no
+cocoapods, mix, mix_build, dart, terraform, gradle, maven and swift verify offline: their ecosystems have no
 read-only in-sync command, and the write-side ones fix drift by re-downloading, so what
 is checked is that the lockfile is structurally complete and no older than the manifest
 it came from, or that the build manifest the tree is derived from is present and parses.
 
-Any of the eighteen can be switched off with `disabled_adapters`.
+Any of the twenty-one can be switched off with `disabled_adapters`.
 
 A repository may hold any number of these, at the root or up to `scan_depth` levels
 below it. Where several managers claim the same `node_modules`, the owner is chosen
@@ -348,7 +366,7 @@ Twenty-three keys, all readable with `devp config get <key>` and writable with
 `auto_hooks_chain` (false), `update_check` (true), `update_check_interval_days` (7),
 `update_check_timeout_secs` (5), `enable_cargo` (false), `enable_gradle` (false),
 `enable_maven` (false), `enable_swift` (false), `enable_dart` (false),
-`build_idle_days` (45),
+`enable_mix_build` (false), `build_idle_days` (45),
 `adapter_idle_days` (none), `auto_update` (true), `disabled_adapters` (none).
 
 `disabled_adapters` is a comma-separated list of adapter names to leave alone
@@ -357,11 +375,11 @@ by `doctor` and never pruned, as if that ecosystem were not installed on the mac
 `devp config set disabled_adapters -` clears it. It is a deny-list rather than
 twenty switches because the answer for almost everyone is "none", and it is
 separate from `enable_cargo` / `enable_gradle` / `enable_maven` / `enable_swift` /
-`enable_dart`,
+`enable_dart` / `enable_mix_build`,
 which are off because of what their directories cost to rebuild rather than because
 anyone dislikes them.
 
-`devp config wizard` opens all twenty-four in a full-screen configurator — the
+`devp config wizard` opens all twenty-five in a full-screen configurator — the
 `devp trust` declaration first, then every setting, then a summary of exactly what
 will be written. It runs itself once on a first install and again after an upgrade
 adds a setting the machine has never been shown, marking that one `NEW`; settings

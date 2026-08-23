@@ -19,29 +19,43 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg-dark: #ffffff;
-  --bg-card: #f8fafc;
-  --bg-card-hover: #f1f5f9;
-  --bg-deep: #f1f5f9;
-  --border-color: #e2e8f0;
-  --text-main: #0f172a;
-  --text-muted: #475569;
-  --primary: #059669;
-  --primary-glow: rgba(5, 150, 105, 0.25);
+  /* Cool paper, not cream: the light theme is the same slate-indigo world
+     with the lights on, so the two themes read as one product. */
+  --bg-dark: #fbfcff;
+  --bg-card: #f4f6fc;
+  --bg-card-hover: #eceffa;
+  --bg-deep: #eef1f9;
+  --border-color: #dee3f0;
+  --text-main: #161a2b;
+  --text-muted: #545c78;
+  --primary: #047857;
+  --primary-glow: rgba(4, 120, 87, 0.22);
   --secondary: #2563eb;
-  --purple: #7c3aed;
-  --yellow: #b45309;
+  --purple: #6d40c8;
+  --yellow: #a1620a;
   --cyan: #0e7490;
+  --red: #c2334f;
 
   --on-primary: #ffffff;
 
-  --nav-bg: rgba(255, 255, 255, 0.85);
-  --table-head: rgba(15, 23, 42, 0.05);
-  --table-hover: rgba(15, 23, 42, 0.03);
-  --shadow-md: 0 10px 30px rgba(15, 23, 42, 0.08);
-  --shadow-lg: 0 20px 50px rgba(15, 23, 42, 0.14);
-  --glow-1: rgba(16, 185, 129, 0.14);
-  --glow-2: rgba(59, 130, 246, 0.1);
+  /* Gold has to darken to stay legible on paper; it is still the only gold. */
+  --reclaimed: #a86a00;
+  --reclaimed-soft: rgba(168, 106, 0, 0.1);
+
+  --eco-js: #a1620a;
+  --eco-py: #2563eb;
+  --eco-rust: #c2410c;
+  --eco-go: #0e7490;
+  --eco-php: #6d40c8;
+  --eco-ruby: #c2334f;
+
+  --nav-bg: rgba(251, 252, 255, 0.85);
+  --table-head: rgba(22, 26, 43, 0.05);
+  --table-hover: rgba(22, 26, 43, 0.03);
+  --shadow-md: 0 10px 30px rgba(22, 26, 43, 0.08);
+  --shadow-lg: 0 20px 50px rgba(22, 26, 43, 0.14);
+  --glow-1: rgba(4, 120, 87, 0.12);
+  --glow-2: rgba(109, 64, 200, 0.09);
 }
 
 /* The terminal mock and the JSON block keep their dark background in light

@@ -241,9 +241,21 @@ pub(crate) fn binary_version(exe: &std::path::Path) -> Option<(u64, u64, u64)> {
     if !output.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .find_map(parse_version)
+    version_in_output(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// The first `x.y.z` in a `--version` output, with or without the `v` this CLI prints.
+///
+/// Split out so it can be tested against real output. It has to accept `v1.7.0` because
+/// that is the only spelling `print_version_info` produces — the banner ends `v1.7.0`
+/// and the line under it reads `dev-prune (devp) v1.7.0`, and a bare `1.7.0` appears
+/// nowhere. Parsing the tokens without stripping that `v` answered `None` for every real
+/// dev-prune on the machine, and `doctor`'s "Other copies" check reads `None` as "not a
+/// dev-prune at all" — so it reported "none on PATH running a different version" however
+/// many stale copies were sitting there.
+fn version_in_output(text: &str) -> Option<(u64, u64, u64)> {
+    text.split_whitespace()
+        .find_map(|token| parse_version(token.strip_prefix('v').unwrap_or(token)))
 }
 
 /// Parse `x.y.z` into an orderable triple. Anything else — including the pre-release
@@ -1321,6 +1333,29 @@ mod tests {
         // The version this binary was built with has to be parseable, or the refresh
         // logic can never decide anything.
         assert!(parse_version(constants::VERSION).is_some());
+    }
+
+    #[test]
+    fn the_version_this_cli_prints_is_one_this_cli_can_read_back() {
+        // Not synthetic: this is the shape `print_version_info` writes, `v` and all,
+        // down to the banner line that ends in the same token.
+        let real = format!(
+            "|_____|   v{v}
+
+dev-prune (devp) v{v}
+  Compiler:        Rust 1.88+ (edition 2024)
+",
+            v = constants::VERSION
+        );
+        assert_eq!(
+            version_in_output(&real),
+            parse_version(constants::VERSION),
+            "binary_version could not read this binary's own --version output"
+        );
+        // Something that is not this CLI still has to answer None, because doctor uses
+        // that to mean "leave this file alone".
+        assert_eq!(version_in_output("git version 2.51.0.windows.1"), None);
+        assert_eq!(version_in_output("some other tool"), None);
     }
 
     #[test]

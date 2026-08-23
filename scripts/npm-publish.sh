@@ -54,6 +54,10 @@ case "$mode" in
         ;;
 esac
 
+published=""
+skipped=""
+missing=""
+
 for pkg in \
     dev-prune-linux-x64 dev-prune-linux-arm64 \
     dev-prune-darwin-x64 dev-prune-darwin-arm64 \
@@ -67,7 +71,23 @@ do
     # this, the second run dies on EPUBLISHCONFLICT at whichever package succeeded the
     # first time and never reaches the ones that did not.
     if [ "$mode" != "--dry-run" ] && npm view "$pkg@$version" version >/dev/null 2>&1; then
-        echo "$pkg@$version is already on the registry — skipping."
+        echo "$pkg@$version is already on the registry - skipping."
+        skipped="$skipped $pkg"
+        continue
+    fi
+
+    # Trusted publishing cannot create a name: a trusted publisher is configured *on* a
+    # package, and a package with no versions has nowhere to hold one. npm answers the
+    # attempt with a bare `E404 ... PUT` that reads like a network fault.
+    #
+    # This used to abort the whole release. It does not any more, because the npm channel
+    # spent 1.6.0 in exactly this state - four names published, four held by the
+    # registry's new-package spam heuristic - and a release that refuses to ship the four
+    # that do work helps nobody. `--local` is the mode that creates names, so it never
+    # skips; `--dry-run` never touches the registry at all.
+    if [ -z "$mode" ] && ! npm view "$pkg" version >/dev/null 2>&1; then
+        echo "$pkg does not exist on the registry - skipping. Publish it once from a workstation (--local), then add a trusted publisher for it."
+        missing="$missing $pkg"
         continue
     fi
 
@@ -77,4 +97,26 @@ do
     # confirm is public, and a package with no published versions has no access setting to
     # read. All seven were new at 1.0.0, and dev-prune-win32-ia32 was new at 1.4.0.
     npm publish "$dir" "$@" --tag "$dist_tag" --access public
+    published="$published $pkg"
 done
+
+echo
+echo "published:${published:- none}"
+if [ -n "$skipped" ]; then
+    echo "already at $version:$skipped"
+fi
+if [ -n "$missing" ]; then
+    echo "not on the registry, so not published:$missing"
+    # Reported through a file rather than through the exit code: a partial npm release is
+    # a real, intended outcome, and the caller decides how loudly to say so.
+    if [ -n "${NPM_MISSING_FILE:-}" ]; then
+        printf '%s\n' "${missing# }" > "$NPM_MISSING_FILE"
+    fi
+fi
+
+# Every name missing means the channel does not exist at all, which is a genuine failure
+# rather than a partial one.
+if [ -z "$published" ] && [ -z "$skipped" ]; then
+    echo "nothing was published, and nothing was already there" >&2
+    exit 1
+fi

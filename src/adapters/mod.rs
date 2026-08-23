@@ -26,6 +26,7 @@ pub mod go;
 pub mod gradle;
 pub mod maven;
 pub mod mix;
+pub mod mix_build;
 pub mod npm;
 pub mod pdm;
 pub mod pipenv;
@@ -227,6 +228,7 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(bundler::Bundler),
         Box::new(cocoapods::CocoaPods),
         Box::new(mix::Mix),
+        Box::new(mix_build::MixBuild),
         Box::new(gradle::Gradle),
         Box::new(maven::Maven),
         Box::new(swift::Swift),
@@ -262,6 +264,9 @@ fn opt_in_enabled() -> &'static [String] {
                 }
                 if r.settings.enable_dart {
                     names.push("dart".to_string());
+                }
+                if r.settings.enable_mix_build {
+                    names.push("mix_build".to_string());
                 }
                 names
             })
@@ -317,7 +322,7 @@ pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("PHP", &["composer"]),
     ("Ruby", &["bundler"]),
     ("Swift & Objective-C", &["swift", "cocoapods"]),
-    ("Elixir", &["mix"]),
+    ("Elixir", &["mix", "mix_build"]),
     ("Infrastructure", &["terraform"]),
     ("Dart & Flutter", &["dart"]),
 ];
@@ -1212,7 +1217,7 @@ pub(crate) fn python_runtime_available(tag: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-const NO_RESTORE_BINARY: [&str; 4] = ["venv", "gradle", "maven", "swift"];
+const NO_RESTORE_BINARY: [&str; 5] = ["venv", "gradle", "maven", "mix_build", "swift"];
 
 /// Adapters whose executable is not called what the adapter is called.
 const ADAPTER_BINARIES: [(&str, &str); 2] = [("bundler", "bundle"), ("cocoapods", "pod")];
@@ -1375,7 +1380,10 @@ mod tests {
         // window and the trust report both describe something else.
         let mut opt_in = opt_in_adapter_names();
         opt_in.sort_unstable();
-        assert_eq!(opt_in, vec!["cargo", "dart", "gradle", "maven", "swift"]);
+        assert_eq!(
+            opt_in,
+            vec!["cargo", "dart", "gradle", "maven", "mix_build", "swift"]
+        );
     }
 
     #[test]

@@ -443,6 +443,10 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     if: vars.NPM_PUBLISH == 'true'
+    outputs:
+      # Empty unless some package name does not exist on the registry yet, in which case
+      # the release is a partial one and the summary says so instead of a bare tick.
+      missing: ${{ steps.npm.outputs.missing }}
     permissions:
       contents: read
       # Required by `npm publish --provenance`: npm exchanges this token for a signed
@@ -478,10 +482,12 @@ jobs:
       # the attempt with a bare `E404 ... PUT` that reads like a network fault. See
       # https://github.com/npm/cli/issues/8544, open since September 2025.
       #
-      # Checked here rather than left to fail inside the loop: this way the error names
-      # every missing package at once, and it fires before any of the others have been
-      # published, so a rerun is not a partial release.
-      - name: Every package name must already exist
+      # This used to abort the release. It reports instead: the npm channel has spent
+      # real releases with some names published and some held by the registry's
+      # new-package spam heuristic, and refusing to ship the ones that work helps nobody.
+      # `npm-publish.sh` skips a name it cannot create; this step is here so the missing
+      # ones are named once, up front, instead of being found scattered through the log.
+      - name: Which package names already exist
         run: |
           set -eu
           missing=""
@@ -490,8 +496,7 @@ jobs:
             npm view "$pkg" version >/dev/null 2>&1 || missing="$missing $pkg"
           done
           if [ -n "$missing" ]; then
-            echo "::error::Not on the registry:$missing. Trusted publishing cannot create a package name — publish each one once from a workstation with \`npm login\`, then add a trusted publisher for it (GitHub Actions, Life-Experimentalist/dev-prune, release.yml)."
-            exit 1
+            echo "::warning::Not on the registry:$missing. These will be skipped, so this is a partial npm release. Publish each one once from a workstation with \`npm login\` (\`sh scripts/npm-publish.sh <version> npm-dist latest --local\`), then add a trusted publisher for it (GitHub Actions, Life-Experimentalist/dev-prune, release.yml)."
           fi
 
       # A prerelease published as `latest` becomes what every `npm install dev-prune`
@@ -511,16 +516,23 @@ jobs:
       # in the same step, so there is nothing in this repository's secrets for anyone to
       # steal and nothing to rotate.
       - name: npm publish
+        id: npm
         env:
           VERSION: ${{ needs.publish.outputs.version }}
           DIST_TAG: ${{ steps.tag.outputs.dist_tag }}
+          NPM_MISSING_FILE: ${{ runner.temp }}/npm-missing.txt
         run: |
           set -eu
           # The loop lives in the script so CI can dry-run this exact command. See the
           # "Dry-run the publish that release.yml will run" step in ci.yml.
           if ! sh scripts/npm-publish.sh "$VERSION" npm-dist "$DIST_TAG"; then
-            echo "::error::npm publish failed. An E404 on the PUT for a name that the preflight said exists means that package has no trusted publisher for this workflow — add one under the package's Settings on npmjs.com."
+            echo "::error::npm publish failed. An E404 on the PUT for a name that exists means that package has no trusted publisher for this workflow — add one under the package's Settings on npmjs.com."
             exit 1
+          fi
+          # Read by the summary job, so the channel report can say "partial" rather than
+          # a green tick that hides three missing Windows packages.
+          if [ -s "$NPM_MISSING_FILE" ]; then
+            echo "missing=$(cat "$NPM_MISSING_FILE")" >> "$GITHUB_OUTPUT"
           fi
 
   # PyPI, for `uv tool install dev-prune`, `uvx dev-prune` and `pipx run dev-prune`.
@@ -772,6 +784,7 @@ jobs:
         env:
           VERSION: ${{ needs.publish.outputs.version }}
           NPM: ${{ needs.publish-npm.result }}
+          NPM_MISSING: ${{ needs.publish-npm.outputs.missing }}
           PYPI: ${{ needs.publish-pypi.result }}
           CRATE: ${{ needs.publish-crate.result }}
           PKG: ${{ needs.packaging.result }}
@@ -792,7 +805,13 @@ jobs:
             echo "| Channel | Result |"
             echo "|---|---|"
             echo "| GitHub release | ✅ published |"
-            echo "| npm | $(describe "$NPM" NPM_PUBLISH) |"
+            # A partial npm release is a success with a caveat: the names that exist
+            # were published, the ones the registry has not created yet were skipped.
+            if [ "$NPM" = success ] && [ -n "${NPM_MISSING:-}" ]; then
+              echo "| npm | ⚠️ **partially published** — no registry entry yet for:$NPM_MISSING |"
+            else
+              echo "| npm | $(describe "$NPM" NPM_PUBLISH) |"
+            fi
             echo "| PyPI | $(describe "$PYPI" PYPI_PUBLISH) |"
             echo "| crates.io | $(describe "$CRATE" CRATES_PUBLISH) |"
             # Not `describe`: "channel not enabled" is the wrong story here — a

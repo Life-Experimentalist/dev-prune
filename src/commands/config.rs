@@ -128,6 +128,13 @@ const RECOMMENDED: &[Recommendation] = &[
         cautious: false,
     },
     Recommendation {
+        key: "enable_mix_build",
+        label: "Elixir build trees",
+        why: "`_build/` holds compiled beam files for every Mix environment you have               built, and `mix compile` recreates the one you are working in.",
+        value: "true",
+        cautious: false,
+    },
+    Recommendation {
         key: "allow_manifest_rewrite",
         label: "Let cargo and go tidy up",
         why: "Cautious, not risky. The commands that restore a Rust or Go project can               also update `Cargo.lock` or `go.mod` — files Git tracks. Nothing is lost               and nothing is deleted, but the next `git status` may show a change you did               not make by hand. Turn it on if that is fine; leave it off if a clean               working tree matters more than a fully automatic restore.",
@@ -425,6 +432,18 @@ const SETTINGS: &[Setting] = &[
         get: |s| s.enable_dart.to_string(),
         set: |s, v| {
             s.enable_dart = parse_bool("enable_dart", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_mix_build",
+        since: "1.7.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Mix build-tree adapter (_build/ comes back by recompiling).",
+        plain: "Clean Elixir _build/ folders too. They come back by recompiling.",
+        get: |s| s.enable_mix_build.to_string(),
+        set: |s, v| {
+            s.enable_mix_build = parse_bool("enable_mix_build", v)?;
             Ok(())
         },
     },

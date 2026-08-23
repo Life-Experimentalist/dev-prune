@@ -67,6 +67,10 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
   project on the machine, so no one lockfile can prove it is recoverable, and it is what
   makes `devp restore` fast. Suggest it only when the user has said they want the disk
   space more than the speed.
+- Non-ASCII paths are not a special case. A repository at
+  `ワークスペース/项目目录名称测试/프론트엔드` scans, verifies, prunes and restores like any
+  other, on Windows, macOS and Linux. Terminal tables pad by display column, not by
+  character, so full-width names stay aligned. Program messages are English only.
 
 ---
 
@@ -87,7 +91,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched, rebuilding each virtual environment on the Python version it was originally built with |
 | "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan, composer, cocoapods, hex) and prints the command that clears each. Read-only |
 | "empty my npm cache" / "clear all the caches" | `devp caches clear npm` (or `all`) — **ask first**, and say what it costs: every project on the machine re-downloads on its next install, and `devp restore` stops being fast. `--dry-run` shows what would go. Never run this unprompted |
-| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the three settings that widen anything (`require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`). Read-only |
+| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the three settings that widen anything (`require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`). Read-only |
 | "git says dubious ownership" / "devp run says it cannot examine my repos" | `devp trust --fix-ownership` — adds every registered repository Git refuses to read to the global `safe.directory` list, after showing the list and asking; `--yes` for a script. Repositories Git will not read have no known age and are never pruned, which is why `devp run` reports them |
 | "did I install anything my lockfiles don't know about?" | `devp status --drift` — every environment holding packages its lockfile never recorded, with the one command that records them. A pure read; this is what a prune would refuse on |
 | "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it. Across every repository at once: `devp run --explain` — read-only, every verdict listed including the quiet ones (still active with the actual age, opted out, under the size floor). Conflicts with `--json`; the `--json --dry-run` document already carries every status |
@@ -108,10 +112,11 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed (add `--deep` to wipe config — confirm first) |
 | "is there a newer version?" | `devp update` — prints the installed and latest versions plus the right upgrade command; never installs anything by itself |
 | "upgrade it" | `devp update --install` — downloads the release binary from GitHub, verifies its SHA-256, and replaces every copy this install runs (managed binary, `devp` alias, `devpw` scheduler twin, the running binary); the package manager that delivered the first copy is not run, and the one command that resyncs its version record is printed. Falls back to that manager's own upgrade command if there is no binary for this platform. `auto_update` does the download half by itself after a pass and is on by default; `devp config set auto_update false` stops it |
-| "clean my Rust `target/` too" / "clean my Java/Gradle/Maven builds too" / "clean my Flutter build caches too" | `devp config set enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true` — opt-in adapters, idle-gated separately by `build_idle_days` (45) |
+| "I installed it with cargo, I want it from winget instead" / "move it to uv" | `devp install --channel <name>` — installs through the manager named, then removes the old copy through the manager that owns it, in that order. `devp install` alone reports which channel owns this copy; `--dry-run` prints the plan and runs none of it. Names: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`, `homebrew` |
+| "clean my Rust `target/` too" / "clean my Java/Gradle/Maven builds too" / "clean my Flutter build caches too" / "clean my Elixir `_build/` too" | `devp config set enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true` / `enable_mix_build true` — opt-in adapters, idle-gated separately by `build_idle_days` (45) |
 | "make npm wait a month" / "give one adapter its own idle window" | `devp config set adapter_idle_days npm=30,cargo=90` — a floor per adapter, applied as `max(idle_days, build_idle_days, this)`; `-` clears it. `devp config wizard` edits it beside the adapter checklist, where a language heading sets every adapter under it at once |
 | "give my editor's agent the rules" | `devp skill --agent <editor>` — writes the per-repository rules file that editor reads. Own file: `cursor`, `windsurf`, `antigravity`, `cline`, `roo`, `kilocode`, `continue`, `amazon-q`, `kiro`, `trae`. Marked block inside a shared file: `agents-md` (`AGENTS.md` — Codex, Jules, Amp, OpenCode), `copilot`, `gemini`, `junie`, `zed`. `devp skill --help` lists the exact paths |
-| "man pages" | `devp man \| man -l -` to read now, `devp man --dir ./man` to write the full set |
+| "man pages" / "show me the manual" / "what commands are there?" | `devp man` — the contents page, every command grouped by what it is for. `devp man <command>` for one page (the same text as `devp <command> --help`). Roff only where something formats it: a redirect or a pipe gets roff, `devp man \| man -l -` reads it formatted, `devp man --dir ./man` writes the full set |
 | "what version?" | `devp -V` (also prints OS, arch, config path, PATH audit) |
 | you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats`, `trust` or `caches` — see below |
 
@@ -250,11 +255,12 @@ over plain venv when `uv.lock` or `[tool.uv]` is present.
 | maven *(opt-in)* | `pom.xml` | `target` | `pom.xml` present and looks like a Maven manifest | next `mvn package` |
 | swift *(opt-in)* | `Package.swift` | `.build` (never `.swiftpm`) | `Package.swift` declares a `Package(` (rebuild-from-source proof) | next `swift build` |
 | dart *(opt-in)* | `pubspec.yaml` | `.dart_tool` (never `build`) | `pubspec.lock` has a `packages:` section and is no older than `pubspec.yaml` | `dart pub get` / `flutter pub get` |
+| mix_build *(opt-in)* | `mix.exs` | `_build` (never `deps`) | `mix.exs` and `mix.lock` both present | next `mix compile` |
 
-cargo, gradle, maven, swift and dart ship **disabled** — a build directory takes far
+cargo, gradle, maven, swift, dart and mix_build ship **disabled** — a build directory takes far
 longer to regenerate than a dependency directory (a full recompile, not a download).
 Enable them with `devp config set enable_cargo true` / `enable_gradle true` /
-`enable_maven true` / `enable_swift true` / `enable_dart true`; while disabled they are invisible (not detected, not
+`enable_maven true` / `enable_swift true` / `enable_dart true` / `enable_mix_build true`; while disabled they are invisible (not detected, not
 listed, `--only cargo` prunes nothing). Their candidates also wait for
 `build_idle_days` (45 by default), applied as the **maximum** of it and the
 repository's effective `idle_days` — the build-tool gate can only ever make pruning
@@ -309,7 +315,8 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `enable_maven` | `false` | Turn the opt-in Maven adapter on |
 | `enable_swift` | `false` | Turn the opt-in Swift Package Manager adapter on |
 | `enable_dart` | `false` | Turn the opt-in Dart/Flutter adapter on |
-| `build_idle_days` | `45` | Extra idle gate for the build-tool adapters (cargo, gradle, maven, swift, dart); applied as `max(build_idle_days, idle_days)` |
+| `enable_mix_build` | `false` | Turn the opt-in Mix build-tree adapter on (`_build/` comes back by recompiling, not downloading) |
+| `build_idle_days` | `45` | Extra idle gate for the build-tool adapters (cargo, gradle, maven, swift, dart, mix_build); applied as `max(build_idle_days, idle_days)` |
 | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. A floor, never a bypass: `max(idle_days, build_idle_days, this)`. `-` clears it |
 | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, comma-separated by name. A disabled adapter is not detected, not counted, not pruned — as if that ecosystem were not installed. `-` clears the list |
 

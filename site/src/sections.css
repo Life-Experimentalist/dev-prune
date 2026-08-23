@@ -93,22 +93,28 @@ section[id],
 }
 
 .hero-stats {
-  display: flex;
-  gap: 2.5rem;
-  margin-top: 2rem;
-  flex-wrap: wrap;
+  /* A grid, not a wrapping flex row: at 1080px wide the flex version broke
+     to two-then-one and left the third figure stranded on its own line. */
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem 2rem;
+  margin-top: 0;
+  align-self: center;
 }
 .hero-stats > div {
   display: flex;
   flex-direction: column;
+  gap: 0.15rem;
+  padding-left: 0.85rem;
+  border-left: 2px solid var(--border-color);
 }
 .hero-stats strong {
-  font-size: 1.8rem;
-  line-height: 1.1;
-  background: linear-gradient(120deg, var(--primary), var(--cyan));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
 }
 .hero-stats span {
   font-size: 0.8rem;
@@ -398,6 +404,16 @@ section[id],
   margin-bottom: 0.75rem;
 }
 
+/* The AI section is the only one carrying four cards, and the auto-fit track
+   above resolves to three at desktop width — leaving the fourth alone on its
+   own row, and squeezing `devp skill --agent antigravity` into a scrollbar.
+   Pairing them fixes both. */
+@media (min-width: 900px) {
+  #ai .split-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 /* FAQ -------------------------------------------------------------------- */
 .faq-list {
   display: grid;
@@ -486,7 +502,8 @@ section[id],
 
 @media (max-width: 720px) {
   .hero-stats {
-    gap: 1.5rem;
+    grid-template-columns: 1fr;
+    gap: 1rem;
   }
   .footer-content {
     flex-direction: column;

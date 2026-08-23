@@ -407,6 +407,17 @@ pub const VSCODE_EXTENSION_ID: &str = "VKrishna04.dev-prune";
 /// it back to the user, so a typo here sends someone to a command that does not resolve.
 pub const WINGET_PACKAGE_ID: &str = "VKrishna04.dev-prune";
 
+/// The Homebrew tap that carries the formula, as `brew tap` takes it. Not homebrew-core:
+/// plain `brew install dev-prune` resolves there, and that has a notability bar this
+/// project has not cleared. See `docs/DISTRIBUTION.md`.
+pub const HOMEBREW_TAP: &str = "Life-Experimentalist/tap";
+
+/// The Scoop bucket name and the repository behind it. `scoop bucket add` takes both,
+/// and the name is what `scoop install` then resolves `dev-prune` against.
+pub const SCOOP_BUCKET_NAME: &str = "life-experimentalist";
+/// Repository URL for [`SCOOP_BUCKET_NAME`].
+pub const SCOOP_BUCKET_URL: &str = "https://github.com/Life-Experimentalist/scoop-bucket";
+
 /// Where a person can read about the extension before installing it.
 ///
 /// The offer prints all three. The two registries carry the same build — the release

@@ -147,10 +147,11 @@ the one above:
    iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
    ```
 
-The `dev-prune` name is held on crates.io and PyPI. On npm four of the eight names are
-held and the other four, the dispatcher among them, are not — see [Name
-availability](#name-availability). "Unclaimed" has a shelf life, so finishing that list
-is also what secures the name there.
+The `dev-prune` name is held on crates.io and PyPI. On npm five of the eight names are
+held — the dispatcher and the four Linux and macOS platform packages — and the three
+`dev-prune-win32-*` names are not, so `npm install -g dev-prune` works on Linux and macOS
+and lands without a binary on Windows. See [Name availability](#name-availability).
+"Unclaimed" has a shelf life, so finishing that list is also what secures the name there.
 
 ---
 
@@ -211,9 +212,12 @@ package names from one account in quick succession trips the registry's spam heu
 on the names — wait and retry, and open a ticket at
 [npmjs.com/support](https://www.npmjs.com/support) if it does not clear.
 
-The `publish-npm` job refuses to start publishing if any of the eight names is missing
-from the registry, and names all of them in the error. A partial release is worse than
-no release.
+The `publish-npm` job does not refuse to start when a name is missing. It skips that one,
+publishes the rest, and names what it skipped — as a `::warning::` on the job and as a
+row in the release summary. A partial npm channel is a state this project has actually
+been in for a whole release, and holding back the names that do work helps nobody. The
+job fails only when *nothing* was published and nothing was already there, which means
+the channel does not exist at all rather than being incomplete.
 
 The eight packages the release publishes — the same eight `npm/package.json` names,
 which is where this list has to keep agreeing with reality:
@@ -332,11 +336,13 @@ a Node patch is not one anyone would think to look at.
 
 As of 2026-08-23, `dev-prune` is published on PyPI and crates.io, which is what holds a
 name on those registries. On npm the eight names are being claimed one at a time, against
-the registry's new-name throttle, and `NPM_PUBLISH` stays `false` until all eight exist:
+the registry's new-name throttle. Five exist, including the dispatcher, so the release
+can publish a working Linux and macOS channel; the three Windows names are still held by
+the throttle:
 
 | Name | npm | PyPI | crates.io |
 |---|---|---|---|
-| `dev-prune` | not yet claimed | **held (published)** | **held (published)** |
+| `dev-prune` | **held** (1.6.0) | **held (published)** | **held (published)** |
 | `dev-prune-linux-x64` | **held** (1.6.0) | n/a | n/a |
 | `dev-prune-linux-arm64` | **held** (1.6.0) | n/a | n/a |
 | `dev-prune-darwin-x64` | **held** (1.6.0) | n/a | n/a |

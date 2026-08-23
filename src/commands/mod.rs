@@ -12,6 +12,7 @@ pub mod doctor;
 pub mod hook;
 pub mod icon;
 pub mod init;
+pub mod install;
 pub mod link;
 pub mod man;
 pub mod restore;

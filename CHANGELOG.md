@@ -7,10 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.7.0] - 2026-08-23
 
-The output stops shouting, the first run stops assuming you already know everything, and
-the tool keeps itself up to date.
+The tool keeps itself up to date, the first run stops assuming you already know
+everything, the output stops shouting — and you can now move the install from one package
+manager to another without ending up with two of them.
 
 ### Added
+
+- **`devp install --channel <name>`** moves this installation from one package manager
+  to another. `devp update` has always upgraded the copy that is running, through
+  whichever channel installed it; what there was no way to do was *change* which channel
+  owns it. Someone who installed with `cargo install` and later wanted WinGet had to know
+  to remove the old copy first, and if they did not, two binaries sat on `PATH` and which
+  one won was an accident of ordering. This installs through the manager you name, then
+  removes the old copy through the manager that put it there — in that order, so a failed
+  install leaves the working copy untouched. Removing through the owning manager rather
+  than deleting the file is the point: uv, pipx, npm and cargo each keep a record of what
+  they installed, and a manager whose record still says dev-prune is there will put the
+  old binary back on its next reinstall. Nothing is migrated, because nothing needs to be
+  — the settings, the repository registry and the undo history live in the config
+  directory, which no package manager owns. `devp install` on its own says which channel
+  owns this copy, and `--dry-run` prints the whole plan without running any of it.
+
+- **Mix's `_build/`, opt-in.** `devp config set enable_mix_build true` adds a second
+  Elixir adapter, for the compiled tree, alongside the `deps/` one that has always been
+  on. It is opt-in and waits for `build_idle_days` (45) rather than `idle_days`, for the
+  same reason `enable_cargo` and `enable_gradle` are: `deps/` comes back by downloading,
+  `_build/` comes back by recompiling. Both `mix.exs` and `mix.lock` must be present
+  before either adapter deletes anything, and the next `mix compile` puts it back.
+
+- **`devp man` now opens on a contents page.** It used to print roff — the raw `.TH` and
+  `.SH` source — at whatever terminal ran it, on the assumption that something downstream
+  would format it. On Windows there is no `man` to hand it to, so what people actually got
+  was a screenful of markup. `devp man` now prints a page you can read: every command
+  grouped by what it is *for* — register repositories, prune and put back, look at what is
+  going on, settings and integration, the program itself — one line each, then the flags
+  that go before the command and the exit codes. `devp man <command>` prints one command's
+  page. Roff still appears wherever something can use it: a redirect or a pipe gets it, so
+  `devp man | man -l -` and `devp man --dir ./man` are unchanged, and `--roff` forces it
+  at a terminal.
 
 - **`devp trust --fix-ownership`** adds every registered repository Git refuses to read
   to your global `safe.directory` list, after showing you the list and asking. Git's
@@ -71,6 +105,21 @@ the tool keeps itself up to date.
   That list means "things you switched on beyond the defaults", and this is now a
   default. It keeps its own row, saying plainly what it does and how to stop it.
 
+- **The landing page has been rebuilt**, and the README with it. The hero now opens on a
+  reclaim ledger — four real directories from one `--dry-run` pass, each with the lockfile
+  that proved it recoverable and the one that refused — instead of a stat block. The whole
+  page is laid out for phones, tablets, portrait monitors and wide desktops rather than
+  three breakpoints, motion respects `prefers-reduced-motion`, and every section still
+  ships visible in the prerendered HTML for anything that does not run JavaScript.
+
+- **Non-ASCII paths are now documented, having been verified end to end.** A repository at
+  `ワークスペース/项目目录名称测试/프론트엔드` is scanned, verified, pruned and restored like
+  any other, and the terminal tables pad by display *column* rather than by character, so a
+  full-width name does not knock `devp status` and `devp doctor` out of alignment. This was
+  already true; nothing in the code changed. It is written down now — in the README, the
+  agent skill and the site — because a tool that never says so is assumed not to. Program
+  messages remain English; the site's pitch is available in ten languages.
+
 ### For contributors
 
 - **CodeQL runs on every push, every pull request and weekly, with the extended query
@@ -101,11 +150,12 @@ the tool keeps itself up to date.
   packages no longer exists, and npm's January 2027 removal of direct publish access for
   bypass-2FA tokens is a date this project can ignore. The job now upgrades npm before
   publishing — exchanging an OIDC token needs 11.5.1 or newer, and the npm inside a Node
-  release is whatever shipped that day — and refuses to publish anything if any of the
-  eight names is missing from the registry, naming all of them at once. Trusted
-  publishing cannot create a name ([npm/cli#8544](https://github.com/npm/cli/issues/8544)),
-  so a missing one is a job for a workstation and `npm login`, and finding that out
-  halfway through eight publishes is how a release ends up half-shipped.
+  release is whatever shipped that day. Trusted publishing cannot create a
+  name ([npm/cli#8544](https://github.com/npm/cli/issues/8544)), so the job skips any of
+  the eight names the registry does not know yet, publishes the rest, and says which ones
+  it skipped in the release summary. A partial npm channel is a real state to be in — a
+  new name has to be created once from a workstation with `npm login` — and a release
+  that refuses to ship the names that do work helps nobody.
 
 - **Two check-then-use file races are gone.** `site/prerender.js` tested for its inputs
   with `existsSync` and then read them; it now reads them and reports the failure it
@@ -126,6 +176,20 @@ the tool keeps itself up to date.
   and the tests state what is on rather than inheriting it.
 
 ### Fixed
+
+- **`devp doctor` can see other copies of dev-prune again.** The "Other copies" check
+  asks each `dev-prune` and `devp` it finds on `PATH` what version it is, and reports the
+  ones that differ from the running build — which matters because whichever comes first on
+  `PATH` is the one you actually get when you type `devp`. It asked by running
+  `--version` and looking for an `x.y.z`, and this CLI does not print one: the banner ends
+  `v1.7.0` and the line under it reads `dev-prune (devp) v1.7.0`, so every token had a `v`
+  in front of it and none of them parsed. A copy that cannot state a version is deliberately
+  left alone — it is far more likely to be an unrelated file under the same name — so the
+  check quietly classified every real dev-prune on the machine as "not a dev-prune" and
+  reported "none on PATH running a different version" no matter how many were sitting
+  there. It now reads the version it prints. On a machine with a `cargo install` copy in
+  front of the managed one, that line is the difference between "everything is fine" and
+  the reason `devp -V` still says the old number after an upgrade.
 
 - **WinGet manifests are generated with no byte-order mark and CRLF line endings**, which
   is what `winget-pkgs` itself writes and what every manifest already in the catalog

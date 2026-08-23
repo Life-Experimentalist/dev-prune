@@ -178,7 +178,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 
   Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `poetry`, `pdm`,
   `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`, `terraform` —
-  plus `gradle`, `maven`, `swift` and `dart`, which are opt-in (see below). An unrecognised name is an error
+  plus `gradle`, `maven`, `swift`, `dart` and `mix_build`, which are opt-in (see below). An unrecognised name is an error
   listing the valid ones rather than a silently empty pass, and `--only` and `--skip`
   cannot be combined. A name listed in `disabled_adapters` is gone from that set
   entirely, and `--only <that name>` prunes nothing.
@@ -198,12 +198,12 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `modules/` is fetched from module sources that `.terraform.lock.hcl` says nothing
   about. Providers are the bulk anyway, and the lock file proves those exactly.
 
-  **Cargo, Gradle, Maven, SwiftPM and Dart are opt-in adapters.** `devp config set
-  enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true`
-  / `enable_dart true` turns each on; until then the adapter is invisible everywhere — `status`, `run`,
+  **Cargo, Gradle, Maven, SwiftPM, Dart and Mix's build tree are opt-in adapters.**
+  `devp config set enable_cargo true` / `enable_gradle true` / `enable_maven true` /
+  `enable_swift true` / `enable_dart true` / `enable_mix_build true` turns each on; until then the adapter is invisible everywhere — `status`, `run`,
   `--only cargo` all behave as if it did not exist. They are off by default because of
   what it costs to get their directories back, not because of any doubt that they come
-  back: `target/`, `build/`, `.gradle/` and `.build/` are compiler output, so they
+  back: `target/`, `build/`, `.gradle/`, `.build/` and `_build/` are compiler output, so they
   return by *recompiling from the sources in the repository* rather than by
   re-downloading, and a large workspace can spend minutes doing that where a dependency
   reinstall spends seconds. For the same reason they answer to their own idle threshold:
@@ -435,8 +435,9 @@ reads unambiguously:
     | `enable_maven` | `false` | Turn on the opt-in Maven adapter (`target/`) |
     | `enable_swift` | `false` | Turn on the opt-in Swift Package Manager adapter (`.build/` — compiled modules, so they come back by recompiling) |
     | `enable_dart` | `false` | Turn on the opt-in Dart/Flutter adapter (`.dart_tool/` — pub metadata restores in a second, but the `build_runner` and `flutter_build` caches beside it come back by recompiling) |
+    | `enable_mix_build` | `false` | Turn on the opt-in Mix build-tree adapter (`_build/` — separate from the always-on `mix` adapter, which claims only `deps/`: that comes back by downloading, this one only by recompiling the project and every dependency in it) |
     | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, by name, comma-separated. A disabled adapter is not detected, not counted by `stats`, not probed for by `doctor` and never pruned — as if the ecosystem were not installed. `devp config set disabled_adapters -` clears the list |
-    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart), applied as `max(build_idle_days, idle_days)` |
+    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart, mix_build), applied as `max(build_idle_days, idle_days)` |
     | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. Each raises only its own adapter's wait — `max(idle_days, build_idle_days, this)` — and can never lower one. `devp config set adapter_idle_days -` clears the map |
     | `auto_update` | `true` | Download and install a newer release by itself at the end of a prune pass, once the release check has found one. Never runs a package manager unattended, and stands aside entirely on WinGet, Scoop and Homebrew, where the manager owns the upgrade |
 
@@ -964,11 +965,21 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 17. `devp man [--dir <DIR>]`
-- **Description**: Renders the manual as man pages, generated from the same clap definitions `--help` prints — so the manual cannot describe a flag the program does not have. With no arguments the main `devp(1)` page goes to stdout, ready to pipe into `man -l -`. With `--dir` the full set is written into a directory: `devp.1`, `dev-prune.1`, and one `devp-<command>.1` per subcommand, ready to copy onto `manpath`.
+### 17. `devp man [COMMAND] [--dir <DIR>] [--roff]`
+- **Description**: The manual, generated from the same clap definitions `--help` prints — so the manual cannot describe a flag the program does not have.
+- **At a terminal, `devp man` prints the contents page**: every command grouped by what it is for with one line each, the flags that go *before* the command, and the exit codes. It is a page to navigate from, not a page to read straight through — which is why it is not the top-level `--help` text, one screen of prose followed by every subcommand's one-liner in definition order.
+- **`devp man <command>`** prints that one command's page. It is the same text `devp <command> --help` prints, because it is the same definition; the name that is easier to remember is the point.
+- **Roff appears only where something can use it.** `man` formats roff and people do not read it, and on Windows there is no `man` to hand it to — so a terminal gets readable text, and a redirect or a pipe gets roff: `devp man > devp.1` and `devp man | man -l -` are unchanged, as is `devp man run --roff > devp-run.1`. `--roff` forces roff at a terminal too.
+- **Flags**:
+  - `--dir <DIR>` — write the full set into a directory instead: `devp.1`, `dev-prune.1` (the same page under the binary's other name) and one `devp-<command>.1` per subcommand, ready to copy onto `manpath`.
+  - `--roff` — print roff even at a terminal.
+- **Exit code**: `0`, or `1` when `COMMAND` is not a command — the error lists the ones that are.
 - **Examples**:
   ```bash
-  devp man | man -l -             # read the main page now (Linux/macOS)
+  devp man                        # the contents page, on any platform
+  devp man run                    # one command's page
+  devp man | man -l -             # read it formatted by man (Linux/macOS)
+  devp man --roff > devp.1        # save the roff source
   devp man --dir ./man            # write the full set into ./man
   sudo cp man/*.1 /usr/local/share/man/man1/
   ```
@@ -980,7 +991,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 - **Two sections, and the split is the point**:
   - **Guaranteed by the code** — the seven [safety invariants](SAFETY_INVARIANTS.md) plus the two questions asked as often as any of them: there is no telemetry endpoint, and build output is never deleted. These rows read the same on every machine. None of them has a setting or a flag behind it, and a build where one did not hold would be a bug, not a configuration.
   - **On this machine** — read live: whether the scheduler is installed, whether the Git hooks register repositories on their own, how many repositories are registered, the idle window, the managed binary's path, and the settings that widen what may happen without you asking.
-- **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
+- **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
 - **No letter grade, on purpose**: `trust level: MEDIUM` tells nobody which switch to look at. The report lists the switches.
 - **Row marks**: `+` guaranteed or safe, `!` widened, blank for a neutral fact (a path, a count).
 - **Flags**:
@@ -995,6 +1006,28 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   devp trust --fix-ownership --yes    # for a script
   devp trust --json | jq '.summary.widened'
   devp trust --json | jq -e '.summary.widened_count == 0'   # non-zero if anything is widened
+  ```
+
+---
+
+### 19. `devp install [--channel <NAME>] [--dry-run]`
+- **Description**: Move this installation from one package manager to another. [`devp update`](#10-devp-update---offline----install) always upgrades the copy that is running, through whichever channel installed it; this command changes *which* channel owns it. With no `--channel` it reports the channel that owns the running binary and lists the names `--channel` accepts.
+- **The order is the safety property**: it installs through the manager you name first, then removes the old copy through the manager that put it there. An install that fails leaves the working copy exactly where it was, so there is no window in which the machine has no `devp`.
+- **Why it uninstalls through the old manager rather than deleting the file**: cargo, npm, uv, pipx and the rest each keep a record of what they installed. A manager whose record still says `dev-prune` is present will put the old binary back on its next upgrade, and two copies on `PATH` means which one wins is an accident of ordering.
+- **Nothing is migrated, because nothing needs to be.** Settings, the repository registry and the undo history live in the config directory, which no package manager owns and none of them touch.
+- **Channel names**: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`. `cargo` uses `cargo binstall` when it is available and `cargo install` otherwise; `scoop` and `homebrew` add the project's bucket or tap first, best-effort, because re-adding one that is already there fails harmlessly. A bare `pip install` is not offered as a destination: it puts the console script wherever the active interpreter happens to be, which is the ambiguity `uv tool` and `pipx` exist to remove.
+- **Flags**:
+  - `--channel <NAME>` — the manager to move to. Omit to report the current one.
+  - `--dry-run` — print the numbered plan and run none of it.
+  - `--yes` (global) — skip the confirmation prompt.
+- **Two cases have nothing to uninstall**, and the plan says which: a copy installed by the install script (the managed copy stays and refreshes itself from the new binary), and a copy in an unrecognised location (remove the file yourself if you want it gone).
+- **Exit code**: `0` on success or a clean `--dry-run`, `1` if the install through the new manager fails. A failed *uninstall* of the old copy warns and still exits `0` — the new copy is installed, and the command to finish the job is printed.
+- **Examples**:
+  ```bash
+  devp install                              # which channel owns this copy
+  devp install --channel winget --dry-run   # print the plan, change nothing
+  devp install --channel uv                 # move onto uv, and remove the old copy
+  devp install --channel cargo --yes        # skip the confirmation prompt
   ```
 
 ---

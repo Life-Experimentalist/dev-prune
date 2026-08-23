@@ -86,7 +86,8 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         "composer" => "composer update --no-install",
         "bundler" => "bundle lock",
         "cocoapods" => "pod install",
-        "mix" => "mix deps.get",
+        // Both Mix adapters refuse on a missing `mix.lock`, and one command writes it.
+        "mix" | "mix_build" => "mix deps.get",
         // Writes the provider selections into `.terraform.lock.hcl` without touching
         // the backend, which is the whole of what this adapter needs proven.
         "terraform" => "terraform providers lock",

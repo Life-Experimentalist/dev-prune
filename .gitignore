@@ -45,3 +45,4 @@ editors/jetbrains/build/
 editors/jetbrains/.gradle/
 editors/jetbrains/gradle/
 editors/jetbrains/gradlew*
+.gstack/

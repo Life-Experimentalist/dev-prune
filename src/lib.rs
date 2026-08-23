@@ -328,10 +328,19 @@ pub enum Commands {
     /// Print or write man pages, generated from the same definitions `--help` prints.
     #[command(long_about = help::MAN_LONG, after_long_help = help::MAN_EXAMPLES)]
     Man {
+        /// The command whose page to read, e.g. `devp man run`. Omit for the
+        /// contents page.
+        command: Option<String>,
+
         /// Write `devp.1` plus one `devp-<command>.1` per subcommand into this
-        /// directory, instead of printing the main page to stdout.
+        /// directory, instead of rendering the main page to stdout.
         #[arg(long, value_name = "DIR")]
         dir: Option<String>,
+
+        /// Print the roff source even when stdout is a terminal, instead of the
+        /// readable manual.
+        #[arg(long)]
+        roff: bool,
     },
 
     /// Report the size of every package manager cache on this machine (read-only unless you ask for `clear`).
@@ -419,6 +428,19 @@ pub enum Commands {
         /// corrupt registry file, which needs a human decision.
         #[arg(long, conflicts_with = "path")]
         fix: bool,
+    },
+
+    /// Move this install to another package manager: `devp install --channel uv`.
+    #[command(long_about = help::INSTALL_LONG, after_long_help = help::INSTALL_EXAMPLES)]
+    Install {
+        /// The package manager to move this installation to. Omit to print which one
+        /// owns the running copy, and the names this flag accepts.
+        #[arg(long, value_enum, value_name = "NAME")]
+        channel: Option<commands::install::TargetChannel>,
+
+        /// Print the commands that would run, and run none of them.
+        #[arg(long)]
+        dry_run: bool,
     },
 
     /// Remove dev-prune: scheduler, hooks, PATH entry, agent skill, and every copy of the binary.
@@ -808,7 +830,9 @@ pub fn run_cli() {
         }
         Commands::Stats { json } => commands::stats::run(json),
         Commands::Completions { shell } => commands::completions::run(shell),
-        Commands::Man { dir } => commands::man::run(dir.as_deref()),
+        Commands::Man { command, dir, roff } => {
+            commands::man::run(command.as_deref(), dir.as_deref(), roff)
+        }
         Commands::Trust {
             json,
             fix_ownership,
@@ -881,6 +905,7 @@ pub fn run_cli() {
             let path = path.map(|p| config::expand_tilde(&p));
             commands::doctor::run(path.as_deref(), fix)
         }
+        Commands::Install { channel, dry_run } => commands::install::run(channel, dry_run, cli.yes),
         Commands::Uninstall { deep } => commands::uninstall::run(deep, cli.yes),
     };
 

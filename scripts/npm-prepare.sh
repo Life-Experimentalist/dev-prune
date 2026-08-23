@@ -83,7 +83,21 @@ matching your machine. Installing this one directly gives you a binary with no l
 and no upgrade path.
 
 Documentation: <https://devprune.vkrishna04.me>
+
+---
+
+What follows is the dev-prune README, so this page describes the tool rather than just
+refusing to be installed. Every command in it is run through the dispatcher package,
+not through this one.
+
+---
+
 EOF
+
+    # The warning above stays first: this page must never read like an install target.
+    # Everything after it is the same README the dispatcher and the repository carry, so
+    # somebody who lands here from a search sees what the tool is.
+    cat "$repo_root/README.md" >> "$dir/README.md"
 
     cat > "$dir/package.json" <<EOF
 {

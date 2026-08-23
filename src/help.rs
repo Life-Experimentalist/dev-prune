@@ -187,16 +187,20 @@ EXAMPLES:
 
 Run interactively with a terminal, `--json` also copies the document to the clipboard.";
 
-pub const MAN_LONG: &str = "\
-Render the manual as man pages, from the same clap definitions `--help` prints, so the \
-manual cannot describe a flag the program does not have. With no arguments the main \
-`devp(1)` page goes to stdout, ready to pipe into `man -l -`; `--dir` writes the full \
-set (`devp.1`, `dev-prune.1`, and one `devp-<command>.1` per subcommand) into a \
-directory, ready to copy onto `manpath`.";
+pub const MAN_LONG: &str = "Render the manual, from the same clap definitions `--help` prints, so the manual cannot describe a flag the program does not have.
 
-pub const MAN_EXAMPLES: &str = "\
-EXAMPLES:
-  devp man | man -l -             Read the main page now (Linux/macOS)
+`devp man` at a terminal prints the contents page: every command grouped by what it is for, one line each, plus the flags that go before the command and the exit codes. `devp man <command>` prints that one command's page — the same text `devp <command> --help` prints, because they are the same definition.
+
+The roff source is something `man` formats, not something a person reads, and on Windows there is no `man` to hand it to, so it appears only where something can use it: redirect or pipe the output and it is roff again, so `devp man > devp.1` and `devp man | man -l -` are unchanged. `--roff` forces roff at a terminal too.
+
+`--dir` writes the full set (`devp.1`, `dev-prune.1`, and one `devp-<command>.1` per subcommand) into a directory, ready to copy onto `manpath`.";
+
+pub const MAN_EXAMPLES: &str = "EXAMPLES:
+  devp man                        The contents page, on any platform
+  devp man run                    One command's page
+  devp man | man -l -             Read it formatted by man (Linux/macOS)
+  devp man --roff > devp.1        Save the roff source
+  devp man run --roff > devp-run.1   Save one page's roff source
   devp man --dir ./man            Write the full set into ./man
   sudo cp man/*.1 /usr/local/share/man/man1/   Install them system-wide";
 
@@ -526,6 +530,31 @@ EXAMPLES:
   devp update                     Version, latest release, upgrade command
   devp update --install           Upgrade now, through the owning channel
   devp update --offline           No network this run";
+
+pub const INSTALL_LONG: &str = "\
+Move this installation from one package manager to another.
+
+`devp update` always upgrades the copy that is running, through whichever channel \
+installed it. This command changes *which* channel owns it: it installs through the \
+manager you name, then removes the old copy through the manager that put it there — in \
+that order, so a failed install leaves the working copy untouched.
+
+Removing the old copy through its own manager, rather than deleting the file, is the \
+point: uv, pipx, npm, cargo and the rest each keep a record of what they installed, and \
+a manager whose record still says dev-prune is there will put the old binary back.
+
+Nothing is migrated, because nothing needs to be. Settings, the repository registry and \
+the undo history live in the config directory, which no package manager owns.
+
+With no `--channel` it prints which manager installed this copy and what `--channel` \
+accepts. `--dry-run` prints the commands without running any of them.";
+
+pub const INSTALL_EXAMPLES: &str = "\
+EXAMPLES:
+  devp install                              Which channel owns this copy
+  devp install --channel winget --dry-run   Print the plan, change nothing
+  devp install --channel uv                 Move onto uv, and remove the old copy
+  devp install --channel cargo --yes        Skip the confirmation prompt";
 
 pub const SKILL_LONG: &str = "\
 Teach your AI assistant this tool. Exports SKILL.md — the full agent-facing manual: \

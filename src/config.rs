@@ -121,6 +121,12 @@ pub struct Settings {
     /// recompiling. See [`crate::adapters::dart`].
     #[serde(default)]
     pub enable_dart: bool,
+    /// Whether the opt-in Mix build-tree adapter is active. Off by default, and separate
+    /// from the always-on `mix` adapter: that one deletes `deps/`, which comes back by
+    /// downloading, while `_build/` comes back only by recompiling the project and every
+    /// dependency in it. See [`crate::adapters::mix_build`].
+    #[serde(default)]
+    pub enable_mix_build: bool,
     /// Idle days required before *build-tree* directories (cargo, gradle, maven,
     /// swift) are pruned.
     ///
@@ -252,6 +258,7 @@ impl Default for Settings {
             enable_maven: false,
             enable_swift: false,
             enable_dart: false,
+            enable_mix_build: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: constants::DEFAULT_AUTO_UPDATE,
             disabled_adapters: Vec::new(),

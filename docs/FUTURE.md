@@ -34,13 +34,16 @@ Work that exists and is waiting on a party that is not this repository.
 
 ## Next
 
-- **Finishing the npm channel.** Four of the eight packages are published —
-  `dev-prune-linux-x64`, `dev-prune-linux-arm64`, `dev-prune-darwin-x64` and
-  `dev-prune-darwin-arm64`, all at 1.6.0. The remaining four, including the `dev-prune`
-  dispatcher that everything else exists to serve, are held by the registry's new-package
-  spam heuristic, which is a throttle rather than a verdict on the names. Until the
-  dispatcher exists there is no `npm install -g dev-prune`, so the channel is not usable
-  and is not documented as if it were. The release job stays gated on `NPM_PUBLISH`. See
+- **Finishing the npm channel on Windows.** Five of the eight packages are published:
+  the `dev-prune` dispatcher and the four Linux and macOS platform packages. So
+  `npm install -g dev-prune` works on Linux and macOS. The three `dev-prune-win32-*`
+  names are still held by the registry's new-package spam heuristic, which is a throttle
+  rather than a verdict on the names, and npm treats a missing optional dependency as
+  non-fatal — so an npm install on Windows completes and then has no binary to run. Until
+  those three names exist, npm is documented as a Linux and macOS channel and Windows is
+  pointed at the installer, WinGet or Scoop. Nothing in the release automation is waiting
+  on this: `scripts/npm-publish.sh` skips a name it cannot create and publishes the rest,
+  and the release summary says which ones were skipped. See
   [`RELEASING.md`](RELEASING.md).
 - **Switching on the WinGet submission.** The release job that raises the `winget-pkgs`
   pull request is built and gated the same way npm is: it reports `skipped` until the
@@ -55,29 +58,15 @@ Work that exists and is waiting on a party that is not this repository.
 
 ## Later
 
-- **Moving between install channels.** dev-prune already knows which channel delivered the
-  running binary — `Channel::detect` reads it out of the executable's path, and the upgrade
-  and uninstall command for every channel are already written down. What does not exist is
-  a way to *change* it. Somebody who installed with `cargo install` and later wants WinGet
-  has to know to remove the old copy first, and if they do not, two binaries sit on `PATH`
-  and which one wins is an accident of ordering. A `devp install --channel <name>` that
-  removed the current copy through its own manager, installed through the new one, and
-  carried the config and the registry across would be built almost entirely out of parts
-  that already exist. It is here rather than in **Next** because it spawns somebody else's
-  package manager to uninstall something, which is a category of action this tool has so
-  far kept behind an explicit request.
-
 - **More adapters.** The trait, registration and test recipe are in
   [`ADDING_ADAPTERS.md`](ADDING_ADAPTERS.md), and the opt-in mechanism (`opt_in()`,
   `enable_*` settings, `build_idle_days`) already exists for anything whose deletion
-  costs a recompile rather than a download. What is left after the 1.6.0 batch, in
-  rough order of how ready each one is:
-
-  - **Mix's `_build/`.** The Elixir adapter deletes `deps/` today. `_build/` is a
-    compiled tree, so it is opt-in territory too, and it is waiting on someone who
-    actually wants it.
-  - **Nix.** `result` symlinks are already refused for being symlinks; a real adapter
-    would have to reason about the store, which is a different kind of problem.
+  costs a recompile rather than a download. Twenty-one ship as of 1.7.0, and the obvious
+  ecosystems are covered — what is left is the awkward one. **Nix**: `result` symlinks
+  are already refused for being symlinks, and a real adapter would have to reason about
+  the store, which is a different kind of problem from "a lockfile says this comes back".
+  Beyond that this is a standing invitation rather than a queue: name the manager and the
+  recipe is written down.
 - **JetBrains plugin publishing.** The icon micro-plugin in `editors/jetbrains/` builds;
   the marketplace listing is the remaining step. It needs a JDK and downloads the
   IntelliJ platform on first build, so it is deliberately outside the repository gate.
