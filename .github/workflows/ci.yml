@@ -37,7 +37,7 @@ jobs:
         with:
           components: clippy, rustfmt
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # Several tests shell out to `git init`; a runner without a configured identity
       # still inits fine, but set one so any future test that commits does not hang.
@@ -72,7 +72,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.msrv.outputs.msrv }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # Cargo.toml advertises the MSRV; nothing enforced it, so a stable-only API could
       # land and silently break every user pinned to it.
       - name: Build against the declared MSRV
@@ -100,7 +100,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: ${{ matrix.target }}
       - name: Check the target
@@ -112,7 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # `cargo package` applies the `include` allowlist in Cargo.toml and then *compiles*
       # the resulting tarball. That second half is the point: the binary embeds SKILL.md,
       # the JSON schema and the MIME icons with `include_bytes!`/`include_str!`, so a file
@@ -235,7 +235,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # Caches $CARGO_HOME/bin as well as the build, so cargo-audit is compiled once
       # rather than on every push.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: audit
       - name: Install cargo-audit

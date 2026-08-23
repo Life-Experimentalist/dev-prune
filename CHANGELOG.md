@@ -84,6 +84,22 @@ the tool keeps itself up to date.
   more languages. The scheduled run matters as much as the push one — the code will not
   have changed, but the queries will have.
 
+- **The third-party actions in CI and the release workflow are pinned to commit SHAs.**
+  CodeQL's first pass flagged all fifteen references: a tag is a moving pointer, so
+  `@v2` is a promise from whoever can still push that tag. The three that hold something
+  worth stealing are now pinned by digest with the version in a trailing comment —
+  `Swatinem/rust-cache`, which can poison a build cache, and `softprops/action-gh-release`
+  and `pypa/gh-action-pypi-publish`, which carry `contents: write` and the PyPI identity.
+  Dependabot updates a digest pin the same way it updates a tag. `dtolnay/rust-toolchain`
+  stays on `@stable` and `@master`: that action reads the toolchain to install out of its
+  own ref, so a digest there would name a toolchain that does not exist.
+
+- **Two check-then-use file races are gone.** `site/prerender.js` tested for its inputs
+  with `existsSync` and then read them; it now reads them and reports the failure it
+  actually got. The VS Code extension's `devprune.createConfig` tested for `.devprune.json`
+  before writing it with the `wx` flag — the flag was already the whole check, and the
+  test in front of it could only ever be out of date.
+
 - **The seven npm platform packages now ship a README saying not to install them.**
   npmjs.com prints `npm i <name>` at the top of every package page with no way to suppress
   it, so a page for a Linux binary read as an install target. The only lever is what

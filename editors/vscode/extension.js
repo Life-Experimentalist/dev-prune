@@ -477,15 +477,15 @@ function registerCommands(context) {
 			const root = workspaceRoot();
 			if (!root) return;
 			const file = path.join(root, '.devprune.json');
-			if (!fs.existsSync(file)) {
-				// The same skeleton the CLI's docs show: the $schema line wires
-				// up validation and hover docs the moment the file opens.
-				const skeleton = `{\n\t"$schema": "${SCHEMA_URL}",\n\t"override_idle_days": 15\n}\n`;
-				try {
-					fs.writeFileSync(file, skeleton, { flag: 'wx' });
-				} catch {
-					// Lost the race to another writer — fall through and open it.
-				}
+			// The same skeleton the CLI's docs show: the $schema line wires up
+			// validation and hover docs the moment the file opens. `wx` is the whole
+			// existence check — it fails if the file is already there, which is the
+			// same outcome an `existsSync` would have produced and cannot be raced.
+			const skeleton = `{\n\t"$schema": "${SCHEMA_URL}",\n\t"override_idle_days": 15\n}\n`;
+			try {
+				fs.writeFileSync(file, skeleton, { flag: 'wx' });
+			} catch {
+				// Already exists, or another writer won the race — open what is there.
 			}
 			vscode.workspace.openTextDocument(file).then((doc) => vscode.window.showTextDocument(doc));
 		}),

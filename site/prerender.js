@@ -11,7 +11,7 @@
 // empty <div id="root"> and every crawler that does not execute JavaScript sees a blank
 // page. With it, the shipped HTML is the whole page and the client merely hydrates.
 
-import { readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -20,22 +20,28 @@ const templatePath = resolve(root, 'dist/index.html');
 const serverEntry = resolve(root, 'dist-ssr/entry-server.js');
 const PLACEHOLDER = '<!--app-html-->';
 
-if (!existsSync(templatePath)) {
-  console.error(`prerender: ${templatePath} is missing — run the client build first.`);
+// Read rather than test-then-read: an `existsSync` before the read answers a question
+// about the past, and the only thing it buys over catching the failure is a second
+// syscall.
+let template;
+try {
+  template = readFileSync(templatePath, 'utf8');
+} catch {
+  console.error(`prerender: ${templatePath} is missing or unreadable — run the client build first.`);
   process.exit(1);
 }
-if (!existsSync(serverEntry)) {
-  console.error(`prerender: ${serverEntry} is missing — run the SSR build first.`);
-  process.exit(1);
-}
-
-const template = readFileSync(templatePath, 'utf8');
 if (!template.includes(PLACEHOLDER)) {
   console.error(`prerender: index.html has no ${PLACEHOLDER} placeholder to fill.`);
   process.exit(1);
 }
 
-const { render } = await import(pathToFileURL(serverEntry).href);
+let render;
+try {
+  ({ render } = await import(pathToFileURL(serverEntry).href));
+} catch {
+  console.error(`prerender: ${serverEntry} is missing or unloadable — run the SSR build first.`);
+  process.exit(1);
+}
 const appHtml = render();
 
 if (!appHtml || appHtml.length < 1000) {
