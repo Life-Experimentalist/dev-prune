@@ -129,10 +129,16 @@ pub struct Settings {
     /// long recompile. Applied as `max(build_idle_days, idle_days)`.
     #[serde(default = "default_build_idle_days")]
     pub build_idle_days: u64,
-    /// Whether `devp update --install` runs by itself at the end of a prune pass when
-    /// a newer release is known. Off by default: replacing the binary is visible,
-    /// channel-specific behaviour the user opts into.
-    #[serde(default)]
+    /// Whether a newer release installs itself at the end of a prune pass, once the
+    /// periodic check has found one.
+    ///
+    /// On by default. A pruner that runs on a schedule is exactly the kind of tool
+    /// nobody thinks to upgrade, and an old one keeps whatever bug it shipped with
+    /// forever. What runs here is the download-and-replace half only: see
+    /// [`crate::commands::update::maybe_auto_update`], which never hands the machine to
+    /// a package manager unattended and stands aside entirely on WinGet, Scoop and
+    /// Homebrew, where the manager owns the upgrade.
+    #[serde(default = "default_auto_update")]
     pub auto_update: bool,
     /// Adapters switched off by name, whatever their lockfiles say.
     ///
@@ -195,6 +201,10 @@ fn default_update_check() -> bool {
     constants::DEFAULT_UPDATE_CHECK
 }
 
+fn default_auto_update() -> bool {
+    constants::DEFAULT_AUTO_UPDATE
+}
+
 fn default_min_size_mb() -> u64 {
     constants::DEFAULT_MIN_SIZE_MB
 }
@@ -243,7 +253,7 @@ impl Default for Settings {
             enable_swift: false,
             enable_dart: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
-            auto_update: false,
+            auto_update: constants::DEFAULT_AUTO_UPDATE,
             disabled_adapters: Vec::new(),
             adapter_idle_days: BTreeMap::new(),
         }

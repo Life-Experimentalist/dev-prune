@@ -30,7 +30,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.6.0";
+const VERSION = "1.7.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -1534,13 +1534,15 @@ Notes you should rely on, not work around:
                 </div>
                 <h3>Phone home</h3>
                 <p>
-                  No analytics, no diagnostics, no usage data, no silent
-                  self-update. One request exists — an unauthenticated release
-                  check against GitHub, with no body and no identifier — and{" "}
-                  <code>devp config set update_check false</code> ends it.
-                  Upgrading is something you ask for:{" "}
-                  <code>devp update --install</code>, or the opt-in{" "}
-                  <code>auto_update</code> setting.
+                  No analytics, no diagnostics, no usage data. One request
+                  exists — an unauthenticated release check against GitHub, with
+                  no body and no identifier — and{" "}
+                  <code>devp config set update_check false</code> ends it. When
+                  that check finds a newer release, dev-prune installs it after
+                  the next pass — verified against its published SHA-256, and
+                  never by handing your machine to a package manager.{" "}
+                  <code>devp config set auto_update false</code> leaves upgrading
+                  to you.
                 </p>
               </div>
               <div className="f-card">

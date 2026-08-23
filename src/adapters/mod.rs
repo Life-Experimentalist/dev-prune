@@ -359,10 +359,25 @@ pub fn opt_in_adapter_names() -> Vec<&'static str> {
 /// each owning a different bloat directory. Adapters that would fight over the *same*
 /// directory are reduced to one first; see [`resolve_conflicts`].
 pub fn detect_adapters(project_path: &Path) -> Vec<Box<dyn PackageManager>> {
+    detect_adapters_with(project_path, opt_in_enabled(), user_disabled())
+}
+
+/// The body of [`detect_adapters`], with the two user-configured lists passed in.
+///
+/// Split out so the tests can state which opt-in adapters are on instead of inheriting
+/// whatever the machine running them has configured. `opt_in_enabled` and
+/// `user_disabled` read the real registry through a process-wide `OnceLock`, so a test
+/// calling `detect_adapters` directly asserted against the developer's own settings and
+/// passed or failed depending on whether they had ever run the config wizard.
+fn detect_adapters_with(
+    project_path: &Path,
+    opt_in: &[String],
+    disabled: &[String],
+) -> Vec<Box<dyn PackageManager>> {
     let mut detected: Vec<Box<dyn PackageManager>> = get_all_adapters()
         .into_iter()
-        .filter(|adapter| !adapter.opt_in() || opt_in_enabled().iter().any(|n| n == adapter.name()))
-        .filter(|adapter| !user_disabled().iter().any(|n| n == adapter.name()))
+        .filter(|adapter| !adapter.opt_in() || opt_in.iter().any(|n| n == adapter.name()))
+        .filter(|adapter| !disabled.iter().any(|n| n == adapter.name()))
         .filter(|adapter| adapter.detect(project_path))
         .collect();
     resolve_conflicts(project_path, &mut detected);
@@ -1484,8 +1499,15 @@ mod tests {
     }
 
     /// Names of the adapters that detect in `dir`, sorted.
+    ///
+    /// Deliberately goes through [`detect_adapters_with`] with both lists empty: no
+    /// opt-in adapter is on and nothing is disabled, whatever the machine running the
+    /// test happens to have in its own config.
     fn detected_names(dir: &Path) -> Vec<&'static str> {
-        let mut names: Vec<&'static str> = detect_adapters(dir).iter().map(|a| a.name()).collect();
+        let mut names: Vec<&'static str> = detect_adapters_with(dir, &[], &[])
+            .iter()
+            .map(|a| a.name())
+            .collect();
         names.sort_unstable();
         names
     }
@@ -1500,11 +1522,37 @@ mod tests {
         fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
         fs::write(tmp.path().join("go.mod"), "module x").unwrap();
 
-        // Cargo is missing on purpose: it is opt-in, `enable_cargo` is off here, and
-        // detection is the single funnel that has to enforce that. An opt-in adapter
-        // that still detected would be counted by status and stats and only refuse at
-        // the point of deletion.
+        // Cargo is missing on purpose: it is opt-in, nothing has switched it on here,
+        // and detection is the single funnel that has to enforce that. An opt-in
+        // adapter that still detected would be counted by status and stats and only
+        // refuse at the point of deletion.
         assert_eq!(detected_names(tmp.path()), vec!["go", "npm", "uv"]);
+    }
+
+    #[test]
+    fn test_detect_adapters_opt_in_appears_once_enabled() {
+        // The other half of the gate: switching cargo on has to make it detect, or the
+        // setting is a no-op that silently never fires.
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+
+        let on = [String::from("cargo")];
+        let mut names: Vec<&str> = detect_adapters_with(tmp.path(), &on, &[])
+            .iter()
+            .map(|a| a.name())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(names, vec!["cargo"]);
+    }
+
+    #[test]
+    fn test_detect_adapters_disabled_adapter_is_invisible() {
+        // `disabled_adapters` has to bite at the same funnel, for the same reason.
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("go.mod"), "module x").unwrap();
+
+        let off = [String::from("go")];
+        assert!(detect_adapters_with(tmp.path(), &[], &off).is_empty());
     }
 
     #[test]

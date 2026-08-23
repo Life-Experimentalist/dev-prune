@@ -45,6 +45,11 @@ pub enum Control {
 pub struct ConfigRow {
     pub key: &'static str,
     pub help: &'static str,
+    /// The same setting said again without jargon, shown under `help` rather than
+    /// instead of it. Someone who knows what a build tree is skips the second line;
+    /// someone who does not was going to guess, and guessing is how a setting gets
+    /// turned on for the wrong reason.
+    pub plain: &'static str,
     pub control: Control,
     /// The value, spelled the way `devp config set` would take it.
     pub value: String,
@@ -70,6 +75,33 @@ pub struct DeclarationLine {
     pub state: String,
 }
 
+/// One entry on the first-run suggestions screen.
+///
+/// Only the *first* run gets this screen. Everything on it is also on the settings list
+/// two keystrokes later, so this is not the only way to reach any of it — it exists
+/// because a list of twenty-four settings, shown to somebody who has had this tool
+/// installed for nine seconds, is a list nobody reads.
+#[derive(Debug, Clone)]
+pub struct Suggestion {
+    pub key: &'static str,
+    /// Three or four words naming what it turns on.
+    pub label: &'static str,
+    /// The official one-liner — the setting's own `help`.
+    pub help: &'static str,
+    /// The same thing without jargon.
+    pub plain: &'static str,
+    /// Why it is being suggested at all, which neither of the other two answers.
+    pub why: &'static str,
+    /// The value accepting it sets.
+    pub value: &'static str,
+    /// The second tier: worth turning on, with something specific to know first.
+    ///
+    /// Kept apart rather than mixed in with a warning glyph, because "recommended" and
+    /// "recommended once you know what it does" are different claims and one button
+    /// must not be able to accept both at once.
+    pub cautious: bool,
+}
+
 /// What the user decided.
 pub enum Outcome {
     /// Write these values back.
@@ -87,6 +119,9 @@ pub struct ConfigSession<'a> {
     /// A one-line summary of what has and has not happened yet.
     pub standing: String,
     pub rows: Vec<ConfigRow>,
+    /// Settings worth turning on, shown once before the full list. Empty on every run
+    /// but the first, which is the only time this screen appears at all.
+    pub suggestions: Vec<Suggestion>,
     /// Every adapter name, in registry order, for the checklist.
     pub adapters: &'a [&'static str],
     /// Adapter names that need their own `enable_*` switch as well.
@@ -111,6 +146,7 @@ fn opening_index(rows: &[ConfigRow]) -> usize {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Screen {
     Declaration,
+    Suggestions,
     Settings,
     Adapters,
     Summary,
@@ -204,6 +240,8 @@ struct State<'a> {
     picker_list: ListState,
     /// Scroll position of the declaration, which is longer than most terminals are tall.
     decl_list: ListState,
+    /// Cursor on the first-run suggestions screen.
+    sugg_list: ListState,
 }
 
 /// Run the configurator. Returns what the user decided; writing is the caller's job.
@@ -221,6 +259,9 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
     let mut decl_list = ListState::default();
     decl_list.select(Some(0));
 
+    let mut sugg_list = ListState::default();
+    sugg_list.select(Some(0));
+
     let mut state = State {
         picker_active: vec![true; session.adapters.len()],
         picker_days: vec![None; session.adapters.len()],
@@ -233,6 +274,7 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
         error: None,
         picker_list,
         decl_list,
+        sugg_list,
     };
 
     // The guard owns raw mode, the alternate screen and the panic hook, and puts all
@@ -278,6 +320,7 @@ fn event_loop(
 fn handle_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
     match state.screen {
         Screen::Declaration => declaration_key(state, code),
+        Screen::Suggestions => suggestions_key(state, code),
         Screen::Settings => settings_key(state, code),
         Screen::Adapters => adapters_key(state, code),
         Screen::Summary => summary_key(state, code),
@@ -301,12 +344,91 @@ fn declaration_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
         // still does — this screen must not turn a habit into a detour.
         KeyCode::Char('y') | KeyCode::Char('Y') => Some(Outcome::KeepAll),
         KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('c') | KeyCode::Char('C') => {
-            state.screen = Screen::Settings;
+            state.screen = if state.session.suggestions.is_empty() {
+                Screen::Settings
+            } else {
+                Screen::Suggestions
+            };
             None
         }
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => Some(Outcome::Cancelled),
         _ => None,
     }
+}
+
+/// Whether a suggestion is currently accepted: its setting already holds the value the
+/// suggestion would set.
+///
+/// Derived rather than stored. The settings list two screens on can change the same
+/// value, and a remembered "accepted" flag would then disagree with the setting it
+/// claims to describe — the summary reads the settings, so the settings are the truth.
+fn accepted(state: &State<'_>, index: usize) -> bool {
+    let s = &state.session.suggestions[index];
+    row_value(&state.session.rows, s.key).as_deref() == Some(s.value)
+}
+
+/// Accept or undo one suggestion. Undoing restores what the setting had when the view
+/// opened, not a hard-coded default: the recommendation is the only thing being
+/// withdrawn, and anything the user had already chosen is not this screen's to discard.
+fn apply_suggestion(state: &mut State<'_>, index: usize, accept: bool) {
+    let (key, value) = {
+        let s = &state.session.suggestions[index];
+        (s.key, s.value)
+    };
+    let restore = state
+        .session
+        .rows
+        .iter()
+        .find(|r| r.key == key)
+        .map(|r| r.original.clone());
+    let Some(restore) = restore else { return };
+    let next = if accept { value.to_string() } else { restore };
+    set_row(&mut state.session.rows, key, next);
+}
+
+fn suggestions_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
+    let len = state.session.suggestions.len();
+    let current = state.sugg_list.selected().unwrap_or(0);
+    match code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            state
+                .sugg_list
+                .select(Some(if current == 0 { len - 1 } else { current - 1 }))
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            state
+                .sugg_list
+                .select(Some(if current + 1 >= len { 0 } else { current + 1 }))
+        }
+        KeyCode::Char(' ') => {
+            let now = accepted(state, current);
+            apply_suggestion(state, current, !now);
+        }
+        // One key for the whole first tier, which is the point of the screen. It
+        // deliberately does not reach the cautious tier: a button that accepts the thing
+        // you were told to read about first is not a shortcut, it is a trap.
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            for i in 0..len {
+                if !state.session.suggestions[i].cautious {
+                    apply_suggestion(state, i, true);
+                }
+            }
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            for i in 0..len {
+                apply_suggestion(state, i, false);
+            }
+        }
+        KeyCode::Enter | KeyCode::Char('c') | KeyCode::Char('C') => {
+            state.screen = Screen::Settings;
+        }
+        // Straight to the summary: someone who accepted the suggestions and wants nothing
+        // else should not have to walk the full list to get out.
+        KeyCode::Char('y') | KeyCode::Char('Y') => state.screen = Screen::Summary,
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Outcome::Cancelled),
+        _ => {}
+    }
+    None
 }
 
 fn settings_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
@@ -665,6 +787,7 @@ fn parse_days(value: &str) -> Vec<(String, u64)> {
 fn render(frame: &mut Frame, state: &mut State<'_>) {
     match state.screen {
         Screen::Declaration => render_declaration(frame, state),
+        Screen::Suggestions => render_suggestions(frame, state),
         Screen::Settings => render_settings(frame, state),
         Screen::Adapters => render_adapters(frame, state),
         Screen::Summary => render_summary(frame, state),
@@ -779,11 +902,149 @@ fn render_declaration(frame: &mut Frame, state: &mut State<'_>) {
     );
 }
 
+/// The first-run suggestions: a short list, in two tiers, with the selected one
+/// explained twice underneath.
+///
+/// Two lines of explanation per setting rather than one, and only for the setting under
+/// the cursor. Printing all of it at once is how a screen becomes a wall nobody reads,
+/// which is the failure this screen exists to fix.
+fn render_suggestions(frame: &mut Frame, state: &mut State<'_>) {
+    // Only reachable with entries, and indexing on a drawn frame is not the place to be
+    // sure of that: a panic here takes the terminal down with the alternate screen on.
+    if state.session.suggestions.is_empty() {
+        state.screen = Screen::Settings;
+        return render_settings(frame, state);
+    }
+    let chunks = Layout::vertical([
+        Constraint::Length(3),
+        Constraint::Min(5),
+        Constraint::Length(7),
+        Constraint::Length(2),
+    ])
+    .split(frame.area());
+
+    let on = (0..state.session.suggestions.len())
+        .filter(|&i| accepted(state, i))
+        .count();
+    frame.render_widget(
+        header(
+            "Suggested settings",
+            // Naming the arrow keys here rather than only in the footer: the first
+            // reaction to a list of nine settings is to accept or skip the lot, and
+            // nobody arrows through an unfamiliar list to find out whether anything
+            // appears elsewhere on screen. The panel below is the point of the screen.
+            &format!(
+                "{} of {} accepted \u{2014} press \u{2191}\u{2193} to read what each one does \
+                 before deciding. Every one is off until you accept it.",
+                on,
+                state.session.suggestions.len()
+            ),
+        ),
+        chunks[0],
+    );
+
+    let selected = state
+        .sugg_list
+        .selected()
+        .unwrap_or(0)
+        .min(state.session.suggestions.len() - 1);
+    let mut items: Vec<ListItem> = Vec::new();
+    let mut tier_shown = false;
+    for (i, s) in state.session.suggestions.iter().enumerate() {
+        // The tier heading is drawn as part of the first cautious entry rather than as an
+        // entry of its own: a heading in the list would be a line the cursor can land on
+        // and Space cannot do anything to.
+        let mut lines = Vec::new();
+        if s.cautious && !tier_shown {
+            tier_shown = true;
+            lines.push(Line::from(Span::styled(
+                "  Worth turning on once you know what it does",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
+        let mark = if accepted(state, i) {
+            Span::styled(
+                "[x] ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::styled("[ ] ", dim())
+        };
+        lines.push(Line::from(vec![
+            mark,
+            Span::styled(
+                crate::output::pad_display(s.label, 28),
+                if selected == i {
+                    Style::default().fg(Color::White)
+                } else {
+                    Style::default()
+                },
+            ),
+            Span::styled(s.key.to_string(), dim()),
+        ]));
+        items.push(ListItem::new(lines));
+    }
+
+    frame.render_stateful_widget(
+        List::new(items)
+            .block(
+                Block::default()
+                    .title(" Suggested ")
+                    .borders(Borders::ALL)
+                    .border_style(dim()),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(30, 40, 60))
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("\u{25b6} "),
+        chunks[1],
+        &mut state.sugg_list,
+    );
+
+    let s = &state.session.suggestions[selected];
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(format!("  {}", s.help), Style::default())),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  In plain words  ", dim()),
+                Span::styled(s.plain.to_string(), Style::default().fg(Color::Cyan)),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  Why we suggest it  ", dim()),
+                Span::styled(s.why.to_string(), Style::default().fg(Color::Green)),
+            ]),
+        ])
+        .wrap(Wrap { trim: true })
+        .block(Block::default().borders(Borders::ALL).border_style(dim())),
+        chunks[2],
+    );
+
+    frame.render_widget(
+        footer(&[
+            ("\u{2191}\u{2193}", "read"),
+            ("Space", "accept one"),
+            ("a", "accept all suggested"),
+            ("r", "undo"),
+            ("Enter", "all settings"),
+            ("y", "done"),
+        ]),
+        chunks[3],
+    );
+}
+
 fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(5),
-        Constraint::Length(4),
+        Constraint::Length(6),
         Constraint::Length(2),
     ])
     .split(frame.area());
@@ -876,7 +1137,13 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
     // about a field belongs next to the field.
     let index = selected.unwrap_or(0);
     let row = &state.session.rows[index];
-    let mut detail = vec![Line::from(Span::styled(format!("  {}", row.help), dim()))];
+    let mut detail = vec![
+        Line::from(Span::styled(format!("  {}", row.help), Style::default())),
+        Line::from(vec![
+            Span::styled("  In plain words  ", dim()),
+            Span::styled(row.plain.to_string(), Style::default().fg(Color::Cyan)),
+        ]),
+    ];
     if row.is_new {
         detail.push(Line::from(Span::styled(
             "  New in this version — it has been applying its default since the upgrade.",
@@ -1148,6 +1415,7 @@ mod tests {
         ConfigRow {
             key,
             help: "help",
+            plain: "plain",
             control,
             value: value.to_string(),
             original: value.to_string(),
@@ -1159,6 +1427,7 @@ mod tests {
         ConfigSession {
             declaration: Vec::new(),
             standing: String::new(),
+            suggestions: Vec::new(),
             rows,
             adapters,
             opt_in_adapters: &[],
@@ -1197,6 +1466,7 @@ mod tests {
             error: None,
             picker_list,
             decl_list: ListState::default(),
+            sugg_list: ListState::default(),
         }
     }
 
@@ -1497,5 +1767,107 @@ mod tests {
         );
         rows[2].is_new = true;
         assert_eq!(opening_index(&rows), 2);
+    }
+
+    fn suggestion(key: &'static str, cautious: bool) -> Suggestion {
+        Suggestion {
+            key,
+            label: "label",
+            help: "help",
+            plain: "plain",
+            why: "why",
+            value: "true",
+            cautious,
+        }
+    }
+
+    #[test]
+    fn accept_all_stops_at_the_cautious_tier() {
+        // The whole reason the second tier exists. A single key that also accepted the
+        // setting the screen just told you to think about would make the warning
+        // decorative.
+        let adapters: &[&str] = &["npm"];
+        let mut s = session(
+            vec![
+                row("enable_cargo", Control::Toggle, "false"),
+                row("allow_manifest_rewrite", Control::Toggle, "false"),
+            ],
+            adapters,
+        );
+        s.suggestions = vec![
+            suggestion("enable_cargo", false),
+            suggestion("allow_manifest_rewrite", true),
+        ];
+        let mut st = state(s);
+        st.screen = Screen::Suggestions;
+        st.sugg_list.select(Some(0));
+
+        assert!(suggestions_key(&mut st, KeyCode::Char('a')).is_none());
+        assert_eq!(
+            row_value(&st.session.rows, "enable_cargo").as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            row_value(&st.session.rows, "allow_manifest_rewrite").as_deref(),
+            Some("false")
+        );
+
+        // Reachable, just not by the one key: Space on the row itself still takes it.
+        st.sugg_list.select(Some(1));
+        suggestions_key(&mut st, KeyCode::Char(' '));
+        assert_eq!(
+            row_value(&st.session.rows, "allow_manifest_rewrite").as_deref(),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn undoing_a_suggestion_puts_back_what_the_setting_had() {
+        let adapters: &[&str] = &["npm"];
+        let mut s = session(
+            vec![row("enable_cargo", Control::Toggle, "false")],
+            adapters,
+        );
+        s.suggestions = vec![suggestion("enable_cargo", false)];
+        let mut st = state(s);
+        st.screen = Screen::Suggestions;
+        st.sugg_list.select(Some(0));
+
+        suggestions_key(&mut st, KeyCode::Char(' '));
+        assert!(accepted(&st, 0));
+        suggestions_key(&mut st, KeyCode::Char(' '));
+        assert!(!accepted(&st, 0));
+        assert_eq!(
+            row_value(&st.session.rows, "enable_cargo").as_deref(),
+            Some("false")
+        );
+        // And the summary must not offer to save a value that never changed.
+        assert!(!st.session.rows[0].changed());
+    }
+
+    #[test]
+    fn the_suggestions_screen_is_skipped_when_there_is_nothing_to_suggest() {
+        // Every run but the first: `first_run_suggestions` returns nothing, and Enter on
+        // the declaration must go straight to the settings rather than to a blank screen.
+        let adapters: &[&str] = &["npm"];
+        let s = session(vec![row("idle_days", Control::Number, "30")], adapters);
+        let mut st = state(s);
+        st.screen = Screen::Declaration;
+        assert!(declaration_key(&mut st, KeyCode::Enter).is_none());
+        assert_eq!(st.screen, Screen::Settings);
+    }
+
+    #[test]
+    fn the_first_run_reaches_the_suggestions_first() {
+        let adapters: &[&str] = &["npm"];
+        let mut s = session(
+            vec![row("enable_cargo", Control::Toggle, "false")],
+            adapters,
+        );
+        s.suggestions = vec![suggestion("enable_cargo", false)];
+        let mut st = state(s);
+        st.screen = Screen::Declaration;
+        assert!(declaration_key(&mut st, KeyCode::Enter).is_none());
+        assert_eq!(st.screen, Screen::Suggestions);
     }
 }

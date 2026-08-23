@@ -38,8 +38,9 @@ for anything that isn't.
    keeps the whole process off the network regardless of any setting). Nothing is
    downloaded until someone asks: `devp update --install` fetches the release binary for
    the platform, refuses it unless its SHA-256 matches the sidecar published beside it,
-   and writes it to every copy this installation runs. `devp config set auto_update true`
-   is the opt-in that runs that after a prune pass. The alternative is the install
+   and writes it to every copy this installation runs. `auto_update` — on by default,
+   `devp config set auto_update false` to stop it — does that same verified download at
+   the end of a prune pass, and never runs a package manager unattended. The alternative is the install
    channel's own command — re-run the `install.sh`/`install.ps1` one-liner,
    `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade
    dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`,
@@ -86,7 +87,8 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched, rebuilding each virtual environment on the Python version it was originally built with |
 | "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan, composer, cocoapods, hex) and prints the command that clears each. Read-only |
 | "empty my npm cache" / "clear all the caches" | `devp caches clear npm` (or `all`) — **ask first**, and say what it costs: every project on the machine re-downloads on its next install, and `devp restore` stops being fast. `--dry-run` shows what would go. Never run this unprompted |
-| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the four settings that widen anything (`auto_update`, `require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`). Read-only |
+| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the three settings that widen anything (`require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`). Read-only |
+| "git says dubious ownership" / "devp run says it cannot examine my repos" | `devp trust --fix-ownership` — adds every registered repository Git refuses to read to the global `safe.directory` list, after showing the list and asking; `--yes` for a script. Repositories Git will not read have no known age and are never pruned, which is why `devp run` reports them |
 | "did I install anything my lockfiles don't know about?" | `devp status --drift` — every environment holding packages its lockfile never recorded, with the one command that records them. A pure read; this is what a prune would refuse on |
 | "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it. Across every repository at once: `devp run --explain` — read-only, every verdict listed including the quiet ones (still active with the actual age, opted out, under the size floor). Conflicts with `--json`; the `--json --dry-run` document already carries every status |
 | "is anything wrong with my install?" | `devp doctor` |
@@ -105,7 +107,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "turn the automation off" | `devp config set auto_setup false` |
 | "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed (add `--deep` to wipe config — confirm first) |
 | "is there a newer version?" | `devp update` — prints the installed and latest versions plus the right upgrade command; never installs anything by itself |
-| "upgrade it" | `devp update --install` — downloads the release binary from GitHub, verifies its SHA-256, and replaces every copy this install runs (managed binary, `devp` alias, `devpw` scheduler twin, the running binary); the package manager that delivered the first copy is not run, and the one command that resyncs its version record is printed. Falls back to that manager's own upgrade command if there is no binary for this platform. `devp config set auto_update true` makes it happen by itself after a pass |
+| "upgrade it" | `devp update --install` — downloads the release binary from GitHub, verifies its SHA-256, and replaces every copy this install runs (managed binary, `devp` alias, `devpw` scheduler twin, the running binary); the package manager that delivered the first copy is not run, and the one command that resyncs its version record is printed. Falls back to that manager's own upgrade command if there is no binary for this platform. `auto_update` does the download half by itself after a pass and is on by default; `devp config set auto_update false` stops it |
 | "clean my Rust `target/` too" / "clean my Java/Gradle/Maven builds too" / "clean my Flutter build caches too" | `devp config set enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true` — opt-in adapters, idle-gated separately by `build_idle_days` (45) |
 | "make npm wait a month" / "give one adapter its own idle window" | `devp config set adapter_idle_days npm=30,cargo=90` — a floor per adapter, applied as `max(idle_days, build_idle_days, this)`; `-` clears it. `devp config wizard` edits it beside the adapter checklist, where a language heading sets every adapter under it at once |
 | "give my editor's agent the rules" | `devp skill --agent <editor>` — writes the per-repository rules file that editor reads. Own file: `cursor`, `windsurf`, `antigravity`, `cline`, `roo`, `kilocode`, `continue`, `amazon-q`, `kiro`, `trae`. Marked block inside a shared file: `agents-md` (`AGENTS.md` — Codex, Jules, Amp, OpenCode), `copilot`, `gemini`, `junie`, `zed`. `devp skill --help` lists the exact paths |
@@ -300,7 +302,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `update_check` | `true` | Whether to ask GitHub for the latest release. Sends nothing but the request itself |
 | `update_check_interval_days` | `7` | Days between automatic release checks; `devp update` always asks |
 | `update_check_timeout_secs` | `5` | How long the release check waits for GitHub before giving up |
-| `auto_update` | `false` | Run `devp update --install` by itself at the end of a prune pass when a newer release is already known; a failed upgrade warns and never fails the pass |
+| `auto_update` | `true` | Download and install a newer release by itself at the end of a prune pass, once the release check has found one. Never runs a package manager unattended, and does nothing on WinGet/Scoop/Homebrew, where the manager owns the upgrade; a failed upgrade warns and never fails the pass |
 | `auto_config` | `false` | Whether `link`/`init` write a default `.devprune.json` into repositories they register |
 | `enable_cargo` | `false` | Turn the opt-in Cargo adapter on (`target/` is compiler output — it comes back by recompiling, not downloading) |
 | `enable_gradle` | `false` | Turn the opt-in Gradle adapter on |

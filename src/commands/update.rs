@@ -101,17 +101,41 @@ pub fn check_now(registry: &mut Registry) -> bool {
     true
 }
 
-/// Every install channel, in one place so they cannot drift apart.
+/// Name the one command that upgrades *this* copy, and only fall back to the menu.
+///
+/// The old version printed all eight channels and told the reader to pick the one they
+/// installed from. Nobody remembers that — it was a decision made once, possibly a year
+/// ago, on a machine they have since reimaged. The channel is written in the path of the
+/// running binary and `Channel::detect` already reads it, so asking the user to recall it
+/// was asking for information dev-prune already had.
 fn print_upgrade_commands() {
-    println!("  Upgrade with whichever channel you installed from:");
-    println!("    cargo binstall dev-prune --force");
-    println!("    cargo install dev-prune --force");
-    println!("    npm install -g dev-prune@latest");
-    println!("    uv tool upgrade dev-prune  /  pipx upgrade dev-prune");
-    println!("    winget upgrade --id {}", constants::WINGET_PACKAGE_ID);
-    println!("    scoop update dev-prune  /  brew upgrade dev-prune");
-    println!("    curl -fsSL {} | sh", constants::INSTALL_SH_URL);
-    println!("    iwr -useb {} | iex", constants::INSTALL_PS1_URL);
+    let channel = Channel::detect();
+    match channel.upgrade_command() {
+        Some(command) => {
+            println!("  Installed with {} — upgrade with:", channel.label());
+            println!("    {command}");
+            println!();
+            println!("  Or `devp update --install` to let dev-prune do it for you.");
+        }
+        // `Unknown` means the binary sits somewhere no channel owns — a dev build, a
+        // hand-copied file, a distro package. There is no manager to name, so this is the
+        // one case where the full list is the honest answer.
+        None => {
+            println!("  This copy is not in a location any install channel owns, so there");
+            println!("  is no package manager to name. Replace it in place with:");
+            println!("    devp update --install");
+            println!();
+            println!("  Or install through a channel, which keeps it upgradeable:");
+            println!("    cargo binstall dev-prune --force");
+            println!("    cargo install dev-prune --force");
+            println!("    npm install -g dev-prune@latest");
+            println!("    uv tool upgrade dev-prune  /  pipx upgrade dev-prune");
+            println!("    winget upgrade {}", constants::WINGET_PACKAGE_ID);
+            println!("    scoop update dev-prune  /  brew upgrade dev-prune");
+            println!("    curl -fsSL {} | sh", constants::INSTALL_SH_URL);
+            println!("    iwr -useb {} | iex", constants::INSTALL_PS1_URL);
+        }
+    }
 }
 
 /// `devp update --install`: upgrade this installation to the latest release.
@@ -520,10 +544,17 @@ fn spawn_channel_upgrade(channel: Channel) -> Result<()> {
 }
 
 /// The end-of-run hook behind `auto_update`: when the setting is on and the last release
-/// check already knows a newer version exists, run the self-update without being asked.
+/// check already knows a newer version exists, replace the binary without being asked.
 ///
 /// Warn-never-fail, like everything else that runs as a side effect of `devp run` — a
 /// broken upgrade path must not turn a successful prune into a failed command.
+///
+/// Deliberately *not* `run_install`. That function falls back to running the package
+/// manager that installed this copy, and this is the path that runs unattended: from the
+/// scheduled pass, from a git hook, from `devp run` in the middle of someone else's
+/// work. Spawning `winget upgrade` there can raise an elevation prompt and can pull in
+/// upgrades nobody asked about. Download-and-replace is safe unattended; handing the
+/// machine to a package manager is a decision, and decisions stay with the person.
 pub fn maybe_auto_update(registry: &Registry) {
     if !registry.settings.auto_update
         || crate::setup::offline_requested()
@@ -537,12 +568,35 @@ pub fn maybe_auto_update(registry: &Registry) {
     if compare_versions(constants::VERSION, latest) != Some(Ordering::Less) {
         return;
     }
+
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let managed = crate::setup::managed_exe_path().ok();
+    let channel = Channel::detect_at(&exe, managed.as_deref());
+
+    // WinGet, Scoop and Homebrew swap their whole package directory on upgrade, so bytes
+    // written there are undone by the next `winget upgrade` — which would still believe
+    // the old version is installed. Those channels own the upgrade, and
+    // `notify_if_outdated` has already printed the line naming the right command.
+    if channel.replaces_its_directory() {
+        return;
+    }
+
     println!();
-    if let Err(e) = run_install() {
-        output::print_warning(&format!(
-            "Automatic update failed ({e}). Run `devp update --install` yourself, or \
+    output::print_info(&format!(
+        "Updating dev-prune v{} -> v{latest} …",
+        constants::VERSION
+    ));
+    match install_directly(latest, &exe, managed.as_deref(), channel) {
+        Ok(()) => {
+            output::print_success(&format!("dev-prune v{latest} installed."));
+            report_channel_bookkeeping(channel);
+        }
+        Err(e) => output::print_warning(&format!(
+            "Automatic update failed ({e:#}). Run `devp update --install` yourself, or \
              `devp config set auto_update false` to stop trying."
-        ));
+        )),
     }
 }
 
@@ -723,10 +777,13 @@ mod tests {
     }
 
     #[test]
-    fn auto_update_is_off_by_default_and_silent_when_off() {
+    fn auto_update_is_on_by_default_and_silent_with_nothing_to_install() {
         let registry = Registry::default();
-        assert!(!registry.settings.auto_update);
-        // Must return without touching the network or the terminal.
+        assert!(registry.settings.auto_update);
+        // No release check has run, so `latest_known_version` is unset and this must
+        // return without touching the network or the terminal. The default being *on* is
+        // what makes that early return load-bearing rather than incidental.
+        assert!(registry.latest_known_version.is_none());
         maybe_auto_update(&registry);
     }
 

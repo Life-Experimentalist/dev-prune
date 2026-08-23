@@ -505,11 +505,12 @@ EXAMPLES:
 
 pub const UPDATE_LONG: &str = "\
 Print the installed version, ask GitHub's public API for the latest release, and \
-show the upgrade command for how this copy was installed. By default it never \
-downloads or replaces its own binary; `--install` runs the upgrade through the \
+show the upgrade command for how this copy was installed. `--install` runs the upgrade through the \
 package manager that owns this copy (cargo, npm, uv, pipx, or the installer \
-script), and `devp config set auto_update true` runs that by itself at the end of \
-a prune pass when a newer release is known. An upgrade never interrupts the \
+script). `auto_update` is on by default and does the verified-download half by \
+itself at the end of a prune pass when a newer release is known — never the \
+package-manager half, and nothing at all on WinGet, Scoop and Homebrew, where the \
+manager owns the upgrade; `devp config set auto_update false` stops it. An upgrade never interrupts the \
 scheduler: the scheduled pass runs a managed copy that refreshes itself from the \
 new binary on its next run.
 

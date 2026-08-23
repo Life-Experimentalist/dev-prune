@@ -11,10 +11,13 @@
 #    liner, and `packaging/winget/` is no exception. A winget-pkgs manifest must open with
 #    its `# yaml-language-server:` schema comment, so everything above that line is
 #    dropped here rather than by hand at submission time.
-# 2. **UTF-8 with a byte-order mark.** winget-pkgs validation rejects a manifest without
-#    one. It is invisible in every editor, which is exactly why it is worth a script.
-#
-# Line endings are left LF; winget-pkgs accepts either and the BOM is what it checks.
+# 2. **UTF-8 with no byte-order mark, and CRLF line endings.** This is what winget-pkgs'
+#    own `Tools/YamlCreate.ps1` writes — `[System.IO.File]::WriteAllLines` with a
+#    `Utf8NoBomEncoding`, on Windows — and so it is what every manifest already in the
+#    catalog looks like. Both are invisible in an editor, which is exactly why they are
+#    worth a script. This script prepended a BOM instead, on the strength of guidance that
+#    stopped being true years ago, and the review bot on the 1.6.0 submission is what
+#    caught it.
 #
 # This is the same transform the release job runs, so a manifest submitted by hand and a
 # manifest submitted by CI are byte-identical. `docs/RELEASING.md` used to spell the two
@@ -54,10 +57,15 @@ for file in "$src"/*.yaml; do
         exit 1
     fi
 
-    # The BOM, then the file from its schema comment onward. `printf` rather than a
-    # literal: a BOM pasted into a shell script is a BOM in the shell script.
-    printf '\357\273\277' > "$dest"
-    sed -n '/^# yaml-language-server:/,$p' "$file" >> "$dest"
+    # The file from its schema comment onward, with CRLF line endings. The carriage
+    # return arrives as a shell variable rather than as an escape: awk, sed and printf
+    # each spell it differently, and one of those spellings is wrong on every platform.
+    #
+    # No byte-order mark. A BOM would sit ahead of the schema comment and so could not
+    # survive this range anyway, which is the belt to that brace.
+    cr="$(printf '\r')"
+    sed -n '/^# yaml-language-server:/,$p' "$file" |
+        awk -v cr="$cr" '{ sub(cr "$", ""); print $0 cr }' > "$dest"
     count=$((count + 1))
     echo "wrote $dest"
 done

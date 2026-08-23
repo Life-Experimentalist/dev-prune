@@ -69,7 +69,7 @@ sidecar published beside it, from GitHub's release-download host.
 | **Headers sent** | `User-Agent: dev-prune/<version>` |
 | **Body sent** | none |
 | **Timeout** | 300 seconds |
-| **Frequency** | only when you run `devp update --install` — or, if you switched `auto_update` on yourself, at the end of a prune pass that already knows a newer release exists |
+| **Frequency** | when you run `devp update --install`, and — because `auto_update` is on by default — at the end of a prune pass that already knows a newer release exists. `devp config set auto_update false` leaves the download to you |
 | **Turn it off** | don't run it; `DEV_PRUNE_OFFLINE=1` refuses it outright |
 
 The asset name encodes the operating system and CPU architecture, because that is which

@@ -5,6 +5,102 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-08-23
+
+The output stops shouting, the first run stops assuming you already know everything, and
+the tool keeps itself up to date.
+
+### Added
+
+- **`devp trust --fix-ownership`** adds every registered repository Git refuses to read
+  to your global `safe.directory` list, after showing you the list and asking. Git's
+  "dubious ownership" refusal is routine after a Windows reinstall, a restored backup, or
+  a drive moved between machines — and because dev-prune dates a repository by its last
+  commit, a repository Git will not read has no known age and is never pruned. One
+  command clears the whole set; `--yes` skips the confirmation for a script. Values are
+  written with forward slashes, which is the only spelling Git actually compares against,
+  even on Windows.
+
+- **A suggested-settings screen on the first run.** Before the full list of settings, the
+  first run now shows a short one: the handful of things worth turning on, each with its
+  official description, the same thing said again without jargon, and why it is being
+  suggested at all. `a` accepts the whole first tier at once. There is a second tier for
+  settings that are worth turning on *once you know what they do* — `allow_manifest_rewrite`
+  is the one that lives there — and the accept-everything key deliberately does not
+  reach it. The screen appears once, on the first run only; everything on it stays
+  available from `devp config wizard` and `devp config set` forever.
+
+- **Every setting now has a plain-English second line**, shown under its official one in
+  the configurator and in the line-by-line fallback. "Days a repository must sit
+  untouched before it is eligible for pruning" is precise; "how long a project has to sit
+  untouched before dev-prune will clean it — something you worked on yesterday is never
+  touched" is the one that answers the question people are actually asking.
+
+### Changed
+
+- **`devp run` groups repositories it could not examine instead of listing them one by
+  one.** A machine where Git refuses twenty-one repositories on ownership used to print
+  twelve lines each — two hundred and fifty lines of near-identical text, with the two
+  real problems buried in it. It now prints one heading per *cause*, the first eight
+  paths under it, how many more there are, an explanation of what the cause means, and
+  the single command that fixes all of them. Anything that does not fall into a known
+  cause is still printed in full, on its own.
+
+- **`auto_update` is now on by default.** A pruner that runs on a schedule is exactly the
+  kind of tool nobody thinks to upgrade, and one that never upgrades keeps whatever bug
+  it shipped with. What runs automatically is only the download-and-replace half — the
+  same GitHub release binary `devp update --install` fetches, refused unless its SHA-256
+  matches the published sidecar. The package-manager half deliberately does not run
+  unattended: `winget upgrade` can raise an elevation prompt and pull in upgrades nobody
+  asked about. On WinGet, Scoop and Homebrew nothing happens at all — those managers
+  replace their whole package directory on upgrade, so they own it, and you get the
+  one-line notice naming their command instead. `devp config set auto_update false`
+  turns the whole thing off, and `DEV_PRUNE_OFFLINE=1` was already enough to stop it.
+
+- **`devp update` now names the channel you installed from**, instead of printing all
+  eight and asking you to remember which one you used. It was never a fair question — the
+  channel is a decision made once, possibly a year ago, on a machine since reimaged. It
+  was also an unnecessary one: the channel is written in the path of the running binary,
+  and dev-prune already reads it to decide what `--install` is allowed to do. You now get
+  one line, `Installed with cargo — upgrade with: cargo install dev-prune --force`, and
+  the offer to let `devp update --install` do it. The full list survives for the one case
+  that earns it: a binary in a location no channel owns, where there is genuinely no
+  package manager to name.
+
+- **`devp trust` no longer counts `auto_update` among the settings that widen anything.**
+  That list means "things you switched on beyond the defaults", and this is now a
+  default. It keeps its own row, saying plainly what it does and how to stop it.
+
+### For contributors
+
+- **CodeQL runs on every push, every pull request and weekly.** `cargo audit` answers
+  whether a dependency is known-vulnerable and says nothing about the code in this
+  repository; this is the other half. It also analyses `.github/workflows`, which holds
+  more privilege than anything else here — a release job carries a PyPI identity, a
+  crates.io token and `contents: write` — and had nothing looking at it. The scheduled run
+  matters as much as the push one: the code will not have changed, but the queries will
+  have.
+
+- **The seven npm platform packages now ship a README saying not to install them.**
+  npmjs.com prints `npm i <name>` at the top of every package page with no way to suppress
+  it, so a page for a Linux binary read as an install target. The only lever is what
+  appears directly below, and with no README npm showed nothing there.
+
+- **The adapter detection tests no longer read the machine they run on.** `detect_adapters`
+  resolves the opt-in and disabled adapter lists from the real registry, so a contributor
+  who had switched cargo on in the config wizard watched
+  `test_detect_adapters_multiple_ecosystems_coexist` fail on their machine and pass in CI,
+  where no config exists. Detection now has an inner form taking both lists as arguments,
+  and the tests state what is on rather than inheriting it.
+
+### Fixed
+
+- **WinGet manifests are generated with no byte-order mark and CRLF line endings**, which
+  is what `winget-pkgs` itself writes and what every manifest already in the catalog
+  looks like. The previous generator prepended a BOM on the strength of guidance that
+  stopped being true years ago. Both are invisible in an editor, which is exactly why the
+  fix is in the generator rather than in the committed files.
+
 ## [1.6.0] - 2026-08-23
 
 Two more ecosystems, three more machine-wide caches, and the first answer to the

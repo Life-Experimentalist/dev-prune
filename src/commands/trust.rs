@@ -133,6 +133,158 @@ pub fn run(json_output: bool) -> Result<()> {
     Ok(())
 }
 
+/// Add every registered repository Git refuses to read to its global `safe.directory`.
+///
+/// Git will not read a working tree whose owner on disk is not the account running it,
+/// and on Windows that state is routine and permanent: a reinstall, a restored backup or
+/// a drive carried between machines leaves the old account's identifier on every
+/// directory. `devp run` cannot date such a repository, and a repository whose age is
+/// unknown is one nothing is ever deleted from — so on an affected machine a large part
+/// of the registry silently does nothing until this is resolved.
+///
+/// Git's own suggestion is one `git config` invocation per repository, printed inside a
+/// twelve-line message, once per repository. This is that suggestion, applied to the
+/// repositories dev-prune already knows about, after showing which ones and asking.
+///
+/// It belongs to `trust` rather than to `run` because it widens what Git will open for
+/// every tool on the machine, not just this one. That is exactly the kind of change this
+/// command exists to make visible.
+pub fn fix_ownership(assume_yes: bool) -> Result<()> {
+    let registry = Registry::load()?;
+    let affected = repositories_git_refuses(&registry);
+
+    if affected.is_empty() {
+        output::print_success("Git reads every registered repository. Nothing to fix.");
+        return Ok(());
+    }
+
+    let n = affected.len();
+    output::print_header(&format!(
+        "{n} {} Git will not read",
+        output::plural(n, "repository", "repositories")
+    ));
+    for path in &affected {
+        println!("    {}", output::styled_path(path));
+    }
+    println!();
+    output::print_info(&format!(
+        "This adds {} to git's global `safe.directory` list, which tells Git to open {}          despite the owner recorded on disk. It affects every tool on this machine that          uses Git, not only dev-prune.",
+        output::plural(n, "this path", "these paths"),
+        output::plural(n, "it", "them")
+    ));
+    output::print_info("Undo one with:  git config --global --unset-all safe.directory <path>");
+
+    if !confirm_fix(assume_yes) {
+        return Ok(());
+    }
+
+    // Read the existing list once rather than per repository: `--add` does not
+    // deduplicate, and a machine where this was run twice would accumulate a second copy
+    // of every entry in the user's global config forever.
+    let existing = configured_safe_directories();
+    let mut added = 0usize;
+    for path in &affected {
+        let value = git_path_value(path);
+        if existing.iter().any(|e| e == &value) {
+            continue;
+        }
+        let status = crate::spawn::command("git")
+            .args(["config", "--global", "--add", "safe.directory", &value])
+            .status();
+        match status {
+            Ok(s) if s.success() => added += 1,
+            _ => output::print_warning(&format!("Could not add `{value}` — skipped.")),
+        }
+    }
+
+    output::print_success(&format!(
+        "Added {added} {}. Run `devp run --dry-run` to see what is now examinable.",
+        output::plural(added, "entry", "entries")
+    ));
+    Ok(())
+}
+
+/// Every registered repository whose path exists but which Git refuses on ownership.
+///
+/// Asks Git directly rather than reusing a prune pass: the question is one `rev-parse`
+/// per repository, and a prune pass would also stat every dependency directory on the
+/// machine to answer it.
+fn repositories_git_refuses(registry: &Registry) -> Vec<std::path::PathBuf> {
+    let mut affected: Vec<std::path::PathBuf> = registry
+        .repositories
+        .keys()
+        .filter(|path| path.exists())
+        .filter(|path| {
+            let output = crate::scanner::git::git_in(path)
+                .args(["rev-parse", "--git-dir"])
+                .output();
+            match output {
+                Ok(out) if !out.status.success() => String::from_utf8_lossy(&out.stderr)
+                    .to_lowercase()
+                    .contains(constants::GIT_DUBIOUS_OWNERSHIP),
+                _ => false,
+            }
+        })
+        .cloned()
+        .collect();
+    // The list is shown to a person and then written to their config; a HashMap's order
+    // would put it in a different order every run.
+    affected.sort();
+    affected
+}
+
+/// The values already in the global `safe.directory` list.
+fn configured_safe_directories() -> Vec<String> {
+    let output = crate::spawn::command("git")
+        .args(["config", "--global", "--get-all", "safe.directory"])
+        .output();
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect(),
+        // An empty list and an unreadable config lead to the same behaviour — write the
+        // entry — and `--add` on a duplicate is untidy rather than harmful.
+        _ => Vec::new(),
+    }
+}
+
+/// A path in the spelling Git uses for `safe.directory`.
+///
+/// Forward slashes even on Windows: that is the form Git prints in its own refusal
+/// message and the form it compares against, and a backslash spelling is accepted by
+/// `git config` while never matching anything.
+fn git_path_value(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+/// Ask before writing to the user's global Git configuration.
+///
+/// Default no, and a non-terminal gets a no with the flag to pass next time: this widens
+/// what Git will open for every tool on the machine, which is not something a piped
+/// invocation should be able to do by accident.
+fn confirm_fix(yes: bool) -> bool {
+    use std::io::{IsTerminal, Write};
+    if yes {
+        return true;
+    }
+    if !std::io::stdin().is_terminal() {
+        output::print_info("Not running in a terminal — pass `--yes` to write these.");
+        return false;
+    }
+    eprint!("Add them to git's safe.directory list? [y/N]: ");
+    if std::io::stderr().flush().is_err() {
+        return false;
+    }
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
 /// Ask the OS its two questions at the same time.
 ///
 /// These are the only two rows that shell out — `schtasks` and `git config` — and
@@ -269,12 +421,16 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
             "auto_update",
             "Auto-update",
             if s.auto_update {
-                "On — dev-prune replaces its own binary"
+                "On (the default) — a newer release installs itself after a pass"
             } else {
-                "Off — updates only when you run `devp update`"
+                "Off — updates only when you run `devp update --install`"
             },
+            // Neutral, not widened, since 1.7.0: `Widened` means someone deliberately
+            // switched something on beyond the defaults, and this is now a default. Still
+            // its own row, because "replaces its own binary" is a fact anyone reading
+            // this screen came here to learn.
             if s.auto_update {
-                Verdict::Widened
+                Verdict::Neutral
             } else {
                 Verdict::Safe
             },
@@ -468,6 +624,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn safe_directory_values_use_the_spelling_git_compares_against() {
+        // A Windows-spelt value is accepted by `git config` and then never matches
+        // anything, because Git normalises the directory it is checking to forward
+        // slashes before comparing. A repair that silently does nothing is the worst
+        // outcome available here.
+        let path = std::path::Path::new("V:\\Code\\Project");
+        assert_eq!(git_path_value(path), "V:/Code/Project");
+    }
+
+    #[test]
     fn the_default_machine_widens_nothing() {
         let registry = Registry::default();
         let report = build(&registry);
@@ -481,17 +647,15 @@ mod tests {
     #[test]
     fn every_widening_setting_shows_up_by_name() {
         let mut registry = Registry::default();
-        registry.settings.auto_update = true;
         registry.settings.require_confirmation = false;
         registry.settings.allow_manifest_rewrite = true;
         registry.settings.enable_gradle = true;
 
         let report = build(&registry);
         let widened = report.widened();
-        assert_eq!(widened.len(), 4, "got {widened:?}");
+        assert_eq!(widened.len(), 3, "got {widened:?}");
         // Named, not counted: a report that says "3 settings" and stops is a report
         // nobody can act on.
-        assert!(widened.contains(&"Auto-update"));
         assert!(widened.contains(&"Opt-in adapters"));
     }
 

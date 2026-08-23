@@ -879,6 +879,51 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     Ok(())
 }
 
+/// Why a repository's activity could not be read, when the reason is one that every
+/// affected repository shares.
+///
+/// Git prints its "dubious ownership" refusal as twelve lines, ten of which are word for
+/// word identical for every repository it refuses — the same explanation, the same two
+/// account identifiers, the same `git config` invitation. On a machine where one Windows
+/// reinstall left twenty-one repositories with a stale owner, printing that per
+/// repository buries the only line that differs (the path) in two hundred that do not.
+/// One cause with one fix should read as one paragraph, however many repositories it
+/// covers.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ActivityFailure {
+    /// Git refuses the working tree because it is owned by another account.
+    UntrustedOwner,
+    /// The registered path is no longer a working tree.
+    NotARepository,
+    /// Anything else: reported individually, with git's own words.
+    Individual,
+}
+
+impl ActivityFailure {
+    /// Classify one activity-check failure from Git's own stderr.
+    ///
+    /// Deliberately a substring match on Git's wording rather than a parse. The
+    /// alternative is asking Git a second question per repository, and the cost of a
+    /// wrong guess here is a message that reads slightly less well — never a wrong
+    /// deletion, because a repository in this list is one nothing was done to.
+    fn classify(message: &str) -> Self {
+        let lower = message.to_lowercase();
+        if lower.contains(constants::GIT_DUBIOUS_OWNERSHIP) {
+            Self::UntrustedOwner
+        } else if lower.contains(constants::GIT_NOT_A_REPOSITORY) {
+            Self::NotARepository
+        } else {
+            Self::Individual
+        }
+    }
+}
+
+/// How many paths a grouped cause lists before it stops and says how many are left.
+///
+/// Eight is enough to recognise a pattern — one directory tree, one old drive — without
+/// the list becoming the thing that has to be scrolled past.
+const GROUPED_PATHS_SHOWN: usize = 8;
+
 /// Report the repositories the analysis pass could not get past, with the fix for each.
 ///
 /// Silent for an empty list, so callers do not have to guard it.
@@ -886,13 +931,82 @@ fn report_blocked(blocked: &[PruneResult]) {
     if blocked.is_empty() {
         return;
     }
-    output::print_header("Repositories That Could Not Be Examined");
+    output::print_header(&format!(
+        "Repositories That Could Not Be Examined ({})",
+        blocked.len()
+    ));
+
+    let grouped = |failure: ActivityFailure| -> Vec<&PruneResult> {
+        blocked
+            .iter()
+            .filter(|r| match &r.status {
+                PruneStatus::ActivityCheckError(e) => ActivityFailure::classify(e) == failure,
+                _ => false,
+            })
+            .collect()
+    };
+
+    let untrusted = grouped(ActivityFailure::UntrustedOwner);
+    if !untrusted.is_empty() {
+        let n = untrusted.len();
+        output::print_error(&format!(
+            "{n} {} owned by a different account — Git will not read {}.",
+            output::plural(n, "repository is", "repositories are"),
+            output::plural(n, "it", "them")
+        ));
+        list_paths(&untrusted);
+        output::print_wrapped(
+            "    ",
+            "Nothing is wrong with the repositories themselves. The owner recorded on \
+             disk is usually one a Windows reinstall, a restored backup or a drive moved \
+             between machines left behind.",
+        );
+        output::print_wrapped(
+            "    ",
+            "dev-prune dates a repository by its last commit, so one Git will not open \
+             has no known age — and nothing is ever deleted from a repository whose age is \
+             unknown.",
+        );
+        output::print_info(&format!(
+            "  Fix all {n} at once:  devp trust --fix-ownership"
+        ));
+    }
+
+    let orphaned = grouped(ActivityFailure::NotARepository);
+    if !orphaned.is_empty() {
+        if !untrusted.is_empty() {
+            println!();
+        }
+        let n = orphaned.len();
+        output::print_error(&format!(
+            "{n} registered {} not {} git {} any more.",
+            output::plural(n, "path is", "paths are"),
+            output::plural(n, "a", ""),
+            output::plural(n, "repository", "repositories")
+        ));
+        list_paths(&orphaned);
+        output::print_wrapped(
+            "    ",
+            "The directory is still there; its `.git` is not — a clone deleted and \
+             recreated by hand, or a worktree `git worktree prune` has since removed. The \
+             registry entry outlived what it pointed at.",
+        );
+        // Not `--missing`: that clears entries whose *directory* has gone, and these
+        // directories are still on disk. Naming the wrong repair here would have the
+        // user run a command that reports it removed nothing.
+        output::print_info(&format!(
+            "  Drop {} from the registry:  devp unlink <path>",
+            output::plural(n, "it", "them")
+        ));
+    }
+
     for result in blocked {
         let clean_p = output::clean_path(&result.repo_path);
         match &result.status {
             PruneStatus::ConfigError(e) => {
                 output::print_error(&format!(
-                    "{clean_p} skipped — its .devprune.json could not be read:\n    {}",
+                    "{clean_p} skipped — its .devprune.json could not be read:
+    {}",
                     e.trim()
                 ));
                 output::print_info(&format!(
@@ -900,18 +1014,40 @@ fn report_blocked(blocked: &[PruneResult]) {
                 ));
             }
             PruneStatus::LockfileError(e) => report_lockfile_failure(result, e),
-            PruneStatus::ActivityCheckError(e) => {
+            PruneStatus::ActivityCheckError(e)
+                if ActivityFailure::classify(e) == ActivityFailure::Individual =>
+            {
                 output::print_error(&format!(
-                    "{clean_p} skipped — its activity could not be determined:\n    {}",
-                    e.trim()
+                    "{clean_p} skipped — its activity could not be determined:
+    {}",
+                    output::condense_tool_output(e, 4)
                 ));
             }
             PruneStatus::DeleteError(e) => {
                 output::print_error(&format!("{clean_p} → delete failed: {e}"));
             }
-            // `blocked` is built from exactly the four arms above.
+            // Everything else was covered by one of the grouped causes above.
             _ => {}
         }
+    }
+}
+
+/// Print the paths of one grouped cause, indented, stopping at [`GROUPED_PATHS_SHOWN`].
+///
+/// `--json` is named as the way to see the rest rather than a `--verbose` flag, because
+/// it already lists every result and is the output a script would be reading anyway.
+fn list_paths(results: &[&PruneResult]) {
+    for result in results.iter().take(GROUPED_PATHS_SHOWN) {
+        println!("    {}", output::styled_path(&result.repo_path));
+    }
+    if let Some(rest) = results
+        .len()
+        .checked_sub(GROUPED_PATHS_SHOWN)
+        .filter(|n| *n > 0)
+    {
+        output::print_dimmed(&format!(
+            "    … and {rest} more — `devp run --dry-run --json` lists every one."
+        ));
     }
 }
 
@@ -938,12 +1074,36 @@ fn report_linked(linked: &[PruneResult]) {
 /// does not fix itself, and failing on it would keep every scheduled pass red until the
 /// user notices. The fix is one command, so name it.
 fn report_missing(missing: &[PruneResult]) {
-    for result in missing {
-        output::print_warning(&format!(
-            "{} no longer exists — `devp unlink --missing` clears such entries.",
-            output::clean_path(&result.repo_path)
+    if missing.is_empty() {
+        return;
+    }
+    println!();
+    let n = missing.len();
+    output::print_warning(&format!(
+        "{n} registered {} no longer {} on disk.",
+        output::plural(n, "path", "paths"),
+        output::plural(n, "exists", "exist")
+    ));
+    // One line per path was fine for the one or two a person deletes by hand. It stopped
+    // being fine the first time a tool that clones into a temporary directory registered
+    // thirty of them: the report ended in thirty near-identical lines carrying one
+    // instruction, repeated thirty times.
+    for result in missing.iter().take(GROUPED_PATHS_SHOWN) {
+        println!("    {}", output::styled_path(&result.repo_path));
+    }
+    if let Some(rest) = missing
+        .len()
+        .checked_sub(GROUPED_PATHS_SHOWN)
+        .filter(|n| *n > 0)
+    {
+        output::print_dimmed(&format!(
+            "    … and {rest} more — `devp run --dry-run --json` lists every one."
         ));
     }
+    output::print_info(&format!(
+        "  Clear {} from the registry:  devp unlink --missing",
+        output::plural(n, "it", "them all")
+    ));
 }
 
 /// Turn a non-empty blocked list into the process's failure exit.
@@ -1207,4 +1367,41 @@ fn print_explain_footer() {
         "Nothing was verified or deleted. `devp run --dry-run` verifies candidates; \
          `devp run` prunes.",
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gits_ownership_refusal_is_recognised_whatever_the_path() {
+        // The whole grouped report hangs off this substring. If Git ever reworded the
+        // message, twenty-one repositories would silently go back to printing twelve
+        // lines each, and nothing else in the suite would notice.
+        let message = "git could not read `V:/x`: fatal: detected dubious ownership in                        repository at 'V:/x'";
+        assert_eq!(
+            ActivityFailure::classify(message),
+            ActivityFailure::UntrustedOwner
+        );
+    }
+
+    #[test]
+    fn a_path_that_lost_its_git_directory_is_its_own_cause() {
+        // Deliberately distinct from UntrustedOwner: the two have different fixes, and
+        // pointing the user at `devp unlink --missing` for a directory that still exists
+        // is a command that reports it removed nothing.
+        let message = "fatal: not a git repository (or any of the parent directories): .git";
+        assert_eq!(
+            ActivityFailure::classify(message),
+            ActivityFailure::NotARepository
+        );
+    }
+
+    #[test]
+    fn an_unfamiliar_failure_is_still_printed_in_full() {
+        assert_eq!(
+            ActivityFailure::classify("fatal: unable to read tree"),
+            ActivityFailure::Individual
+        );
+    }
 }

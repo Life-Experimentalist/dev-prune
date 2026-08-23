@@ -96,9 +96,9 @@ Pre-compiled production binaries for all supported operating systems and archite
 
 ### 1. Windows Installation (`x86_64-pc-windows-msvc`)
 
-1. **Download Archive**: Download `dev-prune-v1.6.0-windows-x64.zip` from GitHub Releases.
-   On Windows on ARM take `dev-prune-v1.6.0-windows-arm64.zip` instead, and on a machine
-   with no 64-bit mode at all take `dev-prune-v1.6.0-windows-x86.zip`. Everything below
+1. **Download Archive**: Download `dev-prune-v1.7.0-windows-x64.zip` from GitHub Releases.
+   On Windows on ARM take `dev-prune-v1.7.0-windows-arm64.zip` instead, and on a machine
+   with no 64-bit mode at all take `dev-prune-v1.7.0-windows-x86.zip`. Everything below
    is the same for all three.
 2. **Create Target Directory**:
    Open PowerShell and create the application directory:
@@ -136,14 +136,14 @@ Pre-compiled production binaries for all supported operating systems and archite
 ### 2. macOS Installation (Intel `x86_64` & Apple Silicon `arm64`)
 
 1. **Download Archive**:
-   - Apple Silicon (M1/M2/M3/M4): `dev-prune-v1.6.0-darwin-arm64.tar.gz`
-   - Intel Mac: `dev-prune-v1.6.0-darwin-x64.tar.gz`
+   - Apple Silicon (M1/M2/M3/M4): `dev-prune-v1.7.0-darwin-arm64.tar.gz`
+   - Intel Mac: `dev-prune-v1.7.0-darwin-x64.tar.gz`
 2. **Extract & Relocate Binary**:
    On macOS the config directory is `~/Library/Application Support/dev-prune`, not `~/.config` — that is where dev-prune reads its registry from, so install the binary alongside it.
    ```bash
    BIN="$HOME/Library/Application Support/dev-prune/bin"
    mkdir -p "$BIN"
-   tar -xzf dev-prune-v1.6.0-darwin-*.tar.gz -C "$BIN"
+   tar -xzf dev-prune-v1.7.0-darwin-*.tar.gz -C "$BIN"
    chmod +x "$BIN/dev-prune"
    ```
 3. **Add to Shell PATH**:
@@ -175,11 +175,11 @@ Pre-compiled production binaries for all supported operating systems and archite
 > `aarch64` (`uname -m` tells you which) — and nothing else.
 
 
-1. **Download Archive**: Download `dev-prune-v1.6.0-linux-x64.tar.gz` from GitHub Releases.
+1. **Download Archive**: Download `dev-prune-v1.7.0-linux-x64.tar.gz` from GitHub Releases.
 2. **Extract & Relocate Binary**:
    ```bash
    mkdir -p ~/.config/dev-prune/bin
-   tar -xzf dev-prune-v1.6.0-linux-x64.tar.gz -C ~/.config/dev-prune/bin/
+   tar -xzf dev-prune-v1.7.0-linux-x64.tar.gz -C ~/.config/dev-prune/bin/
    chmod +x ~/.config/dev-prune/bin/dev-prune
    ```
 3. **Configure Shell PATH**:

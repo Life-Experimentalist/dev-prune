@@ -308,6 +308,14 @@ pub enum Commands {
         /// Emit the report as one JSON document instead of the table.
         #[arg(long)]
         json: bool,
+
+        /// Let Git read registered repositories it currently refuses on ownership.
+        #[arg(long, conflicts_with = "json")]
+        fix_ownership: bool,
+
+        /// Answer yes to the confirmation `--fix-ownership` asks.
+        #[arg(long, requires = "fix_ownership")]
+        yes: bool,
     },
 
     /// Print a shell completion script for bash, zsh, fish, PowerShell or elvish.
@@ -439,7 +447,7 @@ impl Commands {
             Commands::Run { json, .. }
             | Commands::Status { json, .. }
             | Commands::Stats { json }
-            | Commands::Trust { json }
+            | Commands::Trust { json, .. }
             | Commands::Caches { json, .. } => *json,
             Commands::Link { quiet, .. } => *quiet,
             _ => false,
@@ -801,7 +809,17 @@ pub fn run_cli() {
         Commands::Stats { json } => commands::stats::run(json),
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Man { dir } => commands::man::run(dir.as_deref()),
-        Commands::Trust { json } => commands::trust::run(json),
+        Commands::Trust {
+            json,
+            fix_ownership,
+            yes,
+        } => {
+            if fix_ownership {
+                commands::trust::fix_ownership(yes)
+            } else {
+                commands::trust::run(json)
+            }
+        }
         Commands::Caches { json, action } => match action {
             Some(CachesAction::Clear { target }) => {
                 commands::caches::run_clear(&target, cli.yes, cli.dry_run, json)

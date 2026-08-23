@@ -63,6 +63,28 @@ while read -r asset_os asset_arch node_os node_arch kind; do
     # install puts the executable on a machine without it.
     cp "$repo_root/LICENSE.md" "$dir/LICENSE.md"
 
+    # npmjs.com prints "npm i <name>" at the top of every package page and there is no
+    # way to suppress it, so the only lever left is what a person reads directly below.
+    # With no README npm shows nothing there, and the page reads like an install target
+    # for a Linux binary somebody has landed on by mistake.
+    cat > "$dir/README.md" <<EOF
+# $pkg
+
+**Do not install this package.** Install [\`dev-prune\`](https://www.npmjs.com/package/dev-prune):
+
+\`\`\`sh
+npm install -g dev-prune
+\`\`\`
+
+This package holds nothing but the prebuilt \`dev-prune\` binary for **$node_os $node_arch**.
+It exists because npm has no other way to ship a per-platform executable: \`dev-prune\`
+lists all seven platform packages as optional dependencies, and npm installs only the one
+matching your machine. Installing this one directly gives you a binary with no launcher
+and no upgrade path.
+
+Documentation: <https://devprune.vkrishna04.me>
+EOF
+
     cat > "$dir/package.json" <<EOF
 {
   "name": "$pkg",
@@ -70,7 +92,7 @@ while read -r asset_os asset_arch node_os node_arch kind; do
   "description": "Prebuilt dev-prune binary for $node_os $node_arch. Installed automatically by the 'dev-prune' package; not meant to be depended on directly.",
   "os": ["$node_os"],
   "cpu": ["$node_arch"],
-  "files": ["bin", "LICENSE.md"],
+  "files": ["bin", "LICENSE.md", "README.md"],
   "license": "Apache-2.0",
   "author": "VKrishna04",
   "homepage": "https://devprune.vkrishna04.me",

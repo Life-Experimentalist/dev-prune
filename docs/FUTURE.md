@@ -34,11 +34,14 @@ Work that exists and is waiting on a party that is not this repository.
 
 ## Next
 
-- **The npm channel.** The packaging is written and CI dry-runs the exact publish command
-  on every push — eight packages, seven platform binaries plus a dispatcher. The release
-  job is gated on the `NPM_PUBLISH` variable and an `NPM_TOKEN` secret, and reports
-  `skipped` rather than `success` until both exist, so switching it on is one variable
-  and one secret. See [`RELEASING.md`](RELEASING.md).
+- **Finishing the npm channel.** Four of the eight packages are published —
+  `dev-prune-linux-x64`, `dev-prune-linux-arm64`, `dev-prune-darwin-x64` and
+  `dev-prune-darwin-arm64`, all at 1.6.0. The remaining four, including the `dev-prune`
+  dispatcher that everything else exists to serve, are held by the registry's new-package
+  spam heuristic, which is a throttle rather than a verdict on the names. Until the
+  dispatcher exists there is no `npm install -g dev-prune`, so the channel is not usable
+  and is not documented as if it were. The release job stays gated on `NPM_PUBLISH`. See
+  [`RELEASING.md`](RELEASING.md).
 - **Switching on the WinGet submission.** The release job that raises the `winget-pkgs`
   pull request is built and gated the same way npm is: it reports `skipped` until the
   `WINGET_PUBLISH` variable and the `WINGET_TOKEN` secret both exist. What is still
@@ -51,6 +54,18 @@ Work that exists and is waiting on a party that is not this repository.
   rather than a task. The named tap covers the same install today.
 
 ## Later
+
+- **Moving between install channels.** dev-prune already knows which channel delivered the
+  running binary — `Channel::detect` reads it out of the executable's path, and the upgrade
+  and uninstall command for every channel are already written down. What does not exist is
+  a way to *change* it. Somebody who installed with `cargo install` and later wants WinGet
+  has to know to remove the old copy first, and if they do not, two binaries sit on `PATH`
+  and which one wins is an accident of ordering. A `devp install --channel <name>` that
+  removed the current copy through its own manager, installed through the new one, and
+  carried the config and the registry across would be built almost entirely out of parts
+  that already exist. It is here rather than in **Next** because it spawns somebody else's
+  package manager to uninstall something, which is a category of action this tool has so
+  far kept behind an explicit request.
 
 - **More adapters.** The trait, registration and test recipe are in
   [`ADDING_ADAPTERS.md`](ADDING_ADAPTERS.md), and the opt-in mechanism (`opt_in()`,

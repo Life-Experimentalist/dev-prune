@@ -1243,3 +1243,41 @@ fn a_disabled_check_keeps_run_and_status_off_the_network() {
         serde_json::from_str(&fs::read_to_string(config.join("registry.json")).unwrap()).unwrap();
     assert!(registry["last_update_check"].is_null(), "{registry}");
 }
+
+/// `--yes` alone must be a usage error, not a silent no-op.
+///
+/// It exists to skip one confirmation, and the confirmation belongs to `--fix-ownership`.
+/// Accepting it on its own would let `devp trust --yes` look like it had agreed to
+/// something when it had done nothing at all.
+#[test]
+fn trust_yes_requires_fix_ownership() {
+    let dir = TempDir::new().unwrap();
+    let out = devp(dir.path()).args(["trust", "--yes"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "usage errors exit 2");
+}
+
+/// `--fix-ownership` writes to git's config; `--json` promises one document on stdout.
+/// Asking for both is a contradiction, and clap should say so rather than pick one.
+#[test]
+fn trust_cannot_repair_and_emit_json_at_once() {
+    let dir = TempDir::new().unwrap();
+    let out = devp(dir.path())
+        .args(["trust", "--fix-ownership", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "usage errors exit 2");
+}
+
+/// With nothing registered there is nothing Git could be refusing, so the repair reports
+/// that and exits 0 — a clean machine is not a failure.
+#[test]
+fn trust_fix_ownership_is_clean_on_an_empty_registry() {
+    let dir = TempDir::new().unwrap();
+    let out = devp(dir.path())
+        .args(["trust", "--fix-ownership", "--yes"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("Nothing to fix"), "unexpected output: {text}");
+}

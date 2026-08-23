@@ -250,6 +250,14 @@ pub fn print_info(msg: &str) {
     println!("{} {}", "→".dimmed(), highlight_code_spans(msg));
 }
 
+/// Print a line in the terminal's dimmed style, with no marker glyph.
+///
+/// For text that belongs to the item above it rather than being an item of its own —
+/// the "and 13 more" under a list. A `→` there would announce it as a new point.
+pub fn print_dimmed(msg: &str) {
+    println!("{}", highlight_code_spans(msg).dimmed());
+}
+
 /// Print a notice to stderr.
 ///
 /// For anything the user should see that is *about* the command rather than part of its
@@ -258,6 +266,44 @@ pub fn print_info(msg: &str) {
 /// difference between a parseable contract and a parse error.
 pub fn print_notice(msg: &str) {
     eprintln!("{} {}", "→".dimmed(), highlight_code_spans(msg));
+}
+
+/// Widest line this tool will print prose at, however wide the terminal is.
+///
+/// A paragraph set to the full width of a maximised terminal is measurably harder to
+/// read than the same paragraph at ninety columns: the eye loses the line it was on
+/// when it travels back to the left edge. Tables and paths are exempt — truncating
+/// those loses information, whereas wrapping prose loses nothing.
+const MAX_PROSE_WIDTH: usize = 90;
+
+/// Print an explanatory paragraph, wrapped to the terminal and indented under `indent`.
+///
+/// The alternative is what `devp run` did until a machine with twenty-one unreadable
+/// repositories showed it: three-line explanations soft-wrapped by the terminal back to
+/// column zero, so the continuation of an indented note started further left than the
+/// note did and read as a new item.
+pub fn print_wrapped(indent: &str, msg: &str) {
+    let width = crossterm::terminal::size()
+        .map(|(cols, _)| cols as usize)
+        .unwrap_or(MAX_PROSE_WIDTH)
+        .min(MAX_PROSE_WIDTH);
+    // A terminal narrow enough to make the wrap width zero would loop forever below.
+    let room = width.saturating_sub(indent.len()).max(20);
+
+    let mut line = String::new();
+    for word in msg.split_whitespace() {
+        if !line.is_empty() && line.width() + 1 + word.width() > room {
+            println!("{indent}{}", highlight_code_spans(&line));
+            line.clear();
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        println!("{indent}{}", highlight_code_spans(&line));
+    }
 }
 
 /// Print a section header

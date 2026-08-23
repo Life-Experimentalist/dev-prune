@@ -296,6 +296,10 @@ pub fn release_asset_name(version: &str) -> Option<String> {
 /// Whether the periodic release check runs. On by default — see `Settings::update_check`.
 pub const DEFAULT_UPDATE_CHECK: bool = true;
 
+/// Whether a known-newer release installs itself at the end of a prune pass. On by
+/// default — see `Settings::auto_update`.
+pub const DEFAULT_AUTO_UPDATE: bool = true;
+
 /// Default interval, in days, between automatic release checks.
 ///
 /// A week. Frequent enough that a security fix is not missed for long, rare enough that
@@ -489,3 +493,16 @@ pub const COPILOT_INSTRUCTIONS_FILE: &str = ".github/copilot-instructions.md";
 /// Everything outside them belongs to the user and is never touched.
 pub const RULES_BLOCK_START: &str = "<!-- dev-prune:rules:start -->";
 pub const RULES_BLOCK_END: &str = "<!-- dev-prune:rules:end -->";
+
+/// The phrase Git uses when it refuses a working tree owned by another account.
+///
+/// Matched against Git's own stderr rather than parsed: the message is twelve lines
+/// long, ten of which are identical for every repository refused, and `devp run`
+/// groups every repository sharing this cause under one explanation and one fix
+/// instead of reprinting those ten lines per repository.
+pub const GIT_DUBIOUS_OWNERSHIP: &str = "detected dubious ownership";
+
+/// The phrase Git uses when the path it was pointed at is not a working tree at all.
+///
+/// Same reasoning as [`GIT_DUBIOUS_OWNERSHIP`]: one cause, one fix, one paragraph.
+pub const GIT_NOT_A_REPOSITORY: &str = "not a git repository";

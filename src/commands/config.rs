@@ -31,7 +31,16 @@ struct Setting {
     /// What kind of value this is, so a picker can offer the right control.
     kind: Kind,
     /// One line, shown by the walkthrough and by `config show --help-text`.
+    ///
+    /// Written for someone who already knows what a lockfile and a build tree are.
     help: &'static str,
+    /// The same setting explained to someone who does not.
+    ///
+    /// Not a second `help` with shorter words: `help` says what the setting *is*, this
+    /// says what happens to you if it is on, in the second person, with no jargon and no
+    /// flag names. Both are shown together — nobody should have to be the right kind of
+    /// expert to answer a question this tool asked them.
+    plain: &'static str,
     get: fn(&Settings) -> String,
     set: fn(&mut Settings, &str) -> Result<()>,
 }
@@ -58,6 +67,75 @@ enum Kind {
     AdapterDays,
 }
 
+/// One first-run suggestion: a setting worth turning on, and the reason.
+///
+/// A table of its own rather than a field on [`Setting`], because a suggestion is not a
+/// property of a setting — it is a claim about what most people should do on the day
+/// they install this, and the two lists move for different reasons.
+struct Recommendation {
+    key: &'static str,
+    /// Three or four words naming what accepting it turns on.
+    label: &'static str,
+    /// Why it is suggested — the part `help` and `plain` both leave out.
+    why: &'static str,
+    /// The value accepting it sets. A string, not a `bool`, so a suggested *number*
+    /// needs no new machinery here or in the view.
+    value: &'static str,
+    /// The second tier: recommended, with one specific thing to understand first.
+    cautious: bool,
+}
+
+/// What the first run suggests turning on.
+///
+/// Every entry is off by default and stays off unless the person accepts it, which is
+/// the only reason a screen suggesting them is honest. Nothing already on by default
+/// belongs here: a checkbox that is already ticked before you arrive teaches people to
+/// tick boxes.
+const RECOMMENDED: &[Recommendation] = &[
+    Recommendation {
+        key: "enable_cargo",
+        label: "Rust build folders",
+        why: "Rust `target/` directories are usually the largest thing on a developer's               disk — tens of gigabytes across a handful of old projects. Nothing is lost:               `cargo build` rebuilds it, and a project has to sit untouched for 45 days               before this one is even considered.",
+        value: "true",
+        cautious: false,
+    },
+    Recommendation {
+        key: "enable_gradle",
+        label: "Android / Gradle builds",
+        why: "`build/` and `.gradle/` grow with every Android build and are never cleaned               up by anything else. They come back on the next build, under the same               45-day wait.",
+        value: "true",
+        cautious: false,
+    },
+    Recommendation {
+        key: "enable_maven",
+        label: "Maven builds",
+        why: "Maven `target/` directories accumulate quietly per module, so a multi-module               project has several. `mvn package` brings them back.",
+        value: "true",
+        cautious: false,
+    },
+    Recommendation {
+        key: "enable_swift",
+        label: "Swift builds",
+        why: "`.build/` holds compiled modules for every configuration you have ever               built, and `swift build` recreates the one you actually use.",
+        value: "true",
+        cautious: false,
+    },
+    Recommendation {
+        key: "enable_dart",
+        label: "Dart / Flutter caches",
+        why: "`.dart_tool/` carries the pub metadata — back in a second — alongside               `build_runner` and `flutter_build` caches that are worth real disk space.",
+        value: "true",
+        cautious: false,
+    },
+    Recommendation {
+        key: "allow_manifest_rewrite",
+        label: "Let cargo and go tidy up",
+        why: "Cautious, not risky. The commands that restore a Rust or Go project can               also update `Cargo.lock` or `go.mod` — files Git tracks. Nothing is lost               and nothing is deleted, but the next `git status` may show a change you did               not make by hand. Turn it on if that is fine; leave it off if a clean               working tree matters more than a fully automatic restore.",
+        value: "true",
+        cautious: true,
+    },
+];
+
 /// Every global setting, in the order a person would want to be asked about them.
 const SETTINGS: &[Setting] = &[
     Setting {
@@ -65,6 +143,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Number,
         help: "Days a repository must sit untouched before it is eligible for pruning.",
+        plain: "How long a project has to sit untouched before dev-prune will clean it. Something you worked on yesterday is never touched.",
         get: |s| s.idle_days.to_string(),
         set: |s, v| {
             s.idle_days = v
@@ -78,6 +157,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Number,
         help: "Smallest bloat directory worth deleting, in MiB. 0 removes the floor.",
+        plain: "Ignore small folders. Deleting a 2 MB folder is not worth the download to get it back.",
         get: |s| s.min_size_mb.to_string(),
         set: |s, v| {
             s.min_size_mb = v.parse().map_err(|_| {
@@ -91,6 +171,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Number,
         help: "How many directory levels below a repo root project discovery descends.",
+        plain: "How deep inside a repository to look for projects. Raise it if your projects live several folders down; lower it if scanning feels slow.",
         get: |s| s.scan_depth.to_string(),
         set: |s, v| {
             let depth: usize = v
@@ -117,6 +198,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Ask before deleting anything. Turning this off makes every run unattended.",
+        plain: "Whether dev-prune asks \"delete these?\" before it deletes. Leave this on unless you want it to run silently while you are away.",
         get: |s| s.require_confirmation.to_string(),
         set: |s, v| {
             s.require_confirmation = parse_bool("require_confirmation", v)?;
@@ -128,6 +210,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Let cargo and go run the sync command that rewrites tracked manifests.",
+        plain: "Lets dev-prune run the command that puts a Rust or Go project back together — which can edit files that are checked into Git. Nothing is lost, but the change shows up in `git status`.",
         get: |s| s.allow_manifest_rewrite.to_string(),
         set: |s, v| {
             s.allow_manifest_rewrite = parse_bool("allow_manifest_rewrite", v)?;
@@ -139,6 +222,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Number,
         help: "How long a lockfile command may run before it is killed.",
+        plain: "How long to wait for a rebuild command before giving up on it. Raise it on a slow connection.",
         get: |s| s.command_timeout_secs.to_string(),
         set: |s, v| {
             let secs: u64 = v
@@ -162,6 +246,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Install missing integrations by itself, once per installed version.",
+        plain: "Whether dev-prune finishes setting itself up on its own instead of making you run `devp setup`.",
         get: |s| s.auto_setup.to_string(),
         set: |s, v| {
             s.auto_setup = parse_bool("auto_setup", v)?;
@@ -173,6 +258,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.3.0",
         kind: Kind::Toggle,
         help: "Write a default .devprune.json into repositories that link/init register.",
+        plain: "Drops a small settings file into each repository you register, so you can give that one project different rules later.",
         get: |s| s.auto_config.to_string(),
         set: |s, v| {
             s.auto_config = parse_bool("auto_config", v)?;
@@ -184,6 +270,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Register the OS scheduler so passes run without being remembered.",
+        plain: "Lets your operating system run dev-prune on a schedule, so you never have to remember to.",
         get: |s| s.auto_daemon.to_string(),
         set: |s, v| {
             s.auto_daemon = parse_bool("auto_daemon", v)?;
@@ -195,6 +282,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Number,
         help: "Days between scheduled background passes.",
+        plain: "How often that scheduled cleanup runs.",
         get: |s| s.check_interval_days.to_string(),
         set: |s, v| {
             let days: u64 = v
@@ -213,6 +301,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Install the Git hooks that register repositories as you clone them.",
+        plain: "Registers new repositories automatically as you clone them, so you never have to add them by hand.",
         get: |s| s.auto_hooks.to_string(),
         set: |s, v| {
             s.auto_hooks = parse_bool("auto_hooks", v)?;
@@ -224,6 +313,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "If another tool owns core.hooksPath, install in front of it and forward.",
+        plain: "Git only has one slot for this kind of automation. If something else — husky, pre-commit, lefthook — is already using it, share the slot instead of taking it over.",
         get: |s| s.auto_hooks_chain.to_string(),
         set: |s, v| {
             s.auto_hooks_chain = parse_bool("auto_hooks_chain", v)?;
@@ -235,6 +325,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Ask GitHub for the latest release from time to time. Sends nothing but the request.",
+        plain: "Whether dev-prune checks GitHub now and then to see if there is a newer version. It sends no information about you.",
         get: |s| s.update_check.to_string(),
         set: |s, v| {
             s.update_check = parse_bool("update_check", v)?;
@@ -246,6 +337,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Number,
         help: "Days between automatic release checks.",
+        plain: "How often that version check happens.",
         get: |s| s.update_check_interval_days.to_string(),
         set: |s, v| {
             let days: i64 = v.parse().map_err(|_| {
@@ -263,6 +355,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.0.0",
         kind: Kind::Number,
         help: "Seconds the release check waits for GitHub. Raise it behind a slow proxy.",
+        plain: "How long the version check waits before giving up. Raise it if you are behind a slow proxy.",
         get: |s| s.update_check_timeout_secs.to_string(),
         set: |s, v| {
             let secs: u64 = v.parse().map_err(|_| {
@@ -280,6 +373,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.5.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in Cargo adapter (target/ comes back by recompiling, not downloading).",
+        plain: "Clean Rust build folders too. These come back by recompiling, which takes minutes rather than a download — so this is off unless you say otherwise.",
         get: |s| s.enable_cargo.to_string(),
         set: |s, v| {
             s.enable_cargo = parse_bool("enable_cargo", v)?;
@@ -291,6 +385,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.3.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in Gradle adapter (build/ and .gradle/ come back by recompiling).",
+        plain: "Clean Android and Java build folders too. Same trade: they come back by recompiling, not downloading.",
         get: |s| s.enable_gradle.to_string(),
         set: |s, v| {
             s.enable_gradle = parse_bool("enable_gradle", v)?;
@@ -302,6 +397,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.3.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in Maven adapter (target/ comes back by recompiling).",
+        plain: "Clean Maven build folders too. They come back by recompiling.",
         get: |s| s.enable_maven.to_string(),
         set: |s, v| {
             s.enable_maven = parse_bool("enable_maven", v)?;
@@ -313,6 +409,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.4.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in SwiftPM adapter (.build/ comes back by recompiling).",
+        plain: "Clean Swift build folders too. They come back by recompiling.",
         get: |s| s.enable_swift.to_string(),
         set: |s, v| {
             s.enable_swift = parse_bool("enable_swift", v)?;
@@ -324,6 +421,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.6.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in Dart/Flutter adapter (.dart_tool/ holds build caches).",
+        plain: "Clean Dart and Flutter caches too. Part comes back instantly, part by recompiling.",
         get: |s| s.enable_dart.to_string(),
         set: |s, v| {
             s.enable_dart = parse_bool("enable_dart", v)?;
@@ -335,6 +433,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.3.0",
         kind: Kind::Number,
         help: "Idle days before cargo/gradle/maven/swift build trees are pruned. Applied as max(this, idle_days).",
+        plain: "A longer wait, used only for the build folders above, because getting those back costs a recompile rather than a download.",
         get: |s| s.build_idle_days.to_string(),
         set: |s, v| {
             let days: u64 = v
@@ -348,7 +447,8 @@ const SETTINGS: &[Setting] = &[
         key: "auto_update",
         since: "1.3.0",
         kind: Kind::Toggle,
-        help: "Run `devp update --install` by itself after a prune pass when a newer release exists.",
+        help: "Install a newer release by itself at the end of a prune pass. On by default.",
+        plain: "Whether dev-prune installs its own updates after a cleanup. The download is checked against its published fingerprint first.",
         get: |s| s.auto_update.to_string(),
         set: |s, v| {
             s.auto_update = parse_bool("auto_update", v)?;
@@ -360,6 +460,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.4.0",
         kind: Kind::Adapters,
         help: "Adapters to leave alone entirely, by name. Empty means every one of them is active.",
+        plain: "Ecosystems to ignore completely — as if you did not have them installed at all.",
         get: |s| {
             if s.disabled_adapters.is_empty() {
                 "(none)".to_string()
@@ -377,6 +478,7 @@ const SETTINGS: &[Setting] = &[
         since: "1.5.0",
         kind: Kind::AdapterDays,
         help: "Per-adapter idle windows, as `cargo=60,npm=30`. Each one can only raise its own wait.",
+        plain: "A different waiting period for one ecosystem. Useful when your Rust projects should wait longer than your Node ones.",
         get: |s| {
             if s.adapter_idle_days.is_empty() {
                 "(none)".to_string()
@@ -667,6 +769,7 @@ fn run_wizard_tui() -> Result<()> {
             ConfigRow {
                 key: setting.key,
                 help: setting.help,
+                plain: setting.plain,
                 control: match setting.kind {
                     Kind::Toggle => Control::Toggle,
                     Kind::Number => Control::Number,
@@ -696,6 +799,7 @@ fn run_wizard_tui() -> Result<()> {
     let outcome = crate::tui::config_view::run(ConfigSession {
         declaration: declaration_lines(&report),
         standing: NOTHING_DELETED_YET.to_string(),
+        suggestions: first_run_suggestions(),
         rows,
         adapters: &adapters,
         opt_in_adapters: &opt_in,
@@ -746,6 +850,39 @@ fn run_wizard_tui() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// The suggestions screen's contents — empty on every run but the first.
+///
+/// "First" is the same fact the walkthrough itself runs on: no review marker on disk
+/// means this machine has never been shown the settings. Someone who types
+/// `devp config wizard` a month later has already made these decisions once, and
+/// re-suggesting them is how a suggestion turns into nagging.
+///
+/// The descriptions are read off the settings table rather than written again here.
+/// Two copies of "what does `enable_cargo` do" is one copy free to drift, and the copy
+/// on this screen is the one a brand-new user reads first.
+fn first_run_suggestions() -> Vec<crate::tui::config_view::Suggestion> {
+    use crate::tui::config_view::Suggestion;
+
+    if reviewed_version().is_some() {
+        return Vec::new();
+    }
+    RECOMMENDED
+        .iter()
+        .filter_map(|r| {
+            let setting = find_setting(r.key).ok()?;
+            Some(Suggestion {
+                key: r.key,
+                label: r.label,
+                help: setting.help,
+                plain: setting.plain,
+                why: r.why,
+                value: r.value,
+                cautious: r.cautious,
+            })
+        })
+        .collect()
 }
 
 /// What is true at the moment the configurator opens, and stays true while it is open.
@@ -821,6 +958,9 @@ fn run_wizard_prompts() -> Result<()> {
             (setting.get)(&registry.settings)
         );
         println!("  {:<width$}   {}", "", setting.help);
+        // Both lines here too. This path is what a pipe, a narrow terminal and
+        // `DEV_PRUNE_NO_TUI` all get, and it is no place to be the terse one.
+        println!("  {:<width$}   {}", "", setting.plain);
     }
     println!();
 
@@ -1305,10 +1445,27 @@ mod tests {
         for setting in SETTINGS {
             assert!(seen.insert(setting.key), "duplicate key {}", setting.key);
             assert!(!setting.help.is_empty(), "{} has no help", setting.key);
-            // The wizard prints the help under the key; a sentence keeps that readable.
+            assert!(
+                !setting.plain.is_empty(),
+                "{} has no plain text",
+                setting.key
+            );
+            // The wizard prints both under the key; sentences keep that readable.
             assert!(
                 setting.help.ends_with('.'),
                 "{} help should read as a sentence",
+                setting.key
+            );
+            assert!(
+                setting.plain.ends_with('.'),
+                "{} plain text should read as a sentence",
+                setting.key
+            );
+            // Two ways of saying it, not the same way twice: a `plain` line that repeats
+            // `help` costs a screen row and teaches nobody anything.
+            assert_ne!(
+                setting.plain, setting.help,
+                "{} says the same thing twice",
                 setting.key
             );
         }

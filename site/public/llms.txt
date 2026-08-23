@@ -6,7 +6,7 @@
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.6.0. Written by VKrishna04.
+Version 1.7.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
@@ -162,15 +162,21 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   manager that is not installed is reported as failed, never deleted around. The freed
   size is measured afterwards rather than assumed. `--json` requires `--yes`; exit 1 if
   any cache could not be cleared, 2 for an unknown manager name
-- `devp trust [--json]` — what dev-prune is allowed to do on this machine, on one
+- `devp trust [--json | --fix-ownership [--yes]]` — what dev-prune is allowed to do on this machine, on one
   screen. Two sections: the guarantees the code enforces on every machine (the seven
   safety invariants, no telemetry, build outputs never deleted — none with a setting or
   a flag behind it), and this machine read live (scheduler, Git hooks, registered
-  repository count, idle window, managed binary path, and the four settings that widen
-  anything: `auto_update`, `require_confirmation=false`, `allow_manifest_rewrite`, and
+  repository count, idle window, managed binary path, and the three settings that widen
+  anything: `require_confirmation=false`, `allow_manifest_rewrite`, and
   any opt-in adapter: `enable_cargo`, `enable_gradle`, `enable_maven`,
   `enable_swift`, `enable_dart`). No letter grade — the widened settings are named, because
-  "trust level: MEDIUM" tells nobody which switch to look at. Read-only, always exit 0
+  "trust level: MEDIUM" tells nobody which switch to look at. Read-only, always exit 0.
+  `--fix-ownership` is the one exception: it adds every registered repository Git
+  currently refuses to read — the "detected dubious ownership" refusal, routine after a
+  Windows reinstall or a restored backup — to the global `safe.directory` list, after
+  printing the full list and asking; `--yes` answers that for a script. It matters
+  because dev-prune dates a repository by its last commit, so one Git will not read has
+  no known age and is never pruned
 - `devp restore [PATH]` — reinstall dependencies for every project in a tree;
   `devp restore --last-run` restores exactly what the most recent prune pass deleted.
   A pruned virtual environment records the Python that built it and is rebuilt on that
@@ -198,7 +204,7 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   (`AGENTS.md`, read by Codex, Jules, Amp and OpenCode), copilot
   (`.github/copilot-instructions.md`), gemini (`GEMINI.md`), junie
   (`.junie/guidelines.md`) and zed (`.rules`)
-- `devp update [--offline | --install]` — print the installed version, check GitHub for a newer release, and show the upgrade command. `--install` downloads the release binary for this platform from GitHub Releases, refuses it unless its SHA-256 matches the published sidecar, and writes it to every copy this installation runs: the managed binary under the config directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary. The package manager that delivered the first copy is deliberately not run — its version record goes stale and the single command that resyncs it is printed — and its own upgrade command is the fallback when no binary is published for this platform or the download fails. `devp config set auto_update true` runs it by itself after a prune pass; an upgrade never interrupts the scheduler. `DEV_PRUNE_OFFLINE=1` in the environment keeps the process off the network entirely, regardless of any setting
+- `devp update [--offline | --install]` — print the installed version, check GitHub for a newer release, and show the upgrade command. `--install` downloads the release binary for this platform from GitHub Releases, refuses it unless its SHA-256 matches the published sidecar, and writes it to every copy this installation runs: the managed binary under the config directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary. The package manager that delivered the first copy is deliberately not run — its version record goes stale and the single command that resyncs it is printed — and its own upgrade command is the fallback when no binary is published for this platform or the download fails. `auto_update`, on by default, does the verified-download half by itself at the end of a prune pass — never the package-manager half, which can prompt, and nothing at all on WinGet, Scoop and Homebrew, where the manager owns the upgrade; `devp config set auto_update false` stops it. An upgrade never interrupts the scheduler. `DEV_PRUNE_OFFLINE=1` in the environment keeps the process off the network entirely, regardless of any setting
 - `devp man [--dir <dir>]` — the manual as man pages, generated from the same clap
   definitions `--help` uses. Alone: the `devp(1)` page to stdout (pipe into `man -l -`);
   `--dir` writes the full set, one page per subcommand
@@ -343,7 +349,7 @@ Twenty-three keys, all readable with `devp config get <key>` and writable with
 `update_check_timeout_secs` (5), `enable_cargo` (false), `enable_gradle` (false),
 `enable_maven` (false), `enable_swift` (false), `enable_dart` (false),
 `build_idle_days` (45),
-`adapter_idle_days` (none), `auto_update` (false), `disabled_adapters` (none).
+`adapter_idle_days` (none), `auto_update` (true), `disabled_adapters` (none).
 
 `disabled_adapters` is a comma-separated list of adapter names to leave alone
 entirely: a disabled adapter is not detected, not counted by `stats`, not probed for
