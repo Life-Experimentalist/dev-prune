@@ -73,13 +73,16 @@ the tool keeps itself up to date.
 
 ### For contributors
 
-- **CodeQL runs on every push, every pull request and weekly.** `cargo audit` answers
-  whether a dependency is known-vulnerable and says nothing about the code in this
-  repository; this is the other half. It also analyses `.github/workflows`, which holds
-  more privilege than anything else here — a release job carries a PyPI identity, a
-  crates.io token and `contents: write` — and had nothing looking at it. The scheduled run
-  matters as much as the push one: the code will not have changed, but the queries will
-  have.
+- **CodeQL runs on every push, every pull request and weekly, with the extended query
+  suite.** `cargo audit` answers whether a dependency is known-vulnerable and says nothing
+  about the code in this repository; this is the other half. It covers Rust, the site's
+  JavaScript and TypeScript, the Python packaging scripts, the Ruby formula, and
+  `.github/workflows` — which holds more privilege than anything else here, since a
+  release job carries a PyPI identity, a crates.io token and `contents: write`, and had
+  nothing looking at it. It is GitHub's default setup rather than a workflow file in this
+  repository: the two cannot both be enabled, and the one that needs no maintenance covers
+  more languages. The scheduled run matters as much as the push one — the code will not
+  have changed, but the queries will have.
 
 - **The seven npm platform packages now ship a README saying not to install them.**
   npmjs.com prints `npm i <name>` at the top of every package page with no way to suppress
