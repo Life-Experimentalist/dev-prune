@@ -61,7 +61,7 @@ missing=""
 for pkg in \
     dev-prune-linux-x64 dev-prune-linux-arm64 \
     dev-prune-darwin-x64 dev-prune-darwin-arm64 \
-    dev-prune-win32-x64 dev-prune-win32-arm64 dev-prune-win32-ia32 \
+    dev-prune-windows-x64 dev-prune-windows-arm64 dev-prune-windows-x86 \
     dev-prune
 do
     dir="$packages/$pkg"
@@ -95,7 +95,8 @@ do
     # --access public is redundant for an unscoped package that already exists, and
     # mandatory for one that does not: `--provenance` refuses to sign a package it cannot
     # confirm is public, and a package with no published versions has no access setting to
-    # read. All seven were new at 1.0.0, and dev-prune-win32-ia32 was new at 1.4.0.
+    # read. All seven were new at 1.0.0, the 32-bit Windows package at 1.4.0, and the
+    # three renamed Windows packages at 1.8.0.
     npm publish "$dir" "$@" --tag "$dist_tag" --access public
     published="$published $pkg"
 done

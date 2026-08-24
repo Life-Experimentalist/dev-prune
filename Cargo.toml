@@ -1,6 +1,6 @@
 [package]
 name = "dev-prune"
-version = "1.7.0"
+version = "1.8.0"
 edition = "2024"
 authors = ["VKrishna04"]
 description = "Universal, lockfile-safe workspace pruner and background dependency cleaner"
@@ -115,6 +115,15 @@ pkg-fmt = "zip"
 [[bin]]
 name = "dev-prune"
 path = "src/main.rs"
+
+# `devp` is a real second executable under the same source, not a shell alias, so it
+# works in cmd, PowerShell, fish and an IDE terminal alike. Declaring it as its own
+# target is what makes `cargo install dev-prune` produce both names: the installers and
+# the release archives place the twin themselves, and the binary no longer writes a copy
+# of itself beside the original on first run.
+[[bin]]
+name = "devp"
+path = "src/devp.rs"
 
 [dependencies]
 # CLI argument parsing

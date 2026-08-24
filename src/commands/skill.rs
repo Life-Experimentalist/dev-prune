@@ -48,6 +48,8 @@ pub enum AgentEditor {
     Zed,
     /// `.github/copilot-instructions.md`, as a marked block
     Copilot,
+    /// `CONVENTIONS.md`, as a marked block (Aider — which has to be told to read it)
+    Aider,
     /// `AGENTS.md`, as a marked block — the cross-tool convention (Codex, Jules,
     /// Amp, OpenCode, Antigravity and others read it)
     AgentsMd,
@@ -88,7 +90,21 @@ impl AgentEditor {
             AgentEditor::Gemini => (c::GEMINI_MD_FILE, Style::MarkedBlock),
             AgentEditor::Zed => (c::ZED_RULES_FILE, Style::MarkedBlock),
             AgentEditor::Copilot => (c::COPILOT_INSTRUCTIONS_FILE, Style::MarkedBlock),
+            AgentEditor::Aider => (c::AIDER_CONVENTIONS_FILE, Style::MarkedBlock),
             AgentEditor::AgentsMd => (c::AGENTS_MD_FILE, Style::MarkedBlock),
+        }
+    }
+
+    /// What the user still has to do, for the one editor that does not read its
+    /// file unprompted. Aider loads `CONVENTIONS.md` only when told to, so writing
+    /// the file and saying nothing would leave rules an agent never sees.
+    fn wiring(self) -> Option<&'static str> {
+        match self {
+            AgentEditor::Aider => Some(
+                "Aider does not read this file on its own. Add `read: CONVENTIONS.md` \
+                 to `.aider.conf.yml`, or start it with `aider --read CONVENTIONS.md`.",
+            ),
+            _ => None,
         }
     }
 }
@@ -191,6 +207,9 @@ fn write_agent_rules(editor: AgentEditor) -> Result<()> {
     write_rules_file(&target, &content)?;
 
     output::print_success(&format!("Rules written: {}", output::clean_path(&target)));
+    if let Some(wiring) = editor.wiring() {
+        output::print_info(wiring);
+    }
     output::print_info(
         "Commit the file if the whole team's agents should have it; it is inert data \
          and safe to share.",
@@ -251,6 +270,28 @@ mod tests {
         paths.sort_unstable();
         paths.dedup();
         assert_eq!(paths.len(), total, "two editors share a path");
+    }
+
+    #[test]
+    fn the_editor_that_has_to_be_told_to_read_its_file_says_so() {
+        // Rules an agent never loads are worse than no rules at all: the repository
+        // looks configured and nothing is. Aider is the only target whose file is not
+        // picked up by being there, so it is the only one that carries a note — and the
+        // note has to name the file, because that name is what goes in the config.
+        for editor in AgentEditor::value_variants() {
+            if let Some(note) = editor.wiring() {
+                let path = editor.target().0;
+                assert_eq!(path, crate::constants::AIDER_CONVENTIONS_FILE);
+                assert!(
+                    note.contains(path),
+                    "the note does not name the file: {note}"
+                );
+            }
+        }
+        assert!(
+            AgentEditor::Aider.wiring().is_some(),
+            "aider writes a file nothing reads until it is configured"
+        );
     }
 
     #[test]

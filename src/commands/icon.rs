@@ -133,8 +133,8 @@ pub fn sync_app_directory() -> Result<()> {
     // `dev-prune` to the User PATH, and write a `devp` function into `$PROFILE` /
     // `.zshrc` / `.bashrc` / `config.fish`. Editing a user's shell startup is not what
     // "register file icons" means, `devp uninstall` had no way to undo any of it, and
-    // it was redundant three times over: the installers already set PATH, and
-    // `ensure_devp_alias()` creates `devp` beside the real binary on every run.
+    // it was redundant three times over: the installers already set PATH, and every
+    // channel ships `devp` as a second executable of its own.
 
     Ok(())
 }

@@ -434,10 +434,10 @@ jobs:
   # release of this project reported "Publish to npm: success" while publishing nothing,
   # because that is exactly what an early `exit 0` looks like from the outside.
   #
-  # Set NPM_PUBLISH to "true" once every one of the eight names exists on the registry
-  # and each has a trusted publisher pointing at this workflow; see docs/RELEASING.md.
-  # Until then the job reports `skipped`, which is a different word in the UI and in the
-  # API.
+  # NPM_PUBLISH is "true": all eight names exist on the registry and each has a trusted
+  # publisher pointing at this workflow. Setting it back to "false" reports `skipped`,
+  # which is a different word in the UI and in the API from a job that ran and published
+  # nothing. See docs/RELEASING.md.
   publish-npm:
     name: Publish to npm
     needs: publish
@@ -645,6 +645,80 @@ jobs:
 
           cargo publish --locked
 
+  # `package-vsix` builds the extension and it is attached to the GitHub release either
+  # way; this job is what makes `ext install VKrishna04.dev-prune` resolve. Two
+  # marketplaces, because the editors dev-prune writes rules files for are split between
+  # them: VS Code and the forks that use Microsoft's gallery on one side, VSCodium,
+  # Cursor, Windsurf and the rest of Open VSX on the other. Publishing to only one is how
+  # an extension ends up "available" for half its audience. Set VSIX_PUBLISH to "true"
+  # once both PATs exist; docs/RELEASING.md has the exact scopes and expiry each needs.
+  publish-vsix:
+    name: Publish VS Code extension
+    needs: publish
+    runs-on: ubuntu-latest
+    # Pre-release tags are excluded for the manifests' reason. The extension carries its
+    # own version in `editors/vscode/package.json` and takes nothing from the tag, so an
+    # rc run would publish that version to both marketplaces as a general release and
+    # leave the real release with nothing left to publish.
+    if: ${{ vars.VSIX_PUBLISH == 'true' && !contains(github.event.inputs.tag || github.ref_name, '-') }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The artifact `package-vsix` uploaded, not a fresh build: publishing a second
+      # packaging of the same commit would put a .vsix on the marketplaces that no
+      # attestation covers, and the one in the release would no longer be the one people
+      # install.
+      - uses: actions/download-artifact@v8
+        with:
+          name: vscode-extension
+          path: dist
+
+      - name: Publish to both marketplaces
+        env:
+          # Both CLIs read their token from the environment, so it never reaches a
+          # command line and cannot be read out of the runner's process list.
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          set -eu
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "::error::VSIX_PUBLISH is 'true' but the VSCE_PAT secret is empty or unset."
+            exit 1
+          fi
+          if [ -z "${OVSX_PAT:-}" ]; then
+            echo "::error::VSIX_PUBLISH is 'true' but the OVSX_PAT secret is empty or unset."
+            exit 1
+          fi
+
+          vsix=$(ls dist/*.vsix)
+          echo "publishing $vsix"
+
+          # Re-running a release after one channel failed is normal, and by then this
+          # version is already on the marketplace that succeeded. That answer is a success
+          # that has already happened, not a failure; anything else stops the job. It is
+          # still a warning rather than a notice, because the other way to reach it is a
+          # release where nobody bumped the extension's own version — and that one must
+          # not read as a tick on the summary page.
+          publish() {
+            label=$1
+            shift
+            if out=$("$@" 2>&1); then
+              echo "$out"
+              return 0
+            fi
+            echo "$out"
+            case "$out" in
+              *already*exists*|*already*published*|*same*version*)
+                echo "::warning::$label already has this version. If that was not intended, bump the version in editors/vscode/package.json." ;;
+              *) return 1 ;;
+            esac
+          }
+
+          publish "the VS Code Marketplace" npx --yes @vscode/vsce publish --packagePath "$vsix"
+          publish "Open VSX" npx --yes ovsx publish "$vsix"
+
   # The first release of this project finished with three green jobs and nothing on any
   # registry, and there was no single place that said so. This job is that place: it runs
   # whatever happened above and turns each channel's result into a sentence on the run
@@ -776,7 +850,8 @@ jobs:
 
   summary:
     name: What actually shipped
-    needs: [publish, publish-npm, publish-pypi, publish-crate, packaging, submit-winget]
+    needs:
+      [publish, publish-npm, publish-pypi, publish-crate, publish-vsix, packaging, submit-winget]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -787,6 +862,7 @@ jobs:
           NPM_MISSING: ${{ needs.publish-npm.outputs.missing }}
           PYPI: ${{ needs.publish-pypi.result }}
           CRATE: ${{ needs.publish-crate.result }}
+          VSIX: ${{ needs.publish-vsix.result }}
           PKG: ${{ needs.packaging.result }}
           WINGET: ${{ needs.submit-winget.result }}
         run: |
@@ -814,6 +890,14 @@ jobs:
             fi
             echo "| PyPI | $(describe "$PYPI" PYPI_PUBLISH) |"
             echo "| crates.io | $(describe "$CRATE" CRATES_PUBLISH) |"
+            # Not `describe` either: this channel also sits out every pre-release,
+            # so a skip has two innocent explanations and naming one of them would
+            # send someone to check a variable that is already set.
+            case "$VSIX" in
+              success) echo "| VS Code Marketplace + Open VSX | ✅ published |" ;;
+              skipped) echo "| VS Code Marketplace + Open VSX | ⚠️ **not published** — channel not enabled (set \`VSIX_PUBLISH\`), or the tag was a pre-release |" ;;
+              *)       echo "| VS Code Marketplace + Open VSX | ❌ **failed** — see the job log |" ;;
+            esac
             # Not `describe`: "channel not enabled" is the wrong story here — a
             # skip means the tag was a pre-release, which is the correct outcome.
             case "$PKG" in

@@ -22,7 +22,7 @@ pub fn run(status_only: bool) -> Result<()> {
 
     output::print_header("dev-prune setup");
     let registry = Registry::load()?;
-    let report = setup::ensure_integrations(&registry);
+    let report = setup::ensure_integrations(&registry, setup::Consent::Explicit);
     report.print(true);
     setup::suppress_next_auto_setup();
 

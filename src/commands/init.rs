@@ -94,7 +94,8 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
         // Named, not silent. A scan that quietly drops repositories is one the user
         // cannot debug when it drops one they wanted — and `devp link` is the way back.
         output::print_info(&format!(
-            "Skipped {skipped_throwaway} disposable {} (plugin-manager clones, temp              directories). `devp link <path>` registers one anyway.",
+            "Skipped {skipped_throwaway} disposable {} (plugin-manager clones, temp directories). \
+             `devp link <path>` registers one anyway.",
             output::plural(skipped_throwaway, "checkout", "checkouts"),
         ));
     }

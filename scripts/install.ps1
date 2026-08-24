@@ -36,6 +36,8 @@ param(
     # Install the binary and nothing else: no SKILL.md, no Git hooks, no scheduled task.
     # `devp setup` installs them later; `devp setup --status` shows what is missing.
     [switch]$NoAutoSetup,
+    # Download and write the binary even when the same version is already installed here.
+    [switch]$Force,
     [switch]$Help
 )
 
@@ -61,6 +63,7 @@ dev-prune installer
   -BinDir <dir>    install directory (default: %APPDATA%\dev-prune\bin)
   -NoPath          do not touch the User PATH
   -NoAutoSetup     install the binary only; skip SKILL.md, Git hooks and the scheduler
+  -Force           reinstall even if this version is already installed here
   -Help            this message
 
 Passing a parameter needs the script as a script block:
@@ -68,6 +71,10 @@ Passing a parameter needs the script as a script block:
 
 The equivalent environment variables work with the plain `iwr ... | iex` one-liner:
   DEV_PRUNE_VERSION  DEV_PRUNE_BIN_DIR  DEV_PRUNE_NO_PATH=1  DEV_PRUNE_NO_AUTO_SETUP=1
+  DEV_PRUNE_FORCE=1
+
+Re-running this is safe. An install that is already here, current and on PATH is left
+alone and exits 0; an older one is replaced in place; a newer one is not downgraded.
 '@
     return
 }
@@ -77,13 +84,18 @@ The equivalent environment variables work with the plain `iwr ... | iex` one-lin
 $version = if ($Version) { $Version } elseif ($env:DEV_PRUNE_VERSION) { $env:DEV_PRUNE_VERSION } else { '' }
 $noPath = $NoPath -or ($env:DEV_PRUNE_NO_PATH -eq '1')
 $noAutoSetup = $NoAutoSetup -or ($env:DEV_PRUNE_NO_AUTO_SETUP -eq '1')
+$force = $Force -or ($env:DEV_PRUNE_FORCE -eq '1')
+# A version the user named is a version the user meant, however it was named. It is the
+# one thing that makes installing *backwards* the right answer, so it is remembered
+# before the next block fills $version in with whatever GitHub says is newest.
+$versionExplicit = [bool]$version
 $repo = 'Life-Experimentalist/dev-prune'
 
 # With no version pinned, ask GitHub which release is newest. The /releases/latest
 # redirect carries the tag, so one HEAD request answers without parsing JSON.
 # $fallbackVersion exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-$fallbackVersion = '1.7.0'
+$fallbackVersion = '1.8.0'
 if (-not $version) {
     try {
         $resp = Invoke-WebRequest -Uri "https://github.com/$repo/releases/latest" -Method Head -MaximumRedirection 5 -UseBasicParsing -ErrorAction Stop
@@ -95,9 +107,6 @@ if (-not $version) {
 }
 $version = $version.TrimStart('v')
 
-Write-Host ""
-Write-Host "-> Installing dev-prune v$version" -ForegroundColor Cyan
-
 # Must match Registry::config_dir(), which resolves to %APPDATA%\dev-prune on Windows.
 $binDir = if ($BinDir) {
     $BinDir
@@ -108,6 +117,149 @@ $binDir = if ($BinDir) {
 }
 $exePath = Join-Path $binDir 'dev-prune.exe'
 $aliasPath = Join-Path $binDir 'devp.exe'
+
+# Where `dev-prune` resolves *before* this script writes anything, when that is not
+# the copy this script manages. Running the installer over a cargo, WinGet or Scoop
+# install does not fail and does not remove that copy - removing another package
+# manager's file behind its back is how installations become unrepairable. But the
+# copy stays on PATH afterwards, so it is named at the end with the command that
+# migrates it properly.
+$priorExe = (Get-Command dev-prune -CommandType Application -ErrorAction SilentlyContinue |
+    Select-Object -First 1).Source
+if ($priorExe -eq $exePath) { $priorExe = $null }
+
+# `C:\x\bin` and `C:\x\bin\` are the same PATH entry to Windows; a literal -contains
+# treats them as different and appends a duplicate on every re-install.
+function Test-OnPath {
+    param([string]$PathValue, [string]$Dir)
+    $norm = $Dir.TrimEnd('\')
+    @(($PathValue -split ';') | ForEach-Object { $_.TrimEnd('\') }) -contains $norm
+}
+
+# Printed from three endings now, so it lives in one place.
+function Write-PriorExeNotice {
+    if ($priorExe) {
+        Write-Host ""
+        Write-Host "[!] Another dev-prune is on your PATH as well:" -ForegroundColor Yellow
+        Write-Host "        $priorExe"
+        Write-Host "    A different package manager owns that copy, so this script left it alone."
+        if ($noPath) {
+            Write-Host "    PATH was left alone (-NoPath), so which one you get is up to yours."
+        } else {
+            Write-Host "    This directory comes first on PATH, so 'devp' is the copy in $binDir."
+        }
+        Write-Host "    To move the old one over properly - install here, uninstall there through"
+        Write-Host "    the manager that put it there - run:"
+        Write-Host "        devp install --channel installer"
+        Write-Host "    'devp doctor' lists every copy on the machine at any time."
+    }
+}
+
+# The version already sitting at the path this script manages, if any. Both switches
+# matter: `--version` on this CLI is handled in code rather than short-circuited by the
+# parameter parser, so an unguarded call could have the *old* binary register a
+# scheduled task or reach GitHub in the middle of installing its replacement. They are
+# put back afterwards because `devp setup` runs later in this same process and reads
+# them too.
+$installedVersion = ''
+# ...and whether that copy is pinned. version_lock is the one setting that outranks this
+# script: somebody who set it asked for the binary not to change, and a one-liner re-run
+# out of habit is precisely the accident it exists to stop. Probed in the same guarded
+# block, because it is the same binary answering under the same two switches.
+$installedLock = $false
+if (Test-Path -LiteralPath $exePath) {
+    $prevNoSetup = $env:DEV_PRUNE_NO_AUTO_SETUP
+    $prevOffline = $env:DEV_PRUNE_OFFLINE
+    $prevEap = $ErrorActionPreference
+    try {
+        $env:DEV_PRUNE_NO_AUTO_SETUP = '1'
+        $env:DEV_PRUNE_OFFLINE = '1'
+        # A binary too old, too new or too broken to answer is not a reason to stop.
+        $ErrorActionPreference = 'Continue'
+        $probe = & $exePath --version 2>$null | Out-String
+        if ($probe -match '(\d+\.\d+\.\d+)') { $installedVersion = $Matches[1] }
+        if ($installedVersion) {
+            $lockProbe = & $exePath config get version_lock 2>$null | Out-String
+            if ($lockProbe -match 'true') { $installedLock = $true }
+        }
+    } catch {
+    } finally {
+        $ErrorActionPreference = $prevEap
+        $env:DEV_PRUNE_NO_AUTO_SETUP = $prevNoSetup
+        $env:DEV_PRUNE_OFFLINE = $prevOffline
+    }
+}
+
+# Whether a *new* terminal would find this install, which is the only question that
+# matters here: the current session's $env:PATH may only contain $binDir because an
+# earlier run of this script put it there for the session. -NoPath means the user is
+# managing PATH themselves, so it stops being this script's question.
+$persistedPath = ''
+try { $persistedPath = [Environment]::GetEnvironmentVariable('Path', 'User') } catch {}
+if ($null -eq $persistedPath) { $persistedPath = '' }
+$pathConfigured = $noPath -or (Test-OnPath $persistedPath $binDir)
+
+# A release tag that is not three numbers - a `-rc1`, say - simply does not take part
+# in the comparison, and the ordinary install runs.
+$targetVer = $null
+try { $targetVer = [version]$version } catch {}
+$installedVer = if ($installedVersion) { [version]$installedVersion } else { $null }
+
+# Re-running the one-liner is the most common thing anyone does with it - it is what the
+# README, the release page and every "just reinstall it" answer tell people to do. So it
+# has to be safe *and* quiet: an install that is already correct is left exactly as it
+# is, and one that is merely out of date is replaced without asking. The one thing this
+# will not do on its own is install backwards.
+#
+# One branch sits above all of that, including the silent in-place update: a pinned
+# install is not updated, repaired or downgraded by this script at all. -Force is the
+# only way past it, and it has to be typed.
+if ($installedLock -and -not $force) {
+    Write-Host ""
+    Write-Host "[!] dev-prune v$installedVersion at:" -ForegroundColor Yellow
+    Write-Host "        $exePath"
+    Write-Host "    has version_lock set, so this script changed nothing."
+    Write-Host "    Release the pin and re-run:"
+    Write-Host "        devp config set version_lock false"
+    Write-Host "    Or install over it just this once with -Force."
+    Write-PriorExeNotice
+    return
+}
+
+if ($installedVer -and $targetVer -and -not $force) {
+    if ($installedVer -gt $targetVer -and -not $versionExplicit) {
+        Write-Host ""
+        Write-Host "[OK] dev-prune v$installedVersion is already installed at:" -ForegroundColor Green
+        Write-Host "        $exePath"
+        Write-Host "     That is newer than the v$version this run resolved to, so nothing"
+        Write-Host "     was changed. Re-run with -Force to install v$version over it."
+        Write-PriorExeNotice
+        return
+    }
+    if ($installedVer -eq $targetVer -and (Test-Path -LiteralPath $aliasPath) -and $pathConfigured) {
+        Write-Host ""
+        Write-Host "[OK] dev-prune v$version is already installed at:" -ForegroundColor Green
+        Write-Host "        $exePath"
+        if ($noPath) {
+            Write-Host "     'devp.exe' is beside it. Nothing to do."
+        } else {
+            Write-Host "     It is on PATH and 'devp.exe' is beside it. Nothing to do."
+        }
+        Write-Host "     Re-run with -Force to download and write it again."
+        Write-PriorExeNotice
+        return
+    }
+    # Same version, but something is missing - no devp.exe, or nothing on the User PATH
+    # pointing here. Falling through reinstalls and repairs it, which is the whole
+    # reason someone re-runs the one-liner after an install went wrong.
+}
+
+Write-Host ""
+if ($installedVersion -and $installedVersion -ne $version) {
+    Write-Host "-> Updating dev-prune v$installedVersion -> v$version" -ForegroundColor Cyan
+} else {
+    Write-Host "-> Installing dev-prune v$version" -ForegroundColor Cyan
+}
 
 # PROCESSOR_ARCHITECTURE reports the *process* architecture, and on Windows-on-ARM this
 # script frequently runs inside an emulated x64 PowerShell — which would read AMD64 and
@@ -236,14 +388,6 @@ try {
     Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# `C:\x\bin` and `C:\x\bin\` are the same PATH entry to Windows; a literal -contains
-# treats them as different and appends a duplicate on every re-install.
-function Test-OnPath {
-    param([string]$PathValue, [string]$Dir)
-    $norm = $Dir.TrimEnd('\')
-    @(($PathValue -split ';') | ForEach-Object { $_.TrimEnd('\') }) -contains $norm
-}
-
 if (-not $noPath) {
     # Raw registry access, not [Environment]::GetEnvironmentVariable: that call hands
     # back the *expanded* value, and writing it back would bake every %USERPROFILE%-
@@ -257,10 +401,17 @@ if (-not $noPath) {
     }
     if (-not (Test-OnPath $userPath $binDir)) {
         Write-Host "-> Adding $binDir to your User PATH" -ForegroundColor Cyan
-        # Trim first: appending to an empty Path would leave a leading ';', and an
-        # empty PATH entry on Windows means "search the current directory".
-        $trimmed = $userPath.TrimEnd(';')
-        $newPath = if ($trimmed) { $trimmed + ';' + $binDir } else { $binDir }
+        # Prepended, not appended, and for the same reason the in-session assignment
+        # below prepends: this directory holds nothing but dev-prune.exe and devp.exe,
+        # so it can shadow nothing else, and a machine that already has a copy from
+        # cargo or Scoop on PATH would otherwise keep running that one in every
+        # terminal opened after this. The install would look like it worked - it does
+        # work in the session it ran in - and be silently undone by PATH order.
+        #
+        # Trim first: joining an empty Path would leave a stray ';', and an empty PATH
+        # entry on Windows means "search the current directory".
+        $trimmed = $userPath.Trim(';')
+        $newPath = if ($trimmed) { $binDir + ';' + $trimmed } else { $binDir }
         if ($null -ne $envKey) {
             $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
             try { $kind = $envKey.GetValueKind('Path') } catch {}
@@ -356,6 +507,8 @@ if (-not $noAutoSetup) {
     Write-Host ""
     Write-Host "-> Skipped setup (-NoAutoSetup). Run 'devp setup' when you want it." -ForegroundColor Cyan
 }
+
+Write-PriorExeNotice
 
 Write-Host ""
 if ($pathReady) {

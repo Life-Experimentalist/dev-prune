@@ -4,6 +4,12 @@ This guide addresses edge-case scenarios, state file recovery, symlink handling,
 
 ---
 
+<p align="center">
+  <img src="../../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 🔍 Issue Index
 
 - [⚠️ Registry Corruption, Symlinks \& Edge Cases Troubleshooting](#️-registry-corruption-symlinks--edge-cases-troubleshooting)

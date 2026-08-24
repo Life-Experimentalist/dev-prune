@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="assets/readme-banner.png" alt="dev-prune — get the gigabytes back, lose nothing" width="820" />
+<img src="assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="820" />
 
 # `dev-prune`
 
-### Get the gigabytes back. Lose nothing.
+### Gigabytes back. Nothing you can't rebuild.
 
 **Reclaim the disk space your idle repositories are sitting on — without ever deleting
 something a lockfile cannot put back.**
@@ -83,6 +83,10 @@ All three download the prebuilt binary for your platform, verify its published S
 put it on `PATH`, and run `dev-prune setup`. Pass `--no-auto-setup` / `-NoAutoSetup` to
 skip that last step.
 
+Re-run any of them whenever you like. An install that is already current, complete and on
+`PATH` is left exactly as it is and exits `0` without downloading; an older one is updated
+in place; a newer one is not downgraded. `--force` / `-Force` writes it again regardless.
+
 The Command Prompt form installs identically to the PowerShell one, but `cmd` cannot
 inherit the `PATH` the installer sets in its own process, so `devp` resolves in the *next*
 Command Prompt you open rather than the current one. PowerShell does not have that
@@ -91,6 +95,7 @@ problem.
 ### From a package manager
 
 ```bash
+npm install -g dev-prune      # or: npx dev-prune status
 uv tool install dev-prune     # or: uvx dev-prune status
 pipx install dev-prune
 pip install dev-prune
@@ -98,9 +103,15 @@ cargo binstall dev-prune      # fetches the prebuilt release archive
 cargo install dev-prune       # builds from source, needs Rust 1.88+
 ```
 
-The PyPI packages **contain the binary** — there is no download step at install time,
-so they work behind a registry mirror and offline. Everything but `cargo install` ships
-a prebuilt executable.
+The npm and PyPI packages **contain the binary** — there is no download step at install
+time, so they work under `npm ci --ignore-scripts`, behind a registry mirror and offline.
+Everything but `cargo install` ships a prebuilt executable.
+
+npm delivers it the way esbuild and Biome do: one small `dev-prune` package that lists
+seven platform packages as optional dependencies, of which npm installs exactly the one
+matching your machine. That is why there is no download step to block. Windows works from
+1.8.0 onwards — earlier versions installed and then reported no binary to run, so a
+machine still holding `dev-prune@1.7.0` needs `npm install -g dev-prune@latest`.
 
 crates.io stores source and nothing else, so `cargo install` has no binary to fetch and
 always compiles. [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) is the
@@ -132,7 +143,7 @@ brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/ma
 scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json
 ```
 
-WinGet is [submitted and in review](https://github.com/microsoft/winget-pkgs/pull/422665);
+WinGet is [submitted and in review](https://github.com/microsoft/winget-pkgs/pull/422809);
 `winget install VKrishna04.dev-prune` starts resolving when that pull request merges.
 
 The two Python entry points differ in where they land. `pip install` follows whichever
@@ -321,23 +332,27 @@ $ devp caches
 
 Package manager caches
 
-  uv cache                16.25 GiB  ~/.cache/uv
-                                     clear: uv cache prune
+  npm cache               9.98 GiB  ~/.npm
+                                    clear: npm cache clean --force
+                                    npm is used by 18 of 46 registered repositories · 567.75 MiB each
 
-  npm cache                8.97 GiB  ~/.npm
-                                     clear: npm cache clean --force
+  uv cache                6.22 GiB  ~/.cache/uv
+                                    clear: uv cache prune
+                                    uv is used by 7 of 46 registered repositories · 909.77 MiB each
 
-  go build cache         371.75 MiB  ~/.cache/go-build
-                                     clear: go clean -cache
-                                     compiled build artifacts; clearing them means the next build is a cold one
+  pnpm store              2.07 GiB  /mnt/data/.pnpm-store
+                                    clear: pnpm store prune --store-dir /mnt/data/.pnpm-store
+                                    one store per filesystem, because a hardlink into node_modules cannot cross one
+                                    pnpm is used by 1 of 46 registered repositories · 2.09 GiB each
 
-  cargo registry sources 104.75 MiB  ~/.cargo/registry/src
-                                     clear: rm -rf ~/.cargo/registry/src
-                                     unpacked copies of the archives above; cargo re-extracts these offline
+  nuget global packages   1.44 GiB  ~/.nuget/packages
+                                    clear: dotnet nuget locals global-packages --clear
+                                    every .NET project on the machine restores from here; re-downloaded on the next restore
 
-  …                                  (pip, bun, pnpm, go module cache, cargo registry cache)
+  …                                 (pip, bun, both go caches, gradle wrapper distributions, both cargo
+                                    registry caches, and the pnpm store beside your home directory)
 
-  Total                   27.26 GiB  across 9 caches
+  Total                  21.99 GiB  across 12 caches
 
 → Nothing above was deleted, and dev-prune never deletes any of it.
 ```
@@ -345,6 +360,14 @@ Package manager caches
 A cache lives outside every repository and is shared by all of them, so no single
 lockfile can prove it recoverable — and it is what makes `devp restore` fast. `devp
 caches` reports and prints the clear command; running it is your decision.
+
+pnpm gets a row per filesystem rather than a single row. It hardlinks its store into
+every `node_modules` it fills, and a hardlink cannot cross a filesystem, so projects
+kept off the system disk have a store of their own at the root of *that* filesystem —
+`V:\.pnpm-store` on a second Windows drive, `/mnt/data/.pnpm-store` on Linux,
+`/Volumes/Work/.pnpm-store` on macOS. `pnpm store path` only ever answers for the
+filesystem it is run on, so dev-prune looks at the root of every filesystem that holds
+a registered repository, and each such row names its store in the command it prints.
 
 </details>
 
@@ -421,7 +444,7 @@ process that leaves a dirty working tree is a surprise.
 | 🧩 **Any number of ecosystems per repository** | uv, npm and cargo in one root, or spread across `frontend/`, `services/api/` and `tools/cli/` — each discovered, verified and pruned on its own terms                                                                                                                                                                                                       |
 | ↩️ **One-command restore**                     | `devp restore .` reinstalls a tree; `devp restore --last-run` puts back exactly what the most recent pass deleted, across every repository it touched                                                                                                                                                                                                       |
 | 🕒 **Activity-aware**                          | Combines `git log` timestamps with source-file `mtime`, so uncommitted work protects a repository just as a commit does                                                                                                                                                                                                                                     |
-| 📊 **Cache report**                            | `devp caches` sizes every package manager cache and store on the machine — npm to cargo to Maven, Gradle, NuGet, vcpkg, Conan, Composer, CocoaPods and Hex — and prints the command that clears each. The report is read-only; `devp caches clear <manager>` runs that command for you, after asking. Nothing on a schedule ever touches a cache            |
+| 📊 **Cache report**                            | `devp caches` sizes every package manager cache and store on the machine — npm to cargo to conda, Maven, Gradle, NuGet, vcpkg, Conan, Composer, CocoaPods and Hex — and prints the command that clears each. The report is read-only; `devp caches clear <manager>` runs that command for you, after asking. `devp config set cache_max_gb uv=10,npm=10` says how big is too big, per manager, and marks the ones past it — `devp caches clear --over-cap all` then empties exactly those, still only when you type it. Each manager also says how many of your registered repositories use it and what that works out to per repository, and `devp caches clear --unused all` empties the ones nothing uses at all. pnpm is reported once per filesystem, because a store it hardlinks into `node_modules` cannot cross one and projects kept off the system disk get a store of their own. Nothing on a schedule ever touches a cache, and Maven's `~/.m2/repository` is never cleared at all — it holds artifacts `mvn install:install-file` put there that no remote can hand back |
 | 🩺 **`devp doctor`**                           | One read-only pass that ends by naming the *single* reason a repository would or would not be pruned. Runs no package manager, repairs nothing, safe to run twice. `devp doctor --fix` then mends what it found — installed-but-broken only                                                                                                                 |
 | 🤖 **Self-installing automation**              | OS-native scheduler (Task Scheduler, LaunchAgent, systemd user timer) and non-blocking Git hooks, installed at install time and restored after an upgrade. `auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1` turn it off                                                                                                             |
 | ⚡ **0ms opt-out**                             | An `ignore.devprune.json` in a repository root is honoured by file presence alone — no read, no parse                                                                                                                                                                                                                                                       |
@@ -436,27 +459,27 @@ process that leaves a dirty working tree is a surprise.
 
 ## Commands
 
-| Command                | Also                                                                | What it does                                                                                                                                                                                                                                           |
-| :--------------------- | :------------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `devp init [PATHS]`    | `scan`, `onboard`                                                   | Crawls directory trees for Git repositories and registers them, then runs the `setup` integration pass                                                                                                                                                 |
-| `devp link [PATH]`     |                                                                     | Registers one repository                                                                                                                                                                                                                               |
-| `devp unlink [PATH]`   | `--missing`                                                         | Unregisters one; `--missing` drops every entry whose directory is gone, in one pass                                                                                                                                                                    |
-| `devp undo`            |                                                                     | Reverts the most recent `init` or `link`                                                                                                                                                                                                               |
-| `devp run [PATH]`      | `--dry-run`, `--only`, `--skip`, `--except`, `--min-size`, `--json` | Prunes every registered repository, or one target                                                                                                                                                                                                      |
-| `devp status`          | `--top N`, `--drift`, `--json`                                      | Interactive dashboard; a plain table when there is no TTY. `--top N` shows only the N biggest repositories; `--drift` lists every environment holding packages its lockfile never recorded                                                             |
-| `devp stats`           | `--json`                                                            | What has already been reclaimed: lifetime total, prune passes, the last pass, and the biggest contributors                                                                                                                                             |
-| `devp completions`     | `bash`, `zsh`, `fish`, `powershell`, `elvish`                       | Prints a shell completion script to stdout, generated from the same argument definitions the binary parses with                                                                                                                                        |
-| `devp caches`          | `clear <manager\|all>`, `--json`                                    | Sizes every package manager cache on the machine and prints the command that clears each. The report deletes nothing and nothing on a schedule ever will; `clear` empties one when you type it, after asking                                           |
-| `devp trust`           | `--json`                                                            | What dev-prune may do on this machine: the guarantees the code enforces, then the scheduler, hooks and settings read live. Read-only                                                                                                                   |
-| `devp restore [PATH]`  | `--last-run`                                                        | Reinstalls dependencies for every project in a tree; `--last-run` undoes the last prune pass                                                                                                                                                           |
-| `devp doctor [PATH]`   | `--fix`                                                             | Diagnoses the installation, or one repository — ending with the single reason a pass would or would not touch it. `--fix` repairs what the checks found; it never performs a first-time install                                                        |
-| `devp config [ACTION]` | `get`, `set`, `show`, `wizard`, `project`, `daemon`, `hook`, `icon` | Global settings, per-repository `.devprune.json`, scheduler, Git hooks, file manager icons                                                                                                                                                             |
-| `devp setup`           | `--status`                                                          | Installs any missing integration; `--status` only reports                                                                                                                                                                                              |
-| `devp update`          | `--offline`, `--install`                                            | Prints the installed version, checks GitHub for a newer release, shows the upgrade command for your install channel; `--install` runs that upgrade through the channel that owns this copy                                                             |
-| `devp skill`           | `--agent <editor>`                                                  | Exports `SKILL.md` and prints AI agent onboarding prompts; `--agent` writes per-repository rules for 15 editors — Cursor, Windsurf, Antigravity, Cline, Roo, Kilo Code, Continue, Amazon Q, Kiro, Trae, Junie, Gemini CLI, Zed, Copilot or `AGENTS.md` |
-| `devp man`             | `--dir <dir>`                                                       | The manual as man pages, generated from the same argument definitions `--help` prints; alone it emits `devp(1)` to stdout, `--dir` writes the full set                                                                                                 |
-| `devp uninstall`       | `--deep`                                                            | Removes the scheduler, hooks, both binaries and every other installed copy it can find on the machine; `--deep` also clears configuration                                                                                                              |
-| `devp -V`              |                                                                     | Version plus an environment audit: OS, architecture, config path, PATH activation                                                                                                                                                                      |
+| Command                | Also                                                                | What it does                                                                                                                                                                                                                                                  |
+| :--------------------- | :------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `devp init [PATHS]`    | `scan`, `onboard`                                                   | Crawls directory trees for Git repositories and registers them, then runs the `setup` integration pass                                                                                                                                                        |
+| `devp link [PATH]`     | :------------------------------------------------------------------ | Registers one repository                                                                                                                                                                                                                                      |
+| `devp unlink [PATH]`   | `--missing`                                                         | Unregisters one; `--missing` drops every entry whose directory is gone, in one pass                                                                                                                                                                           |
+| `devp undo`            | :------------------------------------------------------------------ | Reverts the most recent `init` or `link`                                                                                                                                                                                                                      |
+| `devp run [PATH]`      | `--dry-run`, `--only`, `--skip`, `--except`, `--min-size`, `--json` | Prunes every registered repository, or one target                                                                                                                                                                                                             |
+| `devp status`          | `--top N`, `--drift`, `--json`                                      | Interactive dashboard; a plain table when there is no TTY. `--top N` shows only the N biggest repositories; `--drift` lists every environment holding packages its lockfile never recorded                                                                    |
+| `devp stats`           | `--json`                                                            | What has already been reclaimed: lifetime total, prune passes, the last pass, and the biggest contributors                                                                                                                                                    |
+| `devp completions`     | `bash`, `zsh`, `fish`, `powershell`, `elvish`                       | Prints a shell completion script to stdout, generated from the same argument definitions the binary parses with                                                                                                                                               |
+| `devp caches`          | `clear <manager\|all>`, `--json`                                    | Sizes every package manager cache on the machine and prints the command that clears each. The report deletes nothing and nothing on a schedule ever will; `clear` empties one when you type it, after asking                                                  |
+| `devp trust`           | `--json`                                                            | What dev-prune may do on this machine: the guarantees the code enforces, then the scheduler, hooks and settings read live. Read-only                                                                                                                          |
+| `devp restore [PATH]`  | `--last-run`                                                        | Reinstalls dependencies for every project in a tree; `--last-run` undoes the last prune pass                                                                                                                                                                  |
+| `devp doctor [PATH]`   | `--fix`                                                             | Diagnoses the installation, or one repository — ending with the single reason a pass would or would not touch it. `--fix` repairs what the checks found; it never performs a first-time install                                                               |
+| `devp config [ACTION]` | `get`, `set`, `show`, `wizard`, `project`, `daemon`, `hook`, `icon` | Global settings, per-repository `.devprune.json`, scheduler, Git hooks, file manager icons                                                                                                                                                                    |
+| `devp setup`           | `--status`                                                          | Installs any missing integration; `--status` only reports                                                                                                                                                                                                     |
+| `devp update`          | `--offline`, `--install`                                            | Prints the installed version, checks GitHub for a newer release, shows the upgrade command for your install channel; `--install` runs that upgrade through the channel that owns this copy                                                                    |
+| `devp skill`           | `--agent <editor>`                                                  | Exports `SKILL.md` and prints AI agent onboarding prompts; `--agent` writes per-repository rules for 16 editors — Cursor, Windsurf, Antigravity, Cline, Roo, Kilo Code, Continue, Amazon Q, Kiro, Trae, Junie, Gemini CLI, Zed, Copilot, Aider or `AGENTS.md` |
+| `devp man`             | `--dir <dir>`                                                       | The manual as man pages, generated from the same argument definitions `--help` prints; alone it emits `devp(1)` to stdout, `--dir` writes the full set                                                                                                        |
+| `devp uninstall`       | `--deep`                                                            | Removes the scheduler, hooks, both binaries and every other installed copy it can find on the machine; `--deep` also clears configuration                                                                                                                     |
+| `devp -V`              | :------------------------------------------------------------------ | Version plus an environment audit: OS, architecture, config path, PATH activation                                                                                                                                                                             |
 
 `devp hook`, `devp daemon` and `devp icon` are shorthands for the `config` subcommands of
 the same name, and `install` / `uninstall` / `on` / `off` work wherever `enable` /
@@ -499,22 +522,49 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **SwiftPM** *(opt-in)*        | `Package.swift`                                               | `.build`                                   | `Package.swift` declares a `Package(` — the rebuild-from-source proof                                             | *(rebuilt by the next `swift build`)*                     |
 | **Dart / Flutter** *(opt-in)* | `pubspec.yaml`                                                | `.dart_tool`                               | `pubspec.lock` has a `packages:` section and is no older than `pubspec.yaml`                                      | `dart pub get` / `flutter pub get`                        |
 | **Mix `_build/`** *(opt-in)*  | `mix.exs`                                                     | `_build`                                   | `mix.exs` and `mix.lock` both present — the rebuild-from-source proof                                             | *(rebuilt by the next `mix compile`)*                     |
+| **vcpkg** (C/C++) *(opt-in)*  | `vcpkg.json`                                                  | `vcpkg_installed`                          | `vcpkg.json` declares a non-empty `dependencies` list                                                             | *(rebuilt by the next `vcpkg install`)*                   |
+| **CMake** (C/C++) *(opt-in)*  | `CMakeLists.txt`                                              | any tree holding a `CMakeCache.txt`        | the tree's own `CMakeCache.txt` names a source directory inside this repository                                   | *(rebuilt by the next `cmake --build`)*                   |
 
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
 
-The six build-tool adapters ship **disabled**, because a build tree is regenerated
+The eight build-tool adapters ship **disabled**, because a build tree is regenerated
 by recompiling, not downloading — it costs more to get back. `devp config set
 enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` /
-`enable_dart true` / `enable_mix_build true` switches them on, and their candidates wait for `build_idle_days` (45 by default),
-applied as the *maximum* of it and `idle_days` — the build-tool gate only ever makes
-pruning later, never earlier.
+`enable_dart true` / `enable_mix_build true` / `enable_vcpkg true` /
+`enable_cmake_build true` switches them on, and their candidates wait for
+`build_idle_days` (45 by default), applied as the *maximum* of it and `idle_days` — the
+build-tool gate only ever makes pruning later, never earlier.
 
 Any one adapter can be made to wait longer than the rest: `devp config set
 adapter_idle_days cargo=90,npm=30` sets a per-adapter floor, applied as
 `max(idle_days, build_idle_days, adapter_idle_days[name])`. `devp config wizard` edits
 it beside the adapter checklist, grouped by language, where one heading sets the same
 window for every adapter under it.
+
+A download cache is a bet that re-downloading costs less than the disk it occupies,
+and somewhere the bet stops paying. `devp config set cache_max_gb uv=10,npm=10` is
+where you say where: a ceiling in gibibytes, per manager, measured against that
+manager's whole footprint. A manager over its cap is **marked** in `devp caches` —
+setting one deletes nothing — and `devp caches clear --over-cap all` empties exactly
+what is marked, when you type it. It is keyed by the names `devp caches clear` takes
+(`npm`, `pnpm`, `uv`, `pip`, `cargo`, `go`, `nuget`, …) rather than by adapter name,
+because the two lists overlap without either containing the other. Empty by default:
+no cache is too big until you say what too big is. The wizard sets caps as a third
+column on the same checklist.
+
+The report answers one more question the disk cannot: *who still needs this*. Beside each
+manager it says how many of your registered repositories use it, and what its cache works
+out to per repository — two repositories sharing a 12 GiB cache is 6 GiB each and worth a
+look, forty sharing the same 12 GiB is 300 MiB each and is the cache doing its job. A
+manager **no** registered repository uses is the one case where a count is enough to act
+on: everything in it was downloaded for projects that are not on this disk any more, so
+`devp caches clear --unused all` costs no re-download for anything you still have. The
+count ignores whether an adapter is switched on, because the question is which managers
+your projects *use*, not which ones a prune pass would touch, and it is shown only for the
+managers that are also adapter names — `pip`, `conda`, `nuget`, `conan` and `hex` get
+no number rather than a guess. With nothing registered, nothing is counted and
+`--unused` refuses to run.
 
 Bundler and Pipenv claim only the install that lives *inside* the repository: the
 `vendor/bundle` a project gets from `bundle config set path vendor/bundle`, and the
@@ -600,9 +650,10 @@ inherited — and again after an upgrade adds a setting you have never been show
 | `check_interval_days`                                                              |    `2`    | How often the OS scheduler runs a pass                                              |
 | `update_check`                                                                     |  `true`   | Whether the periodic release check runs                                             |
 | `update_check_interval_days` · `update_check_timeout_secs`                         | `7` · `5` | Minimum gap between checks, and how long one may hang                               |
-| `enable_cargo` · `enable_gradle` · `enable_maven` · `enable_swift` · `enable_dart` · `enable_mix_build` |  `false`  | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all six        |
+| `enable_cargo` … `enable_cmake_build`                                              |  `false`  | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all eight      |
 | `adapter_idle_days`                                                                | *(none)*  | Per-adapter idle floors, as `cargo=90,npm=30` — each raises only its own window     |
 | `disabled_adapters`                                                                | *(none)*  | Adapters to leave alone entirely, by name — as if that ecosystem were not installed |
+| `cache_max_gb`                                                                     | *(none)*  | Per-manager cache caps in GiB, as `uv=10,npm=10` — the cap itself deletes nothing   |
 
 Three of them — `idle_days` (as `override_idle_days`), `min_size_mb` and `scan_depth` —
 also take a per-repository form in that project's `.devprune.json`, where they win for

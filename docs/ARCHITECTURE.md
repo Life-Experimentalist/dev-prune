@@ -6,7 +6,7 @@ Welcome to the technical architecture guide for **`dev-prune`** (`devp`), a cros
 
 ## 🖼️ System Visual Overview
 
-![dev-prune Hero Banner](../assets/readme-banner.png)
+![dev-prune Hero Banner](../assets/github-readme-banner.png)
 
 ---
 

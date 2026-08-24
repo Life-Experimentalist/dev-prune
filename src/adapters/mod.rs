@@ -19,6 +19,7 @@
 pub mod bun;
 pub mod bundler;
 pub mod cargo_adapter;
+pub mod cmake_build;
 pub mod cocoapods;
 pub mod composer;
 pub mod dart;
@@ -35,6 +36,7 @@ pub mod poetry;
 pub mod swift;
 pub mod terraform;
 pub mod uv;
+pub mod vcpkg;
 pub mod venv;
 pub mod yarn;
 
@@ -179,7 +181,8 @@ pub trait PackageManager: Send + Sync {
     /// Whether this adapter is inert until the user enables it in settings.
     ///
     /// Adapters whose directory is compiler output answer `true` — cargo, gradle,
-    /// maven and swift. Theirs come back by recompiling the project, which costs far
+    /// maven, swift, dart, mix_build, vcpkg and cmake_build. Theirs come back by
+    /// recompiling the project, which costs far
     /// more than a dependency reinstall, so nobody should find them deleted without
     /// having asked. The engine also holds them to the longer `build_idle_days` idle
     /// window.
@@ -234,6 +237,8 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(swift::Swift),
         Box::new(terraform::Terraform),
         Box::new(dart::Dart),
+        Box::new(vcpkg::Vcpkg),
+        Box::new(cmake_build::CmakeBuild),
     ]
 }
 
@@ -267,6 +272,12 @@ fn opt_in_enabled() -> &'static [String] {
                 }
                 if r.settings.enable_mix_build {
                     names.push("mix_build".to_string());
+                }
+                if r.settings.enable_vcpkg {
+                    names.push("vcpkg".to_string());
+                }
+                if r.settings.enable_cmake_build {
+                    names.push("cmake_build".to_string());
                 }
                 names
             })
@@ -325,6 +336,7 @@ pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("Elixir", &["mix", "mix_build"]),
     ("Infrastructure", &["terraform"]),
     ("Dart & Flutter", &["dart"]),
+    ("C & C++", &["vcpkg", "cmake_build"]),
 ];
 
 /// The language group `name` belongs to, or `"Other"` if it somehow belongs to none.
@@ -365,6 +377,23 @@ pub fn opt_in_adapter_names() -> Vec<&'static str> {
 /// directory are reduced to one first; see [`resolve_conflicts`].
 pub fn detect_adapters(project_path: &Path) -> Vec<Box<dyn PackageManager>> {
     detect_adapters_with(project_path, opt_in_enabled(), user_disabled())
+}
+
+/// Every package manager that claims this directory, whatever the user has switched off.
+///
+/// [`detect_adapters`] answers "what would a prune pass touch here", which is the right
+/// question everywhere a prune pass is involved and the wrong one for `devp caches`: an
+/// opt-in adapter that is off, or one named in `disabled_adapters`, still means the
+/// project uses that manager and still means its download cache is what puts the project
+/// back. Counting with the filtered detector would report a cargo cache as used by no
+/// repository on a machine full of Rust, because `enable_cargo` happens to be off — and
+/// that is the one answer that would get a cache cleared.
+pub fn detect_all_adapters(project_path: &Path) -> Vec<Box<dyn PackageManager>> {
+    let opt_in: Vec<String> = opt_in_adapter_names()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    detect_adapters_with(project_path, &opt_in, &[])
 }
 
 /// The body of [`detect_adapters`], with the two user-configured lists passed in.
@@ -1217,7 +1246,15 @@ pub(crate) fn python_runtime_available(tag: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-const NO_RESTORE_BINARY: [&str; 5] = ["venv", "gradle", "maven", "mix_build", "swift"];
+const NO_RESTORE_BINARY: [&str; 7] = [
+    "venv",
+    "gradle",
+    "maven",
+    "mix_build",
+    "swift",
+    "vcpkg",
+    "cmake_build",
+];
 
 /// Adapters whose executable is not called what the adapter is called.
 const ADAPTER_BINARIES: [(&str, &str); 2] = [("bundler", "bundle"), ("cocoapods", "pod")];
@@ -1382,7 +1419,16 @@ mod tests {
         opt_in.sort_unstable();
         assert_eq!(
             opt_in,
-            vec!["cargo", "dart", "gradle", "maven", "mix_build", "swift"]
+            vec![
+                "cargo",
+                "cmake_build",
+                "dart",
+                "gradle",
+                "maven",
+                "mix_build",
+                "swift",
+                "vcpkg"
+            ]
         );
     }
 
@@ -1550,6 +1596,26 @@ mod tests {
             .map(|a| a.name())
             .collect();
         names.sort_unstable();
+        assert_eq!(names, vec!["cargo"]);
+    }
+
+    #[test]
+    fn every_adapter_counts_as_used_even_when_it_is_switched_off() {
+        // `devp caches` asks which package managers a repository *uses*, which is not the
+        // same question as which ones a prune pass would act on. A machine full of Rust
+        // with `enable_cargo` off must not report the cargo cache as needed by nobody —
+        // that is the one wrong answer that gets a cache cleared.
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join("Cargo.toml"), "[package]").unwrap();
+
+        assert!(
+            detect_adapters_with(tmp.path(), &[], &[]).is_empty(),
+            "cargo is opt-in, so the prune-facing detector must not see it here"
+        );
+        let names: Vec<&str> = detect_all_adapters(tmp.path())
+            .iter()
+            .map(|a| a.name())
+            .collect();
         assert_eq!(names, vec!["cargo"]);
     }
 

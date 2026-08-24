@@ -1,0 +1,182 @@
+/* Copyright 2026 VKrishna04 */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* The banner set, rendered by a browser so the type is never approximated.
+   Every colour here is a var from site/src/index.css — if the palette moves,
+   these move with it, which is the whole reason they are not PNGs in a folder. */
+
+:root {
+  --bg-deep: #0d101a;
+  --bg-dark: #10131e;
+  --border-color: #262c40;
+  --text-main: #e8ecf7;
+  --text-muted: #9aa3bd;
+  --primary: #10b981;
+  --reclaimed: #ffc857;
+  --purple: #9f7aea;
+
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* flex-start, never center: a banner wider than the viewport would overflow
+   into negative x, and an element screenshot cannot capture what sits left of
+   the document origin. This cost one silently clipped banner set to find. */
+body {
+  background: #05070c;
+  font-family: var(--font-body);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: max-content;
+  gap: 40px;
+  padding: 40px;
+}
+
+/* Each banner is an exact-pixel box. The render script screenshots the element,
+   not the viewport, so these numbers are the numbers that ship. */
+.banner {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-deep);
+  color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: none;
+}
+
+.banner--social { width: 1600px; height: 900px; padding: 0 130px; }
+.banner--readme { width: 1280px; height: 640px; padding: 0 88px; }
+.banner--og     { width: 1200px; height: 630px; padding: 0 92px; }
+
+/* Ground. A faint violet cast plus one emerald bloom from the lower left, so
+   the plate never reads as the default near-black-plus-acid-accent CLI page. */
+.banner::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(110% 90% at 8% 108%, rgba(16, 185, 129, 0.20), transparent 58%),
+    radial-gradient(90% 80% at 96% -12%, rgba(159, 122, 234, 0.16), transparent 60%),
+    linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-deep) 100%);
+}
+
+/* A hairline grid, low enough that it is texture and never pattern. */
+.banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(232, 236, 247, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232, 236, 247, 0.028) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(120% 100% at 20% 100%, #000 0%, transparent 72%);
+}
+
+.inner { position: relative; z-index: 1; display: flex; flex-direction: column; }
+
+/* Wordmark lockup. The mark is loaded from assets/devprune.svg rather than
+   inlined, so there is one copy of it and a redraw reaches the banners without
+   anyone remembering to update a second path. */
+.mark {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+/* Sized against the word beside it, at roughly twice its cap height: this is
+   the one element on the plate that has to survive being scaled to a 40px
+   avatar, and a bullet-sized mark does not. It keeps its own green-to-cyan
+   gradient instead of being recoloured to --primary — a logo tinted to match a
+   background is no longer the logo. */
+.logo {
+  width: 1.95em;
+  height: 1.95em;
+  flex: none;
+  filter: drop-shadow(0 0 18px rgba(39, 255, 99, 0.32));
+}
+
+/* Headline. Two lines, because the promise has two halves and the second one
+   is the half nobody else can make. */
+.head {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.0;
+}
+.head span { display: block; }
+.head .b { color: var(--primary); }
+
+/* The ledger. This is the signature element: three rows of the tool's own
+   output, and the third one is a refusal. No competitor's banner declines. */
+.ledger {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  border-top: 1px solid var(--border-color);
+}
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: baseline;
+  column-gap: 2.2em;
+  border-bottom: 1px solid var(--border-color);
+}
+.path { color: var(--text-main); }
+.size { color: var(--reclaimed); font-weight: 500; text-align: right; }
+.why  { color: var(--primary); text-align: right; }
+
+.row--skip .path,
+.row--skip .size { color: var(--text-muted); }
+.row--skip .why  { color: var(--text-muted); }
+
+/* Sizes per asset. Kept here rather than inline so one file governs all three. */
+.banner--social .mark   { font-size: 38px; margin-bottom: 46px; }
+.banner--social .head   { font-size: 104px; }
+.banner--social .ledger { margin-top: 62px; font-size: 26px; }
+.banner--social .row    { padding: 17px 0; }
+
+.banner--readme .mark   { font-size: 30px; margin-bottom: 34px; }
+.banner--readme .head   { font-size: 76px; }
+.banner--readme .ledger { margin-top: 44px; font-size: 19px; }
+.banner--readme .row    { padding: 13px 0; }
+
+.banner--og .mark   { font-size: 30px; margin-bottom: 32px; }
+.banner--og .head   { font-size: 74px; }
+.banner--og .ledger { margin-top: 42px; font-size: 19px; }
+.banner--og .row    { padding: 13px 0; }
+
+/* The README hero is cropped differently by GitHub's social preview than by the
+   README itself, so its type stays left and the right third stays empty. */
+.banner--readme .head { max-width: 860px; }
+
+/* Link unfurls crop this card, so nothing may sit near an edge. */
+.banner--og .head { max-width: 820px; }
+
+/* Footer. Balances the block against the bottom edge and is the only place a
+   reader learns where to go. No counts here on purpose: adapter totals change
+   every release and a number baked into a PNG goes stale silently. */
+.foot {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+}
+
+.banner--social .foot { margin-top: 54px; font-size: 21px; }
+.banner--readme .foot { margin-top: 38px; font-size: 16px; }
+.banner--og .foot     { margin-top: 36px; font-size: 16px; }
+
+.label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: #4a5570;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}

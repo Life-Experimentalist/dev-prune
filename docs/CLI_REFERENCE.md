@@ -4,6 +4,12 @@
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## ⚡ Two Names for One Binary
 
 `devp` is **not** a shell alias, a PowerShell profile function or a `doskey` macro — it is
@@ -14,7 +20,9 @@ dev-prune status
 devp status
 ```
 
-On installation, `dev-prune` creates a hard link (or, where that is not possible, a copy) named `devp` alongside `dev-prune`, so both names work in every shell — cmd, PowerShell, bash, fish, an IDE terminal, a scheduled task — without a profile alias that has to be re-sourced. It is refreshed whenever it no longer matches the binary, so an upgrade cannot leave `devp` running the previous version.
+Every channel ships both names as real files: the release archives, the npm and PyPI packages, and two build targets for `cargo install`. The installers put the pair in the dev-prune `bin` directory and put that directory on your `PATH`, so both names work in every shell — cmd, PowerShell, bash, fish, an IDE terminal, a scheduled task — without a profile alias that has to be re-sourced. dev-prune keeps that pair in step, refreshing `devp` whenever it no longer matches, so an upgrade cannot leave it running the previous version.
+
+It never writes a second executable beside the binary you ran unless you ask: `dev-prune setup` and `devp doctor --fix` do that, nothing else does. If a manual install left you with `dev-prune` but no `devp`, `devp doctor` says so and names the command that fixes it.
 
 ---
 
@@ -178,7 +186,8 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 
   Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `poetry`, `pdm`,
   `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`, `terraform` —
-  plus `gradle`, `maven`, `swift`, `dart` and `mix_build`, which are opt-in (see below). An unrecognised name is an error
+  plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg` and `cmake_build`,
+  which are opt-in (see below). An unrecognised name is an error
   listing the valid ones rather than a silently empty pass, and `--only` and `--skip`
   cannot be combined. A name listed in `disabled_adapters` is gone from that set
   entirely, and `--only <that name>` prunes nothing.
@@ -198,12 +207,16 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `modules/` is fetched from module sources that `.terraform.lock.hcl` says nothing
   about. Providers are the bulk anyway, and the lock file proves those exactly.
 
-  **Cargo, Gradle, Maven, SwiftPM, Dart and Mix's build tree are opt-in adapters.**
-  `devp config set enable_cargo true` / `enable_gradle true` / `enable_maven true` /
-  `enable_swift true` / `enable_dart true` / `enable_mix_build true` turns each on; until then the adapter is invisible everywhere — `status`, `run`,
-  `--only cargo` all behave as if it did not exist. They are off by default because of
-  what it costs to get their directories back, not because of any doubt that they come
-  back: `target/`, `build/`, `.gradle/`, `.build/` and `_build/` are compiler output, so they
+  **Cargo, Gradle, Maven, SwiftPM, Dart, Mix's build tree, vcpkg and CMake's build tree
+  are opt-in adapters.** `devp config set enable_cargo true` / `enable_gradle true` /
+  `enable_maven true` / `enable_swift true` / `enable_dart true` /
+  `enable_mix_build true` / `enable_vcpkg true` / `enable_cmake_build true` turns each
+  on; until then the adapter is
+  invisible everywhere — `status`, `run`, `--only cargo` all behave as if it did not
+  exist. They are off by default because of what it costs to get their directories back,
+  not because of any doubt that they come back: `target/`, `build/`, `.gradle/`,
+  `.build/`, `_build/`, `vcpkg_installed/` and a configured CMake build tree are
+  compiler output, so they
   return by *recompiling from the sources in the repository* rather than by
   re-downloading, and a large workspace can spend minutes doing that where a dependency
   reinstall spends seconds. For the same reason they answer to their own idle threshold:
@@ -211,9 +224,20 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   so a repository must be idle much longer before its build directories go than before
   its dependency directories do. Recoverability is proved by the build manifest
   (`Cargo.lock`, `pom.xml`, `build.gradle`/`settings.gradle`, `Package.swift`,
-  `pubspec.lock`) being present and readable — for cargo, `cargo metadata --locked`; for the rest, no network
-  command runs at all. User-home caches (`~/.cargo`, `~/.m2`, `~/.gradle`) are never
-  touched; those belong to `devp caches`.
+  `pubspec.lock`, `vcpkg.json`, `CMakeLists.txt`) being present and readable — for
+  cargo, `cargo metadata --locked`; for the rest, no network command runs at all. vcpkg
+  asks one thing more, because every vcpkg *port* also ships a `vcpkg.json`: the manifest
+  has to declare a non-empty `dependencies` list, or there is nothing an install would
+  put back. `cmake_build` never decides from a directory's name. `cmake` writes a
+  `CMakeCache.txt` at the top of every build tree it configures and nobody writes one by
+  hand; that file records `CMAKE_HOME_DIRECTORY`, the source directory the tree was
+  configured from. A directory is claimed only when it carries that file, the recorded
+  source directory still exists, still holds a `CMakeLists.txt`, and sits inside this
+  repository — so a `build/` you filled by hand is never touched. The search stops
+  descending at the first cache it finds, so the sub-builds `FetchContent` and CPM leave
+  under `build/_deps/` go with the tree that configured them, and it reaches three levels
+  down because Visual Studio's CMake integration configures into `out/build/<preset>/`. User-home caches (`~/.cargo`, `~/.m2`, `~/.gradle`) are never touched; those
+  belong to `devp caches`.
 
   **Any one adapter can wait longer still.** `devp config set adapter_idle_days
   cargo=90,npm=30` gives a named adapter its own window, applied as
@@ -351,6 +375,9 @@ reads unambiguously:
 ### 7. `devp caches [--json]` / `devp caches clear <MANAGER>`
 - **Description**: Finds every package-manager cache and store on the machine, sizes each one, and prints the command that clears it. Largest first, with a total. On its own **it deletes nothing**, and nothing that runs on a schedule ever will; the `clear` subcommand below empties one deliberately, when you type it.
 - **Why the report itself never deletes**: a cache lives outside every repository and is shared by all of them, so no single lockfile can prove its contents are recoverable — which is the bar every deletion in dev-prune has to clear. It is also what makes [`devp restore`](#9-devp-restore-path---last-run) fast: clearing a cache turns the next reinstall into a download. So a cache is only ever emptied by a command you type, when you want the space more than the speed.
+- **Telling it what nothing needs any more**: beside each manager the report now says how many of your registered repositories actually use it, and what its cache works out to per repository — two repositories sharing a 12 GiB cache is 6 GiB each and worth a look, forty sharing the same 12 GiB is 300 MiB each and is the cache doing its job. A manager no registered repository uses at all is the one case where a count is enough to act on, and [`devp caches clear --unused all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly those. The count ignores whether an adapter is enabled or opted in, because the question is which managers your projects *use*, not which ones a prune pass would touch. It is shown only for the twelve managers that are also adapter names; `pip`, `conda`, `nuget`, `conan` and `hex` have no adapter of the same name, so dev-prune says nothing about them rather than guessing that `venv` feeds `pip`. Nothing is counted at all until at least one registered repository is on disk — an empty registry would make every cache look unused, so `--unused` refuses to run instead.
+- **Telling it how big is too big**: a download cache is a bet that re-downloading costs more than the disk it occupies, and the bet stops paying somewhere. `devp config set cache_max_gb uv=10,npm=10` writes that ceiling down, per manager, in gibibytes. A manager over its cap is marked in the report — the cap is measured against the manager's whole footprint, so cargo's registry cache and its unpacked sources are weighed together. **Setting one still deletes nothing.** It marks, and [`devp caches clear --over-cap all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly what is marked, when you type it. Empty by default: no cache is too big until you say what too big is. `devp config wizard` sets caps as a column beside the adapter checklist.
+- **The pnpm store that `pnpm store path` never mentions**: pnpm hardlinks its store into every `node_modules` it fills, and a hardlink cannot cross a filesystem — so projects on a drive that is not your home directory's get a store of their own at the root of *that* filesystem: `V:\.pnpm-store` on a second Windows drive, `/mnt/data/.pnpm-store` on Linux, `/Volumes/Work/.pnpm-store` on an external macOS volume. It is not a Windows idea — it is wherever a developer keeps projects off the system disk. `pnpm store path` only ever answers for the filesystem it is run on, so a machine-wide report asked from your home directory sees the small store beside it and misses the multi-gigabyte one holding your actual projects. dev-prune therefore looks for a store at the root of every filesystem that holds a registered repository, plus the one you are standing in, and gives each its own row. `pnpm store prune` acts on the filesystem it is run on too, so that row names the store in the command it prints — `pnpm store prune --store-dir <path>` — and runs exactly what it printed. `devp caches clear pnpm` empties every pnpm store found, and a `cache_max_gb` cap for `pnpm` is measured against all of them together.
 - **What it looks at**:
 
   | Manager | Cache | Cleared by |
@@ -361,9 +388,10 @@ reads unambiguously:
   | `bun` | cache | `bun pm cache rm` |
   | `uv` | cache | `uv cache prune` |
   | `pip` | cache | `pip cache purge` |
+  | `conda` | package cache | `conda clean --packages --tarballs --yes` |
   | `cargo` | registry cache, registry sources | deleting `$CARGO_HOME/registry/{cache,src}` — cargo ships no cache subcommand |
   | `go` | module cache, build cache | `go clean -modcache`, `go clean -cache` |
-  | `maven` | local repository | deleting `~/.m2/repository` — Maven ships no cache subcommand either |
+  | `maven` | local repository | **reported only.** `rm -rf ~/.m2/repository` is printed for you to run; dev-prune will not run it — see **The one store dev-prune will not empty** under `clear` below |
   | `gradle` | caches, wrapper distributions | deleting `~/.gradle/caches` and `~/.gradle/wrapper/dists` (`GRADLE_USER_HOME` respected) |
   | `nuget` | global packages | `dotnet nuget locals global-packages --clear` |
   | `vcpkg` | binary cache | deleting the `vcpkg/archives` directory (`VCPKG_DEFAULT_BINARY_CACHE` respected) |
@@ -372,9 +400,9 @@ reads unambiguously:
   | `cocoapods` | cache | `pod cache clean --all` (`CP_CACHE_DIR` respected) |
   | `hex` | package cache | deleting `$HEX_HOME/packages` — Hex ships no clean task |
 
-  Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, `composer config --global cache-dir`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. CocoaPods and Hex are found the same way (`CP_CACHE_DIR`, `HEX_HOME`) for the simpler reason that neither ships a command that prints the path at all. Two probes that resolve to the same directory are counted once.
+  Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, `composer config --global cache-dir`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. CocoaPods and Hex are found the same way (`CP_CACHE_DIR`, `HEX_HOME`) for the simpler reason that neither ships a command that prints the path at all. conda is found by convention too — `~/miniconda3/pkgs`, `~/anaconda3/pkgs`, `~/miniforge3/pkgs`, `~/mambaforge/pkgs` and the `~/.conda/pkgs` it falls back to when the installation is not writable — plus `CONDA_PKGS_DIRS` and, for a conda installed somewhere else entirely, the installation root that `CONDA_EXE` names. `conda config --show pkgs_dirs` would answer exactly, and takes seconds to start on a cold shell, which is the same price Maven charges for the same read-only size. Two probes that resolve to the same directory are counted once.
 
-  This is also where the .NET and C/C++ ecosystems live in dev-prune, and why they are *not* adapters: a .NET `bin/`+`obj/` and a CMake `build/` are compiler **outputs** — no lockfile can prove a deleted one comes back byte-for-byte, so deleting them is out of scope by design. Their *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports. Cargo `target/`, Maven `target/` and Gradle `build/`+`.gradle/` are the deliberate exception: they have [opt-in adapters](#5-devp-run-target_path) whose recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle` plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`.
+  This is also where most of the .NET and C/C++ story lives, and why a .NET `bin/`+`obj/` is *not* an adapter: it is compiler **output** — no lockfile can prove a deleted one comes back byte-for-byte, so deleting it is out of scope by design. Its *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports. Cargo `target/`, Maven `target/`, Gradle `build/`+`.gradle/`, vcpkg `vcpkg_installed/` and a configured CMake build tree are the deliberate exception: they have [opt-in adapters](#5-devp-run-target_path) whose recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle`/`vcpkg.json`/`CMakeLists.txt` plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`. A CMake `build/` is the one of those that has to prove which tool made it: the adapter claims a directory only when it holds a `CMakeCache.txt` naming a source directory inside the same repository, so a `build/` you filled by hand is left alone. The `vcpkg` row here is the classic-mode install tree, shared by every project on the machine; the adapter claims only manifest mode's per-project one.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the table. Global within `caches`, so `devp caches clear npm --json` parses the same as `devp caches --json clear npm`.
 - **Examples**:
@@ -383,20 +411,23 @@ reads unambiguously:
   devp caches --json | jq '.summary.total_bytes'
   ```
 
-#### `devp caches clear <MANAGER> [--dry-run] [--yes] [--json]`
+#### `devp caches clear <MANAGER> [--over-cap] [--unused] [--dry-run] [--yes] [--json]`
 
 - **Description**: Empties one manager's cache, or every one of them. What is about to go is listed and sized first, and unless `--yes` answers for you, it asks.
 - **Why this is not a contradiction of the above**: the report still deletes nothing, and nothing that runs on its own ever will — no scheduler, no Git hook and no `devp run` clears a cache. `clear` runs only when you type it. It exists because typing the command the report already prints is the whole of what it does, and doing it by hand for every manager on the machine is tedious.
-- **`<MANAGER>`**: a manager name as the report prints it — `npm`, `pnpm`, `yarn`, `bun`, `uv`, `pip`, `cargo`, `go`, `maven`, `gradle`, `nuget`, `vcpkg`, `conan`, `composer`, `cocoapods`, `hex` — or `all` for every one found. A manager that has more than one cache (cargo, go, gradle) clears both. An unrecognised name is a **usage error** (exit `2`) that lists the ones it knows.
-- **How each one is emptied**: through the manager's own subcommand wherever one exists (`npm cache clean --force`, `pnpm store prune`, `go clean -modcache`), because the manager knows what is still referenced and keeps its own bookkeeping consistent — `pnpm store prune` and `uv cache prune` deliberately keep part of the store, which no directory delete can work out. Only `cargo`, `maven`, `gradle`, `vcpkg` and `hex`, which ship nothing equivalent, are cleared by removing a directory, and the path removed is the one this command already resolved and sized — never a string handed to a shell.
+- **`<MANAGER>`**: a manager name as the report prints it — `npm`, `pnpm`, `yarn`, `bun`, `uv`, `pip`, `conda`, `cargo`, `go`, `gradle`, `nuget`, `vcpkg`, `conan`, `composer`, `cocoapods`, `hex` — or `all` for every one found. A manager that has more than one cache (cargo, go, gradle) clears both. An unrecognised name is a **usage error** (exit `2`) that lists the ones it knows. `maven` is recognised and refused, with the reason and the command — see the next entry but one.
+- **How each one is emptied**: through the manager's own subcommand wherever one exists (`npm cache clean --force`, `pnpm store prune`, `go clean -modcache`), because the manager knows what is still referenced and keeps its own bookkeeping consistent — `pnpm store prune` and `uv cache prune` deliberately keep part of the store, which no directory delete can work out. Only `cargo`, `gradle`, `vcpkg` and `hex`, which ship nothing equivalent, are cleared by removing a directory, and the path removed is the one this command already resolved and sized — never a string handed to a shell. conda's own subcommand carries a caveat it is worth repeating: `conda clean --packages` keeps whatever its environments reference through a hardlink, and conda documents that it does not check for packages an environment linked by *symlink* instead. An environment broken that way is reinstallable from the channel it came from, which is why this is a note on the row rather than a refusal like Maven's, but it is the reason the row says so.
+- **The one store dev-prune will not empty**: `~/.m2/repository` is Maven's *local repository*, not a download cache. `mvn install` writes there, and so does `mvn install:install-file` — the documented way to use a jar that is in no repository at all, which is how a driver behind a click-through licence or a partner SDK ends up on a machine. Those artifacts, and `-SNAPSHOT` builds of your own modules, exist nowhere else; there is no remote to fetch them back from. Maven does record each artifact's origin in a `_remote.repositories` file, but documents that file as internal and free to change without notice, and writes it only from Maven 3 onward — betting the unrecoverable half of the tree on that is not a bet this tool makes. So `devp caches` sizes the repository and prints the command, `devp caches clear maven` is a **usage error** (exit `2`) that explains why and repeats the command, and `devp caches clear all` skips it with the same note and clears everything else.
 - **If the manager is not installed**: the row is reported as failed rather than worked around. dev-prune will not delete a store directly when the manager that owns it is the only thing that knows what is safe to keep.
 - **What it costs**: nothing is lost — every manager re-downloads what it needs. What goes is time, in every project on the machine, on the next install and the next [`devp restore`](#9-devp-restore-path---last-run).
 - **Freed size is measured, not assumed**: each cache is sized again after the clear and the report shows `before - after`, so a `prune` that kept half the store says so, and a half-failed clear reports what actually went.
 - **Flags**:
+  - `--over-cap` — narrow the selection to managers that have outgrown their `cache_max_gb` entry. `devp caches clear --over-cap all` is the whole point of the setting: it empties every cache that has grown past the ceiling you chose and leaves the rest alone. With no caps set it clears nothing and says so.
+  - `--unused` — narrow the selection to managers that no registered repository uses. This is the safest thing this command does: a cache with nothing behind it holds packages downloaded for projects that are no longer on this disk, so emptying it costs nothing to re-download for anything you still have. Combine it with `--over-cap` to take only the caches that are both unused *and* oversized. It refuses with exit `2` when there are no registered repositories on disk to check against, because every cache would otherwise look unused.
   - `--dry-run` — list and size what would go; touch nothing. (Global flag.)
   - `--yes` / `-y` — skip the confirmation. (Global flag.) Without a terminal on stdin the prompt is not shown at all: dev-prune says to pass `--yes` and clears nothing.
   - `--json` — emit one machine-readable document. **Requires `--yes` or `--dry-run`**, because a prompt on a pipe is a hang and the fallback notice would land inside the document.
-- **Exit codes**: `0` if every named cache was cleared, `1` if any could not be (the rows print either way, and the reason goes to stderr), `2` for an unknown manager name or `--json` without `--yes`.
+- **Exit codes**: `0` if every named cache was cleared, `1` if any could not be (the rows print either way, and the reason goes to stderr), `2` for an unknown manager name, for `maven` on its own, or for `--json` without `--yes`.
 - **Examples**:
   ```bash
   devp caches clear npm            # one manager, after confirming
@@ -404,6 +435,8 @@ reads unambiguously:
   devp caches clear all --dry-run  # everything that would go, nothing touched
   devp caches clear all --yes      # no prompt, for a script
   devp caches clear go --json --yes
+  devp caches clear all --over-cap  # only the ones past their cache_max_gb
+  devp caches clear all --unused    # only the ones no registered repository uses
   ```
 
 ---
@@ -436,10 +469,14 @@ reads unambiguously:
     | `enable_swift` | `false` | Turn on the opt-in Swift Package Manager adapter (`.build/` — compiled modules, so they come back by recompiling) |
     | `enable_dart` | `false` | Turn on the opt-in Dart/Flutter adapter (`.dart_tool/` — pub metadata restores in a second, but the `build_runner` and `flutter_build` caches beside it come back by recompiling) |
     | `enable_mix_build` | `false` | Turn on the opt-in Mix build-tree adapter (`_build/` — separate from the always-on `mix` adapter, which claims only `deps/`: that comes back by downloading, this one only by recompiling the project and every dependency in it) |
+    | `enable_vcpkg` | `false` | Turn on the opt-in vcpkg adapter (`vcpkg_installed/` — manifest mode's per-project install tree, holding ports vcpkg compiled from source; `vcpkg install` builds them again) |
     | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, by name, comma-separated. A disabled adapter is not detected, not counted by `stats`, not probed for by `doctor` and never pruned — as if the ecosystem were not installed. `devp config set disabled_adapters -` clears the list |
-    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart, mix_build), applied as `max(build_idle_days, idle_days)` |
+    | `enable_cmake_build` | `false` | Turn on the opt-in CMake adapter (any tree holding a `CMakeCache.txt` that records a source directory inside this repository — the next `cmake --build` compiles it again; a `build/` you made by hand has no cache file and is never claimed) |
+    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart, mix_build, vcpkg, cmake_build), applied as `max(build_idle_days, idle_days)` |
     | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. Each raises only its own adapter's wait — `max(idle_days, build_idle_days, this)` — and can never lower one. `devp config set adapter_idle_days -` clears the map |
+    | `cache_max_gb` | *(none)* | Per-manager cache size caps in GiB, as `uv=10,npm=10`. Keyed by the names [`devp caches clear`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) takes, not by adapter name. A capped manager over its ceiling is marked in `devp caches`; nothing is ever deleted by the cap itself. `devp config set cache_max_gb -` clears the map |
     | `auto_update` | `true` | Download and install a newer release by itself at the end of a prune pass, once the release check has found one. Never runs a package manager unattended, and stands aside entirely on WinGet, Scoop and Homebrew, where the manager owns the upgrade |
+    | `version_lock` | `false` | Pin this copy to the version it is. While it is on, nothing dev-prune does replaces the binary: `auto_update` does not run however it is set, `devp update --install` and `devp install --channel` refuse, and the install scripts leave it alone. There is no flag that bypasses it — `devp config set version_lock false` is the only way back |
 
     Three of these have a per-repository form in that repository's `.devprune.json`,
     where they win for that tree only: `idle_days` (spelled `override_idle_days` there),
@@ -557,7 +594,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -604,7 +641,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -649,7 +686,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "command": "status --drift",
   "drift": [
     {
@@ -677,7 +714,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -709,7 +746,7 @@ an upgraded machine they start from zero while the lifetime figures do not — w
 ```jsonc
 {
   "schema": 1,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "command": "caches",
   "caches": [
     {
@@ -717,8 +754,12 @@ an upgraded machine they start from zero while the lifetime figures do not — w
       "kind": "cache",
       "path": "~/.cache/uv",
       "bytes": 17448304640,
-      "clear_command": "uv cache prune"
+      "clear_command": "uv cache prune",
+      "cap_gb": 10,
+      "over_cap": true
       // "note" — present only when clearing this cache costs more than time
+      // "cap_gb"/"over_cap" — present only when `cache_max_gb` sets a cap for this
+      //   manager, so a report with no caps set is byte-identical to one from 1.7.0
     }
   ],
   "summary": {
@@ -740,7 +781,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -755,6 +796,18 @@ replaces it would land inside the document.
       // "error" — present only on a row that could not be cleared, with the reason
     }
   ],
+  "kept": [
+    // Reported, sized, and deliberately not emptied. Empty for most machines; a Maven
+    // local repository is the only thing that appears here.
+    {
+      "manager": "maven",
+      "kind": "local repository",
+      "path": "~/.m2/repository",
+      "bytes": 8589934592,
+      "clear_command": "rm -rf ~/.m2/repository",
+      "reason": "…why dev-prune will not run it…"
+    }
+  ],
   "summary": {
     "freed_bytes": 2147483648,
     "count": 1,
@@ -767,14 +820,16 @@ replaces it would land inside the document.
 `bytes_before - bytes_after` — because `pnpm store prune` and `uv cache prune`
 deliberately keep what is still referenced. With `--dry-run` the shape is the plan
 instead: `"dry_run": true`, and each row carries `bytes` and `clear_command` rather than
-a before/after pair. Exit code is `1` if `summary.failed` is non-zero.
+a before/after pair. `kept` has the same shape in both and is usually empty — read it,
+or a Maven local repository will look like a machine that simply has none. Exit code is
+`1` if `summary.failed` is non-zero.
 
 ### `devp trust --json`
 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.7.0",
+  "version": "1.8.0",
   "command": "trust",
   "guarantees": [
     {
@@ -836,6 +891,7 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 
     Falls back to that channel's own upgrade command when the release publishes no binary for this platform or the download fails, so a release-page outage costs the fast path and not the upgrade. The channel is detected from where the binary lives, by the one classifier `devp doctor` and `devp uninstall` also read: the managed `bin` directory means the installer script, `.cargo` means cargo (`cargo binstall` when available, `cargo install` otherwise), a `node_modules` tree means npm, uv's tool directory means `uv tool upgrade`, a `pipx` venv means `pipx upgrade`, a `pip` script beside the binary means `pip install --upgrade`, and a WinGet, Scoop or Homebrew package directory means that manager's own upgrade; an unrecognised location prints every channel's command instead. It refuses under `DEV_PRUNE_OFFLINE`, cannot be combined with `--offline`, and does nothing when the installed build is already the latest.
 - **`auto_update`** (`true` by default): a newer release installs itself at the end of a prune pass, once the release check has found one. `devp config set auto_update false` stops it. Only the download-and-replace half runs here — the same verified download `--install` uses; the package-manager fallback deliberately does not, because this path runs unattended (from the scheduler, from a git hook) and a package manager can prompt for elevation or pull in upgrades nobody asked for. On WinGet, Scoop and Homebrew it does nothing at all: those managers replace their whole package directory on upgrade, so new bytes written there would be silently reverted, and the one-line notice naming their upgrade command is printed instead. A failed upgrade warns and never fails the pass. **An upgrade never interrupts the scheduled pass**: the scheduler runs the managed copy under the config `bin` directory, package managers replace binaries by atomic rename (a running pass keeps its loaded image), and the managed copy and hidden `devpw` twin refresh themselves from the new binary on their next healthy run.
+- **`version_lock`** (`false` by default): the one setting that outranks all of this. `devp config set version_lock true` pins this copy to the version it is, and from then on `auto_update` does not run however it is set, `--install` refuses before it touches the network, [`devp install --channel`](#19-devp-install---channel-name---dry-run) refuses because moving channels installs the latest release through the new manager, and re-running the install one-liner leaves the binary exactly where it finds it. It is deliberately not bypassable: no flag, no environment variable. `devp config set version_lock false` is the way back, and it has to be typed. Every path that stands down prints the pin and that command rather than going quiet, because a lock that silently does nothing is indistinguishable from an update path that has broken. `devp doctor` reports it as a note, and stops warning that you are behind while it is on — being behind is the state that was asked for. It exists for machines that have to keep shipping the same tool for months: a CI image, a reproduction that stops reproducing the moment the tool changes underneath it, a build box somebody else re-provisions.
 - **The check is opt-out, not opt-in.** It also runs quietly from `devp run` and `devp status`, at most once every 7 days, and prints one line only when a newer version exists. Disable it permanently with `devp config set update_check false`. It sends no body, no identifier and no usage data — see [PRIVACY.md](PRIVACY.md).
 - **`DEV_PRUNE_OFFLINE=1`** keeps the process off the network entirely — the release check and the extension-download fallback alike — regardless of any setting. For air-gapped machines and test suites; the durable per-user switch remains `devp config set update_check false`.
 - **Examples**:
@@ -902,9 +958,10 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   | `gemini` | `GEMINI.md` — as a marked block (Gemini CLI) |
   | `zed` | `.rules` — as a marked block (Zed reads it ahead of every other convention) |
   | `copilot` | `.github/copilot-instructions.md` — as a marked block |
+  | `aider` | `CONVENTIONS.md` — as a marked block. Aider is the one target that does not read its file by finding it: add `read: CONVENTIONS.md` to `.aider.conf.yml`, or start it with `aider --read CONVENTIONS.md`. Writing the file prints that instruction |
   | `agents-md` | `AGENTS.md` — as a marked block; the cross-tool convention Codex, Jules, Amp, OpenCode and others read |
 
-  The five shared files (`agents-md`, `copilot`, `gemini`, `junie`, `zed`) are edited inside dev-prune's `<!-- dev-prune:rules:start -->`…`<!-- dev-prune:rules:end -->` markers only: a re-run replaces the block, and every byte outside the markers is left exactly as found. The rules file is inert data and safe to commit if the whole team's agents should have it. Claude Code is deliberately not in the list — its skill installs globally, so there is nothing to write per repository.
+  The six shared files (`agents-md`, `aider`, `copilot`, `gemini`, `junie`, `zed`) are edited inside dev-prune's `<!-- dev-prune:rules:start -->`…`<!-- dev-prune:rules:end -->` markers only: a re-run replaces the block, and every byte outside the markers is left exactly as found. The rules file is inert data and safe to commit if the whole team's agents should have it. Claude Code is deliberately not in the list — its skill installs globally, so there is nothing to write per repository.
 - **Examples**:
   ```bash
   devp skill
@@ -991,7 +1048,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 - **Two sections, and the split is the point**:
   - **Guaranteed by the code** — the seven [safety invariants](SAFETY_INVARIANTS.md) plus the two questions asked as often as any of them: there is no telemetry endpoint, and build output is never deleted. These rows read the same on every machine. None of them has a setting or a flag behind it, and a build where one did not hold would be a bug, not a configuration.
   - **On this machine** — read live: whether the scheduler is installed, whether the Git hooks register repositories on their own, how many repositories are registered, the idle window, the managed binary's path, and the settings that widen what may happen without you asking.
-- **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
+- **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
 - **No letter grade, on purpose**: `trust level: MEDIUM` tells nobody which switch to look at. The report lists the switches.
 - **Row marks**: `+` guaranteed or safe, `!` widened, blank for a neutral fact (a path, a count).
 - **Flags**:

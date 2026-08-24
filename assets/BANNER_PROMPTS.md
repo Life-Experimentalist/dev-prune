@@ -1,10 +1,16 @@
 # Banner generation prompts
 
+> The banners shipping today are not generated from these prompts. They are rendered
+> from [`site/banners/index.html`](../site/banners/index.html) by
+> `npm --prefix site run banners`, which is where a change to one belongs. This file
+> is kept for the palette below and for the constraints on it — the part worth having
+> whichever way the artwork gets made.
+
 Three prompts for the three sizes dev-prune actually needs, kept here so the artwork can
 be regenerated without re-deciding what it should look like. Nothing in this file is
 shipped — it is input to an image model. Keep the full-resolution output as
-`banner-master.png`; `readme-banner.png` and `site/public/assets/og-card.jpg` are
-centre-crops of it, not separate generations, so the three never drift apart.
+`banner-master.png`; `readme-banner.png` and `site/public/assets/og-card.jpg` were
+centre-crops of it, not separate generations, so the three never drifted apart.
 
 They share one palette, taken from `site/src/index.css` so generated art matches the
 site rather than approximating it:

@@ -1378,7 +1378,8 @@ mod tests {
         // The whole grouped report hangs off this substring. If Git ever reworded the
         // message, twenty-one repositories would silently go back to printing twelve
         // lines each, and nothing else in the suite would notice.
-        let message = "git could not read `V:/x`: fatal: detected dubious ownership in                        repository at 'V:/x'";
+        let message = "git could not read `V:/x`: fatal: detected dubious ownership in repository \
+                       at 'V:/x'";
         assert_eq!(
             ActivityFailure::classify(message),
             ActivityFailure::UntrustedOwner

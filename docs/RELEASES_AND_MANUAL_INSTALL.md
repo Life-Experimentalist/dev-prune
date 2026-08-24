@@ -4,6 +4,12 @@ This document provides a step-by-step DIY manual installation guide for **`dev-p
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## ⚡ Quick 1-Liner Automated Installers (Recommended)
 
 The installer scripts download the release binary, verify it against the published
@@ -71,7 +77,15 @@ afterwards, for the sake of a single install.
 | `--bin-dir <dir>` | `-BinDir <dir>` | `DEV_PRUNE_BIN_DIR` | Install somewhere other than the config directory's `bin/` |
 | `--no-path` | `-NoPath` | `DEV_PRUNE_NO_PATH=1` | Leave every shell rc file and the User PATH alone |
 | `--no-auto-setup` | `-NoAutoSetup` | `DEV_PRUNE_NO_AUTO_SETUP=1` | Install the binary only — no SKILL.md, hooks or scheduler |
+| `--force` | `-Force` | `DEV_PRUNE_FORCE=1` | Download and write the binary even when this version is already installed here, or when the install is pinned with `version_lock` |
 | `--help` | `-Help` | — | Print the options and exit |
+
+An install that has `devp config set version_lock true` set is the one thing the script
+will not touch on its own: it reports the pin, changes nothing, and exits `0`. That is
+the point of the setting — a machine that has to keep shipping the same version has to
+survive somebody re-running the one-liner out of habit. `--force` / `-Force` /
+`DEV_PRUNE_FORCE=1` installs over it anyway, and has to be typed; `devp config set
+version_lock false` releases it properly.
 
 A flag wins over its environment variable. Both one-liners pipe the script into a shell,
 which is why passing a flag takes a slightly different form:
@@ -96,9 +110,9 @@ Pre-compiled production binaries for all supported operating systems and archite
 
 ### 1. Windows Installation (`x86_64-pc-windows-msvc`)
 
-1. **Download Archive**: Download `dev-prune-v1.7.0-windows-x64.zip` from GitHub Releases.
-   On Windows on ARM take `dev-prune-v1.7.0-windows-arm64.zip` instead, and on a machine
-   with no 64-bit mode at all take `dev-prune-v1.7.0-windows-x86.zip`. Everything below
+1. **Download Archive**: Download `dev-prune-v1.8.0-windows-x64.zip` from GitHub Releases.
+   On Windows on ARM take `dev-prune-v1.8.0-windows-arm64.zip` instead, and on a machine
+   with no 64-bit mode at all take `dev-prune-v1.8.0-windows-x86.zip`. Everything below
    is the same for all three.
 2. **Create Target Directory**:
    Open PowerShell and create the application directory:
@@ -136,14 +150,14 @@ Pre-compiled production binaries for all supported operating systems and archite
 ### 2. macOS Installation (Intel `x86_64` & Apple Silicon `arm64`)
 
 1. **Download Archive**:
-   - Apple Silicon (M1/M2/M3/M4): `dev-prune-v1.7.0-darwin-arm64.tar.gz`
-   - Intel Mac: `dev-prune-v1.7.0-darwin-x64.tar.gz`
+   - Apple Silicon (M1/M2/M3/M4): `dev-prune-v1.8.0-darwin-arm64.tar.gz`
+   - Intel Mac: `dev-prune-v1.8.0-darwin-x64.tar.gz`
 2. **Extract & Relocate Binary**:
    On macOS the config directory is `~/Library/Application Support/dev-prune`, not `~/.config` — that is where dev-prune reads its registry from, so install the binary alongside it.
    ```bash
    BIN="$HOME/Library/Application Support/dev-prune/bin"
    mkdir -p "$BIN"
-   tar -xzf dev-prune-v1.7.0-darwin-*.tar.gz -C "$BIN"
+   tar -xzf dev-prune-v1.8.0-darwin-*.tar.gz -C "$BIN"
    chmod +x "$BIN/dev-prune"
    ```
 3. **Add to Shell PATH**:
@@ -175,11 +189,11 @@ Pre-compiled production binaries for all supported operating systems and archite
 > `aarch64` (`uname -m` tells you which) — and nothing else.
 
 
-1. **Download Archive**: Download `dev-prune-v1.7.0-linux-x64.tar.gz` from GitHub Releases.
+1. **Download Archive**: Download `dev-prune-v1.8.0-linux-x64.tar.gz` from GitHub Releases.
 2. **Extract & Relocate Binary**:
    ```bash
    mkdir -p ~/.config/dev-prune/bin
-   tar -xzf dev-prune-v1.7.0-linux-x64.tar.gz -C ~/.config/dev-prune/bin/
+   tar -xzf dev-prune-v1.8.0-linux-x64.tar.gz -C ~/.config/dev-prune/bin/
    chmod +x ~/.config/dev-prune/bin/dev-prune
    ```
 3. **Configure Shell PATH**:

@@ -12,6 +12,12 @@ All three are described below.
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## The one request
 
 | | |
@@ -109,7 +115,7 @@ overridable with `DEV_PRUNE_CONFIG_DIR`.
 
 The restore timings are the newest of those rows, so they are worth spelling out. When
 `devp restore --last-run` puts a directory back, dev-prune adds three numbers to a running
-total for that adapter � how many restores it has measured, how many bytes they put back,
+total for that adapter — how many restores it has measured, how many bytes they put back,
 and how many milliseconds they took. That is the whole record: no path, no project name,
 no lockfile contents, nothing that says which repository the restore was for. It exists so
 `devp status` can answer *how long is this to undo* with a number measured on this disk

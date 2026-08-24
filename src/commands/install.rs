@@ -26,6 +26,7 @@ use anyhow::{Context, Result};
 use clap::ValueEnum;
 
 use crate::channel::Channel;
+use crate::config::Registry;
 use crate::output;
 
 /// The channels a user can move *to*, as `--channel` accepts them.
@@ -89,6 +90,18 @@ pub fn run(channel: Option<TargetChannel>, dry_run: bool, yes: bool) -> Result<(
             output::print_info(&format!("Upgrade it in place with: {cmd}"));
         }
         return Ok(());
+    }
+
+    // A channel move installs the latest release through the new manager, so under a
+    // pin it is an update wearing a different name. Refused here rather than moved and
+    // then reported, so that one rule stays true without exception: while
+    // `version_lock` is on, nothing dev-prune does changes which version is installed.
+    if Registry::load().is_ok_and(|r| r.settings.version_lock) {
+        anyhow::bail!(
+            "Moving to {} would install the latest release through it. {}",
+            target.label(),
+            super::update::locked_notice(None)
+        );
     }
 
     let (sources, install) = install_plan(target);

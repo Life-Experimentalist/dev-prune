@@ -109,7 +109,10 @@ fn requirement_name(spec: &str) -> Option<String> {
 /// `None` means the file cannot be fully accounted for without running pip — an editable
 /// install, a bare URL or path, or an include that cannot be read. The caller skips the
 /// drift comparison in that case rather than guessing in either direction.
-fn requirement_names(file: &Path, visited: &mut Vec<PathBuf>) -> Option<HashSet<String>> {
+pub(crate) fn requirement_names(
+    file: &Path,
+    visited: &mut Vec<PathBuf>,
+) -> Option<HashSet<String>> {
     // The depth cap breaks include cycles that the exact-path check misses (e.g. the
     // same file reached through differently-spelled relative paths).
     if visited.len() >= 8 || visited.iter().any(|p| p == file) {
@@ -345,6 +348,15 @@ fn warn_about_restore_surprises(path: &Path, venvs: &[PathBuf]) {
 /// dependency graph from every pinned name and flags only what is *unreachable* — a
 /// `pip install` that was never written back, which `pip install -r` after deletion
 /// would not bring back.
+/// Whether a distribution name is this tool, under any spelling pip may hand back.
+///
+/// PEP 503 treats `dev-prune`, `dev_prune` and `Dev.Prune` as one project, and which
+/// spelling lands on disk depends on how the wheel was built rather than on anything the
+/// user did. `APP_NAME` is already in normalised form, so one side needs no conversion.
+pub(crate) fn is_dev_prune(name: &str) -> bool {
+    normalize_package_name(name) == crate::constants::APP_NAME
+}
+
 fn unrecorded_packages(
     installed: &HashMap<String, Vec<String>>,
     pinned: &HashSet<String>,
@@ -476,6 +488,25 @@ impl PackageManager for Venv {
                 } else {
                     String::new()
                 };
+                // The one unaccounted package this tool can name from the inside. It
+                // is nearly always the same accident -- `pip install dev-prune` typed
+                // with a project's environment active -- and the generic message sends
+                // the user to record a tool in their application's requirements file,
+                // which is the wrong repair for it. The refusal itself does not soften:
+                // an unrecorded package is an unrecorded package, whichever one it is.
+                if extras.len() == 1 && is_dev_prune(&extras[0]) {
+                    return Err(anyhow!(
+                        "`{}` holds {app}, which requirements.txt does not account for. \
+                         {app} is installed inside this project's virtual environment, \
+                         and a tool install belongs outside a project. Either remove it \
+                         — `pip uninstall {app}`, then `uv tool install {app}` — or \
+                         record it as a deliberate dev dependency with `pip freeze > \
+                         requirements.txt`. Either one makes the environment prunable. \
+                         Nothing was deleted.",
+                        venv.display(),
+                        app = crate::constants::APP_NAME
+                    ));
+                }
                 return Err(anyhow!(
                     "`{}` holds {} package(s) that requirements.txt does not account for \
                      ({shown}{suffix}). Deleting the environment would lose them with no \
@@ -815,5 +846,81 @@ mod tests {
         install_package(dir.path(), ".venv", "urllib3", &[]);
 
         assert!(Venv.drift(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn enforce_names_dev_prune_as_the_situation_it_actually_is() {
+        // The generic message would send somebody to record a tool in their
+        // application's requirements file, which is the wrong repair for the accident
+        // that produced it. The refusal is unchanged; only the advice is.
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("requirements.txt"), "flask==3.0.0\n").unwrap();
+        make_venv(dir.path(), ".venv");
+        install_package(dir.path(), ".venv", "flask", &[]);
+        // pip escapes the name into the dist-info directory, so this is what is on disk.
+        install_package(dir.path(), ".venv", "dev_prune", &[]);
+
+        let err = Venv
+            .enforce_lockfile(dir.path(), EnforcePolicy::default())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("pip uninstall dev-prune"),
+            "offers the removal: {err}"
+        );
+        assert!(
+            err.contains("uv tool install dev-prune"),
+            "offers the tool install: {err}"
+        );
+        assert!(err.contains("pip freeze"), "offers recording it: {err}");
+        assert!(
+            err.contains("Nothing was deleted"),
+            "is still a refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn enforce_accepts_dev_prune_when_requirements_records_it() {
+        // The odd but legitimate case: a project that really does depend on the tool,
+        // in its own requirements file, on purpose. Recorded is recorded — there is
+        // nothing special about this package once somebody has written it down.
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("requirements.txt"), "dev-prune==1.7.0\n").unwrap();
+        make_venv(dir.path(), ".venv");
+        install_package(dir.path(), ".venv", "dev_prune", &[]);
+
+        assert!(
+            Venv.enforce_lockfile(dir.path(), EnforcePolicy::default())
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn enforce_keeps_the_generic_message_when_dev_prune_is_not_alone() {
+        // Naming one of two strays and saying how to fix only that one would leave the
+        // user re-running the pass to be refused a second time for a package the first
+        // message never mentioned.
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("requirements.txt"), "flask==3.0.0\n").unwrap();
+        make_venv(dir.path(), ".venv");
+        install_package(dir.path(), ".venv", "flask", &[]);
+        install_package(dir.path(), ".venv", "dev_prune", &[]);
+        install_package(dir.path(), ".venv", "requests", &[]);
+
+        let err = Venv
+            .enforce_lockfile(dir.path(), EnforcePolicy::default())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("requests"), "names the other stray: {err}");
+        assert!(err.contains("2 package(s)"), "counts both: {err}");
+    }
+
+    #[test]
+    fn is_dev_prune_accepts_every_spelling_pip_may_write() {
+        assert!(is_dev_prune("dev-prune"));
+        assert!(is_dev_prune("dev_prune"));
+        assert!(is_dev_prune("Dev-Prune"));
+        assert!(!is_dev_prune("dev-pruner"));
+        assert!(!is_dev_prune("prune"));
     }
 }

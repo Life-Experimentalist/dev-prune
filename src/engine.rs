@@ -225,8 +225,8 @@ pub struct PruneOptions {
     /// Idle days required before *build-tree* directories are touched.
     ///
     /// Applied as `max(build_idle_days, idle_days)`, only to adapters that answer
-    /// [`crate::adapters::PackageManager::opt_in`] — cargo, gradle, maven and swift. A
-    /// recompile costs more than a reinstall, so those directories wait longer.
+    /// [`crate::adapters::PackageManager::opt_in`]. A recompile costs more than a
+    /// reinstall, so those directories wait longer.
     pub build_idle_days: u64,
     /// Per-adapter idle windows, keyed by adapter name; the user's `adapter_idle_days`.
     ///

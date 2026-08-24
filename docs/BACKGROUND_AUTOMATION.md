@@ -4,6 +4,12 @@
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## ⚡ The setup pass
 
 `devp setup` installs whatever is missing and leaves whatever is already there alone. It runs in three situations, and it is the same code in all three:

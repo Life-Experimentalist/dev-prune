@@ -58,6 +58,12 @@ enum Kind {
     Number,
     /// A comma-separated list of adapter names.
     Adapters,
+    /// Cache manager names with a number each, as `npm=10,uv=10`.
+    ///
+    /// The third column of the same checklist [`Kind::AdapterDays`] is the second of:
+    /// which ecosystems run, how long each waits, and how big each one's cache may get
+    /// are one table, not three screens.
+    CacheCaps,
     /// Adapter names with a number each, as `cargo=60,npm=30`.
     ///
     /// Edited on the same screen as [`Kind::Adapters`] rather than in a field of its
@@ -95,49 +101,79 @@ const RECOMMENDED: &[Recommendation] = &[
     Recommendation {
         key: "enable_cargo",
         label: "Rust build folders",
-        why: "Rust `target/` directories are usually the largest thing on a developer's               disk — tens of gigabytes across a handful of old projects. Nothing is lost:               `cargo build` rebuilds it, and a project has to sit untouched for 45 days               before this one is even considered.",
+        why: "Rust `target/` directories are usually the largest thing on a developer's disk — \
+              tens of gigabytes across a handful of old projects. Nothing is lost: `cargo build` \
+              rebuilds it, and a project has to sit untouched for 45 days before this one is even \
+              considered.",
         value: "true",
         cautious: false,
     },
     Recommendation {
         key: "enable_gradle",
         label: "Android / Gradle builds",
-        why: "`build/` and `.gradle/` grow with every Android build and are never cleaned               up by anything else. They come back on the next build, under the same               45-day wait.",
+        why: "`build/` and `.gradle/` grow with every Android build and are never cleaned up by \
+              anything else. They come back on the next build, under the same 45-day wait.",
         value: "true",
         cautious: false,
     },
     Recommendation {
         key: "enable_maven",
         label: "Maven builds",
-        why: "Maven `target/` directories accumulate quietly per module, so a multi-module               project has several. `mvn package` brings them back.",
+        why: "Maven `target/` directories accumulate quietly per module, so a multi-module project \
+              has several. `mvn package` brings them back.",
         value: "true",
         cautious: false,
     },
     Recommendation {
         key: "enable_swift",
         label: "Swift builds",
-        why: "`.build/` holds compiled modules for every configuration you have ever               built, and `swift build` recreates the one you actually use.",
+        why: "`.build/` holds compiled modules for every configuration you have ever built, and \
+              `swift build` recreates the one you actually use.",
         value: "true",
         cautious: false,
     },
     Recommendation {
         key: "enable_dart",
         label: "Dart / Flutter caches",
-        why: "`.dart_tool/` carries the pub metadata — back in a second — alongside               `build_runner` and `flutter_build` caches that are worth real disk space.",
+        why: "`.dart_tool/` carries the pub metadata — back in a second — alongside `build_runner` \
+              and `flutter_build` caches that are worth real disk space.",
         value: "true",
         cautious: false,
     },
     Recommendation {
         key: "enable_mix_build",
         label: "Elixir build trees",
-        why: "`_build/` holds compiled beam files for every Mix environment you have               built, and `mix compile` recreates the one you are working in.",
+        why: "`_build/` holds compiled beam files for every Mix environment you have built, and \
+              `mix compile` recreates the one you are working in.",
+        value: "true",
+        cautious: false,
+    },
+    Recommendation {
+        key: "enable_vcpkg",
+        label: "C / C++ vcpkg trees",
+        why: "`vcpkg_installed/` holds libraries vcpkg compiled from source for one \
+              project, and `vcpkg install` builds them again from the manifest beside \
+              them.",
+        value: "true",
+        cautious: false,
+    },
+    Recommendation {
+        key: "enable_cmake_build",
+        label: "C / C++ CMake build trees",
+        why: "A configured CMake build tree is object files and linked binaries, and \
+              `cmake` writes a `CMakeCache.txt` at the top of it that says which sources \
+              build it again — so a `build/` you made by hand is left alone.",
         value: "true",
         cautious: false,
     },
     Recommendation {
         key: "allow_manifest_rewrite",
         label: "Let cargo and go tidy up",
-        why: "Cautious, not risky. The commands that restore a Rust or Go project can               also update `Cargo.lock` or `go.mod` — files Git tracks. Nothing is lost               and nothing is deleted, but the next `git status` may show a change you did               not make by hand. Turn it on if that is fine; leave it off if a clean               working tree matters more than a fully automatic restore.",
+        why: "Cautious, not risky. The commands that restore a Rust or Go project can also update \
+              `Cargo.lock` or `go.mod` — files Git tracks. Nothing is lost and nothing is deleted, \
+              but the next `git status` may show a change you did not make by hand. Turn it on if \
+              that is fine; leave it off if a clean working tree matters more than a fully \
+              automatic restore.",
         value: "true",
         cautious: true,
     },
@@ -448,10 +484,35 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "enable_vcpkg",
+        since: "1.8.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in vcpkg adapter (vcpkg_installed/ comes back by recompiling).",
+        plain: "Clean C and C++ vcpkg_installed/ folders too. They come back by recompiling.",
+        get: |s| s.enable_vcpkg.to_string(),
+        set: |s, v| {
+            s.enable_vcpkg = parse_bool("enable_vcpkg", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_cmake_build",
+        since: "1.8.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in CMake adapter (build trees proven by their CMakeCache.txt).",
+        plain: "Clean C and C++ build folders CMake configured. A `build/` you made by hand is \
+                never touched.",
+        get: |s| s.enable_cmake_build.to_string(),
+        set: |s, v| {
+            s.enable_cmake_build = parse_bool("enable_cmake_build", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "build_idle_days",
         since: "1.3.0",
         kind: Kind::Number,
-        help: "Idle days before cargo/gradle/maven/swift build trees are pruned. Applied as max(this, idle_days).",
+        help: "Idle days before the opt-in adapters' build trees are pruned. Applied as max(this, idle_days).",
         plain: "A longer wait, used only for the build folders above, because getting those back costs a recompile rather than a download.",
         get: |s| s.build_idle_days.to_string(),
         set: |s, v| {
@@ -471,6 +532,21 @@ const SETTINGS: &[Setting] = &[
         get: |s| s.auto_update.to_string(),
         set: |s, v| {
             s.auto_update = parse_bool("auto_update", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "version_lock",
+        since: "1.8.0",
+        kind: Kind::Toggle,
+        help: "Pin this copy to the version it is. Overrides auto_update, `devp update \
+                --install`, `devp install --channel` and the install scripts.",
+        plain: "Stay on exactly this version. Nothing dev-prune does replaces the binary \
+                while this is on -- not the automatic update, not a re-run of the install \
+                one-liner.",
+        get: |s| s.version_lock.to_string(),
+        set: |s, v| {
+            s.version_lock = parse_bool("version_lock", v)?;
             Ok(())
         },
     },
@@ -514,6 +590,28 @@ const SETTINGS: &[Setting] = &[
             Ok(())
         },
     },
+    Setting {
+        key: "cache_max_gb",
+        since: "1.8.0",
+        kind: Kind::CacheCaps,
+        help: "Per-manager cache size caps in GiB, as `npm=10,uv=10`. Reported by `devp caches`; cleared only by `devp caches clear --over-cap`.",
+        plain: "How big one ecosystem's download cache is allowed to get before dev-prune says so. It still never deletes a cache on its own.",
+        get: |s| {
+            if s.cache_max_gb.is_empty() {
+                "(none)".to_string()
+            } else {
+                s.cache_max_gb
+                    .iter()
+                    .map(|(name, gb)| format!("{name}={gb}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            }
+        },
+        set: |s, v| {
+            s.cache_max_gb = parse_cache_caps(v)?;
+            Ok(())
+        },
+    },
 ];
 
 /// Parse the comma-separated adapter deny-list, rejecting names that do not exist.
@@ -521,6 +619,55 @@ const SETTINGS: &[Setting] = &[
 /// An unknown name is an error listing the valid ones rather than a no-op, for the same
 /// reason `--only nmp` is: a silently ignored typo reads as "npm is protected" right up
 /// until the pass that deletes `node_modules`.
+/// Parse `npm=10,uv=10` into the per-manager cache cap map.
+///
+/// Validated against the cache manager names `devp caches clear` takes, not the adapter
+/// names [`parse_adapter_days`] uses. The two lists overlap but neither contains the
+/// other — `pip`, `nuget`, `conan`, `conda`, `vcpkg` and `hex` are caches with no
+/// adapter, and `venv`, `terraform` and `dart` are adapters with no cache — so
+/// accepting an adapter name here would store a cap that nothing ever reads.
+///
+/// Zero is rejected rather than treated as "cap everything": a cache is over a cap of
+/// zero the moment it exists, and a setting whose only effect is to mark every cache
+/// permanently over-size is a typo for `-` every time.
+fn parse_cache_caps(value: &str) -> Result<std::collections::BTreeMap<String, u64>> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() || matches!(trimmed.to_lowercase().as_str(), "none" | "(none)" | "-") {
+        return Ok(std::collections::BTreeMap::new());
+    }
+
+    let mut caps = std::collections::BTreeMap::new();
+    for raw in trimmed.split(',') {
+        let entry = raw.trim();
+        if entry.is_empty() {
+            continue;
+        }
+        let Some((name, value)) = entry.split_once('=') else {
+            bail!("`{entry}` must be written as `<manager>=<gib>`, for example `uv=10`.");
+        };
+        let name = name.trim().to_lowercase();
+        if !crate::commands::caches::is_cache_manager(&name) {
+            bail!(
+                "`{name}` is not a manager dev-prune knows a cache for. Valid names: {}",
+                crate::commands::caches::known_managers().join(", ")
+            );
+        }
+        let parsed: u64 = value.trim().parse().map_err(|_| {
+            anyhow::anyhow!(
+                "`{name}` needs a whole number of gibibytes, not `{}`.",
+                value.trim()
+            )
+        })?;
+        if parsed == 0 {
+            bail!(
+                "`{name}=0` would call the cache too big the moment it exists. Use `-` to clear the caps instead."
+            );
+        }
+        caps.insert(name, parsed);
+    }
+    Ok(caps)
+}
+
 /// Parse `cargo=60,npm=30` into the per-adapter idle map.
 ///
 /// Same "clear it" spellings as [`parse_adapter_list`], and the same closed loop: what
@@ -794,6 +941,7 @@ fn run_wizard_tui() -> Result<()> {
                     Kind::Number => Control::Number,
                     Kind::Adapters => Control::Adapters,
                     Kind::AdapterDays => Control::AdapterDays,
+                    Kind::CacheCaps => Control::CacheCaps,
                 },
                 original: value.clone(),
                 value,
@@ -814,6 +962,13 @@ fn run_wizard_tui() -> Result<()> {
     let report = crate::commands::trust::build(&registry);
     let adapters = crate::adapters::all_adapter_names();
     let opt_in = crate::adapters::opt_in_adapter_names();
+    // Identity, never a guess: the checklist offers a cache cap only where an adapter
+    // and a cache go by the same name. See `ConfigSession::capped_adapters`.
+    let capped: Vec<&'static str> = adapters
+        .iter()
+        .copied()
+        .filter(|name| crate::commands::caches::is_cache_manager(name))
+        .collect();
 
     let outcome = crate::tui::config_view::run(ConfigSession {
         declaration: declaration_lines(&report),
@@ -822,6 +977,7 @@ fn run_wizard_tui() -> Result<()> {
         rows,
         adapters: &adapters,
         opt_in_adapters: &opt_in,
+        capped_adapters: &capped,
         groups: crate::adapters::ADAPTER_GROUPS,
         validate: &validate,
         title: "dev-prune configuration",
@@ -1428,6 +1584,66 @@ mod tests {
     }
 
     #[test]
+    fn a_cache_cap_is_written_the_way_it_is_read_back() {
+        let caps = parse_cache_caps("uv=10,npm=4").unwrap();
+        assert_eq!(caps.get("uv"), Some(&10));
+        assert_eq!(caps.get("npm"), Some(&4));
+        // Sorted and normalised, so `config get` prints one spelling no matter which
+        // order or casing the user typed.
+        let settings = Settings {
+            cache_max_gb: parse_cache_caps("UV = 10 , npm=4").unwrap(),
+            ..Settings::default()
+        };
+        let printed = SETTINGS
+            .iter()
+            .find(|s| s.key == "cache_max_gb")
+            .map(|s| (s.get)(&settings))
+            .unwrap();
+        assert_eq!(printed, "npm=4,uv=10");
+        assert_eq!(parse_cache_caps(&printed).unwrap(), settings.cache_max_gb);
+    }
+
+    #[test]
+    fn clearing_the_caps_is_spelled_the_way_the_getter_prints_an_empty_map() {
+        for blank in ["", "-", "none", "(none)", "NONE"] {
+            assert!(
+                parse_cache_caps(blank).unwrap().is_empty(),
+                "`{blank}` should clear every cap"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cap_on_something_that_is_not_a_cache_is_refused_with_the_list() {
+        // `venv`, `terraform` and `dart` are adapters with no cache of their own, and
+        // accepting a cap for one would store a setting nothing ever reads.
+        let err = parse_cache_caps("venv=10").unwrap_err().to_string();
+        assert!(err.contains("venv"), "{err}");
+        assert!(err.contains("npm"), "the error lists what is valid: {err}");
+    }
+
+    #[test]
+    fn a_cap_has_to_be_a_whole_number_of_gibibytes() {
+        for bad in ["uv=10.5", "uv=ten", "uv=-1", "uv="] {
+            assert!(parse_cache_caps(bad).is_err(), "`{bad}` was accepted");
+        }
+        // A bare name is not a cap, and guessing a default for it would be a number the
+        // user never chose.
+        assert!(parse_cache_caps("uv").is_err());
+    }
+
+    #[test]
+    fn a_cap_of_zero_is_refused_rather_than_stored() {
+        // Zero marks the cache over-size the moment it exists, which is almost always a
+        // typo for clearing the cap.
+        let err = parse_cache_caps("uv=0").unwrap_err().to_string();
+        assert!(
+            err.contains("`-`"),
+            "the error names the way to clear it: {err}"
+        );
+    }
+
+    #[test]
     fn every_setting_round_trips_through_its_own_getter() {
         // The table is what `get`, `set`, `show` and the wizard all read, so a getter
         // that reports a different field than its setter writes would be invisible in
@@ -1446,6 +1662,9 @@ mod tests {
                 // Same, with a window attached: proves the map prints back in the
                 // `name=days` spelling `config set` parses.
                 Kind::AdapterDays => "cargo=45".to_string(),
+                // A name that is a cache manager, which `cargo` also happens to be —
+                // spelled out separately because the two lists are validated apart.
+                Kind::CacheCaps => "cargo=10".to_string(),
             };
             (setting.set)(&mut settings, &probe)
                 .unwrap_or_else(|e| panic!("{} rejected `{probe}`: {e}", setting.key));

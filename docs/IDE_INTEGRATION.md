@@ -7,6 +7,12 @@ maintainer checklist for publishing each piece. Written in the same spirit as
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## The name is `.devprune.json`, permanently
 
 `.dev-prune.json` was considered and rejected. The filename shipped in 1.0.0 and is
@@ -169,10 +175,17 @@ editor's agent actually reads:
 | `zed` | `.rules` — a marked block; Zed reads it ahead of every other convention |
 | `copilot` | `.github/copilot-instructions.md` — a marked block |
 | `agents-md` | `AGENTS.md` — a marked block; read by Codex, Jules, Amp, OpenCode and others |
+| `aider` | `CONVENTIONS.md` — a marked block; the one file its editor does not read by finding it |
 
-The first ten own their file outright. The last five share one with other tools, so
+The first ten own their file outright. The last six share one with other tools, so
 dev-prune writes only inside its `<!-- dev-prune:rules:start -->`…`<!-- dev-prune:rules:end -->`
 markers — a re-run replaces that block and leaves every byte outside it as found.
+
+Aider is the exception to the rule that writing the file is enough. It reads
+`CONVENTIONS.md` only when told to, so `devp skill --agent aider` prints the wiring
+the file still needs: `read: CONVENTIONS.md` in `.aider.conf.yml`, or
+`aider --read CONVENTIONS.md` at the command line. Rules an agent never loads are
+worse than no rules at all — the repository looks configured and nothing is.
 
 Claude Code is deliberately absent: its skill installs globally (`devp skill`,
 `devp setup`), so there is nothing to write per repository.

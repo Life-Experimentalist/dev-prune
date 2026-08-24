@@ -4,6 +4,12 @@ This document defines the Low-Level Design (LLD) specification for **`dev-prune`
 
 ---
 
+<p align="center">
+  <img src="../../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 🔬 1. Crate Module Map & Visibility
 
 ```

@@ -485,6 +485,16 @@ pub enum CachesAction {
         /// Which cache to empty: a manager name (npm, go, cargo, gradle, …) or `all`.
         #[arg(value_name = "MANAGER")]
         target: String,
+
+        /// Only empty caches that are over the size cap set for them in
+        /// `cache_max_gb`. Without a cap set for anything, this clears nothing.
+        #[arg(long)]
+        over_cap: bool,
+
+        /// Only empty caches that no registered repository uses. Refuses to run when
+        /// there are no registered repositories to check against.
+        #[arg(long)]
+        unused: bool,
     },
 }
 
@@ -554,24 +564,6 @@ pub enum ConfigAction {
         #[arg(long)]
         no_tui: bool,
     },
-}
-
-/// Create the `devp` executable alias next to `dev-prune`, and keep it current.
-///
-/// Runs on every invocation because it is two `stat` calls in the settled case, and
-/// because the alias is how most people invoke this tool — it must never be the stale
-/// half of an upgrade.
-///
-/// `DEV_PRUNE_NO_AUTO_SETUP` suppresses it, and so does looking like CI or a container,
-/// because writing a second executable next to the first is a self-installation like any
-/// other — and those environments cannot set the variable before the first run. `devp
-/// setup` still creates the alias in either case: it governs the unattended pass, not
-/// the explicit request.
-pub fn ensure_devp_alias() {
-    if setup::no_auto_setup_requested() || setup::unattended_environment().is_some() {
-        return;
-    }
-    let _ = setup::ensure_alias();
 }
 
 /// Print rich version & system environment details for -v / -V / --version.
@@ -764,7 +756,6 @@ fn auto_setup_allowed(args: &[String]) -> bool {
 /// Run the CLI application.
 pub fn run_cli() {
     restore_sigpipe();
-    ensure_devp_alias();
 
     let args = normalize_args();
     if auto_setup_allowed(&args) {
@@ -845,8 +836,12 @@ pub fn run_cli() {
             }
         }
         Commands::Caches { json, action } => match action {
-            Some(CachesAction::Clear { target }) => {
-                commands::caches::run_clear(&target, cli.yes, cli.dry_run, json)
+            Some(CachesAction::Clear {
+                target,
+                over_cap,
+                unused,
+            }) => {
+                commands::caches::run_clear(&target, over_cap, unused, cli.yes, cli.dry_run, json)
             }
             None => commands::caches::run(json),
         },

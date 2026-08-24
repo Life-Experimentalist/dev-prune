@@ -4,6 +4,12 @@ This guide provides diagnostics and fix procedures for OS background schedulers 
 
 ---
 
+<p align="center">
+  <img src="../../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 🔍 Issue Index
 
 - [🤖 Background Daemon \& Git Hook Subsystem Troubleshooting](#-background-daemon--git-hook-subsystem-troubleshooting)

@@ -1,5 +1,9 @@
 # dev-prune (`devp`)
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
 **Universal, lockfile-safe workspace pruner.** Reclaims disk space from idle Git
 repositories by deleting dependency and build directories a lockfile can rebuild —
 `node_modules`, `.venv`, `target`, `vendor` — and refuses to delete anything it cannot

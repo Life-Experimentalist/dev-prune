@@ -38,6 +38,21 @@ pub enum Control {
     /// they are edited on one screen. The row exists separately only because the
     /// settings table stores them as two keys.
     AdapterDays,
+    /// Opens the same adapter checklist, on the cache-cap column.
+    ///
+    /// Third column of the same table for the same reason the second one is there: how
+    /// big npm's cache may get is a decision about npm, and the screen where npm is a
+    /// row is where it belongs.
+    CacheCaps,
+}
+
+/// Which column of the adapter checklist an inline edit is landing in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerField {
+    /// `adapter_idle_days`, in days.
+    Days,
+    /// `cache_max_gb`, in gibibytes.
+    Cap,
 }
 
 /// One setting, as the view needs it.
@@ -126,6 +141,16 @@ pub struct ConfigSession<'a> {
     pub adapters: &'a [&'static str],
     /// Adapter names that need their own `enable_*` switch as well.
     pub opt_in_adapters: &'a [&'static str],
+    /// Adapter names that are also the name of a cache `devp caches` knows, and so can
+    /// carry a `cache_max_gb` entry.
+    ///
+    /// Identity only, never a guess: npm's cache is npm's. The caches with no adapter
+    /// of the same name — `pip`, `nuget`, `conan`, `conda`, `vcpkg`, `hex` — have no
+    /// row here to sit on and are capped with `devp config set cache_max_gb` instead,
+    /// which the footer says. Inventing a row for them, or pointing `poetry` at pip's
+    /// cache, would be the checklist claiming a relationship dev-prune has not
+    /// verified.
+    pub capped_adapters: &'a [&'static str],
     /// The language groups the adapters are shown under, in display order. Anything
     /// not named by a group is collected under a trailing "Other".
     pub groups: &'a [(&'static str, &'static [&'static str])],
@@ -231,12 +256,17 @@ struct State<'a> {
     picker_active: Vec<bool>,
     /// Per-adapter idle window in days, `None` when the adapter follows the global one.
     picker_days: Vec<Option<u64>>,
+    /// Per-adapter cache cap in gibibytes, `None` when that cache has no cap. Always
+    /// `None` for an adapter that is not in `capped_adapters`.
+    picker_caps: Vec<Option<u64>>,
     /// The checklist as it is drawn: group headings interleaved with their adapters.
     /// Rebuilt when the screen opens, because it depends on nothing that changes while
     /// it is open.
     picker_entries: Vec<PickerEntry>,
-    /// Buffer for an in-progress idle-window edit on the checklist.
+    /// Buffer for an in-progress number edit on the checklist.
     picker_editing: Option<String>,
+    /// Which column [`State::picker_editing`] is being typed into.
+    picker_field: PickerField,
     picker_list: ListState,
     /// Scroll position of the declaration, which is longer than most terminals are tall.
     decl_list: ListState,
@@ -265,8 +295,10 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
     let mut state = State {
         picker_active: vec![true; session.adapters.len()],
         picker_days: vec![None; session.adapters.len()],
+        picker_caps: vec![None; session.adapters.len()],
         picker_entries: Vec::new(),
         picker_editing: None,
+        picker_field: PickerField::Days,
         session,
         screen: Screen::Declaration,
         list,
@@ -482,7 +514,7 @@ fn activate(state: &mut State<'_>, index: usize) {
             };
         }
         Control::Number => state.editing = Some(state.session.rows[index].value.clone()),
-        Control::Adapters | Control::AdapterDays => open_picker(state),
+        Control::Adapters | Control::AdapterDays | Control::CacheCaps => open_picker(state),
     }
 }
 
@@ -495,6 +527,7 @@ fn open_picker(state: &mut State<'_>) {
     let rows = &state.session.rows;
     let disabled = parse_list(&row_value(rows, "disabled_adapters").unwrap_or_default());
     let days = parse_days(&row_value(rows, "adapter_idle_days").unwrap_or_default());
+    let caps = parse_days(&row_value(rows, "cache_max_gb").unwrap_or_default());
 
     state.picker_active = state
         .session
@@ -520,8 +553,21 @@ fn open_picker(state: &mut State<'_>) {
         .map(|name| days.iter().find(|(n, _)| n == name).map(|(_, d)| *d))
         .collect();
 
+    state.picker_caps = state
+        .session
+        .adapters
+        .iter()
+        .map(|name| {
+            if !state.session.capped_adapters.contains(name) {
+                return None;
+            }
+            caps.iter().find(|(n, _)| n == name).map(|(_, g)| *g)
+        })
+        .collect();
+
     state.picker_entries = build_entries(state.session.adapters, state.session.groups);
     state.picker_editing = None;
+    state.picker_field = PickerField::Days;
     state.picker_list.select(Some(0));
     state.screen = Screen::Adapters;
 }
@@ -564,7 +610,7 @@ fn number_edit_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
 
 fn adapters_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
     if state.picker_editing.is_some() {
-        return picker_days_key(state, code);
+        return picker_number_key(state, code);
     }
 
     let len = state.picker_entries.len().max(1);
@@ -610,7 +656,31 @@ fn adapters_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
                 }
                 None => None,
             };
+            state.picker_field = PickerField::Days;
             state.picker_editing = Some(seed.map(|d| d.to_string()).unwrap_or_default());
+        }
+        KeyCode::Char('c') | KeyCode::Char('C') => {
+            state.error = None;
+            // Nothing to type into: the adapter has no cache of its own name, so a cap
+            // typed here would be stored against a manager that does not exist. Saying
+            // so beats an editor that accepts a number and drops it.
+            let targets = capped_targets(state, current);
+            if targets.is_empty() {
+                state.error = Some(
+                    "No cache of that name for dev-prune to size. `devp caches` lists the ones \
+                     there are; `devp config set cache_max_gb` caps them."
+                        .to_string(),
+                );
+                return None;
+            }
+            let first = targets.first().and_then(|&i| state.picker_caps[i]);
+            let seed = if targets.iter().all(|&i| state.picker_caps[i] == first) {
+                first
+            } else {
+                None
+            };
+            state.picker_field = PickerField::Cap;
+            state.picker_editing = Some(seed.map(|g| g.to_string()).unwrap_or_default());
         }
         KeyCode::Char('a') | KeyCode::Char('A') => state.picker_active.fill(true),
         KeyCode::Char('n') | KeyCode::Char('N') => state.picker_active.fill(false),
@@ -621,9 +691,33 @@ fn adapters_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
     None
 }
 
-/// The inline idle-window editor on the checklist. An empty buffer clears the window,
-/// which is the only way back to "follow the global one" once a number is set.
-fn picker_days_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
+/// The adapters a cap typed at line `line` should land on: those under it that have a
+/// cache of their own name.
+///
+/// A language heading types into every capped adapter beneath it at once and silently
+/// skips the rest — "cap the JavaScript caches at 10" is one sentence, and the four
+/// managers it reaches are exactly the four that have one.
+fn capped_targets(state: &State<'_>, line: usize) -> Vec<usize> {
+    let members: Vec<usize> = match state.picker_entries.get(line) {
+        Some(PickerEntry::Adapter(i)) => vec![*i],
+        Some(PickerEntry::Group { members, .. }) => members.clone(),
+        None => Vec::new(),
+    };
+    members
+        .into_iter()
+        .filter(|&i| {
+            state
+                .session
+                .capped_adapters
+                .contains(&state.session.adapters[i])
+        })
+        .collect()
+}
+
+/// The inline number editor on the checklist, for whichever column
+/// [`State::picker_field`] names. An empty buffer clears the value, which is the only
+/// way back to "no window of its own" or "no cap" once a number is set.
+fn picker_number_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
     let current = state.picker_list.selected().unwrap_or(0);
     match code {
         KeyCode::Char(c) if c.is_ascii_digit() => {
@@ -639,10 +733,17 @@ fn picker_days_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
         KeyCode::Enter => {
             let typed = state.picker_editing.clone().unwrap_or_default();
             let typed = typed.trim().to_string();
-            let targets: Vec<usize> = match state.picker_entries.get(current) {
-                Some(PickerEntry::Adapter(i)) => vec![*i],
-                Some(PickerEntry::Group { members, .. }) => members.clone(),
-                None => Vec::new(),
+            let key = match state.picker_field {
+                PickerField::Days => "adapter_idle_days",
+                PickerField::Cap => "cache_max_gb",
+            };
+            let targets: Vec<usize> = match state.picker_field {
+                PickerField::Days => match state.picker_entries.get(current) {
+                    Some(PickerEntry::Adapter(i)) => vec![*i],
+                    Some(PickerEntry::Group { members, .. }) => members.clone(),
+                    None => Vec::new(),
+                },
+                PickerField::Cap => capped_targets(state, current),
             };
             let value = if typed.is_empty() {
                 None
@@ -654,14 +755,17 @@ fn picker_days_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
                 let probe = format!("{}={typed}", state.session.adapters[first]);
                 // Through the real setter, so the checklist cannot store a number
                 // `devp config set` would refuse.
-                if let Err(why) = (state.session.validate)("adapter_idle_days", &probe) {
+                if let Err(why) = (state.session.validate)(key, &probe) {
                     state.error = Some(why);
                     return None;
                 }
                 typed.parse::<u64>().ok()
             };
             for i in targets {
-                state.picker_days[i] = value;
+                match state.picker_field {
+                    PickerField::Days => state.picker_days[i] = value,
+                    PickerField::Cap => state.picker_caps[i] = value,
+                }
             }
             state.picker_editing = None;
             state.error = None;
@@ -698,15 +802,42 @@ fn commit_picker(state: &mut State<'_>) {
         disabled.join(",")
     };
 
-    let days: Vec<String> = adapters
+    let mut days: Vec<String> = adapters
         .iter()
         .enumerate()
         .filter_map(|(i, name)| state.picker_days[i].map(|d| format!("{name}={d}")))
         .collect();
+    // Sorted for the same reason the caps below are: `config get adapter_idle_days`
+    // prints a `BTreeMap`, and this row is compared against that. Assembling it in
+    // adapter order instead would report an untouched setting as changed.
+    days.sort_unstable();
     let days = if days.is_empty() {
         "(none)".to_string()
     } else {
         days.join(",")
+    };
+
+    // A cap on a cache with no adapter of its own name — `pip`, `nuget`, `conan`,
+    // `conda`, `vcpkg`, `hex` — has no row on this screen to be edited from, and a
+    // screen that writes back only what it can draw would delete it the first time
+    // anyone opened the checklist for any other reason.
+    let existing = parse_days(&row_value(&state.session.rows, "cache_max_gb").unwrap_or_default());
+    let mut caps: Vec<String> = existing
+        .iter()
+        .filter(|(name, _)| !adapters.iter().any(|a| a == name))
+        .map(|(name, gb)| format!("{name}={gb}"))
+        .collect();
+    caps.extend(
+        adapters
+            .iter()
+            .enumerate()
+            .filter_map(|(i, name)| state.picker_caps[i].map(|g| format!("{name}={g}"))),
+    );
+    caps.sort_unstable();
+    let caps = if caps.is_empty() {
+        "(none)".to_string()
+    } else {
+        caps.join(",")
     };
 
     let switches: Vec<(String, String)> = adapters
@@ -719,6 +850,7 @@ fn commit_picker(state: &mut State<'_>) {
     let rows = &mut state.session.rows;
     set_row(rows, "disabled_adapters", disabled);
     set_row(rows, "adapter_idle_days", days);
+    set_row(rows, "cache_max_gb", caps);
     for (key, value) in switches {
         set_row(rows, &key, value);
     }
@@ -1075,7 +1207,9 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
                 ),
                 Control::Toggle => Span::styled("[ ] ", dim()),
                 Control::Number => Span::styled("123 ", dim()),
-                Control::Adapters | Control::AdapterDays => Span::styled("••• ", dim()),
+                Control::Adapters | Control::AdapterDays | Control::CacheCaps => {
+                    Span::styled("••• ", dim())
+                }
             };
 
             let shown = if state.editing.is_some() && selected == Some(i) {
@@ -1215,13 +1349,34 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
                     // one Space press silently turns three adapters back on.
                     "[-]"
                 };
+                let editing_here = state.picker_editing.is_some() && selected == Some(line);
                 let shared = members.first().and_then(|&i| state.picker_days[i]);
                 // A heading is an editing target like any adapter row, so it has to show
                 // the buffer being typed into it — otherwise the keys land silently.
-                let window = if state.picker_editing.is_some() && selected == Some(line) {
+                let window = if editing_here && state.picker_field == PickerField::Days {
                     format!("{}_", state.picker_editing.clone().unwrap_or_default())
                 } else if members.iter().all(|&i| state.picker_days[i] == shared) {
                     shared.map(|d| format!("{d}d")).unwrap_or_default()
+                } else {
+                    "mixed".to_string()
+                };
+                let capped: Vec<usize> = members
+                    .iter()
+                    .copied()
+                    .filter(|&i| {
+                        state
+                            .session
+                            .capped_adapters
+                            .contains(&state.session.adapters[i])
+                    })
+                    .collect();
+                let shared_cap = capped.first().and_then(|&i| state.picker_caps[i]);
+                let cap = if editing_here && state.picker_field == PickerField::Cap {
+                    format!("{}_", state.picker_editing.clone().unwrap_or_default())
+                } else if capped.is_empty() {
+                    String::new()
+                } else if capped.iter().all(|&i| state.picker_caps[i] == shared_cap) {
+                    shared_cap.map(|g| format!("{g}G")).unwrap_or_default()
                 } else {
                     "mixed".to_string()
                 };
@@ -1236,17 +1391,31 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
                         crate::output::pad_display(&format!("{on}/{}", members.len()), 8),
                         dim(),
                     ),
-                    Span::styled(window, dim()),
+                    Span::styled(crate::output::pad_display(&window, 10), dim()),
+                    Span::styled(cap, dim()),
                 ]))
             }
             PickerEntry::Adapter(i) => {
                 let name = state.session.adapters[*i];
-                let shown = if state.picker_editing.is_some() && selected == Some(line) {
+                let editing_here = state.picker_editing.is_some() && selected == Some(line);
+                let shown = if editing_here && state.picker_field == PickerField::Days {
                     format!("{}_", state.picker_editing.clone().unwrap_or_default())
                 } else {
                     state.picker_days[*i]
                         .map(|d| format!("{d}d"))
                         .unwrap_or_else(|| "default".to_string())
+                };
+                // Blank, not "no cap": there is no cache of this name for a cap to be
+                // about, and an empty cell is the only honest way to draw a column that
+                // does not apply to this row.
+                let cap = if editing_here && state.picker_field == PickerField::Cap {
+                    format!("{}_", state.picker_editing.clone().unwrap_or_default())
+                } else if !state.session.capped_adapters.contains(&name) {
+                    String::new()
+                } else {
+                    state.picker_caps[*i]
+                        .map(|g| format!("{g}G"))
+                        .unwrap_or_else(|| "no cap".to_string())
                 };
                 let mut spans = vec![
                     if state.picker_active[*i] {
@@ -1268,6 +1437,14 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
                             dim()
                         },
                     ),
+                    Span::styled(
+                        crate::output::pad_display(&cap, 10),
+                        if state.picker_caps[*i].is_some() {
+                            Style::default().fg(Color::Yellow)
+                        } else {
+                            dim()
+                        },
+                    ),
                 ];
                 if state.session.opt_in_adapters.contains(&name) {
                     // Naming the cost is the whole argument for the switch: these come
@@ -1283,7 +1460,7 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
     let list = List::new(items)
         .block(
             Block::default()
-                .title(" Checked adapters stay active ")
+                .title(" Checked adapters stay active      idle      cache cap ")
                 .borders(Borders::ALL)
                 .border_style(dim()),
         )
@@ -1298,7 +1475,9 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
     let mut detail = vec![Line::from(Span::styled(
         "  Space toggles one adapter, or a whole language from its heading. d sets how \
          many days that adapter — or that language — must be idle first; an empty value \
-         puts it back on the global window.",
+         puts it back on the global window. c caps that ecosystem's download cache in \
+         GiB — reported by `devp caches`, and emptied only when you run \
+         `devp caches clear --over-cap`, never on a schedule.",
         dim(),
     ))];
     if let Some(why) = &state.error {
@@ -1314,23 +1493,29 @@ fn render_adapters(frame: &mut Frame, state: &mut State<'_>) {
         chunks[2],
     );
 
-    let keys: &[(&str, &str)] = if state.picker_editing.is_some() {
-        &[
+    let keys: &[(&str, &str)] = match (state.picker_editing.is_some(), state.picker_field) {
+        (true, PickerField::Days) => &[
             ("digits", "days"),
             ("Enter", "accept"),
             ("empty", "use the global window"),
             ("Esc", "abandon"),
-        ]
-    } else {
-        &[
+        ],
+        (true, PickerField::Cap) => &[
+            ("digits", "GiB"),
+            ("Enter", "accept"),
+            ("empty", "no cap"),
+            ("Esc", "abandon"),
+        ],
+        (false, _) => &[
             ("↑↓", "move"),
             ("Space", "toggle"),
             ("d", "idle days"),
+            ("c", "cache cap"),
             ("a", "all on"),
             ("n", "all off"),
             ("Enter", "accept"),
             ("Esc", "back"),
-        ]
+        ],
     };
     frame.render_widget(footer(keys), chunks[3]);
 }
@@ -1431,11 +1616,12 @@ mod tests {
             rows,
             adapters,
             opt_in_adapters: &[],
+            capped_adapters: &["npm", "pnpm", "cargo", "go"],
             groups: &[("Test", &["npm", "cargo", "go"])],
             validate: &|key, v| {
                 // Stands in for the real setters: the same shapes accepted, so a test
                 // that types a value the checklist stores is a test the wizard passes.
-                let number = if key == "adapter_idle_days" {
+                let number = if key == "adapter_idle_days" || key == "cache_max_gb" {
                     v.split_once('=').map(|(_, d)| d).unwrap_or("")
                 } else {
                     v
@@ -1457,8 +1643,10 @@ mod tests {
         State {
             picker_active: vec![true; s.adapters.len()],
             picker_days: vec![None; s.adapters.len()],
+            picker_caps: vec![None; s.adapters.len()],
             picker_entries: build_entries(s.adapters, s.groups),
             picker_editing: None,
+            picker_field: PickerField::Days,
             session: s,
             screen: Screen::Settings,
             list,
@@ -1658,6 +1846,118 @@ mod tests {
         handle_key(&mut st, KeyCode::Enter);
         handle_key(&mut st, KeyCode::Enter);
         assert_eq!(st.session.rows[1].value, "(none)");
+    }
+
+    #[test]
+    fn a_cache_cap_typed_on_a_heading_reaches_only_the_adapters_that_have_a_cache() {
+        // The two lists overlap without either containing the other, so a heading has to
+        // skip the members dev-prune knows no cache for rather than store a cap against
+        // a manager name that does not exist.
+        let adapters: &[&'static str] = &["npm", "pnpm", "venv"];
+        let mut st = state(session(
+            vec![
+                row("disabled_adapters", Control::Adapters, "(none)"),
+                row("cache_max_gb", Control::CacheCaps, "(none)"),
+            ],
+            adapters,
+        ));
+        st.session.groups = &[("JavaScript", &["npm", "pnpm"]), ("Python", &["venv"])];
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char('c')); // on the JavaScript heading
+        handle_key(&mut st, KeyCode::Char('1'));
+        handle_key(&mut st, KeyCode::Char('0'));
+        handle_key(&mut st, KeyCode::Enter);
+        assert_eq!(st.picker_caps, vec![Some(10), Some(10), None]);
+
+        handle_key(&mut st, KeyCode::Enter); // accept the checklist
+        assert_eq!(st.session.rows[1].value, "npm=10,pnpm=10");
+    }
+
+    #[test]
+    fn a_cache_cap_is_cleared_by_emptying_it() {
+        let adapters: &[&'static str] = &["npm"];
+        let mut st = state(session(
+            vec![
+                row("disabled_adapters", Control::Adapters, "(none)"),
+                row("cache_max_gb", Control::CacheCaps, "npm=10"),
+            ],
+            adapters,
+        ));
+        st.session.groups = &[("JavaScript", &["npm"])];
+        handle_key(&mut st, KeyCode::Enter);
+        // Opening shows the cap that is already set, or accepting the screen for any
+        // other reason would quietly drop it.
+        assert_eq!(st.picker_caps, vec![Some(10)]);
+        handle_key(&mut st, KeyCode::Down); // heading -> npm
+        handle_key(&mut st, KeyCode::Char('c'));
+        handle_key(&mut st, KeyCode::Backspace);
+        handle_key(&mut st, KeyCode::Backspace);
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Enter);
+        assert_eq!(st.session.rows[1].value, "(none)");
+    }
+
+    #[test]
+    fn a_cap_on_a_cache_with_no_adapter_survives_the_checklist() {
+        // `pip`, `nuget`, `conan`, `conda`, `vcpkg` and `hex` are caches no adapter is
+        // named after, so they have no row here to be edited from. The screen writes
+        // back the whole setting, and without this it would delete them the first time
+        // anyone opened the checklist for any other reason.
+        let adapters: &[&'static str] = &["npm"];
+        let mut st = state(session(
+            vec![
+                row("disabled_adapters", Control::Adapters, "(none)"),
+                row("cache_max_gb", Control::CacheCaps, "npm=10,pip=20"),
+            ],
+            adapters,
+        ));
+        st.session.groups = &[("JavaScript", &["npm"])];
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Enter);
+        assert_eq!(st.session.rows[1].value, "npm=10,pip=20");
+    }
+
+    #[test]
+    fn typing_a_cap_where_there_is_no_cache_says_so_instead_of_dropping_it() {
+        let adapters: &[&'static str] = &["venv"];
+        let mut st = state(session(
+            vec![
+                row("disabled_adapters", Control::Adapters, "(none)"),
+                row("cache_max_gb", Control::CacheCaps, "(none)"),
+            ],
+            adapters,
+        ));
+        st.session.groups = &[("Python", &["venv"])];
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Down); // heading -> venv
+        handle_key(&mut st, KeyCode::Char('c'));
+        assert!(st.picker_editing.is_none(), "no editor opened");
+        let err = st.error.clone().expect("the refusal is explained");
+        assert!(err.contains("devp caches"), "{err}");
+    }
+
+    #[test]
+    fn the_checklist_draws_the_cache_cap_beside_the_idle_window() {
+        // Both settings are per adapter, and the whole point of the third column is that
+        // one screen answers "what is on, for how long, and how big".
+        let adapters: &[&'static str] = &["npm", "venv"];
+        let mut st = state(session(
+            vec![
+                row("disabled_adapters", Control::Adapters, "(none)"),
+                row("adapter_idle_days", Control::AdapterDays, "npm=30"),
+                row("cache_max_gb", Control::CacheCaps, "npm=10"),
+            ],
+            adapters,
+        ));
+        st.session.groups = &[("JavaScript", &["npm"]), ("Python", &["venv"])];
+        handle_key(&mut st, KeyCode::Enter);
+        let picker = screenshot(&mut st, Screen::Adapters);
+        assert!(picker.contains("30d"), "the idle window is drawn");
+        assert!(picker.contains("10G"), "the cap is drawn");
+        // `venv` has no cache, so its cell is blank rather than "no cap" — there is
+        // nothing there for a cap to be about.
+        assert!(picker.contains("no cap") || picker.contains("10G"));
+        assert!(picker.contains("cache cap"), "the column is labelled");
     }
 
     #[test]

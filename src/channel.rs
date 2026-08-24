@@ -246,6 +246,42 @@ fn pip_script_beside(exe: &Path) -> bool {
     })
 }
 
+/// This binary, running from inside a project's own virtual environment.
+///
+/// The distinction that matters is not "was this installed by pip" — a machine-wide
+/// `pip install` is a perfectly good way to get the tool. It is "does this copy live
+/// inside one project's environment", because such a copy dies with the environment,
+/// and until it does it is a package that project's `requirements.txt` has to account
+/// for before the environment can ever be pruned.
+///
+/// `pyvenv.cfg` one directory above the script is what separates the two: every virtual
+/// environment has one and no system install does.
+pub struct ProjectVenvInstall {
+    /// The environment root — the directory holding `pyvenv.cfg`.
+    pub venv: PathBuf,
+    /// The directory the environment sits in, which is the project in every layout
+    /// anyone actually uses.
+    pub project: PathBuf,
+}
+
+/// Detect a [`ProjectVenvInstall`] for `exe`, or `None` if this copy lives anywhere else.
+///
+/// Takes the executable rather than reading `current_exe` so the detection can be tested
+/// against a directory tree instead of against whichever machine runs the suite.
+pub fn project_venv_install(exe: &Path) -> Option<ProjectVenvInstall> {
+    if !pip_script_beside(exe) {
+        return None;
+    }
+    let venv = exe.parent()?.parent()?;
+    if !venv.join("pyvenv.cfg").exists() {
+        return None;
+    }
+    Some(ProjectVenvInstall {
+        venv: venv.to_path_buf(),
+        project: venv.parent()?.to_path_buf(),
+    })
+}
+
 /// Every fixed directory a channel installs into, whether or not it is on `PATH`.
 ///
 /// Shared by `devp doctor` (which reports copies running a different version) and `devp
@@ -327,6 +363,14 @@ mod tests {
             ("/home/k/.cargo/bin/dev-prune", Channel::Cargo),
             (
                 "/usr/lib/node_modules/dev-prune/bin/dev-prune",
+                Channel::Npm,
+            ),
+            // The platform package, which is where the executable npm actually runs
+            // lives. `devp doctor` suppresses its missing-twin warning on the strength
+            // of this: npm ships the second name as a launcher of its own, so there is
+            // no file to look for beside this one.
+            (
+                "/usr/lib/node_modules/dev-prune-linux-x64/bin/dev-prune",
                 Channel::Npm,
             ),
             (
@@ -456,5 +500,48 @@ mod tests {
             joined.contains(platform),
             "{platform} missing from {joined}"
         );
+    }
+
+    /// A virtual environment on disk: the interpreter beside the script, and the
+    /// `pyvenv.cfg` one level up that no system-wide install has.
+    fn make_project_venv(root: &Path, with_cfg: bool, with_python: bool) -> PathBuf {
+        let venv = root.join("proj").join(".venv");
+        let scripts = venv.join("bin");
+        std::fs::create_dir_all(&scripts).unwrap();
+        if with_python {
+            std::fs::write(scripts.join("python"), "").unwrap();
+        }
+        if with_cfg {
+            std::fs::write(venv.join("pyvenv.cfg"), "").unwrap();
+        }
+        let exe = scripts.join("devp");
+        std::fs::write(&exe, "").unwrap();
+        exe
+    }
+
+    #[test]
+    fn a_copy_inside_a_project_venv_is_recognised() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = make_project_venv(dir.path(), true, true);
+        let found = project_venv_install(&exe).expect("a venv install");
+        assert_eq!(found.venv, dir.path().join("proj").join(".venv"));
+        assert_eq!(found.project, dir.path().join("proj"));
+    }
+
+    #[test]
+    fn a_machine_wide_pip_install_is_not_a_project_venv() {
+        // An interpreter beside the script is not enough on its own: `/usr/bin` has one
+        // too, and telling somebody their machine-wide install is in the wrong place is
+        // both wrong and unfixable.
+        let dir = tempfile::tempdir().unwrap();
+        let exe = make_project_venv(dir.path(), false, true);
+        assert!(project_venv_install(&exe).is_none());
+    }
+
+    #[test]
+    fn a_copy_with_no_interpreter_beside_it_is_not_a_venv_install() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = make_project_venv(dir.path(), true, false);
+        assert!(project_venv_install(&exe).is_none());
     }
 }

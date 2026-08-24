@@ -4,6 +4,12 @@
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 🏛️ Architecture Overview
 
 All adapters live in [`src/adapters/`](../src/adapters/) and implement the [`PackageManager`](../src/adapters/mod.rs) Rust trait:

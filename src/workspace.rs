@@ -97,6 +97,24 @@ pub fn discover(repo_root: &Path) -> Vec<Project> {
 /// `depth` is clamped, so a caller cannot hand this an unbounded or useless walk even by
 /// reading a hand-edited config straight off disk.
 pub fn discover_to_depth(repo_root: &Path, depth: usize) -> Vec<Project> {
+    discover_with(repo_root, depth, adapters::detect_adapters)
+}
+
+/// [`discover_to_depth`], counting managers the user has switched off for pruning too.
+///
+/// For the one caller that is asking which package managers a repository *uses* rather
+/// than which ones a pass would act on: see [`adapters::detect_all_adapters`].
+pub fn discover_all_to_depth(repo_root: &Path, depth: usize) -> Vec<Project> {
+    discover_with(repo_root, depth, adapters::detect_all_adapters)
+}
+
+/// The walk both discovery functions share, parameterised only by which detector runs
+/// at each directory.
+fn discover_with(
+    repo_root: &Path,
+    depth: usize,
+    detect: fn(&Path) -> Vec<Box<dyn PackageManager>>,
+) -> Vec<Project> {
     WalkDir::new(repo_root)
         .follow_links(false)
         .max_depth(clamp_depth(depth))
@@ -109,7 +127,7 @@ pub fn discover_to_depth(repo_root: &Path, depth: usize) -> Vec<Project> {
         .flatten()
         .filter(|entry| entry.file_type().is_dir())
         .filter_map(|entry| {
-            let adapters = adapters::detect_adapters(entry.path());
+            let adapters = detect(entry.path());
             if adapters.is_empty() {
                 return None;
             }

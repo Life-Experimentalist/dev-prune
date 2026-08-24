@@ -4,6 +4,12 @@ This document details the market landscape, competitive matrix, unique selling p
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 🌐 Executive Summary
 
 Software developers, polyglot engineering teams, and DevOps practitioners accumulate tens to hundreds of gigabytes of heavy dependency and cache directories (`node_modules`, `.venv`, `venv`, `target`, `vendor`) over time across dozens of inactive Git repositories — every one rebuildable from a lockfile. (Build *outputs* like `dist/` or `.next/` are deliberately outside dev-prune's scope: it only deletes what a lockfile can prove restorable.) Existing tools fall into 4 main categories:

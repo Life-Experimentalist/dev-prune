@@ -40,7 +40,10 @@ for anything that isn't.
    the platform, refuses it unless its SHA-256 matches the sidecar published beside it,
    and writes it to every copy this installation runs. `auto_update` — on by default,
    `devp config set auto_update false` to stop it — does that same verified download at
-   the end of a prune pass, and never runs a package manager unattended. The alternative is the install
+   the end of a prune pass, and never runs a package manager unattended. `version_lock`,
+   off by default, outranks all of it: with `devp config set version_lock true` nothing
+   dev-prune does replaces the binary, including a re-run of the install one-liner, and
+   there is no flag that bypasses it. The alternative is the install
    channel's own command — re-run the `install.sh`/`install.ps1` one-liner,
    `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade
    dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`,
@@ -66,7 +69,14 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
   before it acts. Do not reach for `clear` to free space: a cache is shared by every
   project on the machine, so no one lockfile can prove it is recoverable, and it is what
   makes `devp restore` fast. Suggest it only when the user has said they want the disk
-  space more than the speed.
+  space more than the speed. The one exception worth offering unprompted is
+  `--unused`: a manager no registered repository uses has nothing behind it, so
+  emptying it costs no re-download for anything still on the disk.
+- Never empties `~/.m2/repository`. Maven's local repository is an install target as well
+  as a download cache — `mvn install:install-file` puts artifacts there that exist in no
+  remote at all — so `devp caches` sizes it and prints `rm -rf ~/.m2/repository` and
+  stops. `devp caches clear maven` is a usage error that says why; `clear all` skips it.
+  If the user wants that space, hand them the command; do not run it for them.
 - Non-ASCII paths are not a special case. A repository at
   `ワークスペース/项目目录名称测试/프론트엔드` scans, verifies, prunes and restores like any
   other, on Windows, macOS and Linux. Terminal tables pad by display column, not by
@@ -89,9 +99,13 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "clean everything but the API project" | `devp run --except api -y` — never verified, never deleted, never reinstalled |
 | "put the dependencies back" | `devp restore .` |
 | "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched, rebuilding each virtual environment on the Python version it was originally built with |
-| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg, conan, composer, cocoapods, hex) and prints the command that clears each. Read-only |
-| "empty my npm cache" / "clear all the caches" | `devp caches clear npm` (or `all`) — **ask first**, and say what it costs: every project on the machine re-downloads on its next install, and `devp restore` stops being fast. `--dry-run` shows what would go. Never run this unprompted |
-| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the three settings that widen anything (`require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`). Read-only |
+| "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, conda, cargo, go, maven, gradle, nuget, vcpkg, conan, composer, cocoapods, hex) and prints the command that clears each. Read-only |
+| "my uv cache is over 10 GB" / "tell me when a cache gets too big" | `devp config set cache_max_gb uv=10,npm=10` — a ceiling in GiB, per cache manager (the names `devp caches clear` takes, not adapter names). A manager past its cap is marked in `devp caches`; **the cap itself never deletes anything**. Off by default; 10 is the figure the wizard offers. `-` clears the map |
+| "clear the caches that got too big" | `devp caches clear --over-cap all` — empties only the managers past their `cache_max_gb`, leaves the rest alone. Still asks first, still costs the same re-download. With no caps set it clears nothing and says so |
+| "which caches do I still need" / "clear the ones nothing uses" | `devp caches` says how many registered repositories use each manager and what its cache works out to per repository. A manager no registered repository uses is the one case a count is enough to act on: `devp caches clear --unused all` empties exactly those, and costs nothing to re-download for anything still on the disk. Shown only for the twelve managers that are also adapter names — `pip`, `conda`, `nuget`, `conan` and `hex` have no adapter of the same name, so dev-prune says nothing rather than guessing. Refuses when no registered repository is on disk, because every cache would look unused |
+| "my pnpm store looks tiny" / "my projects live on another drive" | `devp caches` looks for a pnpm store at the root of every filesystem that holds a registered repository, not just the one beside the home directory. pnpm hardlinks into `node_modules` and a hardlink cannot cross a filesystem, so projects off the system disk get a store of their own — `V:\.pnpm-store`, `/mnt/data/.pnpm-store`, `/Volumes/Work/.pnpm-store`. Not a Windows thing. Each is its own row and its clear command names it: `pnpm store prune --store-dir <path>` |
+| "empty my npm cache" / "clear all the caches" | `devp caches clear npm` (or `all`) — **ask first**, and say what it costs: every project on the machine re-downloads on its next install, and `devp restore` stops being fast. `--dry-run` shows what would go. Never run this unprompted. `maven` is refused: print `rm -rf ~/.m2/repository` and let the user decide |
+| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the three settings that widen anything (`require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`). Read-only |
 | "git says dubious ownership" / "devp run says it cannot examine my repos" | `devp trust --fix-ownership` — adds every registered repository Git refuses to read to the global `safe.directory` list, after showing the list and asking; `--yes` for a script. Repositories Git will not read have no known age and are never pruned, which is why `devp run` reports them |
 | "did I install anything my lockfiles don't know about?" | `devp status --drift` — every environment holding packages its lockfile never recorded, with the one command that records them. A pure read; this is what a prune would refuse on |
 | "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it. Across every repository at once: `devp run --explain` — read-only, every verdict listed including the quiet ones (still active with the actual age, opted out, under the size floor). Conflicts with `--json`; the `--json --dry-run` document already carries every status |
@@ -111,11 +125,12 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "turn the automation off" | `devp config set auto_setup false` |
 | "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed (add `--deep` to wipe config — confirm first) |
 | "is there a newer version?" | `devp update` — prints the installed and latest versions plus the right upgrade command; never installs anything by itself |
-| "upgrade it" | `devp update --install` — downloads the release binary from GitHub, verifies its SHA-256, and replaces every copy this install runs (managed binary, `devp` alias, `devpw` scheduler twin, the running binary); the package manager that delivered the first copy is not run, and the one command that resyncs its version record is printed. Falls back to that manager's own upgrade command if there is no binary for this platform. `auto_update` does the download half by itself after a pass and is on by default; `devp config set auto_update false` stops it |
+| "upgrade it" | `devp update --install` — downloads the release binary from GitHub, verifies its SHA-256, and replaces every copy this install runs (managed binary, `devp` alias, `devpw` scheduler twin, the running binary); the package manager that delivered the first copy is not run, and the one command that resyncs its version record is printed. Falls back to that manager's own upgrade command if there is no binary for this platform. `auto_update` does the download half by itself after a pass and is on by default; `devp config set auto_update false` stops it, and `devp config set version_lock true` stops every update path at once |
 | "I installed it with cargo, I want it from winget instead" / "move it to uv" | `devp install --channel <name>` — installs through the manager named, then removes the old copy through the manager that owns it, in that order. `devp install` alone reports which channel owns this copy; `--dry-run` prints the plan and runs none of it. Names: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`, `homebrew` |
-| "clean my Rust `target/` too" / "clean my Java/Gradle/Maven builds too" / "clean my Flutter build caches too" / "clean my Elixir `_build/` too" | `devp config set enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true` / `enable_mix_build true` — opt-in adapters, idle-gated separately by `build_idle_days` (45) |
+| "I ran the one-liner but cargo/brew installed it first — which one runs?" | The one the one-liner installed. It works over any previous channel, needs no uninstall first, and never fails because of one; it puts its own directory *first* on PATH (prepended to the rc file on macOS/Linux, prepended to the User PATH on Windows) and prints the path of the copy it found rather than deleting another manager's file. `devp doctor` lists every copy; `devp install --channel installer` collapses them to one properly |
+| "clean my Rust `target/` too" / "clean my Java/Gradle/Maven builds too" / "clean my Flutter build caches too" / "clean my Elixir `_build/` too" / "clean my C++ `vcpkg_installed/` too" / "clean my CMake `build/` too" | `devp config set enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true` / `enable_mix_build true` / `enable_vcpkg true` / `enable_cmake_build true` — opt-in adapters, idle-gated separately by `build_idle_days` (45). cmake_build claims only a tree holding a `CMakeCache.txt` that names a source directory inside the same repository, so a `build/` made by hand is never touched |
 | "make npm wait a month" / "give one adapter its own idle window" | `devp config set adapter_idle_days npm=30,cargo=90` — a floor per adapter, applied as `max(idle_days, build_idle_days, this)`; `-` clears it. `devp config wizard` edits it beside the adapter checklist, where a language heading sets every adapter under it at once |
-| "give my editor's agent the rules" | `devp skill --agent <editor>` — writes the per-repository rules file that editor reads. Own file: `cursor`, `windsurf`, `antigravity`, `cline`, `roo`, `kilocode`, `continue`, `amazon-q`, `kiro`, `trae`. Marked block inside a shared file: `agents-md` (`AGENTS.md` — Codex, Jules, Amp, OpenCode), `copilot`, `gemini`, `junie`, `zed`. `devp skill --help` lists the exact paths |
+| "give my editor's agent the rules" | `devp skill --agent <editor>` — writes the per-repository rules file that editor reads. Own file: `cursor`, `windsurf`, `antigravity`, `cline`, `roo`, `kilocode`, `continue`, `amazon-q`, `kiro`, `trae`. Marked block inside a shared file: `agents-md` (`AGENTS.md` — Codex, Jules, Amp, OpenCode), `copilot`, `gemini`, `junie`, `zed`, `aider` (`CONVENTIONS.md`, which Aider reads only once `read: CONVENTIONS.md` is in `.aider.conf.yml` or `--read CONVENTIONS.md` is passed — the command says so after writing it). `devp skill --help` lists the exact paths |
 | "man pages" / "show me the manual" / "what commands are there?" | `devp man` — the contents page, every command grouped by what it is for. `devp man <command>` for one page (the same text as `devp <command> --help`). Roff only where something formats it: a redirect or a pipe gets roff, `devp man \| man -l -` reads it formatted, `devp man --dir ./man` writes the full set |
 | "what version?" | `devp -V` (also prints OS, arch, config path, PATH audit) |
 | you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats`, `trust` or `caches` — see below |
@@ -256,12 +271,15 @@ over plain venv when `uv.lock` or `[tool.uv]` is present.
 | swift *(opt-in)* | `Package.swift` | `.build` (never `.swiftpm`) | `Package.swift` declares a `Package(` (rebuild-from-source proof) | next `swift build` |
 | dart *(opt-in)* | `pubspec.yaml` | `.dart_tool` (never `build`) | `pubspec.lock` has a `packages:` section and is no older than `pubspec.yaml` | `dart pub get` / `flutter pub get` |
 | mix_build *(opt-in)* | `mix.exs` | `_build` (never `deps`) | `mix.exs` and `mix.lock` both present | next `mix compile` |
+| vcpkg *(opt-in)* | `vcpkg.json` | `vcpkg_installed` (never `build`) | `vcpkg.json` parses and declares a non-empty `dependencies` list | next `vcpkg install` |
+| cmake_build *(opt-in)* | `CMakeLists.txt` | any tree holding a `CMakeCache.txt` (`build`, `cmake-build-debug`, `out/build/<preset>`) | the tree's own `CMakeCache.txt` records a `CMAKE_HOME_DIRECTORY` that still holds a `CMakeLists.txt` and sits inside this repository | next `cmake -S . -B <dir> && cmake --build <dir>` |
 
-cargo, gradle, maven, swift, dart and mix_build ship **disabled** — a build directory takes far
-longer to regenerate than a dependency directory (a full recompile, not a download).
-Enable them with `devp config set enable_cargo true` / `enable_gradle true` /
-`enable_maven true` / `enable_swift true` / `enable_dart true` / `enable_mix_build true`; while disabled they are invisible (not detected, not
-listed, `--only cargo` prunes nothing). Their candidates also wait for
+cargo, gradle, maven, swift, dart, mix_build, vcpkg and cmake_build ship **disabled**
+— a build directory takes far longer to regenerate than a dependency directory (a full
+recompile, not a download). Enable them with `devp config set enable_cargo true` /
+`enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true` /
+`enable_mix_build true` / `enable_vcpkg true` / `enable_cmake_build true`; while disabled
+they are invisible (not detected, not listed, `--only cargo` prunes nothing). Their candidates also wait for
 `build_idle_days` (45 by default), applied as the **maximum** of it and the
 repository's effective `idle_days` — the build-tool gate can only ever make pruning
 later, never earlier.
@@ -309,6 +327,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `update_check_interval_days` | `7` | Days between automatic release checks; `devp update` always asks |
 | `update_check_timeout_secs` | `5` | How long the release check waits for GitHub before giving up |
 | `auto_update` | `true` | Download and install a newer release by itself at the end of a prune pass, once the release check has found one. Never runs a package manager unattended, and does nothing on WinGet/Scoop/Homebrew, where the manager owns the upgrade; a failed upgrade warns and never fails the pass |
+| `version_lock` | `false` | Pin this copy to the version it is. Outranks everything above: `auto_update` does not run however it is set, `devp update --install` and `devp install --channel` refuse, and the install scripts leave the binary alone. No flag bypasses it; `devp config set version_lock false` is the only way back |
 | `auto_config` | `false` | Whether `link`/`init` write a default `.devprune.json` into repositories they register |
 | `enable_cargo` | `false` | Turn the opt-in Cargo adapter on (`target/` is compiler output — it comes back by recompiling, not downloading) |
 | `enable_gradle` | `false` | Turn the opt-in Gradle adapter on |
@@ -316,8 +335,11 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `enable_swift` | `false` | Turn the opt-in Swift Package Manager adapter on |
 | `enable_dart` | `false` | Turn the opt-in Dart/Flutter adapter on |
 | `enable_mix_build` | `false` | Turn the opt-in Mix build-tree adapter on (`_build/` comes back by recompiling, not downloading) |
-| `build_idle_days` | `45` | Extra idle gate for the build-tool adapters (cargo, gradle, maven, swift, dart, mix_build); applied as `max(build_idle_days, idle_days)` |
+| `enable_vcpkg` | `false` | Turn the opt-in vcpkg adapter on (`vcpkg_installed/` holds ports vcpkg built from source — it comes back by recompiling) |
+| `enable_cmake_build` | `false` | Turn the opt-in CMake adapter on (claims only a tree holding a `CMakeCache.txt` that names a source directory inside the same repository — a `build/` you made by hand is never touched) |
+| `build_idle_days` | `45` | Extra idle gate for the build-tool adapters (cargo, gradle, maven, swift, dart, mix_build, vcpkg, cmake_build); applied as `max(build_idle_days, idle_days)` |
 | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. A floor, never a bypass: `max(idle_days, build_idle_days, this)`. `-` clears it |
+| `cache_max_gb` | *(none)* | Per-manager cache size caps in GiB, as `uv=10,npm=10`. Keyed by cache-manager name (`npm`, `pnpm`, `uv`, `pip`, `cargo`, `go`, `nuget`, …), not adapter name. Marks an over-cap manager in `devp caches`; only `devp caches clear --over-cap` acts on it. `-` clears it |
 | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, comma-separated by name. A disabled adapter is not detected, not counted, not pruned — as if that ecosystem were not installed. `-` clears the list |
 
 **Per repository:**
@@ -420,6 +442,7 @@ specific symptom the report named.
 | **Path Missing** | The directory was moved or deleted | If moved: `devp link <new path>` alone — the matching root commit adopts the old entry, history and all, and the dead row goes. If deleted: `devp unlink <old path>`, or `devp unlink --missing` for a registry full of them |
 | Lockfile verification fails | The lockfile has drifted from the manifest, and verification is read-only so it refuses rather than repairing | Run the exact command dev-prune printed (it is the writing form for that ecosystem), in that project. Or `devp config set allow_manifest_rewrite true` to let dev-prune run it during the pass. Never delete the lockfile |
 | "holds package(s) that the lockfile does not record" | Something was installed without recording it — `npm install --no-save`, a bare `pip install` into a pinned venv, an ad-hoc `uv pip install` | `devp status --drift` lists every such environment with the exact record command (`npm install <pkg>`, `uv add <package>`, `pip freeze > requirements.txt`). Run it, or uninstall the extras. Never delete the directory manually |
+| "holds dev-prune, which requirements.txt does not account for" | The tool was `pip install`ed inside that project's own virtualenv, so it is an unrecorded package in the very environment it would prune | Move it out — `pip uninstall dev-prune`, then `uv tool install dev-prune` — or record it deliberately with `pip freeze > requirements.txt`. Either one makes the environment prunable. The refusal is the ordinary unrecorded-package one; only the suggested repair differs |
 | "`npm` is not available" | that manager is not installed, or not on `PATH` | Install it. dev-prune will not delete a tree it cannot prove it can rebuild |
 | Verification times out | A slow registry or a very large project | `devp config set command_timeout_secs 1800` |
 | Hooks not installed | `git` absent from `PATH`, or another tool owns `core.hooksPath` | `devp setup --status` says which. Install git, or `devp hook install --chain` to sit in front of the other tool and forward to it |

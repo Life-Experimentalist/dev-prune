@@ -31,6 +31,8 @@ VERSION=""
 BIN_DIR_ARG=""
 NO_PATH=0
 NO_AUTO_SETUP=0
+FORCE=0
+VERSION_EXPLICIT=0
 
 usage() {
     cat <<'EOF'
@@ -40,6 +42,7 @@ dev-prune installer
   --bin-dir <dir>    install directory (default: the dev-prune config dir's bin/)
   --no-path          do not edit any shell rc file or the Windows User PATH
   --no-auto-setup    install the binary only; skip SKILL.md, Git hooks and the scheduler
+  --force            reinstall even if this version is already installed here
   --help             this message
 
 Piping into a shell needs `-s --` before the options:
@@ -47,6 +50,10 @@ Piping into a shell needs `-s --` before the options:
 
 The equivalent environment variables work with the plain one-liner:
   DEV_PRUNE_VERSION  DEV_PRUNE_BIN_DIR  DEV_PRUNE_NO_PATH=1  DEV_PRUNE_NO_AUTO_SETUP=1
+  DEV_PRUNE_FORCE=1
+
+Re-running this is safe. An install that is already here, current and on PATH is left
+alone and exits 0; an older one is replaced in place; a newer one is not downgraded.
 EOF
 }
 
@@ -60,6 +67,7 @@ while [ $# -gt 0 ]; do
         --bin-dir=*) BIN_DIR_ARG="${1#*=}"; shift ;;
         --no-path) NO_PATH=1; shift ;;
         --no-auto-setup) NO_AUTO_SETUP=1; shift ;;
+        --force) FORCE=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; echo "" >&2; usage >&2; exit 2 ;;
     esac
@@ -70,13 +78,19 @@ done
 [ -n "$VERSION" ] || VERSION="${DEV_PRUNE_VERSION:-}"
 [ "$NO_PATH" = "1" ] || NO_PATH="${DEV_PRUNE_NO_PATH:-0}"
 [ "$NO_AUTO_SETUP" = "1" ] || NO_AUTO_SETUP="${DEV_PRUNE_NO_AUTO_SETUP:-0}"
+[ "$FORCE" = "1" ] || FORCE="${DEV_PRUNE_FORCE:-0}"
+
+# A version the user named is a version the user meant, however it was named. It is the
+# one thing that makes installing *backwards* the right answer, so it is remembered
+# before the next block fills VERSION in with whatever GitHub says is newest.
+[ -z "$VERSION" ] || VERSION_EXPLICIT=1
 REPO="Life-Experimentalist/dev-prune"
 
 # With no version pinned, ask GitHub which release is newest. The redirect target of
 # /releases/latest carries the tag, so one HEAD request answers without parsing JSON.
 # FALLBACK_VERSION exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-FALLBACK_VERSION="1.7.0"
+FALLBACK_VERSION="1.8.0"
 if [ -z "$VERSION" ]; then
     LATEST_URL="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
     case "$LATEST_URL" in
@@ -85,9 +99,6 @@ if [ -z "$VERSION" ]; then
     esac
 fi
 VERSION="${VERSION#v}"
-
-echo ""
-echo "-> Installing dev-prune v${VERSION}"
 
 RAW_OS="$(uname -s)"
 ARCH="$(uname -m)"
@@ -154,6 +165,158 @@ else
 fi
 EXE_PATH="$BIN_DIR/dev-prune$EXT"
 ALIAS_PATH="$BIN_DIR/devp$EXT"
+
+# Where `dev-prune` resolves *before* this script writes anything, when that is not
+# the copy this script manages. Running the installer over a cargo, npm or Homebrew
+# install does not fail and does not remove that copy — removing another package
+# manager's file behind its back is how installations become unrepairable. But the
+# copy stays on PATH afterwards, and a user who does not know it is there upgrades
+# one binary and keeps running the other. So it is named at the end, with the command
+# that migrates it properly.
+PRIOR_EXE=""
+if command -v dev-prune >/dev/null 2>&1; then
+    PRIOR_EXE=$(command -v dev-prune)
+    # An explicit `if`, not `[ ... ] && ...`: under `set -e` an AND-list that ends
+    # false is a failing command, and it would abort the install in exactly the
+    # case this is here to detect.
+    if [ "$PRIOR_EXE" = "$EXE_PATH" ]; then
+        PRIOR_EXE=""
+    fi
+fi
+
+# Printed from three endings now, so it lives in one place.
+report_prior_exe() {
+    if [ -n "$PRIOR_EXE" ]; then
+        echo ""
+        echo "[!] Another dev-prune is on your PATH as well:"
+        echo "        $PRIOR_EXE"
+        echo "    A different package manager owns that copy, so this script left it alone."
+        if [ "$NO_PATH" = "1" ]; then
+            echo "    PATH was left alone (--no-path), so which one you get is up to yours."
+        else
+            echo "    This directory comes first on PATH, so 'devp' is the copy in $BIN_DIR."
+        fi
+        echo "    To move the old one over properly — install here, uninstall there through"
+        echo "    the manager that put it there — run:"
+        echo "        devp install --channel installer"
+        echo "    'devp doctor' lists every copy on the machine at any time."
+    fi
+}
+
+# The version already sitting at the path this script manages, if any. Both switches
+# matter: `--version` on this CLI is handled in code rather than short-circuited by the
+# argument parser, so an unguarded call could have the *old* binary register a
+# scheduler or reach GitHub in the middle of installing its replacement.
+INSTALLED_VERSION=""
+if [ -x "$EXE_PATH" ]; then
+    INSTALLED_VERSION=$(DEV_PRUNE_NO_AUTO_SETUP=1 DEV_PRUNE_OFFLINE=1 "$EXE_PATH" --version 2>/dev/null |
+        grep -o '[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*' | head -n 1 || true)
+fi
+
+# ...and whether that copy is pinned. version_lock is the one setting that outranks this
+# script: somebody who set it asked for the binary not to change, and a one-liner re-run
+# out of habit is precisely the accident it exists to stop.
+INSTALLED_LOCK=0
+if [ -n "$INSTALLED_VERSION" ]; then
+    if DEV_PRUNE_NO_AUTO_SETUP=1 DEV_PRUNE_OFFLINE=1 "$EXE_PATH" config get version_lock 2>/dev/null |
+        grep -q true; then
+        INSTALLED_LOCK=1
+    fi
+fi
+
+# How $1 stands to $2: newer, older or same. The answer is printed rather than returned
+# as an exit status, because under `set -e` a function that answers "no" by failing is
+# a function that ends the script. Compared field by field and numerically: a string
+# compare sorts 1.10.0 before 1.9.0.
+version_rel() {
+    _i=1
+    while [ "$_i" -le 3 ]; do
+        _x=$(echo "$1" | cut -d. -f"$_i")
+        _y=$(echo "$2" | cut -d. -f"$_i")
+        case "$_x" in '' | *[!0-9]*) _x=0 ;; esac
+        case "$_y" in '' | *[!0-9]*) _y=0 ;; esac
+        if [ "$_x" -gt "$_y" ]; then echo newer; return 0; fi
+        if [ "$_x" -lt "$_y" ]; then echo older; return 0; fi
+        _i=$((_i + 1))
+    done
+    echo same
+}
+
+# Whether some shell rc file already puts *this* BIN_DIR on PATH. Only consulted to
+# decide whether re-running has anything left to do: a "no" falls through to the
+# ordinary install, which configures PATH as part of its normal work.
+rc_configured() {
+    if [ "$NO_PATH" = "1" ] || [ "$OS" = "windows" ]; then
+        return 0
+    fi
+    for _rc in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+        if [ -f "$_rc" ] && grep -qF "export PATH=\"$BIN_DIR:\$PATH\"" "$_rc"; then
+            return 0
+        fi
+    done
+    _fish="$HOME/.config/fish/config.fish"
+    if [ -f "$_fish" ] && grep -qF "fish_add_path '$BIN_DIR'" "$_fish"; then
+        return 0
+    fi
+    return 1
+}
+
+# Re-running the one-liner is the most common thing anyone does with it — it is what
+# the README, the release page and every "just reinstall it" answer tell people to do.
+# So it has to be safe *and* quiet: an install that is already correct is left exactly
+# as it is and exits 0, and one that is merely out of date is replaced without asking.
+# The one thing this will not do on its own is install backwards.
+#
+# One branch sits above all of that, including the silent in-place update: a pinned
+# install is not updated, repaired or downgraded by this script at all. --force is the
+# only way past it, and it has to be typed.
+if [ "$INSTALLED_LOCK" = "1" ] && [ "$FORCE" != "1" ]; then
+    echo ""
+    echo "[!] dev-prune v${INSTALLED_VERSION} at:"
+    echo "        $EXE_PATH"
+    echo "    has version_lock set, so this script changed nothing."
+    echo "    Release the pin and re-run:"
+    echo "        devp config set version_lock false"
+    echo "    Or install over it just this once with --force."
+    report_prior_exe
+    exit 0
+fi
+
+if [ -n "$INSTALLED_VERSION" ] && [ "$FORCE" != "1" ]; then
+    REL=$(version_rel "$INSTALLED_VERSION" "$VERSION")
+    if [ "$REL" = "newer" ] && [ "$VERSION_EXPLICIT" != "1" ]; then
+        echo ""
+        echo "[OK] dev-prune v${INSTALLED_VERSION} is already installed at:"
+        echo "        $EXE_PATH"
+        echo "     That is newer than the v${VERSION} this run resolved to, so nothing"
+        echo "     was changed. Re-run with --force to install v${VERSION} over it."
+        report_prior_exe
+        exit 0
+    fi
+    if [ "$REL" = "same" ] && [ -e "$ALIAS_PATH" ] && rc_configured; then
+        echo ""
+        echo "[OK] dev-prune v${VERSION} is already installed at:"
+        echo "        $EXE_PATH"
+        if [ "$NO_PATH" = "1" ]; then
+            echo "     'devp' is beside it. Nothing to do."
+        else
+            echo "     It is on PATH and 'devp' is beside it. Nothing to do."
+        fi
+        echo "     Re-run with --force to download and write it again."
+        report_prior_exe
+        exit 0
+    fi
+    # Same version, but something is missing — no `devp`, or nothing on PATH
+    # pointing here. Falling through reinstalls and repairs it, which is the whole
+    # reason someone re-runs the one-liner after an install went wrong.
+fi
+
+echo ""
+if [ -n "$INSTALLED_VERSION" ] && [ "$INSTALLED_VERSION" != "$VERSION" ]; then
+    echo "-> Updating dev-prune v${INSTALLED_VERSION} -> v${VERSION}"
+else
+    echo "-> Installing dev-prune v${VERSION}"
+fi
 
 if ! command -v curl >/dev/null 2>&1; then
     echo "Required command 'curl' not found." >&2
@@ -331,22 +494,52 @@ if [ "$NO_PATH" != "1" ]; then
             WIN_BIN_DIR="$(cygpath -w "$BIN_DIR")"
         fi
         echo "-> Adding $WIN_BIN_DIR to your Windows User PATH"
-        # Read-modify-write through .NET rather than `setx`, which truncates any PATH
-        # longer than 1024 characters.
+        # Read-modify-write straight through the registry. Not `setx`, which truncates
+        # any PATH longer than 1024 characters; and not
+        # [Environment]::GetEnvironmentVariable, which expands %USERPROFILE% and every
+        # other reference on the way out and then writes the expanded text back as a
+        # plain string. A PATH that followed the profile would come back frozen to this
+        # machine, and nothing about it would look wrong afterwards.
+        #
+        # Prepended, not appended. This is the same order install.ps1 writes: an install
+        # that lands behind whatever a previous package manager left on PATH is an
+        # install the user has no way to tell happened.
         #
         # The single quotes are the point: this is PowerShell source, and
         # `$dir`/`$env:`/`$userPath` are its variables, not the shell's. The directory
         # crosses over as an environment variable so it never has to be quoted into the
-        # script text.
+        # script text, and the inner double quotes are backtick-escaped for the same
+        # reason.
         # shellcheck disable=SC2016
         DEV_PRUNE_WIN_BIN_DIR="$WIN_BIN_DIR" powershell.exe -NoProfile -NonInteractive -Command '
             $dir = $env:DEV_PRUNE_WIN_BIN_DIR
-            $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-            if ($null -eq $userPath) { $userPath = "" }
+            $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+            $userPath = ""
+            if ($null -ne $key) {
+                $raw = [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+                $userPath = [string]$key.GetValue("Path", "", $raw)
+            }
             if (($userPath -split ";") -notcontains $dir) {
-                $trimmed = $userPath.TrimEnd(";")
-                $newPath = if ($trimmed) { $trimmed + ";" + $dir } else { $dir }
-                [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+                $trimmed = $userPath.Trim(";")
+                $newPath = if ($trimmed) { $dir + ";" + $trimmed } else { $dir }
+                if ($null -ne $key) {
+                    $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+                    try { $kind = $key.GetValueKind("Path") } catch {}
+                    if ($kind -ne [Microsoft.Win32.RegistryValueKind]::String) {
+                        $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+                    }
+                    $key.SetValue("Path", $newPath, $kind)
+                } else {
+                    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+                }
+                # Tell the already-running desktop. Without this, Explorer and every
+                # program it launches keep the old PATH until the next sign-in.
+                try {
+                    $sig = "[DllImport(`"user32.dll`",SetLastError=true,CharSet=CharSet.Auto)]public static extern IntPtr SendMessageTimeout(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);"
+                    $api = Add-Type -MemberDefinition $sig -Name "NativeBroadcast" -Namespace DevPruneInstall -PassThru
+                    $sent = [UIntPtr]::Zero
+                    [void]$api::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$sent)
+                } catch {}
             }
         ' || echo "[!] Could not update the Windows User PATH; add $WIN_BIN_DIR by hand."
     fi
@@ -380,6 +573,8 @@ else
     echo ""
     echo "-> Skipped setup (--no-auto-setup). Run 'devp setup' when you want it."
 fi
+
+report_prior_exe
 
 echo ""
 echo "[OK] Installation complete."

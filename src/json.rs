@@ -95,9 +95,10 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         // `pubspec.lock`, and it fills the machine-wide pub cache on the way past.
         "dart" => "dart pub get",
         // venv has no lockfile to regenerate — the fix is to write `requirements.txt`,
-        // which is authoring work, not a command we can hand over. gradle, maven and
-        // swift verify manifest presence, not lockfile sync — a missing manifest has no
-        // mechanical fix either.
+        // which is authoring work, not a command we can hand over. gradle, maven, swift,
+        // vcpkg and cmake_build verify the manifest, not lockfile sync — a missing
+        // manifest, or a `vcpkg.json` that declares no dependencies, has no mechanical
+        // fix either.
         _ => return None,
     })
 }
@@ -350,7 +351,14 @@ pub fn stats_document(registry: &Registry) -> Value {
 /// contract that carries a command dev-prune will not run itself: these caches are shared
 /// by every project on the machine, so clearing one is a human's decision. `note` is
 /// present only where there is a cost beyond time.
-pub fn caches_document(reports: &[crate::commands::caches::CacheReport]) -> Value {
+/// `registered_repositories` is the denominator behind every `dependents` field, and is
+/// present only when there was a registry to count — a consumer that finds it absent knows
+/// the counts are missing because nothing could be counted, not because nothing uses these
+/// caches.
+pub fn caches_document(
+    reports: &[crate::commands::caches::CacheReport],
+    registered_repositories: Option<usize>,
+) -> Value {
     let total: u64 = reports.iter().map(|r| r.bytes).sum();
 
     let caches: Vec<Value> = reports
@@ -361,40 +369,87 @@ pub fn caches_document(reports: &[crate::commands::caches::CacheReport]) -> Valu
                 "kind": r.kind,
                 "path": clean_path(&r.path),
                 "bytes": r.bytes,
-                "clear_command": r.clear_command,
+                "clear_command": &r.clear_command,
             });
             if let Some(note) = r.note {
                 obj["note"] = json!(note);
             }
+            // Only when a cap is actually set. A `"cap_gb": null` on every row of every
+            // report would read as a feature that is switched on and doing nothing.
+            if let Some(gb) = r.cap_gb {
+                obj["cap_gb"] = json!(gb);
+                obj["over_cap"] = json!(r.over_cap);
+            }
+            // Absent where dev-prune cannot attribute a cache to any adapter, for the same
+            // reason: a `"dependents": 0` on a `pip` row would be read as "safe to clear"
+            // by exactly the consumer this contract exists for.
+            if let Some(n) = r.dependents {
+                obj["dependents"] = json!(n);
+            }
             obj
         })
         .collect();
+
+    let mut summary = json!({
+        "total_bytes": total,
+        "count": reports.len(),
+    });
+    if let Some(n) = registered_repositories {
+        summary["registered_repositories"] = json!(n);
+    }
 
     json!({
         "schema": SCHEMA_VERSION,
         "version": constants::VERSION,
         "command": "caches",
         "caches": caches,
-        "summary": {
-            "total_bytes": total,
-            "count": reports.len(),
-        },
+        "summary": summary,
     })
 }
+/// The caches `clear` reported but deliberately did not empty, and the reason for each.
+///
+/// A consumer that only reads `caches` would otherwise see a Maven repository silently
+/// absent from a `clear all` and conclude there was none on the machine.
+fn kept_caches(kept: &[crate::commands::caches::CacheReport]) -> Vec<Value> {
+    use crate::commands::caches::Clear;
+    kept.iter()
+        .filter_map(|r| {
+            let Clear::Manual { why } = r.clear else {
+                return None;
+            };
+            Some(json!({
+                "manager": r.manager,
+                "kind": r.kind,
+                "path": clean_path(&r.path),
+                "bytes": r.bytes,
+                "clear_command": &r.clear_command,
+                "reason": why,
+            }))
+        })
+        .collect()
+}
+
 /// `caches clear --dry-run --json`: what would be emptied, and nothing touched.
-pub fn caches_clear_plan_document(reports: &[crate::commands::caches::CacheReport]) -> Value {
+pub fn caches_clear_plan_document(
+    reports: &[crate::commands::caches::CacheReport],
+    kept: &[crate::commands::caches::CacheReport],
+) -> Value {
     let total: u64 = reports.iter().map(|r| r.bytes).sum();
 
     let caches: Vec<Value> = reports
         .iter()
         .map(|r| {
-            json!({
+            let mut obj = json!({
                 "manager": r.manager,
                 "kind": r.kind,
                 "path": clean_path(&r.path),
                 "bytes": r.bytes,
-                "clear_command": r.clear_command,
-            })
+                "clear_command": &r.clear_command,
+            });
+            if let Some(n) = r.dependents {
+                obj["dependents"] = json!(n);
+            }
+            obj
         })
         .collect();
 
@@ -404,6 +459,7 @@ pub fn caches_clear_plan_document(reports: &[crate::commands::caches::CacheRepor
         "command": "caches clear",
         "dry_run": true,
         "caches": caches,
+        "kept": kept_caches(kept),
         "summary": {
             "total_bytes": total,
             "count": reports.len(),
@@ -415,7 +471,10 @@ pub fn caches_clear_plan_document(reports: &[crate::commands::caches::CacheRepor
 ///
 /// `freed_bytes` is measured, not assumed — a `prune` keeps what is still referenced,
 /// and a clear that failed half-way still freed part of it.
-pub fn caches_clear_document(outcomes: &[crate::commands::caches::ClearOutcome]) -> Value {
+pub fn caches_clear_document(
+    outcomes: &[crate::commands::caches::ClearOutcome],
+    kept: &[crate::commands::caches::CacheReport],
+) -> Value {
     let freed: u64 = outcomes.iter().map(|o| o.freed()).sum();
     let failed = outcomes.iter().filter(|o| o.problem.is_some()).count();
 
@@ -444,6 +503,7 @@ pub fn caches_clear_document(outcomes: &[crate::commands::caches::ClearOutcome])
         "command": "caches clear",
         "dry_run": false,
         "caches": caches,
+        "kept": kept_caches(kept),
         "summary": {
             "freed_bytes": freed,
             "count": outcomes.len(),
@@ -739,26 +799,37 @@ mod tests {
     fn the_cache_report_totals_what_it_lists() {
         use crate::commands::caches::{CacheReport, Clear};
 
-        let doc = caches_document(&[
-            CacheReport {
-                manager: "go",
-                kind: "module cache",
-                path: PathBuf::from("/home/dev/go/pkg/mod"),
-                bytes: 4_000,
-                clear_command: "go clean -modcache",
-                clear: Clear::Command("go", &["clean", "-modcache"]),
-                note: None,
-            },
-            CacheReport {
-                manager: "pnpm",
-                kind: "store",
-                path: PathBuf::from("/home/dev/.pnpm-store"),
-                bytes: 1_000,
-                clear_command: "pnpm store prune",
-                clear: Clear::Command("pnpm", &["store", "prune"]),
-                note: Some("hardlinked"),
-            },
-        ]);
+        let doc = caches_document(
+            &[
+                CacheReport {
+                    manager: "go",
+                    kind: "module cache",
+                    path: PathBuf::from("/home/dev/go/pkg/mod"),
+                    bytes: 4_000,
+                    clear_command: "go clean -modcache".to_string(),
+                    clear: Clear::Command("go", &["clean", "-modcache"]),
+                    note: None,
+                    cap_gb: None,
+                    over_cap: false,
+                    dependents: None,
+                    extra_args: Vec::new(),
+                },
+                CacheReport {
+                    manager: "pnpm",
+                    kind: "store",
+                    path: PathBuf::from("/home/dev/.pnpm-store"),
+                    bytes: 1_000,
+                    clear_command: "pnpm store prune".to_string(),
+                    clear: Clear::Command("pnpm", &["store", "prune"]),
+                    note: Some("hardlinked"),
+                    cap_gb: None,
+                    over_cap: false,
+                    dependents: None,
+                    extra_args: Vec::new(),
+                },
+            ],
+            Some(3),
+        );
 
         assert_eq!(doc["command"], "caches");
         assert_eq!(doc["summary"]["total_bytes"], 5_000);
@@ -774,7 +845,7 @@ mod tests {
     fn an_empty_cache_report_is_still_a_document() {
         // A machine with no package manager installed must produce a parseable zero, not
         // an absent `summary` a consumer would have to special-case.
-        let doc = caches_document(&[]);
+        let doc = caches_document(&[], None);
         assert_eq!(doc["summary"]["total_bytes"], 0);
         assert_eq!(doc["caches"].as_array().unwrap().len(), 0);
     }
@@ -782,9 +853,13 @@ mod tests {
     #[test]
     fn every_adapter_with_a_lockfile_has_a_fix_command() {
         for adapter in crate::adapters::get_all_adapters() {
-            // venv, gradle, maven and swift verify without a lockfile-sync step — see
-            // `lockfile_fix_command` for why each has nothing mechanical to hand over.
-            if matches!(adapter.name(), "venv" | "gradle" | "maven" | "swift") {
+            // venv, gradle, maven, swift, vcpkg and cmake_build verify without a
+            // lockfile-sync step — see `lockfile_fix_command` for why each has nothing
+            // mechanical to hand over.
+            if matches!(
+                adapter.name(),
+                "venv" | "gradle" | "maven" | "swift" | "vcpkg" | "cmake_build"
+            ) {
                 continue;
             }
             assert!(

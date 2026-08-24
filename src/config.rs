@@ -127,8 +127,19 @@ pub struct Settings {
     /// dependency in it. See [`crate::adapters::mix_build`].
     #[serde(default)]
     pub enable_mix_build: bool,
-    /// Idle days required before *build-tree* directories (cargo, gradle, maven,
-    /// swift) are pruned.
+    /// Whether the opt-in vcpkg adapter is active. Off by default: vcpkg builds every
+    /// port from source, so `vcpkg_installed/` comes back by compiling Boost or Qt
+    /// again rather than by downloading them. See [`crate::adapters::vcpkg`].
+    #[serde(default)]
+    pub enable_vcpkg: bool,
+
+    /// Whether the opt-in CMake build-tree adapter is active. Off by default: a build
+    /// tree is object files and linked binaries, and it comes back by compiling the
+    /// project again. See [`crate::adapters::cmake_build`].
+    #[serde(default)]
+    pub enable_cmake_build: bool,
+    /// Idle days required before *build-tree* directories — everything the opt-in
+    /// adapters claim — are pruned.
     ///
     /// Separate from `idle_days` because the cost of being wrong is different: a
     /// deleted `node_modules` is one `npm ci` away, a deleted Android `build/` is a
@@ -146,6 +157,23 @@ pub struct Settings {
     /// Homebrew, where the manager owns the upgrade.
     #[serde(default = "default_auto_update")]
     pub auto_update: bool,
+    /// Whether this copy stays on the version it is, whatever else is configured.
+    ///
+    /// Off by default, and turned on only by a person typing
+    /// `devp config set version_lock true`. While it is on, `auto_update` does not run
+    /// however it is set, `devp update --install` refuses, `devp install --channel`
+    /// refuses because moving channels installs the latest release, and the install
+    /// scripts leave the binary exactly where they find it. There is no flag that
+    /// bypasses it: releasing the pin is the same kind of decision as setting it, and
+    /// belongs to the same person.
+    ///
+    /// It exists because `auto_update = false` was never the whole answer. That setting
+    /// stops one path; a machine that has to keep shipping the same tool for a year --
+    /// a CI image, a reproduction that stops reproducing the moment the tool changes
+    /// underneath it, a locked-down build box -- also has to survive someone re-running
+    /// the install one-liner out of habit.
+    #[serde(default)]
+    pub version_lock: bool,
     /// Adapters switched off by name, whatever their lockfiles say.
     ///
     /// A deny-list rather than twenty `enable_*` booleans, because the answer for
@@ -177,6 +205,25 @@ pub struct Settings {
     /// a diff of the registry file shows what actually changed.
     #[serde(default)]
     pub adapter_idle_days: BTreeMap<String, u64>,
+    /// Per-manager cache size caps, in gibibytes, keyed by cache manager name.
+    ///
+    /// A download cache is a bet that re-downloading costs more than the disk it
+    /// occupies, and the bet stops paying somewhere: a `uv` cache past ten gigabytes is
+    /// keeping wheels for Python versions the machine no longer has, and no repository's
+    /// lockfile will ever say so. This is where that ceiling is written down.
+    ///
+    /// **It never deletes anything on its own.** `devp caches` marks a cache over its
+    /// cap and `devp caches clear --over-cap` empties exactly those; nothing dev-prune
+    /// runs on a schedule touches a cache, which is a promise `devp caches` prints in
+    /// so many words and a size cap is not a reason to break.
+    ///
+    /// Keyed by the names `devp caches clear <MANAGER>` takes, not by adapter name.
+    /// They mostly agree — `npm`, `uv`, `cargo`, `go` — but `pip`, `nuget`, `conan`,
+    /// `conda`, `vcpkg` and `hex` are caches with no adapter, and `venv`, `terraform`
+    /// and `dart` are adapters with no cache. Empty by default: no cache is too big
+    /// until someone says what too big is.
+    #[serde(default)]
+    pub cache_max_gb: BTreeMap<String, u64>,
 }
 
 fn default_build_idle_days() -> u64 {
@@ -259,10 +306,14 @@ impl Default for Settings {
             enable_swift: false,
             enable_dart: false,
             enable_mix_build: false,
+            enable_vcpkg: false,
+            enable_cmake_build: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: constants::DEFAULT_AUTO_UPDATE,
+            version_lock: constants::DEFAULT_VERSION_LOCK,
             disabled_adapters: Vec::new(),
             adapter_idle_days: BTreeMap::new(),
+            cache_max_gb: BTreeMap::new(),
         }
     }
 }

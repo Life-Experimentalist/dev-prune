@@ -89,8 +89,8 @@ pub const DEFAULT_IDLE_DAYS: u64 = 15;
 
 /// Default idle threshold for *build-tree* directories, in days.
 ///
-/// Applies to every adapter that answers [`crate::adapters::PackageManager::opt_in`]:
-/// cargo, gradle, maven and swift. Deliberately longer than [`DEFAULT_IDLE_DAYS`],
+/// Applies to every adapter that answers [`crate::adapters::PackageManager::opt_in`].
+/// Deliberately longer than [`DEFAULT_IDLE_DAYS`],
 /// because those directories come back by recompiling the whole project rather than by
 /// re-downloading a dependency tree, so the bar for "nobody will miss this" sits
 /// higher. The engine applies `max(build_idle_days, idle_days)`.
@@ -99,6 +99,19 @@ pub const DEFAULT_IDLE_DAYS: u64 = 15;
 /// project touched once a quarter never became a candidate at all, which is not
 /// caution, it is the feature never firing.
 pub const DEFAULT_BUILD_IDLE_DAYS: u64 = 45;
+
+/// The per-manager cache size cap `devp config wizard` offers, in gibibytes.
+///
+/// Not a default: `cache_max_gb` is empty until someone puts a number in it, and an
+/// empty map means no cache is ever called too big. This is only the figure the wizard
+/// pre-fills and the docs recommend, and 10 GiB is where it sits because that is the
+/// size at which a download cache stops being a time-saver and starts being the largest
+/// directory on the disk — a `uv` cache measured on the author's machine had passed it
+/// while every project it served fit in a tenth of that.
+pub const RECOMMENDED_CACHE_MAX_GB: u64 = 10;
+
+/// One gibibyte, for turning `cache_max_gb` into the byte count a cache is measured in.
+pub const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 
 /// Shown while `devp trust` and the configurator ask the OS about the scheduler and
 /// Git hooks, then overwritten in place. Kept here because its width is what the
@@ -300,6 +313,10 @@ pub const DEFAULT_UPDATE_CHECK: bool = true;
 /// default — see `Settings::auto_update`.
 pub const DEFAULT_AUTO_UPDATE: bool = true;
 
+/// Whether the installed version is pinned where it is. Off by default, and the only
+/// setting that outranks every other update path -- see `Settings::version_lock`.
+pub const DEFAULT_VERSION_LOCK: bool = false;
+
 /// Default interval, in days, between automatic release checks.
 ///
 /// A week. Frequent enough that a security fix is not missed for long, rare enough that
@@ -363,6 +380,16 @@ pub const DEVPRUNE_IGNORE_FILE: &str = "ignore.devprune.json";
 
 /// Default timeout in seconds for lockfile enforcement / CLI commands (10 minutes).
 pub const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 600;
+
+/// Directory name pnpm gives a store it has to put on a volume of its own.
+///
+/// pnpm hardlinks its store into every `node_modules` it fills, and a hardlink cannot
+/// cross a filesystem. A project on a filesystem that is not the home directory's
+/// therefore gets a store at the root of *its* filesystem instead — `V:\\.pnpm-store` on
+/// a second Windows drive, `/mnt/data/.pnpm-store` on Linux, `/Volumes/Work/.pnpm-store`
+/// on macOS. `devp caches` looks for one on every volume that holds a registered
+/// repository, because `pnpm store path` only ever answers for the volume it is run on.
+pub const PNPM_VOLUME_STORE_DIR: &str = ".pnpm-store";
 
 /// Timeout for the "where does your cache live?" queries `devp caches` makes.
 ///
@@ -496,6 +523,12 @@ pub const GEMINI_MD_FILE: &str = "GEMINI.md";
 /// `.rules` ahead of every other convention, so a repository that also has an
 /// `AGENTS.md` still needs this one.
 pub const ZED_RULES_FILE: &str = ".rules";
+
+/// The shared file `devp skill --agent aider` owns a marked block inside. Aider is the
+/// one target that does not read its file on its own: `CONVENTIONS.md` is loaded only
+/// by `aider --read CONVENTIONS.md` or a `read: CONVENTIONS.md` line in
+/// `.aider.conf.yml`, which is why writing it prints that instruction.
+pub const AIDER_CONVENTIONS_FILE: &str = "CONVENTIONS.md";
 
 /// The shared file `devp skill --agent copilot` owns a marked block inside.
 pub const COPILOT_INSTRUCTIONS_FILE: &str = ".github/copilot-instructions.md";

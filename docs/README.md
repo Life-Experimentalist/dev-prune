@@ -7,7 +7,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 ---
 
 <p align="center">
-  <img src="../assets/readme-banner.png" alt="dev-prune Banner" width="800" />
+  <img src="../assets/github-readme-banner.png" alt="dev-prune Banner" width="800" />
 </p>
 
 ---
@@ -56,8 +56,8 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 ### 📊 Market Analysis & Positioning
 - **[Market Analysis & Competitive Matrix](MARKET_ANALYSIS.md)**
   Detailed comparison of `dev-prune` against existing developer tools (`npkill`, `cargo-clean-all`, `pyclean`, `git clean`, `dust`/`ncdu`, `BleachBit`) and breakdown of Unique Selling Propositions (USPs).
-- **[Future Possibilities](FUTURE.md)**
-  Everything that is not built yet, sorted into four tiers — *in flight*, *next*, *later*, *not planned* — so "we haven't done that" and "we decided against that" never read the same. Distribution channels, adapter candidates, editor follow-ups, and the ideas that were declined with the reason attached.
+- **[Roadmap](ROADMAP.md)**
+  Everything that is not built yet, grouped by *why* it is not — *in flight*, *next*, *standing orders*, *on request*, *waiting on a shape*, and *not planned* split by the reason it was declined. So "we haven't done that", "ask and we will" and "we decided against that" never read the same. Distribution channels, adapter candidates, editor follow-ups, and the declined ideas with the reason attached.
 
 ---
 

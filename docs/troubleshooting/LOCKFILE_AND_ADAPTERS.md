@@ -4,6 +4,12 @@ This guide details diagnostics, configuration overrides, and fix command workflo
 
 ---
 
+<p align="center">
+  <img src="../../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 🔍 Issue Index
 
 - [🔒 Lockfile Sync \& Ecosystem Adapter Troubleshooting](#-lockfile-sync--ecosystem-adapter-troubleshooting)

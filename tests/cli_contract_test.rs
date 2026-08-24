@@ -1186,6 +1186,69 @@ fn update_offline_still_prints_the_upgrade_commands() {
     );
 }
 
+#[test]
+fn a_pinned_copy_is_told_it_is_pinned_instead_of_how_to_upgrade() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let set = devp(&config)
+        .args(["config", "set", "version_lock", "true"])
+        .output()
+        .unwrap();
+    assert!(set.status.success(), "{}", combined(&set));
+
+    let out = devp(&config)
+        .args(["update", "--offline"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+
+    // The upgrade command is the one command that undoes the pin, so `devp update`
+    // stops offering it and names the pin instead.
+    let text = combined(&out);
+    assert!(text.contains("version_lock"), "{text}");
+    assert!(!text.contains("cargo install dev-prune"), "{text}");
+}
+
+#[test]
+fn a_pinned_copy_refuses_to_replace_its_own_binary() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    devp(&config)
+        .args(["config", "set", "version_lock", "true"])
+        .output()
+        .unwrap();
+
+    let out = devp(&config)
+        .args(["update", "--install"])
+        .output()
+        .unwrap();
+    // Not doing what was asked is a failure, the same as the offline refusal beside it:
+    // the exit code is what a provisioning script reads, and it must not read as done.
+    let text = combined(&out);
+    assert_eq!(out.status.code(), Some(1), "{text}");
+    assert!(text.contains("version_lock"), "{text}");
+}
+
+#[test]
+fn doctor_reports_a_pin_without_calling_it_a_problem() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    devp(&config)
+        .args(["config", "set", "version_lock", "true"])
+        .output()
+        .unwrap();
+
+    let out = devp(&config).arg("doctor").output().unwrap();
+    let text = combined(&out);
+    // A deliberate pin is a fact to report, not breakage: exit 0, and named where
+    // somebody looking for "why has this not updated" would actually look.
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("version_lock"), "{text}");
+}
+
 // ---------------------------------------------------------------------------
 // Cache report
 // ---------------------------------------------------------------------------

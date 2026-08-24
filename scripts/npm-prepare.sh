@@ -29,13 +29,17 @@ mkdir -p "$out"
 # `exit 1` on a missing asset would end the subshell and let the script carry on to
 # publish a set of packages with a hole in it.
 #
-# Columns: asset-os asset-arch node-platform node-arch archive-kind
-# The asset names come from .github/workflows/release.yml; the node names come from
-# `process.platform` and `process.arch`, which is what the launcher resolves against.
-while read -r asset_os asset_arch node_os node_arch kind; do
+# Columns: asset-os asset-arch node-platform node-arch archive-kind package-name
+# The asset names come from .github/workflows/release.yml; the node names are what npm
+# matches `os` and `cpu` against, and are `process.platform` and `process.arch`.
+#
+# The package name is listed rather than derived from the node names, which is what it
+# used to be. npm refused all three `dev-prune-win32-*` names as new names, so the
+# Windows packages carry the asset spelling and only their `os`/`cpu` fields still say
+# `win32` and `ia32`.
+while read -r asset_os asset_arch node_os node_arch kind pkg; do
     [ -n "$asset_os" ] || continue
 
-    pkg="dev-prune-$node_os-$node_arch"
     dir="$out/$pkg"
     mkdir -p "$dir/bin"
 
@@ -76,7 +80,7 @@ while read -r asset_os asset_arch node_os node_arch kind; do
 npm install -g dev-prune
 \`\`\`
 
-This package holds nothing but the prebuilt \`dev-prune\` binary for **$node_os $node_arch**.
+This package holds nothing but the prebuilt \`dev-prune\` binary for **$asset_os $asset_arch**.
 It exists because npm has no other way to ship a per-platform executable: \`dev-prune\`
 lists all seven platform packages as optional dependencies, and npm installs only the one
 matching your machine. Installing this one directly gives you a binary with no launcher
@@ -103,7 +107,7 @@ EOF
 {
   "name": "$pkg",
   "version": "$version",
-  "description": "Prebuilt dev-prune binary for $node_os $node_arch. Installed automatically by the 'dev-prune' package; not meant to be depended on directly.",
+  "description": "Prebuilt dev-prune binary for $asset_os $asset_arch. Installed automatically by the 'dev-prune' package; not meant to be depended on directly.",
   "os": ["$node_os"],
   "cpu": ["$node_arch"],
   "files": ["bin", "LICENSE.md", "README.md"],
@@ -121,13 +125,13 @@ EOF
 EOF
     echo "prepared $pkg"
 done <<'TARGETS'
-linux   x64    linux   x64    tar
-linux   arm64  linux   arm64  tar
-darwin  x64    darwin  x64    tar
-darwin  arm64  darwin  arm64  tar
-windows x64    win32   x64    zip
-windows arm64  win32   arm64  zip
-windows x86    win32   ia32   zip
+linux   x64    linux   x64    tar  dev-prune-linux-x64
+linux   arm64  linux   arm64  tar  dev-prune-linux-arm64
+darwin  x64    darwin  x64    tar  dev-prune-darwin-x64
+darwin  arm64  darwin  arm64  tar  dev-prune-darwin-arm64
+windows x64    win32   x64    zip  dev-prune-windows-x64
+windows arm64  win32   arm64  zip  dev-prune-windows-arm64
+windows x86    win32   ia32   zip  dev-prune-windows-x86
 TARGETS
 
 # The dispatcher. Its own version and every optionalDependency version are rewritten

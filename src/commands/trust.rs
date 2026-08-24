@@ -168,7 +168,9 @@ pub fn fix_ownership(assume_yes: bool) -> Result<()> {
     }
     println!();
     output::print_info(&format!(
-        "This adds {} to git's global `safe.directory` list, which tells Git to open {}          despite the owner recorded on disk. It affects every tool on this machine that          uses Git, not only dev-prune.",
+        "This adds {} to git's global `safe.directory` list, which tells Git to open {} despite \
+         the owner recorded on disk. It affects every tool on this machine that uses Git, not only \
+         dev-prune.",
         output::plural(n, "this path", "these paths"),
         output::plural(n, "it", "them")
     ));
@@ -420,7 +422,11 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
         TrustRow::new(
             "auto_update",
             "Auto-update",
-            if s.auto_update {
+            // The pin answers this row's question outright, so it answers it here rather
+            // than leaving the screen saying a pass will install a release it will not.
+            if s.version_lock {
+                "Off — `version_lock` pins this copy to the version it is"
+            } else if s.auto_update {
                 "On (the default) — a newer release installs itself after a pass"
             } else {
                 "Off — updates only when you run `devp update --install`"
@@ -429,7 +435,7 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
             // switched something on beyond the defaults, and this is now a default. Still
             // its own row, because "replaces its own binary" is a fact anyone reading
             // this screen came here to learn.
-            if s.auto_update {
+            if s.auto_update && !s.version_lock {
                 Verdict::Neutral
             } else {
                 Verdict::Safe
@@ -533,6 +539,8 @@ fn opt_in_adapters(registry: &Registry) -> Vec<&'static str> {
         ("swift", s.enable_swift),
         ("dart", s.enable_dart),
         ("mix_build", s.enable_mix_build),
+        ("vcpkg", s.enable_vcpkg),
+        ("cmake_build", s.enable_cmake_build),
     ]
     .into_iter()
     .filter_map(|(name, on)| on.then_some(name))

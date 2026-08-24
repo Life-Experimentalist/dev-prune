@@ -30,6 +30,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 
 use crate::adapters;
+use crate::channel::Channel;
 use crate::commands::hook::{self, HookState};
 use crate::config::{PerRepoConfig, Registry};
 use crate::constants;
@@ -290,7 +291,9 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
                         ok(
                             "Repo configs",
                             &format!(
-                                "{healed} unreadable `.devprune.json` {} replaced with                                  defaults — the broken originals are kept beside them                                  as `.devprune.json.broken`",
+                                "{healed} unreadable `.devprune.json` {} replaced with defaults — \
+                                 the broken originals are kept beside them as \
+                                 `.devprune.json.broken`",
                                 output::plural(healed, "file", "files")
                             ),
                         );
@@ -429,12 +432,22 @@ fn check_binary(f: &mut Findings) {
         twin_stem.to_string()
     });
     if !twin.exists() {
-        f.warn(
-            twin_stem,
-            &format!("not installed next to {running} — run `{running} setup`"),
-        );
-        // Either name may recreate a twin that is missing outright.
-        f.fixable(Repair::Twin);
+        // npm is the one channel that delivers the second name without a second file:
+        // it declares both commands in its own `bin` map and writes a launcher for
+        // each. The directory being searched here is the platform package, which is
+        // not on `PATH` at all, and anything written into it would be discarded by the
+        // next `npm install -g dev-prune` — so a missing file here costs nothing and
+        // there is nothing to repair.
+        if crate::channel::Channel::detect() == crate::channel::Channel::Npm {
+            f.ok(twin_stem, "provided by npm as a command of its own");
+        } else {
+            f.warn(
+                twin_stem,
+                &format!("not installed next to {running} — run `{running} setup`"),
+            );
+            // Either name may recreate a twin that is missing outright.
+            f.fixable(Repair::Twin);
+        }
     } else if same_binary(&exe, &twin) {
         f.ok(twin_stem, &output::clean_path(&twin));
     } else {
@@ -488,7 +501,7 @@ fn check_binary(f: &mut Findings) {
 /// ("how do I update this?") has an answer on the same screen, rather than sending the
 /// user to guess between six install methods they may not remember choosing.
 fn check_install_channel(f: &mut Findings) {
-    let channel = crate::channel::Channel::detect();
+    let channel = Channel::detect();
     let detail = match (channel.upgrade_command(), channel.uninstall_command()) {
         (Some(upgrade), Some(uninstall)) => {
             format!(
@@ -548,13 +561,8 @@ fn check_other_copies(f: &mut Findings) {
             let version = setup::binary_version(path)?;
             let ours = setup::parse_version(constants::VERSION)?;
             (version != ours).then(|| {
-                format!(
-                    "{} (v{}.{}.{})",
-                    output::clean_path(path),
-                    version.0,
-                    version.1,
-                    version.2
-                )
+                let channel = Channel::detect_at(path, managed_dir.as_deref());
+                stale_copy_line(path, version, channel)
             })
         })
         .collect();
@@ -566,12 +574,36 @@ fn check_other_copies(f: &mut Findings) {
     f.warn(
         "Other copies",
         &format!(
-            "{} — whichever comes first on PATH is the one `devp` runs. \
-             Remove or upgrade each through the manager that installed it; \
+            "{} — whichever comes first on PATH is the one `devp` runs, and \
              `devp update --install` only replaces the managed copy.",
-            stale.join(", ")
+            stale.join("; ")
         ),
     );
+}
+
+/// One line of the "Other copies" warning: where the copy is, which release it is, and
+/// the command that removes it *through whatever put it there*.
+///
+/// Naming that command per copy is the whole value of the finding. "Remove each through
+/// the manager that installed it" is true and useless: the reason a second copy goes
+/// unnoticed for months is precisely that nobody remembers installing it, so the
+/// instruction to remember is the one thing the user cannot follow.
+fn stale_copy_line(path: &Path, version: (u64, u64, u64), channel: Channel) -> String {
+    let (major, minor, patch) = version;
+    let remedy = match channel.uninstall_command() {
+        Some(cmd) => format!("from {}, remove with `{cmd}`", channel.label()),
+        // The two channels that have no manager to ask. A copy inside the managed
+        // directory never reaches here — `binaries_in` skips that directory outright
+        // — but a second directory shaped like the installer's still can.
+        None if channel == Channel::Installer => {
+            "left by the install script, remove with `devp uninstall`".to_string()
+        }
+        None => "no package manager owns it; delete the file yourself".to_string(),
+    };
+    format!(
+        "{} (v{major}.{minor}.{patch}, {remedy})",
+        output::clean_path(path)
+    )
 }
 
 /// Every directory that could hold a `dev-prune` this machine might run: `PATH`, plus
@@ -1076,6 +1108,21 @@ fn check_release_state(f: &mut Findings, registry: Option<&Registry>) {
     f.section("Release check");
 
     let Some(registry) = registry else { return };
+
+    // Above the release check rather than beside it, because it outranks the answer:
+    // whatever the check finds, a pinned copy is not going to install it.
+    if registry.settings.version_lock {
+        f.note(
+            "version_lock",
+            &format!(
+                "on — this copy stays at v{}. auto_update, `devp update --install`, \
+                 `devp install --channel` and the install scripts all stand down until \
+                 `devp config set version_lock false`",
+                constants::VERSION
+            ),
+        );
+    }
+
     if !registry.settings.update_check {
         f.note(
             "update_check",
@@ -1117,6 +1164,16 @@ fn check_release_state(f: &mut Findings, registry: Option<&Registry>) {
         Some(latest) => {
             let latest_core = latest.trim_start_matches('v');
             match super::update::compare_versions(constants::VERSION, latest_core) {
+                // Not a warning under a pin: being behind is the state that was
+                // asked for, and doctor flagging it would be doctor arguing with the
+                // configuration.
+                Some(Ordering::Less) if registry.settings.version_lock => f.note(
+                    "Latest release",
+                    &format!(
+                        "{latest} is available, and version_lock is holding this copy at v{}",
+                        constants::VERSION
+                    ),
+                ),
                 Some(Ordering::Less) => f.warn(
                     "Latest release",
                     &format!("{latest} is available — `devp update` shows how to upgrade"),
@@ -1570,6 +1627,40 @@ fn heal_repo_configs() -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn a_stale_copy_names_the_command_that_removes_it() {
+        // The finding exists so the user can act on it without first remembering how
+        // the copy got there, which is exactly what they have forgotten.
+        let line = stale_copy_line(
+            Path::new("/usr/local/bin/dev-prune"),
+            (1, 6, 0),
+            Channel::Cargo,
+        );
+        assert!(line.contains("v1.6.0"), "{line}");
+        assert!(line.contains("cargo uninstall dev-prune"), "{line}");
+    }
+
+    #[test]
+    fn a_copy_from_the_install_script_is_removed_by_devp_itself() {
+        // `Channel::uninstall_command` is None here for a good reason -- there is no
+        // manager to ask -- but None must not come out as silence.
+        let line = stale_copy_line(
+            Path::new("/home/a/.dev-prune/bin/dev-prune"),
+            (1, 5, 0),
+            Channel::Installer,
+        );
+        assert!(line.contains("devp uninstall"), "{line}");
+    }
+
+    #[test]
+    fn a_copy_nothing_owns_says_so_rather_than_naming_a_command() {
+        // A file somebody copied into place by hand. Inventing a manager command for it
+        // would send the user to run something that reports the package is not installed.
+        let line = stale_copy_line(Path::new("/opt/dev-prune"), (0, 9, 1), Channel::Unknown);
+        assert!(line.contains("delete the file yourself"), "{line}");
+        assert!(!line.contains("uninstall dev-prune"), "{line}");
+    }
 
     #[test]
     fn an_integration_pointing_at_a_deleted_binary_is_a_problem_not_a_warning() {

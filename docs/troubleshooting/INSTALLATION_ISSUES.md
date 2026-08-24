@@ -4,6 +4,12 @@ This document addresses all potential issues related to installing **`dev-prune`
 
 ---
 
+<p align="center">
+  <img src="../../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 🔍 Issue Index
 
 1. [`devp: command not found`](#1-devp-command-not-found)
@@ -16,6 +22,8 @@ This document addresses all potential issues related to installing **`dev-prune`
 8. [Current working directory (CWD) determinism check](#8-current-working-directory-cwd-determinism-check)
 9. [`pip install` in a virtual environment — what happens when the venv goes away](#9-pip-install-in-a-virtual-environment--what-happens-when-the-venv-goes-away)
 10. [A terminal window flashes briefly after logging in (Windows)](#10-a-terminal-window-flashes-briefly-after-logging-in-windows)
+11. [I installed with one manager, then ran the one-liner — which copy am I running?](#11-i-installed-with-one-manager-then-ran-the-one-liner--which-copy-am-i-running)
+12. [I re-ran the one-liner and it said there was nothing to do](#12-i-re-ran-the-one-liner-and-it-said-there-was-nothing-to-do)
 
 ---
 
@@ -125,8 +133,8 @@ Unblock-File "$env:APPDATA\dev-prune\bin\dev-prune.exe","$env:APPDATA\dev-prune\
 listed here for the hand-downloaded path — where unblocking the **archive before
 extracting** means nothing inside it is ever marked:
 ```powershell
-Unblock-File .\dev-prune-v1.7.0-windows-x64.zip
-Expand-Archive .\dev-prune-v1.7.0-windows-x64.zip -DestinationPath .
+Unblock-File .\dev-prune-v1.8.0-windows-x64.zip
+Expand-Archive .\dev-prune-v1.8.0-windows-x64.zip -DestinationPath .
 ```
 
 If you are standing in front of the dialog right now, you do not need any of the above:
@@ -375,6 +383,59 @@ So the venv copy is just the delivery vehicle. Deactivate the venv, delete it, o
 prune pass reclaim it: `devp` keeps working from every new terminal, because the shell
 finds the managed copy.
 
+#### The catch: this project's environment stops being prunable
+
+Surviving is not the same as being harmless. For as long as that copy is installed,
+dev-prune is a package in the project's `site-packages` — and if `requirements.txt` does
+not mention it, it is a package nothing can rebuild. Lockfile pre-verification then does
+exactly what it is for and declines the environment, so the one venv you installed into
+becomes the one venv a prune pass will not touch.
+
+dev-prune says so on its first run from that location, while the cause is still fresh:
+
+```text
+dev-prune is installed inside this project's virtual environment
+
+  running from  V:\Code\api\.venv\Scripts\dev-prune.exe
+  environment   V:\Code\api\.venv
+  project       V:\Code\api
+
+A tool install belongs outside a project: it outlives the environment, every repository
+shares it, and it never has to appear in an application's requirements file to stay out
+of the way.
+
+Until that is fixed, a prune pass will decline this project's environment - a package
+`requirements.txt` does not account for is a package nothing can rebuild.
+
+Record dev-prune in requirements.txt instead, as a deliberate dev dependency? [y/N]:
+```
+
+Two repairs, and either one is enough.
+
+**Move it out**, which is what almost everybody wants — the tool stops being this
+project's problem, and every other repository on the machine gets it too:
+
+```powershell
+pip uninstall dev-prune
+uv tool install dev-prune     # or: pipx install dev-prune
+```
+
+If a copy already exists outside the project, the message names its path, so you can see
+that removing this one still leaves you a working `devp`.
+
+**Or keep it, on purpose.** Some projects really do want the tool pinned in their own
+environment. Answer `y` and dev-prune appends its own pin to `requirements.txt`;
+`pip freeze > requirements.txt` does the same thing by hand. Once it is recorded it is an
+ordinary dependency, the environment is prunable again, and the subject never comes up
+again — the check is silent when the file already lists the tool, because a project that
+depends on dev-prune deliberately is not making a mistake.
+
+The prompt defaults to no, appears only when a person is at the terminal, and is asked
+once per installed version rather than on every run. Dismissing it costs nothing: a
+prune pass that meets the same environment names the same situation and prints the same
+two commands before declining it. That refusal is the failsafe, not the plan — it is
+what catches a copy installed before this check existed.
+
 #### Removing it cleanly
 Two halves, because pip only knows about its own files:
 
@@ -439,3 +500,124 @@ One caveat applies **only to the S4U fallback**, not the default `devpw.exe` tas
 S4U logon has no access to mapped network drives, so if a registered repository lives on
 one, that background pass skips it (everything fails closed) — prune those from a normal
 terminal instead. The `devpw.exe` task does not have this limitation.
+
+---
+
+### 11. I installed with one manager, then ran the one-liner — which copy am I running?
+
+The one this install put there. The one-liner works over any previous channel — cargo,
+npm, uv, pipx, Homebrew, Scoop, WinGet, or an earlier run of itself — and it needs no
+uninstall step first.
+
+#### What actually happened
+
+The script wrote `dev-prune` and `devp` into the managed `<config>/bin` directory and put
+that directory **first** on your PATH: prepended to the rc file on macOS and Linux,
+prepended to the User PATH on Windows. The other copy is untouched — the script never
+runs another manager's uninstaller, because deleting a file a package manager still has
+on its books is how an install becomes unrepairable. It prints the path it found instead:
+
+```text
+[!] Another dev-prune is on your PATH as well:
+        /home/you/.cargo/bin/dev-prune
+    A different package manager owns that copy, so this script left it alone.
+    This directory comes first on PATH, so 'devp' is the copy in /home/you/.config/dev-prune/bin.
+    To move the old one over properly — install here, uninstall there through
+    the manager that put it there — run:
+        devp install --channel installer
+    'devp doctor' lists every copy on the machine at any time.
+```
+
+#### Diagnostic
+
+```bash
+devp doctor
+```
+
+Two lines answer this. **Install channel** names the manager that owns the copy that just
+ran, and **Other copies** lists every other `dev-prune` on the machine that reports a
+different version — searching the per-channel install directories as well as your PATH,
+because a copy that is not on PATH is also a copy nothing upgrades.
+
+To be certain which file answered, ask the shell rather than the tool:
+
+```bash
+command -v dev-prune && devp --version
+```
+
+```powershell
+(Get-Command dev-prune).Source; devp --version
+```
+
+#### Solution
+
+If you want one copy, move the old one over instead of deleting it:
+
+```bash
+devp install --channel installer
+```
+
+That installs through the target manager first and then uninstalls through the manager
+that owns the old copy — in that order, so a failure leaves you with a working `devp`
+either way. `--dry-run` prints the numbered plan and runs none of it. Substitute any
+channel name for `installer` to go the other direction: `cargo`, `npm`, `uv`, `pipx`,
+`winget`, `scoop`, `homebrew`.
+
+Nothing is migrated because nothing needs to be. Your settings, the repository registry
+and the undo history live in the config directory, which no package manager owns and none
+of them touch — so switching channels never costs you the list of repositories you
+registered.
+
+Leaving both copies in place is a legitimate choice too. It costs a few megabytes, and
+the only consequence is that `devp doctor` keeps mentioning the older one until its
+version stops differing.
+
+---
+
+### 12. I re-ran the one-liner and it said there was nothing to do
+
+That is the installer working, not refusing. Re-running it is the ordinary answer to
+"get the latest" and "I think mine is broken", so it looks before it downloads.
+
+#### What it decides
+
+| What it finds at the managed path | What it does |
+| --- | --- |
+| Nothing | Installs. |
+| An **older** version | Updates it in place, without asking. Prints `-> Updating dev-prune v1.7.0 -> v1.8.0`. |
+| **This** version, with `devp` beside it and on PATH | Nothing at all. Prints `[OK] ... Nothing to do.` and exits `0`. |
+| **This** version, but `devp` or the PATH entry is missing | Reinstalls, which repairs both. |
+| A **newer** version | Leaves it alone, and says so. |
+| Any version with `version_lock` set | Nothing at all, whatever the versions are. Prints the pin and exits `0`. |
+
+The last row is the only one that can surprise: a machine ahead of the release the script
+resolved to is not silently walked backwards. Naming the version is what makes going
+backwards deliberate, so `--version` / `-Version` overrides it.
+
+The `version_lock` row outranks every other row, including the silent in-place update.
+It is set by `devp config set version_lock true` and by nothing else, and it is there
+precisely so that a re-run of the one-liner — the habit this page is about — cannot
+change which version a machine is shipping. `devp config set version_lock false`
+releases it.
+
+#### Making it install anyway
+
+```bash
+curl -fsSL https://devprune.vkrishna04.me/install.sh | sh -s -- --force
+```
+
+```powershell
+& ([scriptblock]::Create((iwr -useb https://devprune.vkrishna04.me/install.ps1))) -Force
+```
+
+`DEV_PRUNE_FORCE=1` does the same for the plain one-liner, which has nowhere to put a
+flag. All three download the release and write both files again, whatever is already
+there — the right move when you suspect the file on disk, rather than its version, is
+the problem. It is also the only thing that installs over a `version_lock`, which is
+why it has to be typed rather than picked up from a setting.
+
+#### What it will never do on a re-run
+
+Touch a copy it did not install. If another manager put a `dev-prune` on your PATH, the
+script names it and leaves it alone; see
+[which copy am I running](#11-i-installed-with-one-manager-then-ran-the-one-liner--which-copy-am-i-running).

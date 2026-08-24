@@ -45,13 +45,15 @@ pub fn run(offline: bool, install: bool) -> Result<()> {
 
     output::print_info(&format!("Installed version: v{}", constants::VERSION));
 
+    let mut registry = Registry::load().ok();
+
     if offline {
         output::print_info("Skipping the release check because `--offline` was passed.");
-    } else if let Ok(mut registry) = Registry::load() {
-        if registry.settings.update_check {
+    } else if let Some(reg) = registry.as_mut() {
+        if reg.settings.update_check {
             // An explicit `devp update` always asks, regardless of when the last
             // automatic check ran — the user is standing there waiting for the answer.
-            match refresh_latest(&mut registry) {
+            match refresh_latest(reg) {
                 Ok(latest) => report_comparison(&latest),
                 // A failed check is not a failed command. Someone offline, behind a
                 // proxy, or hitting a rate limit still wants the upgrade instructions.
@@ -59,7 +61,7 @@ pub fn run(offline: bool, install: bool) -> Result<()> {
                     "Could not reach the release API ({e}). The upgrade commands below still apply."
                 )),
             }
-            let _ = registry.save();
+            let _ = reg.save();
         } else {
             output::print_info(
                 "The release check is off (`devp config set update_check true` re-enables it).",
@@ -70,9 +72,37 @@ pub fn run(offline: bool, install: bool) -> Result<()> {
     println!();
     println!("  Latest releases:  {}", constants::RELEASES_URL);
     println!();
-    print_upgrade_commands();
+
+    // Under a pin, the upgrade command is the one command that undoes it. Printing it
+    // here would answer "how do I upgrade this" with the wrong answer, so the pin is
+    // what the section says instead.
+    if registry.is_some_and(|r| r.settings.version_lock) {
+        output::print_info(&locked_notice(None));
+    } else {
+        print_upgrade_commands();
+    }
 
     Ok(())
+}
+
+/// The one sentence every refusal prints, so the pin and the way out of it always
+/// arrive together.
+///
+/// A lock that silently does nothing is indistinguishable from an update path that has
+/// broken, and "it stopped updating" is what people conclude when a tool goes quiet.
+/// `latest` is passed on the paths that already know a newer release exists, because
+/// "there is one, and you are deliberately not getting it" is a different fact from
+/// "you are pinned".
+pub(crate) fn locked_notice(latest: Option<&str>) -> String {
+    let head = match latest {
+        Some(latest) => format!("dev-prune v{latest} is out. "),
+        None => String::new(),
+    };
+    format!(
+        "{head}`version_lock` is on, so this copy stays at v{}. \
+         `devp config set version_lock false` releases it.",
+        constants::VERSION
+    )
 }
 
 /// Ask GitHub right now — no interval — and say where the installed build stands.
@@ -160,6 +190,14 @@ fn print_upgrade_commands() {
 fn run_install() -> Result<()> {
     output::print_header("dev-prune self-update");
 
+    let mut registry = Registry::load()?;
+
+    // Checked before the network is touched: a refusal the configuration already
+    // guarantees should cost nothing and say why.
+    if registry.settings.version_lock {
+        anyhow::bail!("{}", locked_notice(None));
+    }
+
     if crate::setup::offline_requested() {
         anyhow::bail!(
             "{} is set — an install needs the network by definition.",
@@ -170,7 +208,6 @@ fn run_install() -> Result<()> {
     // Know before downloading whether there is anything to download. A failed check is
     // fatal here (unlike `devp update`): running an installer blind would "upgrade" to
     // the version already installed.
-    let mut registry = Registry::load()?;
     let latest = refresh_latest(&mut registry)?;
     let _ = registry.save();
     if compare_versions(constants::VERSION, &latest) != Some(Ordering::Less) {
@@ -282,7 +319,8 @@ fn install_directly(
         }
         if let Err(e) = install_bytes_at(&bytes, &path) {
             output::print_warning(&format!(
-                "The managed copy is now v{latest}, but {} could not be replaced ({e:#}).                  Until it is, that copy runs the previous version whenever it is the one                  invoked.",
+                "The managed copy is now v{latest}, but {} could not be replaced ({e:#}). Until it \
+                 is, that copy runs the previous version whenever it is the one invoked.",
                 path.display()
             ));
         }
@@ -569,6 +607,15 @@ pub fn maybe_auto_update(registry: &Registry) {
         return;
     }
 
+    // Announced here rather than at the top of the function, so the line appears on
+    // exactly the runs where the pin changed the outcome. A pass with nothing to
+    // install stays as silent as it has always been.
+    if registry.settings.version_lock {
+        println!();
+        output::print_info(&locked_notice(Some(latest)));
+        return;
+    }
+
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
@@ -625,11 +672,15 @@ pub fn notify_if_outdated(registry: &mut Registry) -> bool {
     if let Some(latest) = registry.latest_known_version.as_deref()
         && compare_versions(constants::VERSION, latest) == Some(Ordering::Less)
     {
-        output::print_info(&format!(
-            "dev-prune v{latest} is out (you have v{}). `devp update` has the commands; \
+        if registry.settings.version_lock {
+            output::print_info(&locked_notice(Some(latest)));
+        } else {
+            output::print_info(&format!(
+                "dev-prune v{latest} is out (you have v{}). `devp update` has the commands; \
                  `devp config set update_check false` silences this.",
-            constants::VERSION
-        ));
+                constants::VERSION
+            ));
+        }
     }
 
     due
@@ -785,6 +836,37 @@ mod tests {
         // what makes that early return load-bearing rather than incidental.
         assert!(registry.latest_known_version.is_none());
         maybe_auto_update(&registry);
+    }
+
+    #[test]
+    fn the_pin_is_off_until_somebody_asks_for_it() {
+        // Every other path in this file is written on the assumption that the pin costs
+        // nothing when nobody has set it, so the default is the part worth asserting.
+        assert!(!Registry::default().settings.version_lock);
+    }
+
+    #[test]
+    fn the_refusal_names_the_version_it_is_holding_and_the_way_out() {
+        // Both halves matter. A refusal that does not say which version it is holding
+        // cannot be audited, and one that does not say how to release it is
+        // indistinguishable, to the person reading it, from an update path that broke.
+        let notice = locked_notice(None);
+        assert!(notice.contains(constants::VERSION), "{notice}");
+        assert!(
+            notice.contains("devp config set version_lock false"),
+            "{notice}"
+        );
+        assert!(!notice.contains("is out"), "{notice}");
+    }
+
+    #[test]
+    fn a_known_release_is_named_in_the_refusal_that_withholds_it() {
+        // "You are pinned" and "there is a 2.0.0 out that you are not getting" are
+        // different facts, and the second is the one that makes somebody go and look at
+        // the setting.
+        let notice = locked_notice(Some("2.0.0"));
+        assert!(notice.contains("v2.0.0 is out"), "{notice}");
+        assert!(notice.contains(constants::VERSION), "{notice}");
     }
 
     #[test]

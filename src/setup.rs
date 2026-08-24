@@ -706,22 +706,53 @@ pub fn unattended_environment() -> Option<&'static str> {
     None
 }
 
+/// Whether this integration pass was asked for by name.
+///
+/// The only thing it decides is the `devp` twin. Writing a second executable beside the
+/// first is a self-installation, and doing it *unasked*, on the first run of a freshly
+/// downloaded unsigned binary, alongside registering a scheduled task, is a behavioural
+/// malware signature — it is what earned this package a `Validation-Defender-Error` on
+/// microsoft/winget-pkgs#422665. Asked for in so many words, the same write is an
+/// ordinary install step. Nothing else in the pass changes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Consent {
+    /// `devp setup`, or `devp doctor --fix`.
+    Explicit,
+    /// The pass that runs on its own when `auto_setup` is on.
+    Unattended,
+}
+
 /// Run an integration pass unless unattended installation is switched off.
 ///
 /// Every caller that the user did not name explicitly goes through this. `devp setup`
-/// calls [`ensure_integrations`] directly: asking for it in so many words is consent.
+/// calls [`ensure_integrations`] with [`Consent::Explicit`]: asking for it in so many
+/// words is consent.
 pub fn ensure_integrations_if_enabled(registry: &Registry) -> Option<SetupReport> {
-    auto_setup_enabled(registry).then(|| ensure_integrations(registry))
+    auto_setup_enabled(registry).then(|| ensure_integrations(registry, Consent::Unattended))
 }
 
 /// Run one integration pass, installing whatever is missing.
 ///
 /// The two per-integration settings (`auto_daemon`, `auto_hooks`) are honoured here, so
 /// turning one off turns it off for every future pass as well as this one.
-pub fn ensure_integrations(registry: &Registry) -> SetupReport {
+pub fn ensure_integrations(registry: &Registry, consent: Consent) -> SetupReport {
     let mut report = SetupReport::default();
 
-    report.push("dev-prune/devp pair", ensure_alias());
+    // Only when asked. This is the twin *beside the running binary*, which on an
+    // unattended pass means beside whatever the delivery vehicle happened to be: npm's
+    // cache, a venv's `Scripts`, a Downloads folder. Every channel already ships both
+    // names as real files — the archives, the npm and PyPI packages, and two `[[bin]]`
+    // targets for `cargo install` — so there is normally nothing to create, and the one
+    // case left over is a manual install that skipped `dev-prune setup`, which `devp
+    // doctor` reports with a one-command fix.
+    //
+    // The pair that actually matters is not this one. `ensure_command_on_path` below
+    // keeps `dev-prune` and `devp` together in the managed `bin` directory, which is
+    // the directory on the user's PATH and the one `devp uninstall` knows about, and it
+    // runs on every pass.
+    if consent == Consent::Explicit {
+        report.push("dev-prune/devp pair", ensure_alias());
+    }
     report.push("Command on PATH", ensure_command_on_path());
     report.push("SKILL.md", ensure_skill_file());
     // Only reported when an agent is actually installed: a machine without one would
@@ -1062,6 +1093,8 @@ pub fn auto_setup_if_due() {
         return;
     }
 
+    review_project_venv_install();
+
     let Ok(registry) = Registry::load() else {
         return;
     };
@@ -1128,6 +1161,160 @@ fn first_run_config_review() {
 /// integrations is not immediately undone by the next command.
 pub fn suppress_next_auto_setup() {
     write_stamp();
+}
+
+/// Say something, once, when this copy is running from inside a project's virtualenv.
+///
+/// This is the remedy at the source. By the time a prune pass refuses the environment,
+/// the user is several days and one confusing error away from the moment they typed
+/// `pip install dev-prune` with a project activated; saying it here, on the first run
+/// after that install, is the only chance to explain it while the cause is still in
+/// living memory. The refusal in the venv adapter stays as the failsafe, for a copy
+/// installed before this check existed or by somebody who dismissed it.
+///
+/// Silent when `requirements.txt` already lists the tool. That is somebody who meant it,
+/// and being told about a decision you made on purpose is what teaches people to stop
+/// reading output.
+fn review_project_venv_install() {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Some(found) = crate::channel::project_venv_install(&exe) else {
+        return;
+    };
+
+    let requirements = found.project.join("requirements.txt");
+    let recorded = crate::adapters::venv::requirement_names(&requirements, &mut Vec::new())
+        .is_some_and(|names| names.iter().any(|n| crate::adapters::venv::is_dev_prune(n)));
+    if recorded {
+        return;
+    }
+
+    output::print_header(&format!(
+        "{} is installed inside this project's virtual environment",
+        constants::APP_NAME
+    ));
+    println!("  running from  {}", exe.display());
+    println!("  environment   {}", found.venv.display());
+    println!("  project       {}", found.project.display());
+    println!();
+    output::print_info(
+        "A tool install belongs outside a project: it outlives the environment, every \
+         repository shares it, and it never has to appear in an application's \
+         requirements file to stay out of the way.",
+    );
+
+    if requirements.is_file() {
+        println!();
+        output::print_info(
+            "Until that is fixed, a prune pass will decline this project's environment \
+             — a package `requirements.txt` does not account for is a package nothing \
+             can rebuild.",
+        );
+        println!();
+        if record_in_requirements(&requirements) {
+            return;
+        }
+    }
+
+    println!();
+    println!("  Remove this copy and install it as a tool instead:");
+    println!("    pip uninstall {}", constants::APP_NAME);
+    println!("    uv tool install {}", constants::APP_NAME);
+    println!("    # or: pipx install {}", constants::APP_NAME);
+    report_other_copy(&exe);
+    println!();
+}
+
+/// Offer the other repair: declare the tool a dependency of this project, on purpose.
+///
+/// Default no, for the reason `devp restore` defaults no on a substituted interpreter —
+/// this is the branch that writes into a file in somebody's repository, so a reflexive
+/// Enter must not be what agrees to it. Returns whether the file was written, which is
+/// also whether the removal instructions are still worth printing.
+fn record_in_requirements(requirements: &std::path::Path) -> bool {
+    use std::io::{IsTerminal, Write};
+    if !std::io::stdin().is_terminal() {
+        return false;
+    }
+    eprint!(
+        "Record {} in requirements.txt instead, as a deliberate dev dependency? [y/N]: ",
+        constants::APP_NAME
+    );
+    if std::io::stderr().flush().is_err() {
+        return false;
+    }
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    if !matches!(input.trim().to_lowercase().as_str(), "y" | "yes") {
+        return false;
+    }
+
+    let Ok(existing) = fs::read_to_string(requirements) else {
+        output::print_warning("Could not read requirements.txt, so nothing was changed.");
+        return false;
+    };
+    // Requirements files without a trailing newline are common, and appending to one
+    // blind would glue the pin onto the last requirement.
+    let separator = if existing.is_empty() || existing.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let line = format!(
+        "{separator}{}=={}\n",
+        constants::APP_NAME,
+        constants::VERSION
+    );
+    match std::fs::OpenOptions::new()
+        .append(true)
+        .open(requirements)
+        .and_then(|mut f| f.write_all(line.as_bytes()))
+    {
+        Ok(()) => {
+            output::print_success(&format!(
+                "Added `{}=={}` to {}. The environment is prunable now.",
+                constants::APP_NAME,
+                constants::VERSION,
+                requirements.display()
+            ));
+            true
+        }
+        Err(e) => {
+            output::print_warning(&format!("Could not write requirements.txt ({e})."));
+            false
+        }
+    }
+}
+
+/// Name the copy that is already installed properly, if there is one.
+///
+/// "Uninstall this" reads very differently depending on whether it leaves the user with
+/// no tool at all or with the one they already had — and on a machine where this mistake
+/// happens there usually is one, because the working copy is what they were reaching for
+/// in the first place.
+fn report_other_copy(exe: &std::path::Path) {
+    let names: [&str; 2] = if cfg!(windows) {
+        ["dev-prune.exe", "devp.exe"]
+    } else {
+        ["dev-prune", "devp"]
+    };
+    let home = dirs::home_dir();
+    let other = crate::channel::install_dirs(home.as_deref())
+        .into_iter()
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+        .find(|candidate| candidate.is_file() && candidate != exe);
+
+    if let Some(other) = other {
+        println!();
+        output::print_info(&format!(
+            "You already have a copy outside this project, at `{}`, so removing this one \
+             still leaves you a working `devp`.",
+            other.display()
+        ));
+    }
 }
 
 #[cfg(test)]

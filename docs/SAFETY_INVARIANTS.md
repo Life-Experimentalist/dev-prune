@@ -4,6 +4,12 @@
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 🛡️ Safety Invariant Flowchart
 
 The order below is the order the checks actually run in
@@ -128,12 +134,17 @@ Some adapters sit outside it:
   must be reachable from something the file pins — directly, or as a transitive
   dependency of a pinned package. A `pip install foo` that was never written back is
   recoverable from nowhere, so the prune refuses, names the unrecorded packages, and
-  suggests `pip freeze > requirements.txt`. A file that cannot be fully parsed
-  (editable installs, bare URLs, unreadable includes) skips the comparison rather than
-  guessing in either direction. Projects carrying `poetry.lock`, `Pipfile.lock`,
-  `pdm.lock` or a `[tool.poetry]` table are not claimed at all: their
-  `requirements.txt` is usually a stale export of the real lockfile, and rebuilding
-  from it would quietly produce a different environment than the one deleted.
+  suggests `pip freeze > requirements.txt`. One package is named by hand: when the sole
+  unaccounted distribution is dev-prune itself, the message says so and offers
+  `pip uninstall` and `uv tool install` alongside `pip freeze`, because a tool that ended
+  up inside a project's environment is a different accident from a dependency somebody
+  forgot to record. That changes which repair is suggested and nothing else — the
+  refusal is identical, nothing is deleted, and there is no flag that relaxes it. A file
+  that cannot be fully parsed (editable installs, bare URLs, unreadable includes) skips
+  the comparison rather than guessing in either direction. Projects carrying
+  `poetry.lock`, `Pipfile.lock`, `pdm.lock` or a `[tool.poetry]` table are not claimed
+  at all: their `requirements.txt` is usually a stale export of the real lockfile, and
+  rebuilding from it would quietly produce a different environment than the one deleted.
 - **cocoapods, mix, gradle, maven** and **swift** run no command either, for a
   different reason: their ecosystems have no read-only "is this in sync?" verb.
   `pod install`, `mix deps.get` and `gradle --write-locks` all *fix* drift by

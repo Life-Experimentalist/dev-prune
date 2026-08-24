@@ -5,6 +5,306 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-08-24
+
+### Added
+
+- **`devp caches` now says who still needs each cache.** Beside every package manager
+  it reports how many of your registered repositories actually use it, and what its
+  cache works out to per repository — two repositories sharing a 12 GiB cache is 6 GiB
+  each and worth a look, forty sharing the same 12 GiB is 300 MiB each and is the cache
+  doing its job. A manager that **no** registered repository uses is the one case where
+  a count is enough to act on: everything in it was downloaded for projects that are not
+  on this disk any more, so the new
+  [`devp caches clear --unused all`](docs/CLI_REFERENCE.md#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json)
+  costs no re-download for anything you still have. The count deliberately ignores
+  whether an adapter is enabled or opted in — the question is which managers your
+  projects *use*, not which ones a prune pass would touch, and a machine full of Rust
+  with `enable_cargo` off must not report the cargo cache as needed by nobody. It is
+  shown only for the managers that are also adapter names; `pip`, `conda`, `nuget`,
+  `conan` and `hex` get no number rather than a guess that `venv` feeds `pip`. With no
+  registered repository on disk nothing is counted at all and `--unused` refuses to run,
+  because every cache would otherwise look unused. In `--json`, `dependents` appears on a
+  cache row only where there was something to count, and `summary.registered_repositories`
+  carries the denominator.
+
+- **`devp caches` now finds the pnpm store on the drive your projects are actually on.**
+  pnpm hardlinks its store into every `node_modules` it fills, and a hardlink cannot
+  cross a filesystem — so a project kept off the system disk gets a store of its own at
+  the root of *that* filesystem: `V:\.pnpm-store` on a second Windows drive,
+  `/mnt/data/.pnpm-store` on Linux, `/Volumes/Work/.pnpm-store` on an external macOS
+  volume. It is not a Windows idea; it is wherever a developer keeps code off the system
+  disk. `pnpm store path` only ever answers for the filesystem it is run on, and
+  `devp caches` asks from your home directory — so a machine whose code lives on another
+  drive was shown the small store beside the home directory and never the multi-gigabyte
+  one holding its projects. The report now looks at the root of every filesystem that
+  holds a registered repository, plus the one you are standing in, and gives each store a
+  row of its own. `pnpm store prune` acts on the filesystem it is run on too, so that row
+  names the store in the command it prints — `pnpm store prune --store-dir <path>` — and
+  runs exactly what it printed. `devp caches clear pnpm` empties every pnpm store found,
+  and a `cache_max_gb` cap for `pnpm` is measured against all of them together.
+
+- **`devp caches` now reports conda's package cache.** A conda installation keeps every
+  package it has ever unpacked, plus the archive it came from, under `pkgs/` inside
+  itself — and keeps them after the environment that pulled them in is gone, which is how
+  a machine that has not touched conda in a year still has several gigabytes of it. The
+  report finds it at the conventional roots (`~/miniconda3`, `~/anaconda3`,
+  `~/miniforge3`, `~/mambaforge`, and the `~/.conda/pkgs` conda falls back to when the
+  installation is not writable), at `CONDA_PKGS_DIRS`, and — for a conda installed
+  somewhere else entirely — at the root that `CONDA_EXE` names, so a shell that can run
+  conda is enough to find its cache. `devp caches clear conda` runs
+  `conda clean --packages --tarballs --yes`, which is conda's own command and keeps
+  whatever its environments still reference. One caveat is conda's, and the row repeats
+  it: that check follows hardlinks and not symlinks, so an environment built with
+  symlinked packages can be broken by it. Unlike Maven's local repository, such an
+  environment reinstalls from the channel it came from — which is why this is a note on
+  the row and not a refusal.
+
+- **`devp skill --agent aider`** writes the rules into `CONVENTIONS.md`, the file Aider
+  reads project conventions from — the sixteenth editor the command supports, and the
+  first one where writing the file is not the whole job. Aider does not pick
+  `CONVENTIONS.md` up by finding it: it loads only when you pass
+  `aider --read CONVENTIONS.md`, run `/read CONVENTIONS.md` in a chat, or put
+  `read: CONVENTIONS.md` in `.aider.conf.yml`. So the command prints that line after
+  writing the file, rather than leaving a repository that looks configured and is not.
+  As with the other shared files, dev-prune owns only what sits between its
+  `<!-- dev-prune:rules:start -->` and `<!-- dev-prune:rules:end -->` markers, so your
+  own conventions can live in the same file and a re-run leaves every byte of them
+  alone. See
+  [`docs/IDE_INTEGRATION.md`](docs/IDE_INTEGRATION.md#ai-agent-rules-devp-skill---agent-editor).
+
+- **`devp config set cache_max_gb uv=10,npm=10`** writes down how big a package cache is
+  allowed to get, per manager, in gibibytes. A download cache is a bet that
+  re-downloading costs less than the disk it occupies, and somewhere that bet stops
+  paying — a `uv` cache past ten gigabytes is mostly wheels for versions nothing resolves
+  to any more. A manager over its ceiling is now marked in `devp caches`, measured
+  against that manager's *whole* footprint, so cargo's registry cache and its unpacked
+  sources are weighed together instead of judged a row at a time. **Setting a cap deletes
+  nothing.** It marks, and the new
+  [`devp caches clear --over-cap all`](docs/CLI_REFERENCE.md#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json)
+  empties exactly what is marked, when you type it — the promise that no schedule, hook
+  or prune pass ever touches a cache is unchanged. Empty by default: no cache is too big
+  until you say what too big is. The keys are the names `devp caches clear` takes
+  (`npm`, `pnpm`, `uv`, `pip`, `cargo`, `go`, `nuget`, …), not adapter names, and
+  `devp config set cache_max_gb -` clears the map. In `--json`, `cap_gb` and `over_cap`
+  appear on a cache row only where a cap is set, so a report from a machine with no caps
+  is byte-for-byte what 1.7.0 printed.
+
+- **`devp config set enable_vcpkg true`** adds C and C++ projects that build their
+  dependencies with vcpkg. A repository holding a `vcpkg.json` gets a `vcpkg_installed/`
+  directory beside it, full of the headers and static libraries vcpkg produced for that
+  one project — anything that pulls in Boost or Qt measures in gigabytes. It is opt-in
+  for the same reason `enable_cargo` and `enable_gradle` are, and waits for
+  `build_idle_days` (45) rather than `idle_days`: vcpkg builds every port from source, so
+  `vcpkg install` puts that directory back by compiling it again rather than by
+  downloading it. Only `vcpkg_installed/` is ever claimed — the `build/` sitting next to
+  it is CMake's, and a directory name alone never says whose it is — and the manifest has
+  to declare a non-empty `dependencies` list before dev-prune accepts it as proof, because
+  every vcpkg *port* ships a `vcpkg.json` of its own and a port manifest rebuilds nothing.
+  Only manifest mode is an adapter's business; vcpkg's classic mode installs into one tree
+  beside vcpkg itself that every project on the machine shares, and `devp caches` has
+  reported that one all along. See
+  [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md#8-devp-config-action).
+
+- **`devp config set enable_cmake_build true`** cleans the build trees CMake
+  configured, and answers the question that has kept C and C++ builds out of scope:
+  whose `build/` is that? Never the directory's name — `cmake` writes a
+  `CMakeCache.txt` at the top of every tree it configures, nobody writes one by hand,
+  and that file records `CMAKE_HOME_DIRECTORY`, the source directory the tree was
+  configured from. A directory is claimed only when it carries that cache *and* the
+  source directory the cache names still exists, still holds a `CMakeLists.txt`, and
+  sits inside the same repository. A `build/` you filled with your own artefacts has no
+  cache file and is never touched. Because the proof is the cache rather than the name,
+  the adapter finds `build/`, CLion's `cmake-build-debug/` and Visual Studio's
+  `out/build/<preset>/` alike — it looks three levels down, stepping only past
+  directories that hold a handful of subdirectories and nothing else, which is what an
+  out-of-source container looks like and what a dependency tree never does. The search
+  stops descending at the first cache it finds, so the sub-builds `FetchContent` and CPM
+  leave under `build/_deps/` are deleted with the tree that configured them rather than
+  counted twice. Opt-in like `enable_cargo`, and gated by `build_idle_days` (45) rather
+  than `idle_days`: a build tree is object files and linked binaries, and
+  `cmake -S . -B build && cmake --build build` puts it back by compiling, which for a C++
+  project of any size is the most expensive rebuild dev-prune can ask for. See
+  [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md#8-devp-config-action).
+
+- **`cargo install dev-prune` now installs `devp` too.** It only ever built one
+  executable; the second name — the one every page of the documentation uses — arrived
+  afterwards, as a copy the binary made of itself on its first run. `devp` is now a real
+  build target, so cargo installs both names the way npm, PyPI and the release archives
+  already ship both.
+
+- **`devp config set version_lock true`** pins this copy to the version it is, and
+  outranks every other way dev-prune can replace its own binary. `auto_update` does not
+  run however it is set, `devp update --install` refuses, `devp install --channel`
+  refuses because moving channels installs the latest release, and re-running the
+  `install.sh` / `install.ps1` one-liner leaves the binary exactly where it found it.
+  There is no flag that bypasses it and no environment variable that quietly wins:
+  releasing the pin is `devp config set version_lock false`, typed by the same person who
+  set it. `auto_update false` was never the whole answer — it stops one path, and a
+  machine that has to keep shipping the same tool for a year (a CI image, a reproduction
+  that stops reproducing the moment the tool changes underneath it, a locked-down build
+  box) also has to survive somebody re-running the install one-liner out of habit. The
+  pin never goes quiet about itself: every path that stands down says so and says how to
+  release it, `devp update` prints the pin where it would have printed the upgrade
+  command, and `devp doctor` reports it as a note above the release check rather than
+  warning that you are behind — being behind is the state that was asked for.
+
+  ```console
+  $ devp update
+  -> `version_lock` is on, so this copy stays at v1.8.0. `devp config set version_lock false` releases it.
+  ```
+
+- **dev-prune now notices when it has been installed inside a project's own virtual
+  environment**, and says so on its first run from there. `pip install dev-prune` with a
+  project activated puts the tool in that project's `site-packages`, where it becomes a
+  package the project's `requirements.txt` does not account for — so lockfile
+  pre-verification declines to prune that environment, and the one venv you installed
+  into is the one venv a prune pass will not touch. The message names the situation while
+  the cause is still fresh: where this copy is running from, which environment it is in,
+  which project that environment belongs to, and the two repairs. Move it out —
+  `pip uninstall dev-prune`, then `uv tool install dev-prune` — and if a copy already
+  exists elsewhere on the machine it names that path too, so you can see that removing
+  this one still leaves a working `devp`. Or keep it deliberately: answer `y` and the pin
+  is appended to `requirements.txt`, which makes it an ordinary recorded dependency and
+  the environment prunable again. The prompt defaults to no, appears only with a person
+  at the terminal, is asked once per installed version, and is skipped entirely when
+  `requirements.txt` already lists the tool — a project that depends on dev-prune on
+  purpose is not making a mistake. Dismiss it and the prune pass now names the same
+  situation and prints the same two commands when it declines, rather than the generic
+  "record these with `pip freeze`", which is the wrong repair for a tool that ended up
+  somewhere it should not be. **The refusal itself is unchanged**: an unrecorded package
+  is still an unrecorded package, nothing is deleted, and there is no flag that relaxes
+  it. See
+  [`docs/troubleshooting/INSTALLATION_ISSUES.md`](docs/troubleshooting/INSTALLATION_ISSUES.md#9-pip-install-in-a-virtual-environment--what-happens-when-the-venv-goes-away).
+
+### Changed
+
+- **`devp config wizard`'s adapter checklist gained a third column.** It already showed
+  whether an adapter is on and how many days it waits; each row now carries that
+  adapter's cache cap beside them, so one screen answers what is on, for how long, and
+  how big. `d` sets the idle window as before, `c` sets the cap, and either one typed on
+  a language heading applies to every adapter under that heading. A cap is offered only
+  where dev-prune knows a cache of that adapter's name — typing one anywhere else says
+  so, rather than storing a setting nothing would ever read. Caps on the caches no
+  adapter is named after (`pip`, `conda`, `nuget`, `conan`, `vcpkg`, `hex`) have no
+  row to be
+  drawn on and are carried through the screen untouched; set those with
+  `devp config set cache_max_gb`.
+
+- **dev-prune no longer writes a `devp` copy beside the binary you ran.** Every
+  invocation used to look for `devp` next to `dev-prune` and create it when it was
+  missing — so a binary run out of npm's cache, a virtualenv's `Scripts` folder or your
+  Downloads directory quietly wrote a second executable into that directory. Nobody asked
+  for it, it was orphaned the moment the delivery directory was replaced, and "a freshly
+  downloaded unsigned binary copies itself and registers a scheduled task" is a
+  behavioural malware signature — it is what earned the WinGet package a
+  `Validation-Defender-Error`. The pair you actually run is untouched: the managed `bin`
+  directory the installers put on your `PATH` still holds both names and is still kept in
+  step on every pass. Beside the running binary, the twin is now created only when you ask
+  for it — `dev-prune setup`, or `devp doctor --fix` — and `devp doctor` reports a
+  missing one with the command that fixes it.
+
+- **`devp caches clear` will no longer empty Maven's local repository.** It used to
+  delete `~/.m2/repository` like any other download cache, and that was wrong: Maven does
+  not call it a cache and neither should we. `mvn install` writes there, and so does
+  `mvn install:install-file` — the documented way to use a jar that is in no repository
+  at all, which is how a driver behind a click-through licence, a partner SDK, or an
+  internal artifact from before there was an internal Nexus ends up on a machine. Those
+  files, and `-SNAPSHOT` builds of your own modules, exist nowhere else; no remote can
+  hand them back. `devp caches` still finds the repository, sizes it, and prints
+  `rm -rf ~/.m2/repository` for you to run if you know yours is disposable.
+  `devp caches clear maven` now explains that and exits `2`, and `devp caches clear all`
+  clears everything else and says what it kept. In `--json`, that row moves to a new
+  `kept` array on both the plan and the result document — read it, or a Maven repository
+  will look like a machine that simply has none.
+
+- **Re-running the install one-liner now does only what needs doing.** It is the answer
+  to almost every install question — "reinstall it", "get me the latest", "I think mine
+  is broken" — and until now it answered all of them the same way: download the release
+  again and write over whatever was there. It looks first now. An install already at the
+  version being installed, with `devp` beside it and on `PATH`, is left exactly as it is
+  and exits `0` without downloading anything. An older one is updated in place and says
+  so (`-> Updating dev-prune v1.7.0 -> v1.8.0`). A **newer** one is not touched at all,
+  so a machine ahead of the release the script resolved to is never quietly walked
+  backwards — naming the version with `--version` / `-Version` is what makes installing
+  backwards deliberate, and that still works. And a same-version install that is missing
+  `devp`, or missing its `PATH` entry, is reinstalled — which repairs both, and is the
+  whole reason anyone runs the one-liner a second time. The new `--force` (`-Force` in
+  PowerShell, `DEV_PRUNE_FORCE=1` for the plain one-liner, which has nowhere to put a
+  flag) downloads and writes both files regardless, for when you suspect the file on disk
+  rather than its version. See
+  [Installer options](docs/RELEASES_AND_MANUAL_INSTALL.md#installer-options).
+
+- **`devp doctor` now names the command that removes each other copy it finds.** The
+  "Other copies" warning listed the paths and then told you to remove each one "through
+  the manager that installed it" — true, and useless, because the reason a second copy
+  goes unnoticed for months is precisely that nobody remembers installing it. Each line
+  now names the channel that owns that file and the command to type, so a leftover cargo
+  copy reads `…\.cargo\bin\dev-prune.exe (v1.6.0, from cargo, remove with
+  cargo uninstall dev-prune)`. A copy the install script left behind is removed by
+  `devp uninstall`, and one that no package manager owns says so rather than naming a
+  command that would report the package is not installed.
+
+### Fixed
+
+- **`devp caches --help` was three managers behind the command itself.** Its `Covered:`
+  line still ended at Conan, so Composer, CocoaPods and Hex — all reported by
+  `devp caches` since 1.7.0 — went unmentioned in the help for it, as did the fact that
+  Hex is cleared by removing a directory. Both lists now name every manager the command
+  probes.
+
+- **The install one-liner now wins in every terminal, not only the one you ran it in
+  (Windows).** `install.ps1` prepended its directory to the PATH of the session it was
+  running in but *appended* it to the User PATH it saved, and those two disagree. Run it
+  on a machine that already had dev-prune from `cargo install` or Scoop and it looked
+  like it worked — because in that window it had — while every terminal opened afterwards
+  went on running the older copy. The saved PATH now prepends as well, which is what the
+  script always claimed to do. The directory holds `dev-prune.exe` and `devp.exe` and
+  nothing else, so it can shadow nothing you did not ask for. macOS and Linux were
+  already correct.
+
+- **Both install scripts now tell you about a `dev-prune` they did not install.** The
+  one-liner has always been safe to run over a cargo, npm, uv, pipx, Homebrew, Scoop or
+  WinGet install — it needs no uninstall first and never fails because of one — but it
+  said nothing about the copy it found, and a second copy nothing upgrades is how a
+  machine ends up running a version you fixed months ago. It now prints the path, says
+  it deliberately left the file alone (deleting a file another package manager still has
+  on its books is how an install becomes unrepairable), and gives you
+  `devp install --channel installer`, which installs here and uninstalls there through
+  the manager that owns it. [Changing channels](docs/DISTRIBUTION.md#-changing-channels)
+  covers it end to end.
+
+- **`install.sh` no longer rewrites your Windows User PATH into something frozen to this
+  machine.** Running the shell installer from Git Bash or WSL-on-Windows updates the User
+  PATH through PowerShell, and it read that value with a call that *expands* every
+  `%USERPROFILE%`-style reference on the way out — then wrote the expanded text back as
+  a plain string. Any entry that followed your profile came back hard-coded to this
+  machine and this user, the registry value stopped being the expandable kind, and
+  nothing about the result looked wrong afterwards. It now reads and writes the raw
+  registry value, preserves its type, and — like the PowerShell installer above — puts
+  its directory *first* rather than last, so the copy it just installed is the one that
+  answers. It also tells the running desktop the value changed, instead of leaving every
+  already-open program on the old PATH until the next sign-in.
+
+- **`npm install -g dev-prune` now installs a working binary on Windows.** The three
+  Windows platform packages are published under new names — `dev-prune-windows-x64`,
+  `dev-prune-windows-arm64` and `dev-prune-windows-x86`. npm had refused every
+  `dev-prune-win32-*` spelling with `E403 — Package name triggered spam detection`, while
+  the four Linux and macOS names published from the same script in the same run went
+  through untouched, so the refusal tracked the name and not the payload. The effect was
+  that 1.6.0 and 1.7.0 both shipped an npm channel that installed on Windows and then
+  reported it had no binary to run. The new names match the release assets you already
+  download (`dev-prune-v1.8.0-windows-x64.zip`), and each package still declares npm's
+  own `win32` and `ia32` values in `os` and `cpu`, so npm resolves exactly one of them
+  exactly as before. Nothing changes on Linux or macOS, and nothing changes for the
+  shell installer, WinGet, Scoop, `cargo install` or `pip`. A Windows machine already
+  holding `dev-prune@1.7.0` needs `npm install -g dev-prune@latest` rather than a
+  repair — a published manifest cannot be edited, so 1.7.0 names the old packages
+  permanently. With all eight names finally on the registry, npm is now listed as an
+  install channel alongside the others in the README, on the site and in
+  [`DISTRIBUTION.md`](docs/DISTRIBUTION.md), and `npx dev-prune status` runs the tool
+  once without installing anything.
+
 ## [1.7.0] - 2026-08-23
 
 The tool keeps itself up to date, the first run stops assuming you already know
@@ -702,7 +1002,7 @@ forever.
 
   A 32-bit *shell* on 64-bit Windows still gets the x64 build: the installer reads the
   machine's architecture, not the shell's. There is no 32-bit Linux, macOS or ARM build,
-  and [`docs/FUTURE.md`](docs/FUTURE.md) records why.
+  and [`docs/ROADMAP.md`](docs/ROADMAP.md) records why.
 
   Because there are now two Windows builds that can end up on the same machine, `devp -v`
   and `devp doctor` both say when the one you are running is not the one the machine
@@ -941,7 +1241,7 @@ four colours instead of seven.
   (`assets/readme-banner.png`, also the correct size for GitHub's social preview) and one
   1200×630 Open Graph card, both centre-crops of `assets/banner-master.png`. The old hero
   was 5.8 MB of generated lettering that spelled `developements` and `READM.md`.
-- [`docs/FUTURE.md`](docs/FUTURE.md) is now a triaged roadmap — *in flight*, *next*,
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) is now a triaged roadmap — *in flight*, *next*,
   *later*, *not planned* — so "we have not done that yet" and "we decided against that"
   no longer read the same. 32-bit builds, deleting build outputs, and any bypass for the
   seven safety invariants are recorded under *not planned*, with the reason attached.

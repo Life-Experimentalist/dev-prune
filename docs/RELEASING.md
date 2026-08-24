@@ -9,6 +9,12 @@ one-time setup or a pre-flight check.
 
 ---
 
+<p align="center">
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+</p>
+
+---
+
 ## 📋 Contents
 
 - [Launch day: the first release](#-launch-day-the-first-release)
@@ -44,7 +50,7 @@ the one above:
    ```
 
    The social preview has no API and has to be uploaded by hand: Settings → General →
-   Social preview → Upload `assets/readme-banner.png`. It is already exactly the
+   Social preview → Upload `assets/github-readme-banner.png`. It is already exactly the
    1280×640 GitHub asks for, so nothing is rescaled. It is the image every link to the
    repository renders as on Twitter/X, Slack, Discord and Hacker News, and without it
    they render as a grey octocat.
@@ -123,15 +129,16 @@ the one above:
    actually run, and running them is the only proof the packages resolve:
 
    ```bash
+   npx dev-prune@1.2.0 -V
    uvx dev-prune@1.2.0 -V
    cargo install dev-prune --version 1.2.0
    cargo binstall dev-prune@1.2.0
    curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
    ```
 
-   `npx dev-prune@<version> -V` joins this list only once npm publishing is switched on
-   — `NPM_PUBLISH` is currently `false`, and the `dev-prune` dispatcher that `npx` would
-   resolve does not exist on the registry yet.
+   Run the `npx` line on Windows as well as on one Unix machine. It is the only check
+   that exercises a platform package rather than the dispatcher, and the Windows three
+   are the ones that were missing until 1.8.0.
 
    `cargo binstall` is the one worth watching: it reads
    `[package.metadata.binstall]` from the published crate and downloads a release asset
@@ -147,11 +154,10 @@ the one above:
    iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
    ```
 
-The `dev-prune` name is held on crates.io and PyPI. On npm five of the eight names are
-held — the dispatcher and the four Linux and macOS platform packages — and the three
-`dev-prune-win32-*` names are not, so `npm install -g dev-prune` works on Linux and macOS
-and lands without a binary on Windows. See [Name availability](#name-availability).
-"Unclaimed" has a shelf life, so finishing that list is also what secures the name there.
+The `dev-prune` name is held on crates.io, PyPI and npm, and all eight npm names now
+exist, so `npm install -g dev-prune` works on every platform. Getting there took a
+rename: the registry refused each `dev-prune-win32-*` spelling as a new name, and the
+three became `dev-prune-windows-*` in 1.8.0. See [Name availability](#name-availability).
 
 ---
 
@@ -176,6 +182,7 @@ instead of quietly skipping it.
 | npm | *no secret* — Trusted Publishing | `NPM_PUBLISH` = `true` | Job reports `skipped` |
 | PyPI | *no secret* — Trusted Publishing | `PYPI_PUBLISH` = `true` | Job reports `skipped` |
 | crates.io | `CARGO_REGISTRY_TOKEN` secret | `CRATES_PUBLISH` = `true` | Job reports `skipped` |
+| VS Code Marketplace + Open VSX | `VSCE_PAT` and `OVSX_PAT` secrets | `VSIX_PUBLISH` = `true` | Job reports `skipped`; the `.vsix` is still attached to the release |
 | GitHub Pages (site) | Automatic | — Settings → Pages → "GitHub Actions" | Site does not deploy |
 
 Secrets and variables live in the same place, on two different tabs: **Settings → Secrets
@@ -206,11 +213,19 @@ That leaves exactly one manual step per package name, once, forever:
 4. Set the repository **variable** **`NPM_PUBLISH`** to `true`. Without it the publish
    job does not run at all, and the release reports `skipped` for npm.
 
-Step 2 is the one that bites, and not for the reason you expect. Creating several new
-package names from one account in quick succession trips the registry's spam heuristic:
-`403 Package name triggered spam detection`. It is a throttle on the rate, not a verdict
-on the names — wait and retry, and open a ticket at
-[npmjs.com/support](https://www.npmjs.com/support) if it does not clear.
+All four are done. The eight names exist, each has a trusted publisher pointing at this
+workflow, and `NPM_PUBLISH` is `true`; what follows is the record of how, and what to
+repeat if a ninth package name is ever added.
+
+Step 2 is the one that bites, and not for the reason you expect. A new name can come back
+`403 Package name triggered spam detection`, which reads like a rate limit and is not
+one. Three names were refused across a week of retries — `dev-prune-win32-x64`,
+`dev-prune-win32-arm64` and `dev-prune-win32-ia32` — while the four Linux and macOS names,
+published from the same script in the same run, went through untouched. Renaming those
+three to `dev-prune-windows-x64`, `dev-prune-windows-arm64` and `dev-prune-windows-x86`
+cleared it on the first attempt. So read the message as being about the *name*: try a
+different spelling before waiting, and open a ticket at
+[npmjs.com/support](https://www.npmjs.com/support) only if every spelling is refused.
 
 The `publish-npm` job does not refuse to start when a name is missing. It skips that one,
 publishes the rest, and names what it skipped — as a `::warning::` on the job and as a
@@ -228,10 +243,15 @@ dev-prune-linux-x64
 dev-prune-linux-arm64
 dev-prune-darwin-x64
 dev-prune-darwin-arm64
-dev-prune-win32-x64
-dev-prune-win32-arm64
-dev-prune-win32-ia32
+dev-prune-windows-x64
+dev-prune-windows-arm64
+dev-prune-windows-x86
 ```
+
+The three Windows names do not spell out npm's `win32`/`ia32` platform values, and the
+other four do. That is not an oversight: those three names were refused as new names,
+and the ones that replaced them follow the release assets instead. `os` and `cpu` inside
+each package still carry npm's values, which is what npm actually resolves against.
 
 The seven platform packages are published *before* the dispatcher, because npm resolves
 the dispatcher's `optionalDependencies` as soon as it exists.
@@ -265,10 +285,11 @@ sh scripts/npm-prepare.sh 1.6.0 /tmp/rel /tmp/npm-dist
 sh scripts/npm-publish.sh 1.6.0 /tmp/npm-dist latest --local
 ```
 
-If this returns `403 Package name triggered spam detection`, the account has created too
-many new names too quickly. Nothing about the names is wrong and nothing about the
-account is in trouble — wait, retry, and escalate to
-[npmjs.com/support](https://www.npmjs.com/support) if hours of retrying do not clear it.
+If this returns `403 Package name triggered spam detection`, suspect the name before the
+account. A week of retrying never cleared it for the three `dev-prune-win32-*` names;
+changing the spelling cleared it immediately. Try a different name first, and escalate to
+[npmjs.com/support](https://www.npmjs.com/support) only if the account cannot create any
+new name at all.
 
 `--local` drops `--provenance`, which is not a preference: the attestation is signed
 against a CI OIDC identity and a workstation has none. **The version published this way
@@ -276,8 +297,8 @@ carries no provenance badge.** Every later version, published by CI, does.
 
 Re-run the command as often as you like — the `npm view` check skips whatever already
 made it to the registry, which matters here because a 2FA code expires partway through
-seven publishes more often than not, and because the throttle above tends to let names
-through a few at a time.
+seven publishes more often than not, and because a refusal above can apply to some
+names and not others.
 
 Always prepare from the downloaded release assets rather than a local `cargo build`.
 The npm packages must contain the same executables the tarballs, wheels and installers
@@ -332,13 +353,48 @@ a Node patch is not one anyone would think to look at.
 3. Save it as the repository secret **`CARGO_REGISTRY_TOKEN`**.
 4. Set the repository **variable** **`CRATES_PUBLISH`** to `true`.
 
+### VS Code Marketplace and Open VSX
+
+The extension is built and attached to every release whether or not this channel is on.
+What the channel adds is `ext install VKrishna04.dev-prune` resolving — in two galleries,
+because the editors dev-prune writes rules files for are split between them. VS Code and
+the forks that use Microsoft's gallery read one; VSCodium, Cursor, Windsurf and the rest
+read Open VSX. Publishing to only one is how an extension ends up "available" for half
+its audience.
+
+1. **Visual Studio Marketplace.** Create the publisher `VKrishna04` at
+   [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage) —
+   it must match the `publisher` field in `editors/vscode/package.json`. The token is an
+   **Azure DevOps** personal access token, not a GitHub one: sign in at
+   [dev.azure.com](https://dev.azure.com/), User settings → Personal access tokens → New
+   token, **Organization: all accessible organizations**, scope **Marketplace → Manage**,
+   and nothing else. Azure caps the lifetime, so this one expires and the release will
+   fail loudly when it does — that is the intended failure, and re-issuing takes a
+   minute. Save it as the repository secret **`VSCE_PAT`**.
+2. **Open VSX.** Sign in at [open-vsx.org](https://open-vsx.org/) with GitHub, agree to
+   the publisher agreement, and create an access token under your profile. Claim the
+   namespace once, from any machine that has the token:
+   `npx ovsx create-namespace VKrishna04 -p <token>`. Save the token as the repository
+   secret **`OVSX_PAT`**.
+3. Set the repository **variable** **`VSIX_PUBLISH`** to `true`.
+
+The extension carries its own version in `editors/vscode/package.json` and takes nothing
+from the tag, so bump it whenever the extension itself changes. A release that does not
+publishes nothing here and says so: the job stays green — a version that is already up is
+not a failure, and re-running a release after another channel broke must not turn into
+one — but it writes a warning naming the file to bump.
+
 ### Name availability
 
-As of 2026-08-23, `dev-prune` is published on PyPI and crates.io, which is what holds a
-name on those registries. On npm the eight names are being claimed one at a time, against
-the registry's new-name throttle. Five exist, including the dispatcher, so the release
-can publish a working Linux and macOS channel; the three Windows names are still held by
-the throttle:
+As of 2026-08-24 every name this project needs is held. `dev-prune` is published on
+PyPI, crates.io and npm, and all seven npm platform packages exist alongside the
+dispatcher, so the release publishes a complete npm channel with nothing skipped.
+
+Claiming the last three took a rename rather than patience. npm's new-name throttle
+refused each `dev-prune-win32-*` spelling with `E403 — Package name triggered spam
+detection` while the four Linux and macOS names published from the same script in the
+same run went through, so the refusal tracked the name and not the payload. The
+`dev-prune-windows-*` spellings were accepted first try.
 
 | Name | npm | PyPI | crates.io |
 |---|---|---|---|
@@ -347,9 +403,9 @@ the throttle:
 | `dev-prune-linux-arm64` | **held** (1.6.0) | n/a | n/a |
 | `dev-prune-darwin-x64` | **held** (1.6.0) | n/a | n/a |
 | `dev-prune-darwin-arm64` | **held** (1.6.0) | n/a | n/a |
-| `dev-prune-win32-x64` | not yet claimed | n/a | n/a |
-| `dev-prune-win32-arm64` | not yet claimed | n/a | n/a |
-| `dev-prune-win32-ia32` | not yet claimed | n/a | n/a |
+| `dev-prune-windows-x64` | **held** (1.7.0) | n/a | n/a |
+| `dev-prune-windows-arm64` | **held** (1.7.0) | n/a | n/a |
+| `dev-prune-windows-x86` | **held** (1.7.0) | n/a | n/a |
 | `devp` | free | free | free |
 | `devprune` | free | free | free |
 
@@ -561,8 +617,8 @@ three registries used here, it does not.
 | **AUR** | **None.** | Anyone with an account can upload a PKGBUILD. |
 
 So: npm, PyPI and crates.io are effectively free-for-all — the only gate is owning the
-name. `dev-prune` is already held on PyPI and crates.io by the published releases; on
-npm it is [still free](#name-availability) until `NPM_PUBLISH` is switched on.
+name. `dev-prune` is held on all three by the published releases, npm
+[included](#name-availability).
 
 The flip side of "no review" is that **nothing is reversible**. crates.io versions are
 permanent; npm allows unpublishing only within 72 hours and only if nothing depends on
@@ -615,7 +671,7 @@ What this buys, concretely:
 uv tool install dev-prune     # persistent install, no Python project needed
 uvx dev-prune status          # run once, nothing left behind
 pipx run dev-prune status     # same, via pipx
-npx dev-prune status          # same, via npm — once NPM_PUBLISH is switched on
+npx dev-prune status          # same, via npm
 ```
 
 ---
@@ -660,8 +716,12 @@ bar and stays a post-popularity step.
 
 **WinGet** is submitted by the release, and merged by a person. `winget-pkgs` has no
 popularity requirement, but every version is a pull request a Microsoft reviewer signs
-off, so "submitted" and "installable" are days apart. The first submission is open as
-[microsoft/winget-pkgs#422665](https://github.com/microsoft/winget-pkgs/pull/422665).
+off, so "submitted" and "installable" are days apart. The submission under review is
+[microsoft/winget-pkgs#422809](https://github.com/microsoft/winget-pkgs/pull/422809),
+opened for 1.6.0. The 1.5.0 submission before it,
+[#422665](https://github.com/microsoft/winget-pkgs/pull/422665), was closed rather than
+amended: validation had flagged the first-run self-copy, and the answer to that
+was a release, not an edit to a manifest.
 
 The `submit-winget` job renders the manifests from the published sidecars, strips this
 repository's licence header, writes each file as UTF-8 with a BOM, and hands the

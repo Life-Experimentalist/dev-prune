@@ -22,7 +22,16 @@ const os = require('os');
 
 const isWin = process.platform === 'win32';
 const exeName = isWin ? 'dev-prune.exe' : 'dev-prune';
-const platformPackage = `dev-prune-${process.platform}-${process.arch}`;
+
+// npm refused every `dev-prune-win32-*` name with `E403 - Package name triggered spam
+// detection`, while the identically-shaped linux and darwin names went through, so the
+// refusal tracks the name rather than the payload. The Windows packages are named after
+// the release assets instead. Each one still declares npm's own `win32`/`ia32` values in
+// `os` and `cpu`, so resolution is unchanged - only the name it resolves to differs.
+const WINDOWS_ARCH = { x64: 'x64', arm64: 'arm64', ia32: 'x86' };
+const platformPackage = isWin
+  ? `dev-prune-windows-${WINDOWS_ARCH[process.arch] || process.arch}`
+  : `dev-prune-${process.platform}-${process.arch}`;
 
 // Must mirror Registry::config_dir() in src/config.rs.
 function configBinDir() {

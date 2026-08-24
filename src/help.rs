@@ -103,9 +103,10 @@ and a directory is deleted only when every check passes:
 Interactively, a selection TUI shows what would be deleted before anything is; `-y` \
 skips the confirmation, and `--dry-run` reports what a pass would do without deleting \
 anything at all. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
-venv, poetry, pdm, pipenv, cargo, go, composer, bundler, cocoapods, mix, gradle, \
-maven, swift — an unknown name is an error listing the valid ones, not a silently \
-empty pass. cargo, gradle, maven and swift are opt-in (`devp config set \
+poetry, pdm, pipenv, venv, cargo, go, composer, bundler, cocoapods, mix, mix_build, \
+gradle, maven, swift, terraform, dart, vcpkg, cmake_build — an unknown name is an \
+error listing the valid ones, not a silently empty pass. cargo, gradle, maven, \
+swift, dart, mix_build, vcpkg and cmake_build are opt-in (`devp config set \
 enable_cargo true`) and idle-gated separately by `build_idle_days`, because a \
 build directory takes far longer to get back than a dependency directory. \
 `devp config wizard` switches them on by language, and can give any one adapter \
@@ -234,12 +235,12 @@ restore` into a download.
 `devp caches clear <manager>` runs the command this table prints, after showing you \
 what goes and asking.
 
-Covered: npm, pnpm, yarn, bun, uv, pip, cargo, go, maven, gradle, nuget, vcpkg and \
-conan. Each manager is asked where its cache is (`npm config get cache`, `go env \
-GOMODCACHE`, …) rather than assumed, with read-only queries run from your home \
-directory; a manager that is not installed falls back to the conventional location, \
-because a cache left behind by an uninstalled manager is exactly the multi-gigabyte \
-directory nobody remembers.";
+Covered: npm, pnpm, yarn, bun, uv, pip, conda, cargo, go, maven, gradle, nuget, vcpkg, \
+conan, composer, cocoapods and hex. Each manager is asked where its cache is (`npm \
+config get cache`, `go env GOMODCACHE`, …) rather than assumed, with read-only queries \
+run from your home directory; a manager that is not installed falls back to the \
+conventional location, because a cache left behind by an uninstalled manager is \
+exactly the multi-gigabyte directory nobody remembers.";
 
 pub const CACHES_EXAMPLES: &str = "\
 EXAMPLES:
@@ -261,11 +262,24 @@ will ever clear a cache — this only runs when you type it.
 Wherever the manager ships its own subcommand, that is what runs: `npm cache clean \
 --force`, `pnpm store prune`, `go clean -modcache`. The manager knows what is still \
 referenced, which a directory delete cannot work out, and its own bookkeeping stays \
-consistent. cargo, maven, gradle and vcpkg ship nothing equivalent, so those are \
-cleared by removing the directory this command resolved and sized — never a string \
+consistent. cargo, gradle, vcpkg and hex ship nothing equivalent, so those \
+are cleared by removing the directory this command resolved and sized — never a string \
 handed to a shell.
 
-Nothing in a cache is lost; every manager re-downloads what it needs. What it costs \
+Maven is reported and never cleared. `~/.m2/repository` is an install target as \
+well as a download cache — `mvn install:install-file` puts artifacts there that no \
+remote can hand back — so dev-prune sizes it and prints `rm -rf ~/.m2/repository` \
+for you to run. `clear maven` says so and stops; `clear all` skips it.
+
+Two flags narrow what `all` means, so you do not have to pick the caches by hand. \
+`--over-cap` keeps only the managers that have outgrown the ceiling you set in \
+`cache_max_gb`; with no cap set anywhere it clears nothing and says so. `--unused` keeps \
+only the managers that no registered repository uses — a cache with nothing behind it \
+was filled for projects that are not on this disk any more. It counts only repositories \
+dev-prune knows about, so `devp link` anything you keep outside the registry first, and \
+it refuses to run at all when there are no registered repositories to check against.
+
+Nothing else in a cache is lost; every manager re-downloads what it needs. What it costs \
 is time, in every project on the machine, on the next install and the next `devp \
 restore`. The freed size reported afterwards is measured rather than assumed, because \
 a `prune` keeps what is still in use.";
@@ -275,11 +289,15 @@ EXAMPLES:
   devp caches clear npm           One manager, after confirming
   devp caches clear cargo         Both cargo rows: the registry cache and its sources
   devp caches clear all --dry-run Everything that would go, and nothing touched
+  devp caches clear all --over-cap
+                                  Only the ones past their cache_max_gb
+  devp caches clear all --unused  Only the ones no registered repository uses
   devp caches clear all --yes     No prompt, for a script
   devp caches clear go --json --yes
                                   Machine-readable (`--json` requires `--yes`)
 
-Exit code 1 if any cache could not be cleared; the rows are printed either way.";
+Exit code 1 if any cache could not be cleared; the rows are printed either way.
+Exit code 2 for `maven`, which is reported but never cleared.";
 
 pub const TRUST_LONG: &str = "\
 What dev-prune is allowed to do on this machine, on one screen. Read-only — it reads \
@@ -518,6 +536,12 @@ manager owns the upgrade; `devp config set auto_update false` stops it. An upgra
 scheduler: the scheduled pass runs a managed copy that refreshes itself from the \
 new binary on its next run.
 
+`devp config set version_lock true` outranks all of it. While the pin is on this \
+copy stays on the version it is: `auto_update` does not run however it is set, \
+`--install` refuses, `devp install --channel` refuses because moving channels \
+installs the latest release, and the install scripts leave the binary alone. \
+No flag bypasses it -- `devp config set version_lock false` is the way back.
+
 The same check also runs quietly from `devp run` and `devp status`, at most once \
 every `update_check_interval_days` (7 by default), printing one line only when a \
 newer version exists. It is the only thing in dev-prune that opens a network \
@@ -564,15 +588,17 @@ into the config directory, installs it into any detected agent skills directory 
 ready-to-copy onboarding prompts for assistants without one (Gemini Antigravity, \
 Cursor, Windsurf, Copilot, OpenClaw).
 
-`--agent <EDITOR>` instead writes per-repository rules into the current repository, \
-in the file that editor's agent reads. Ten editors get a file of their own — cursor, \
-windsurf, antigravity, cline, roo, kilocode, continue, amazon-q, kiro, trae — and five \
+`--agent <EDITOR>` instead writes per-repository rules into the current repository, in \
+the file that editor's agent reads. Ten editors get a file of their own — cursor, \
+windsurf, antigravity, cline, roo, kilocode, continue, amazon-q, kiro, trae — and six \
 share a file with other tools, so dev-prune owns a marked block inside it: agents-md \
 (`AGENTS.md`, the cross-tool convention Codex, Jules, Amp and OpenCode read), copilot \
 (`.github/copilot-instructions.md`), gemini (`GEMINI.md`), junie \
-(`.junie/guidelines.md`) and zed (`.rules`). Every byte outside the markers is left as \
-found. `devp skill --help` lists each value with its exact path. \
-Claude Code needs no per-repository file — its skill installs globally.";
+(`.junie/guidelines.md`), zed (`.rules`) and aider (`CONVENTIONS.md`, the one file its \
+editor does not read by finding it — writing it prints the `read: CONVENTIONS.md` line \
+that makes Aider load it). Every byte outside the markers is left as found. \
+`devp skill --help` lists each value with its exact path. Claude Code needs no \
+per-repository file — its skill installs globally.";
 
 pub const SKILL_EXAMPLES: &str = "\
 EXAMPLES:
