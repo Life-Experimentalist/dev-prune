@@ -37,6 +37,13 @@ pub fn run(json_output: bool) -> Result<()> {
         "Space reclaimed:   {}",
         output::format_bytes_styled(registry.total_freed_bytes)
     ));
+    // Its own line rather than added to the one above it. Both are space this tool gave
+    // back, but they are not interchangeable: the line above cost a reinstall in one
+    // repository, this one costs a download in every project on the disk.
+    output::print_info(&format!(
+        "Caches emptied:    {}",
+        output::format_bytes_styled(registry.total_cache_freed_bytes)
+    ));
     output::print_info(&format!(
         "Prune passes:      {}",
         registry.total_pruned_count

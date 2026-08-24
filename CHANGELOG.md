@@ -58,6 +58,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   neither document carries a prune command anywhere: no field in this contract should be
   one substitution away from an argv for `docker system prune --volumes`.
 
+- **`devp stats` now counts what `devp caches clear` gave back**, on a **Caches emptied**
+  line of its own and as `lifetime.cache_bytes_freed` in
+  [`devp stats --json`](docs/CLI_REFERENCE.md#devp-stats---json). Emptying a 6 GiB npm
+  cache used to print `Freed 6.00 GiB.` and then vanish from the only report that claims
+  to say what this tool has done for you. It is deliberately a second figure rather than
+  part of the first, because the two do not cost the same to undo: what pruning frees
+  costs one reinstall in one repository, and what emptying a shared cache frees costs a
+  download in every project on the disk. Counting starts at 1.9.0, so the line reads zero
+  until your first clear after upgrading — it is not a number that could be
+  reconstructed from anything already on the machine.
+
 - **`container_disk` is now a row in
   [`devp trust`](docs/CLI_REFERENCE.md#18-devp-trust---json---fix-ownership)** —
   reported, never deleted. It sits beside the no-telemetry and never-touch-build-outputs

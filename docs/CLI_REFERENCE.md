@@ -741,6 +741,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
     "bytes_freed": 6772391936,
+    "cache_bytes_freed": 3221225472,  // `devp caches clear`; never added to bytes_freed
     "prune_passes": 9,           // same number and same meaning as totals.prune_passes above
     "repositories": 12
   },
@@ -762,6 +763,14 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 `recent_passes` and the per-repository `bytes_freed` were not recorded before 1.1.0, so on
 an upgraded machine they start from zero while the lifetime figures do not — which is what
 `history_starts_at` is there to tell a consumer.
+
+`lifetime.cache_bytes_freed` is a third vintage again: recorded from **1.9.0** onward, and
+zero until the first `devp caches clear` after upgrading. It is deliberately its own key
+rather than part of `bytes_freed`. Both are bytes dev-prune gave back, but they do not
+cost the same to undo: what pruning frees costs one reinstall in one repository, and what
+emptying a shared cache frees costs a download in every project on the disk. A consumer
+that wants the grand total is welcome to add them; one that does not would have had no way
+to separate them again.
 
 ### `devp caches --json`
 
@@ -1096,7 +1105,8 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ---
 
 ### 15. `devp stats [--json]`
-- **Description**: What dev-prune has actually done for you, as opposed to what it could do next. Lifetime space reclaimed, how many prune passes there have been, the most recent pass and how to undo it, the last ten passes, and the ten repositories that have given back the most. Read-only — it touches the registry and nothing else.
+- **Description**: What dev-prune has actually done for you, as opposed to what it could do next. Lifetime space reclaimed, how much has been emptied out of package-manager caches, how many prune passes there have been, the most recent pass and how to undo it, the last ten passes, and the ten repositories that have given back the most. Read-only — it touches the registry and nothing else.
+- **Two space figures, not one**: `Space reclaimed` is what pruning gave back; `Caches emptied` is what [`devp caches clear`](#7-devp-caches---json--devp-caches-clear-manager) gave back. They are never added together, because getting the first back is one reinstall in one repository and getting the second back is a download in every project on the machine. `Caches emptied` counts from **1.9.0**; a machine that cleared caches before upgrading starts it at zero.
 - **Why it is separate from `status`**: [`devp status`](#6-devp-status---top-n---drift---json) answers "what can I reclaim right now". Folding a history report into it would put a screen of the past above the list people open it for.
 - **A note on upgraded machines**: the lifetime total has been accumulating since 1.0.0, but the per-repository figures and the pass history are only recorded from **1.1.0** onward. A machine that pruned for months before upgrading will show a large lifetime total next to an empty "Biggest reclaims" section, and the report says so rather than implying nothing ever happened.
 - **Flags**:
@@ -1105,6 +1115,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```bash
   devp stats
   devp stats --json | jq '.lifetime.bytes_freed'
+  devp stats --json | jq '.lifetime.cache_bytes_freed'
   ```
 
 ---

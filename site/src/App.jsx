@@ -1270,6 +1270,10 @@ Notes you should rely on, not work around:
                         {"   "}12.41 GB
                       </div>
                       <div className="term-line">
+                        <span className="c-blue">→</span> Caches emptied:
+                        {"    "}6.30 GB
+                      </div>
+                      <div className="term-line">
                         <span className="c-blue">→</span> Prune passes:
                         {"      "}9
                       </div>

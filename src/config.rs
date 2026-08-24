@@ -738,6 +738,18 @@ pub struct Registry {
     /// Total cumulative bytes freed historically across all prune passes.
     #[serde(default)]
     pub total_freed_bytes: u64,
+    /// Total bytes given back by `devp caches clear`, ever, on this machine.
+    ///
+    /// Kept apart from `total_freed_bytes` rather than folded into it, because the two
+    /// cost different things to undo. A prune deletes what a lockfile proves it can
+    /// rebuild, and getting it back is one reinstall in one repository; emptying a shared
+    /// cache costs a download in every project on the disk. Not keyed by repository for
+    /// the same reason: a package manager's cache belongs to none of them.
+    ///
+    /// Recorded from 1.9.0 onward, so a registry written before then deserializes to
+    /// zero and starts counting from the next clear.
+    #[serde(default)]
+    pub total_cache_freed_bytes: u64,
     /// How many prune passes have deleted something, ever.
     ///
     /// One per *pass*, not per repository and not per directory — a `devp run` that
@@ -806,6 +818,7 @@ impl Default for Registry {
             settings: Settings::default(),
             repositories: HashMap::new(),
             total_freed_bytes: 0,
+            total_cache_freed_bytes: 0,
             total_pruned_count: 0,
             last_added_repos: Vec::new(),
             last_prune: None,
@@ -1055,6 +1068,11 @@ impl Registry {
         self.total_freed_bytes += bytes_freed;
     }
 
+    /// Credit `bytes` to the machine's running cache-clear total.
+    pub fn record_cache_clear(&mut self, bytes: u64) {
+        self.total_cache_freed_bytes += bytes;
+    }
+
     /// Record what a prune pass deleted, replacing any earlier record.
     ///
     /// A pass that deleted nothing is not a pass worth remembering, so an empty list is
@@ -1179,6 +1197,59 @@ mod tests {
             size_freed: 42,
             runtime: None,
         }
+    }
+
+    #[test]
+    fn cache_clears_accumulate_separately_from_prunes() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = test_registry_path(&dir);
+
+        let mut registry = Registry::default();
+        registry.mark_pruned(Path::new("/repo"), 42);
+        registry.record_cache_clear(6_000_000_000);
+        registry.record_cache_clear(2_000_000_000);
+        registry.save_to(&path).expect("saved");
+
+        let reloaded = Registry::load_from(&path).expect("reloaded");
+        assert_eq!(reloaded.total_cache_freed_bytes, 8_000_000_000);
+        // The prune total is untouched by either clear. `devp stats` prints them as two
+        // lines because emptying a shared cache is not the same promise as pruning one
+        // repository, and one combined figure would answer neither question.
+        assert_eq!(reloaded.total_freed_bytes, 42);
+    }
+
+    #[test]
+    fn a_registry_written_before_1_9_0_reads_the_cache_total_as_zero() {
+        // The `#[serde(default)]`, exercised. Without it every registry on every machine
+        // that upgraded would fail to parse, and `devp stats` would exit 1.
+        let dir = TempDir::new().expect("temp dir");
+        let path = test_registry_path(&dir);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("config dir");
+
+        // Built by removing the one key 1.8.0 did not write, rather than hand-typed, so
+        // this stays a test of the `default` and not of whichever unrelated field is
+        // added to `Settings` next.
+        let mut older = Registry {
+            total_freed_bytes: 99,
+            ..Default::default()
+        };
+        older.record_cache_clear(500);
+        let mut document: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&older).expect("serialized"))
+                .expect("re-parsed");
+        assert!(
+            document
+                .as_object_mut()
+                .expect("an object")
+                .remove("total_cache_freed_bytes")
+                .is_some(),
+            "the field this test is about must be in the document to begin with"
+        );
+        std::fs::write(&path, document.to_string()).expect("wrote an older registry");
+
+        let registry = Registry::load_from(&path).expect("an older registry still parses");
+        assert_eq!(registry.total_cache_freed_bytes, 0);
+        assert_eq!(registry.total_freed_bytes, 99);
     }
 
     #[test]

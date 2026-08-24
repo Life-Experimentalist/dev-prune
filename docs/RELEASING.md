@@ -416,7 +416,7 @@ placeholder is only worth it if you intend to publish something real under it.
 
 ---
 
-## 🏷️ Cutting a release
+## 🏷 Cutting a release
 
 ```bash
 cargo fmt --all -- --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all
@@ -454,7 +454,7 @@ finishes what the first attempt started rather than dying on a conflict.
 
 ---
 
-## ⚙️ What the workflow does
+## ⚙ What the workflow does
 
 ```mermaid
 flowchart TD
@@ -600,7 +600,7 @@ sh scripts/changelog-section.sh 1.1.0
 
 ---
 
-## 🏛️ Registry reference: who reviews what
+## 🏛 Registry reference: who reviews what
 
 A common assumption is that publishing to a package registry involves review. For the
 three registries used here, it does not.

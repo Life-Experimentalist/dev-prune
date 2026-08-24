@@ -1242,6 +1242,10 @@ pub fn run_clear(
     }
 
     let outcomes: Vec<ClearOutcome> = reports.iter().map(clear_one).collect();
+    // Before either output path, so both credit it. Everything above this line has
+    // already returned — a dry run never reaches here, and neither does a
+    // declined confirmation.
+    record_cache_clear(outcomes.iter().map(ClearOutcome::freed).sum());
 
     if json_output {
         json::emit(&json::caches_clear_document(&outcomes, &kept))?;
@@ -1408,6 +1412,22 @@ fn print_clear_plan(reports: &[CacheReport], dry_run: bool) {
          The cost is time: the next install, and the next `devp restore`, in every \
          project on this machine.",
     );
+}
+
+/// Add what was just emptied to the machine's running total, for `devp stats`.
+///
+/// Best-effort, and silent when it fails. The space is already back whether or not the
+/// note about it lands, and a registry that cannot be written — a read-only
+/// home directory, a disk that just filled — must not turn a successful
+/// clear into a failed command.
+fn record_cache_clear(bytes: u64) {
+    if bytes == 0 {
+        return;
+    }
+    if let Ok(mut registry) = crate::config::Registry::load() {
+        registry.record_cache_clear(bytes);
+        let _ = registry.save();
+    }
 }
 
 /// What actually went.

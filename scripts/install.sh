@@ -534,7 +534,7 @@ json_escape() {
 
 write_receipt() {
     _receipt="$BIN_DIR/install.json"
-    {
+    if {
         echo '{'
         echo '  "schema": 1,'
         echo "  \"version\": \"$(json_escape "$VERSION")\","
@@ -545,11 +545,12 @@ write_receipt() {
         echo '  "alias": true,'
         echo "  \"path_entry\": $PATH_ENTRY"
         echo '}'
-    } > "$_receipt.new" 2>/dev/null && mv -f "$_receipt.new" "$_receipt" 2>/dev/null || {
-        rm -f "$_receipt.new" 2>/dev/null || true
-        echo "[!] Could not write $_receipt. Harmless: it is a note about this install,"
-        echo "    not a setting, and nothing reads it to decide anything."
-    }
+    } > "$_receipt.new" 2>/dev/null && mv -f "$_receipt.new" "$_receipt" 2>/dev/null; then
+        return 0
+    fi
+    rm -f "$_receipt.new" 2>/dev/null || true
+    echo "[!] Could not write $_receipt. Harmless: it is a note about this install,"
+    echo "    not a setting, and nothing reads it to decide anything."
 }
 
 RC_TOUCHED=0

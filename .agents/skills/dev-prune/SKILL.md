@@ -98,7 +98,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "how much space can I get back?" | `devp run --dry-run` |
 | "show me my repos" | `devp status` (interactive; prints a plain table when not a TTY). In the dashboard: `s` sorts, `f` filters, `/` searches — display only, the totals always cover every registered repository |
 | "just the worst offenders" / "top 10 biggest" | `devp status --top 10` — trims the list, never the totals |
-| "how much has this saved me?" / "what did it clean last week?" | `devp stats` — lifetime total, prune passes, the last pass, and the repositories that gave back the most |
+| "how much has this saved me?" / "what did it clean last week?" | `devp stats` — lifetime total from pruning, a separate lifetime total from `devp caches clear`, prune passes, the last pass, and the repositories that gave back the most |
 | "add tab completion" | `devp completions <bash\|zsh\|fish\|powershell\|elvish>` — prints the script to stdout; the user redirects it |
 | "clean up" / "free space" | `devp run --dry-run`, then `devp run -y` |
 | "clean this project" | `devp run . -y` |
@@ -183,6 +183,7 @@ dimmed stderr note — piped output, the way you consume it, never triggers this
 devp status --json          # what exists, what is reclaimable, are the integrations up
 devp status --top 10 --json # the same, trimmed to the ten biggest — totals still cover all
 devp stats --json           # what has already been reclaimed, and by which repositories
+                            # .lifetime.cache_bytes_freed is `caches clear`, counted apart
 devp run --dry-run --json   # what a pass would do, with exact byte counts
 devp run -y --json          # do it
 devp caches --json          # every package-manager cache, sized, largest first

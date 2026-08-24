@@ -163,7 +163,9 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   packages its lockfile never recorded (`npm install --no-save`, a bare `pip install`
   into a pinned venv, an ad-hoc `uv pip install`), with the one command that records
   them — a pure read, and the same comparison a prune refuses on
-- `devp stats [--json]` — what has already been reclaimed: lifetime total, prune passes,
+- `devp stats [--json]` — what has already been reclaimed: lifetime total from pruning,
+  a separate lifetime total from `devp caches clear` (never added to it: one costs a
+  reinstall in one repository, the other a download in every project), prune passes,
   the most recent pass and how to undo it, and the repositories that gave back the most.
   Per-repository figures and the pass history are recorded from 1.1.0 onward
 - `devp completions <bash|zsh|fish|powershell|elvish>` — print a shell completion script

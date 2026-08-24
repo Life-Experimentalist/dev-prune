@@ -305,6 +305,8 @@ pub fn status_document(
 /// inside `repositories` are only recorded from 1.1.0 onward, so on an upgraded machine
 /// they start near zero while `lifetime` does not — `history_starts_at` names the version
 /// that changed, so a consumer can say so rather than reporting a regression.
+/// `lifetime.cache_bytes_freed` is the third vintage: 1.9.0 onward, and zero on every
+/// machine that has not emptied a cache since upgrading.
 pub fn stats_document(registry: &Registry) -> Value {
     let mut repos: Vec<(&std::path::PathBuf, &crate::config::RepoEntry)> =
         registry.repositories.iter().collect();
@@ -321,6 +323,10 @@ pub fn stats_document(registry: &Registry) -> Value {
         "history_starts_at": constants::HISTORY_STARTS_AT,
         "lifetime": {
             "bytes_freed": registry.total_freed_bytes,
+            // Its own key, never added to `bytes_freed`. Both are bytes this tool gave
+            // back, but a consumer asking "how much did pruning save me" and one asking
+            // "how much will I re-download" want different halves of the sum.
+            "cache_bytes_freed": registry.total_cache_freed_bytes,
             // Same name and same number as `totals.prune_passes` in the status document.
             // One per pass that deleted something, wherever it was started from.
             "prune_passes": registry.total_pruned_count,
@@ -938,6 +944,20 @@ mod tests {
         assert_eq!(doc["summary"]["total_bytes"], 0);
         assert_eq!(doc["caches"].as_array().unwrap().len(), 0);
         assert_eq!(doc["containers"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn cache_clears_are_reported_beside_the_prune_total_not_inside_it() {
+        let mut registry = crate::config::Registry {
+            total_freed_bytes: 12_000_000_000,
+            ..Default::default()
+        };
+        registry.record_cache_clear(6_000_000_000);
+
+        let doc = stats_document(&registry);
+
+        assert_eq!(doc["lifetime"]["bytes_freed"], 12_000_000_000u64);
+        assert_eq!(doc["lifetime"]["cache_bytes_freed"], 6_000_000_000u64);
     }
 
     #[test]
