@@ -856,6 +856,40 @@ pub fn run_command_with_timeout(
     }
 }
 
+/// A command's outcome and both of its streams, for a caller that needs the failure
+/// text rather than an error built from it.
+pub struct CapturedCommand {
+    /// Whether it exited zero.
+    pub ok: bool,
+    /// Everything it wrote to stdout.
+    pub stdout: String,
+    /// Everything it wrote to stderr.
+    pub stderr: String,
+}
+
+/// Run a command and hand back what it printed, whether or not it worked.
+///
+/// `devp caches containers` needs the difference between "docker is not installed" and
+/// "docker is installed and its daemon is not running", and the second only exists in
+/// what the failed command wrote to stderr. Every other caller wants
+/// [`capture_command_with_timeout`], which turns a non-zero exit into an error.
+///
+/// `Err` here is narrower than it looks: the process could not be spawned at all, or it
+/// outlived `timeout`. A command that ran and failed is `Ok` with `ok: false`.
+pub fn capture_allowing_failure(
+    program: &str,
+    args: &[&str],
+    cwd: &Path,
+    timeout: std::time::Duration,
+) -> Result<CapturedCommand> {
+    let out = spawn_capture(program, args, cwd, timeout)?;
+    Ok(CapturedCommand {
+        ok: out.status.success(),
+        stdout: out.stdout,
+        stderr: out.stderr,
+    })
+}
+
 /// Run a command and hand back what it printed on stdout, bounded by `timeout`.
 ///
 /// For commands that answer a question instead of doing work. A non-zero exit is an

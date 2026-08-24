@@ -56,31 +56,16 @@ blocked on code, and nothing here blocks a release: every one of these channels 
 
 ## Next
 
-Decided, understood, and not yet written. Both of these are the second half of the
-install work that landed in 1.8.0, which was split deliberately: the guarantees first,
-the convenience after.
+Decided, understood, and not yet written. Nothing is in it.
 
-- **An install receipt beside the managed binary.** Today the two install scripts and the
-  binary each work out the same facts independently — which channel owns this copy, what
-  the last install actually did, whether `devp` and the `PATH` entry were written by us
-  or were already there. Three derivations of one truth is how they drift. The decided
-  shape is a small JSON file next to the managed binary, at `<bindir>/install.json`,
-  written by whichever of them performed the install and read by all of them: the script
-  bootstraps, and the binary decides. It is not a new source of truth about the *machine*
-  — `Channel::detect()` stays the classifier, because a receipt cannot describe a copy
-  that arrived through `cargo install` — it is a record of what this project's own
-  installer did, in the one place that survives the shell it ran in.
-- **The interactive half of the install flow.** 1.8.0 made a re-run of the one-liner do
-  only what needs doing, made both scripts report a copy they did not install, and gave
-  `devp install --channel` the job of moving between managers. What it deliberately did
-  not do is *ask*. The remaining work is offering the choice — "there is a cargo copy at
-  this path, move it here?" — instead of printing the command and leaving. It was held
-  back because prompting from inside `curl … | sh` is genuinely hazardous: the script
-  *is* stdin, so a naive `read` consumes the rest of the script rather than the user's
-  answer, and getting that wrong turns the safest command on the page into a truncated
-  one. It needs `/dev/tty` on POSIX, the PowerShell equivalent, and a non-interactive
-  path that is still correct when there is no terminal at all — which is most of CI.
-  Never delete the other copy, whatever the answer: offer the command.
+The two items that stood here through 1.8.0 — an install receipt beside the managed
+binary, and the interactive half of the install flow — were the second half of the
+install work 1.8.0 split deliberately, the guarantees first and the convenience after.
+Both shipped in 1.9.0. Nothing has moved up to replace them, and an empty queue is not a
+promise that it stays empty: this is where a direction lands once it is settled, and the
+groups below are where directions come from. [**On request**](#on-request) is waiting on
+one person to ask by name; [**Waiting on a shape**](#waiting-on-a-shape) is waiting on a
+design that is right.
 
 ## Standing orders
 
@@ -90,7 +75,7 @@ written down, and the answer to "will you add X" is yes, here is the recipe.
 - **More adapters.** The trait, registration and test recipe are in
   [`ADDING_ADAPTERS.md`](ADDING_ADAPTERS.md), and the opt-in mechanism (`opt_in()`,
   `enable_*` settings, `build_idle_days`) already exists for anything whose deletion
-  costs a recompile rather than a download. Twenty-three ship as of 1.8.0, and the obvious
+  costs a recompile rather than a download. Twenty-three ship as of 1.9.0, and the obvious
   ecosystems are covered — what is left is the awkward one. **Nix**: `result` symlinks
   are already refused for being symlinks, and a real adapter would have to reason about
   the store, which is a different kind of problem from "a lockfile says this comes back".
@@ -117,11 +102,6 @@ merely thought about.
 - **Man page packaging.** `devp man --dir` generates the pages; installing them pre-placed
   is a per-channel packaging question (deb, rpm, a Homebrew formula) rather than a CLI
   one, so it arrives with those channels or not at all.
-- **A read-only Docker report.** Container images and volumes are real disk usage that a
-  developer machine accumulates, and dev-prune could *name* what is there. It will never
-  delete any of it — see [Because it is a different tool's
-  job](#because-it-is-a-different-tools-job) — so the most this can ever be is another
-  section of `devp caches`, printing what to run yourself.
 
 ## Waiting on a shape
 
@@ -241,8 +221,10 @@ because a command whose guarantee holds for some of its arguments has no guarant
 - **Deleting Docker images, volumes or build cache.** Nothing about them is
   lockfile-recoverable. An image layer may be irreproducible the moment an upstream tag
   moves, and a volume is data, not a cache. `docker system prune` exists, is well
-  understood, and its consequences are the user's to accept. Reporting what is there is a
-  different question and is [on request](#on-request).
+  understood, and its consequences are the user's to accept. Reporting what is there was
+  always a different question, and it shipped in 1.9.0: `devp caches docker` sizes it,
+  says what the engine calls reclaimable, and prints those commands for you to run. There
+  is no flag that makes dev-prune run one, and there will not be.
 - **Growing into a general "developer storage manager"** — Xcode DerivedData, simulator
   runtimes, Android SDK images, browser and IDE caches, the Downloads folder. The review
   framed it as the obvious next market. The problem is that dev-prune's whole claim is

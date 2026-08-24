@@ -252,6 +252,31 @@ EXAMPLES:
 
 Run interactively with a terminal, `--json` also copies the document to the clipboard.";
 
+pub const CACHES_DOCKER_LONG: &str = "\
+What the engine is holding, in its own words: images, containers, local volumes and build cache, each with a count, a size, and how much of that size it believes it could give back. Then the commands that would give it back, narrowest first.
+
+Read-only, permanently. dev-prune deletes only what a lockfile proves it can rebuild, and nothing here clears that bar: an image's registry tag can be retagged or deleted, the Dockerfile that built it may not be on this disk, and a named volume is the one thing on the machine that is not reproducible at all. So this prints the prune commands and never runs them, with or without `--yes`.
+
+The numbers come from the engine's own `system df` rather than from a directory walk. On Docker Desktop and Podman the store lives inside a VM disk image the host cannot see, and `~/.docker` is configuration rather than data — a size taken off the filesystem would be wrong by orders of magnitude, in the reassuring direction. Asking the engine is also the only way to learn what is *reclaimable*, which is the figure that decides anything: 40 GB of images with 38 GB dangling is a different situation from 40 GB with 2 GB dangling.
+
+An engine that is installed with its daemon stopped is reported as exactly that, in the engine's own words, rather than as an absence.";
+
+pub const CACHES_CONTAINERS_LONG: &str = "\
+The same read-only report as `devp caches docker`, for every container engine on this machine — docker, podman and nerdctl — or for the one you name.
+
+Local Kubernetes clusters are listed by name and deliberately not sized. kind, k3d and minikube run their nodes as containers, or as a VM disk belonging to an engine already in the table, so their disk is counted there. A figure beside the cluster name would be the same gigabytes twice. Delete one with its own tool — `kind delete cluster`, `minikube delete`, `k3d cluster delete` — which is what actually releases the space. The cluster list is read out of your kubeconfig with `kubectl config get-contexts`, which contacts nothing: a context pointing at a production cluster is filtered out by name here rather than by being dialled.";
+
+pub const CACHES_CONTAINERS_EXAMPLES: &str = "\
+EXAMPLES:
+  devp caches docker              Images, containers, volumes, build cache
+  devp caches podman              The same, for Podman
+  devp caches containers          Every engine installed, plus local clusters
+  devp caches containers nerdctl  Just that one
+  devp caches docker --json | jq '.summary.reclaimable_bytes'
+                                  Machine-readable
+
+Nothing here deletes anything. The prune commands are printed for you to run.";
+
 pub const CACHES_CLEAR_LONG: &str = "\
 Empty one manager's cache, or every one of them. What is about to go is listed and \
 sized first, and unless `--yes` answers for you, it asks.

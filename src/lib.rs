@@ -12,6 +12,7 @@ pub mod help;
 pub mod json;
 pub mod output;
 pub mod pathenv;
+pub mod receipt;
 pub mod scanner;
 pub mod setup;
 pub mod spawn;
@@ -496,6 +497,22 @@ pub enum CachesAction {
         #[arg(long)]
         unused: bool,
     },
+
+    /// What Docker is holding: images, containers, volumes and build cache (read-only).
+    #[command(long_about = help::CACHES_DOCKER_LONG, after_long_help = help::CACHES_CONTAINERS_EXAMPLES)]
+    Docker,
+
+    /// What Podman is holding: images, containers, volumes and build cache (read-only).
+    #[command(long_about = help::CACHES_DOCKER_LONG, after_long_help = help::CACHES_CONTAINERS_EXAMPLES)]
+    Podman,
+
+    /// The same report for every container engine found, or for the one you name.
+    #[command(long_about = help::CACHES_CONTAINERS_LONG, after_long_help = help::CACHES_CONTAINERS_EXAMPLES)]
+    Containers {
+        /// Which engine: docker, podman or nerdctl. Omit for every one installed.
+        #[arg(value_name = "ENGINE")]
+        engine: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -842,6 +859,11 @@ pub fn run_cli() {
                 unused,
             }) => {
                 commands::caches::run_clear(&target, over_cap, unused, cli.yes, cli.dry_run, json)
+            }
+            Some(CachesAction::Docker) => commands::containers::run(Some("docker"), json),
+            Some(CachesAction::Podman) => commands::containers::run(Some("podman"), json),
+            Some(CachesAction::Containers { engine }) => {
+                commands::containers::run(engine.as_deref(), json)
             }
             None => commands::caches::run(json),
         },

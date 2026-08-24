@@ -518,6 +518,14 @@ fn check_install_channel(f: &mut Findings) {
         ),
     };
     f.ok("Install channel", &detail);
+
+    // Only for the copy the receipt actually describes. Any other channel's binary would
+    // be shown a date belonging to a different file, which is worse than no date.
+    if channel == Channel::Installer
+        && let Some(receipt) = crate::receipt::load()
+    {
+        f.ok("Install receipt", &crate::receipt::summary(&receipt));
+    }
 }
 
 /// Find every *other* `dev-prune` on the machine and report the ones running a

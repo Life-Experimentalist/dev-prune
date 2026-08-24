@@ -414,15 +414,33 @@ pub fn run(json_output: bool) -> Result<()> {
     let deps = reg.as_ref().map(|r| dependents(r, !json_output));
     apply_dependents(&mut reports, deps.as_ref());
 
+    // Asked here rather than left to `devp caches containers`, because the mistake this
+    // report exists to prevent is someone clearing 6 GB of npm cache while a stopped
+    // Docker daemon holds 40 GB they were never told about. It costs one `system df` per
+    // installed engine and nothing at all on a machine with none.
+    let engines = container_summary(!json_output);
+
     if json_output {
         return json::emit(&json::caches_document(
             &reports,
             deps.as_ref().map(|d| d.repositories),
+            &engines,
         ));
     }
 
     print_report(&reports, deps.as_ref());
+    crate::commands::containers::print_summary(&engines);
     Ok(())
+}
+
+/// The container engines on this machine, behind the report's own spinner.
+fn container_summary(spinner: bool) -> Vec<crate::commands::containers::EngineReport> {
+    let pb = spinner.then(|| output::create_spinner("Asking the container engines..."));
+    let engines = crate::commands::containers::collect(None);
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
+    engines
 }
 
 /// The user's `cache_max_gb`, or an empty map when the registry cannot be read.
@@ -1094,6 +1112,18 @@ pub fn run_clear(
     json_output: bool,
 ) -> Result<()> {
     let all = target.eq_ignore_ascii_case("all");
+    // A container engine is a thing `devp caches` reports on, so its name is a plausible
+    // thing to type here. "not a manager dev-prune knows" would be both wrong and a dead
+    // end; the answer is that this tool does not delete container disk, and where to go
+    // to see it.
+    if !all && crate::commands::containers::is_engine(target) {
+        return Err(anyhow::Error::new(crate::UsageError(format!(
+            "dev-prune reports {target}'s disk use and never deletes it — an image has no \
+             lockfile to prove it can be rebuilt, and a volume cannot be rebuilt at all. \
+             `devp caches {target}` shows what it is holding and prints the prune commands \
+             for you to run."
+        ))));
+    }
     if !all
         && !PROBES
             .iter()

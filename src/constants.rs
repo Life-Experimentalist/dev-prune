@@ -356,6 +356,25 @@ pub const ENV_NO_AUTO_SETUP: &str = "DEV_PRUNE_NO_AUTO_SETUP";
 /// `devp config set update_check false`.
 pub const ENV_OFFLINE: &str = "DEV_PRUNE_OFFLINE";
 
+/// Environment variable that stops both install scripts from asking anything.
+///
+/// The scripts offer to migrate a copy another package manager owns, and `devp install
+/// --channel installer` re-runs the script that made the offer. Without this the offer
+/// would be made again by that inner run, to a user who has already answered it — the
+/// same copy is still on PATH until the uninstall at the end. It is also the switch for
+/// a provisioning script that wants the install and none of the conversation.
+///
+/// Read by `scripts/install.sh`, `scripts/install.ps1`, and set by
+/// `src/commands/install.rs` on the child it spawns.
+pub const ENV_NO_MIGRATE_PROMPT: &str = "DEV_PRUNE_NO_MIGRATE_PROMPT";
+
+/// The install receipt, written beside the managed binary by whichever installer put it
+/// there. See [`crate::receipt`].
+///
+/// Also written by `scripts/install.sh` and `scripts/install.ps1`, by hand, in their own
+/// languages — which is why the field names have a test of their own.
+pub const INSTALL_RECEIPT_FILE: &str = "install.json";
+
 /// Set to any value to keep every full-screen view from opening, so the line-by-line
 /// fallback runs instead.
 ///
@@ -398,6 +417,15 @@ pub const PNPM_VOLUME_STORE_DIR: &str = ".pnpm-store";
 /// has not answered in five seconds is a broken installation, and the report is better
 /// off falling back to the conventional path than waiting ten minutes for it.
 pub const CACHE_QUERY_TIMEOUT_SECS: u64 = 5;
+
+/// Timeout for asking a container engine how much disk it is using.
+///
+/// Longer than [`CACHE_QUERY_TIMEOUT_SECS`], because `docker system df` is not a config
+/// lookup: the daemon walks every image layer, container and build-cache record to
+/// answer it, and on a store with hundreds of images that is genuinely a few seconds. A
+/// daemon that is not running refuses in milliseconds either way, which is the case this
+/// ceiling is not for.
+pub const CONTAINER_QUERY_TIMEOUT_SECS: u64 = 20;
 
 /// Ceiling for one `devp caches clear` step.
 ///

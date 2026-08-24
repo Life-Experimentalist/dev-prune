@@ -334,6 +334,13 @@ fn remove_binaries(
         output::print_info("Removed the dev-prune binaries.");
     }
 
+    // The install receipt describes the binary in this directory and nothing else, so it
+    // goes when that binary goes. Left behind it would outlive its subject, and it would
+    // also keep the directory below from ever being empty.
+    if let Some(bin_dir) = &managed_bin_dir {
+        let _ = fs::remove_file(bin_dir.join(crate::constants::INSTALL_RECEIPT_FILE));
+    }
+
     // The managed `bin` directory should not outlive its contents. On a deep uninstall
     // the whole config directory goes anyway; on a light one, remove it once empty, or
     // let the helper do it after the pending deletions.

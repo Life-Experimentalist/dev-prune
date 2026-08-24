@@ -7,6 +7,7 @@
 pub mod caches;
 pub mod completions;
 pub mod config;
+pub mod containers;
 pub mod daemon;
 pub mod doctor;
 pub mod hook;

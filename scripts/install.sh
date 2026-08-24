@@ -52,6 +52,10 @@ The equivalent environment variables work with the plain one-liner:
   DEV_PRUNE_VERSION  DEV_PRUNE_BIN_DIR  DEV_PRUNE_NO_PATH=1  DEV_PRUNE_NO_AUTO_SETUP=1
   DEV_PRUNE_FORCE=1
 
+DEV_PRUNE_NO_MIGRATE_PROMPT=1 has no flag. It suppresses the one question this script
+asks -- whether to move a copy another package manager owns -- and prints the command
+instead. CI, and having no terminal at all, suppress it already.
+
 Re-running this is safe. An install that is already here, current and on PATH is left
 alone and exits 0; an older one is replaced in place; a newer one is not downgraded.
 EOF
@@ -90,7 +94,7 @@ REPO="Life-Experimentalist/dev-prune"
 # /releases/latest carries the tag, so one HEAD request answers without parsing JSON.
 # FALLBACK_VERSION exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-FALLBACK_VERSION="1.8.0"
+FALLBACK_VERSION="1.9.0"
 if [ -z "$VERSION" ]; then
     LATEST_URL="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
     case "$LATEST_URL" in
@@ -184,6 +188,45 @@ if command -v dev-prune >/dev/null 2>&1; then
     fi
 fi
 
+# Whether there is a person at the other end who can answer a question.
+#
+# `curl ... | sh` means stdin *is* this script: a bare `read` would swallow the rest of
+# the file and run a truncated install, which is the reason this script asked nothing at
+# all until now. /dev/tty is the terminal itself and the pipe does not touch it, so every
+# prompt here reads from it by name. Its absence is the signal, not an obstacle: a
+# container build, a CI job and a provisioning run all have no terminal, and every one of
+# them wants the install and none of the conversation.
+a_person_is_present() {
+    if [ "${DEV_PRUNE_NO_MIGRATE_PROMPT:-}" = "1" ]; then
+        return 1
+    fi
+    # Set by every CI provider worth naming, and by nothing with a keyboard attached.
+    if [ -n "${CI:-}" ]; then
+        return 1
+    fi
+    # `[ -r /dev/tty ]` is not enough. In a container without a terminal the device node
+    # exists and is readable by mode, and opening it fails with ENXIO. Opening it is the
+    # only test that answers the question actually being asked. In a subshell so the
+    # descriptor closes with it.
+    if ! (exec 3<>/dev/tty) 2>/dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+# One yes/no question on the terminal. Default no, and every non-answer is a no: this is
+# only ever asked before running another package manager, and a stray newline pasted
+# after the one-liner must never be the thing that authorises that.
+ask_yes_no() {
+    printf '%s [y/N]: ' "$1" > /dev/tty
+    _answer=""
+    read -r _answer < /dev/tty || _answer=""
+    case "$_answer" in
+        y | Y | yes | Yes | YES) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Printed from three endings now, so it lives in one place.
 report_prior_exe() {
     if [ -n "$PRIOR_EXE" ]; then
@@ -196,10 +239,33 @@ report_prior_exe() {
         else
             echo "    This directory comes first on PATH, so 'devp' is the copy in $BIN_DIR."
         fi
-        echo "    To move the old one over properly — install here, uninstall there through"
-        echo "    the manager that put it there — run:"
-        echo "        devp install --channel installer"
-        echo "    'devp doctor' lists every copy on the machine at any time."
+        echo "    Moving it over means installing here and uninstalling there, through the"
+        echo "    manager that put it there. 'devp install --channel installer' does both."
+        if a_person_is_present && ask_yes_no "    Do that now?"; then
+            echo ""
+            # The *old* binary, not the one just installed. It is the copy that knows
+            # which manager owns it, and `--channel installer` is how it hands over; run
+            # from the new copy the same command would only report that it is already an
+            # installer copy with nothing to move.
+            #
+            # Nothing is deleted by this script either way. The uninstall is the other
+            # manager's own command, run by the binary that manager installed.
+            if "$PRIOR_EXE" install --channel installer --yes; then
+                echo ""
+                echo "[OK] Moved. 'devp doctor' will confirm only one copy is left."
+            else
+                echo ""
+                echo "[!] That did not finish, and nothing was deleted — the copy at"
+                echo "        $PRIOR_EXE"
+                echo "    is exactly where it was. A copy older than 1.8.0 has no 'devp"
+                echo "    install' subcommand at all; upgrade it through its own manager"
+                echo "    first, or just remove it. 'devp doctor' shows both copies."
+            fi
+        else
+            echo "    Run it whenever you like:"
+            echo "        devp install --channel installer"
+            echo "    'devp doctor' lists every copy on the machine at any time."
+        fi
     fi
 }
 
@@ -444,7 +510,53 @@ if [ "$OS" = "windows" ] || ! ln -s "$EXE_PATH" "$ALIAS_PATH" 2>/dev/null; then
 fi
 echo "[OK] Installed: $ALIAS_PATH"
 
+# What this run actually did, written down beside the binary it installed.
+#
+# This script, install.ps1 and the binary each used to derive the same facts on their
+# own, and three derivations of one truth is how they drift. `devp doctor` and `devp
+# install` read this file; it outlives the shell that ran the one-liner, which no
+# variable here does. It is a record, never a setting: `Channel::detect()` is still what
+# classifies a copy, because no receipt can describe one that arrived through
+# `cargo install`, and every reader treats a missing file as "no installer of ours wrote
+# one" rather than as an error.
+#
+# Written by hand rather than by the binary it just installed, because it has to be true
+# even when `--no-auto-setup` means that binary is never run. `src/receipt.rs` has a test
+# asserting these exact field names for that reason.
+#
+# Backslashes and double quotes are the only two characters a path can hold that would
+# stop this file being JSON, and a --bin-dir given in Windows form holds the first one
+# by definition.
+# shellcheck disable=SC2001  # the replacement is a regex; ${var//x/y} is not POSIX sh.
+json_escape() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+write_receipt() {
+    _receipt="$BIN_DIR/install.json"
+    {
+        echo '{'
+        echo '  "schema": 1,'
+        echo "  \"version\": \"$(json_escape "$VERSION")\","
+        echo '  "channel": "installer",'
+        echo '  "installed_by": "install.sh",'
+        echo "  \"installed_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+        echo "  \"exe\": \"$(json_escape "$EXE_PATH")\","
+        echo '  "alias": true,'
+        echo "  \"path_entry\": $PATH_ENTRY"
+        echo '}'
+    } > "$_receipt.new" 2>/dev/null && mv -f "$_receipt.new" "$_receipt" 2>/dev/null || {
+        rm -f "$_receipt.new" 2>/dev/null || true
+        echo "[!] Could not write $_receipt. Harmless: it is a note about this install,"
+        echo "    not a setting, and nothing reads it to decide anything."
+    }
+}
+
 RC_TOUCHED=0
+# Whether *this script* is the reason the directory is on PATH, as opposed to finding it
+# already there or being told to leave PATH alone. Recorded in the receipt, and the only
+# one of its fields nothing else on the machine can work out afterwards.
+PATH_ENTRY=false
 
 if [ "$NO_PATH" != "1" ]; then
     # "Already configured" means the rc file exports *this* BIN_DIR, not merely that
@@ -456,6 +568,7 @@ if [ "$NO_PATH" != "1" ]; then
         if [ -f "$file" ]; then
             if grep -qF "$RC_LINE" "$file"; then
                 RC_TOUCHED=1
+                PATH_ENTRY=true
             else
                 echo "-> Adding dev-prune to PATH in $file"
                 # `$PATH` must reach the rc file unexpanded: expanding it here would
@@ -463,6 +576,7 @@ if [ "$NO_PATH" != "1" ]; then
                 # shellcheck disable=SC2016
                 printf '\n# dev-prune\nexport PATH="%s:$PATH"\n' "$BIN_DIR" >> "$file"
                 RC_TOUCHED=1
+                PATH_ENTRY=true
             fi
         fi
     done
@@ -475,6 +589,7 @@ if [ "$NO_PATH" != "1" ]; then
             printf "\n# dev-prune\nfish_add_path '%s'\n" "$BIN_DIR" >> "$FISH_CFG"
         fi
         RC_TOUCHED=1
+        PATH_ENTRY=true
     fi
 
     # A fresh container, or a shell whose rc file simply is not one of the five above.
@@ -511,7 +626,7 @@ if [ "$NO_PATH" != "1" ]; then
         # script text, and the inner double quotes are backtick-escaped for the same
         # reason.
         # shellcheck disable=SC2016
-        DEV_PRUNE_WIN_BIN_DIR="$WIN_BIN_DIR" powershell.exe -NoProfile -NonInteractive -Command '
+        if DEV_PRUNE_WIN_BIN_DIR="$WIN_BIN_DIR" powershell.exe -NoProfile -NonInteractive -Command '
             $dir = $env:DEV_PRUNE_WIN_BIN_DIR
             $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
             $userPath = ""
@@ -541,9 +656,15 @@ if [ "$NO_PATH" != "1" ]; then
                     [void]$api::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$sent)
                 } catch {}
             }
-        ' || echo "[!] Could not update the Windows User PATH; add $WIN_BIN_DIR by hand."
+        '; then
+            PATH_ENTRY=true
+        else
+            echo "[!] Could not update the Windows User PATH; add $WIN_BIN_DIR by hand."
+        fi
     fi
 fi
+
+write_receipt
 
 # Make both names work for the rest of *this script* — the `devp setup` call below and
 # anything the user chained onto the same `sh -c`.

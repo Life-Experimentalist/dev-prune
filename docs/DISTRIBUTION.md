@@ -30,13 +30,15 @@ curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
 - Adds that directory to `PATH` in whichever of `.zshrc`, `.bashrc` and `config.fish` exist, and prints the `export` line to paste when none do. `devp` is a second copy of the binary in the same directory, not a shell alias, so it works in every shell — including ones whose startup file was never touched.
 - Runs `dev-prune setup` as its last step, installing the integrations described in [Background Automation](BACKGROUND_AUTOMATION.md). `--no-auto-setup` installs the binary and nothing else, and `devp uninstall` reverses it either way.
 - Registers **no** repositories. Which directories to track stays your decision: run `dev-prune init <dir>` yourself.
+- Asks exactly one question, and only when there is somebody to answer it: if another manager's copy is on `PATH`, whether to collapse the two by running `devp install --channel installer` from that older binary. Anything but `y` prints the command instead. `DEV_PRUNE_NO_MIGRATE_PROMPT=1`, a set `CI`, or no terminal at all skips the question and prints the command. Nothing is deleted by the script either way.
+- Writes `install.json` beside the binary as its last step — version, which script, when, and whether `devp` and the `PATH` entry came from it. `devp doctor` and `devp install` report it; nothing decides anything from it.
 - `curl … | sh` runs in a child process, so it cannot change the PATH of the shell you typed it in. Open a new terminal, or run the `export` line the installer prints. (The PowerShell one-liner *can*, and does — see below.)
 - Safe to re-run, and quiet about it. An install already at this version, with `devp` beside it and on `PATH`, is left exactly as it is and exits `0` without downloading anything; an older one is updated in place; a newer one is not downgraded unless you name the version with `--version`. A same-version install missing `devp` or its `PATH` entry is repaired. An install pinned with `devp config set version_lock true` is left alone whatever its version. `--force` downloads and writes it again regardless, including over a pin.
 - Options: `--version <tag>`, `--bin-dir <dir>`, `--no-path`, `--no-auto-setup`, `--force`, `--help`. Piping into a shell needs `-s --` to reach them:
   ```bash
   curl -fsSL https://devprune.vkrishna04.me/install.sh | sh -s -- --no-auto-setup
   ```
-  The environment variables `DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1`, `DEV_PRUNE_NO_AUTO_SETUP=1` and `DEV_PRUNE_FORCE=1` do the same and work with the plain one-liner. An option wins over its variable.
+  The environment variables `DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1`, `DEV_PRUNE_NO_AUTO_SETUP=1` and `DEV_PRUNE_FORCE=1` do the same and work with the plain one-liner. An option wins over its variable. `DEV_PRUNE_NO_MIGRATE_PROMPT=1` has no option of its own and suppresses the question above.
 
 ### 2. Windows One-Liner PowerShell Installer — **LIVE**
 ```powershell
@@ -48,12 +50,14 @@ iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
 - Replaces a running executable safely: the old image is renamed aside before the new one is copied in, which is the only thing Windows permits while a prune pass happens to be mid-run.
 - Runs `dev-prune setup` as its last step, installing the integrations described in [Background Automation](BACKGROUND_AUTOMATION.md). `-NoAutoSetup` installs the binary and nothing else, and `devp uninstall` reverses it either way.
 - Registers **no** repositories. Run `dev-prune init <dir>` yourself.
+- Asks exactly one question, and only when there is somebody to answer it: if another manager's copy is on `PATH`, whether to collapse the two by running `devp install --channel installer` from that older binary. Anything but `y` prints the command instead. `DEV_PRUNE_NO_MIGRATE_PROMPT=1`, a set `CI`, or a host with no desktop behind it skips the question and prints the command. Nothing is deleted by the script either way.
+- Writes `install.json` beside the binary as its last step — version, which script, when, and whether `devp.exe` and the `PATH` entry came from it. `devp doctor` and `devp install` report it; nothing decides anything from it.
 - Safe to re-run, and quiet about it. An install already at this version, with `devp.exe` beside it and on the User `PATH`, is left exactly as it is and returns without downloading anything; an older one is updated in place; a newer one is not downgraded unless you name the version with `-Version`. A same-version install missing `devp.exe` or its `PATH` entry is repaired. An install pinned with `devp config set version_lock true` is left alone whatever its version. `-Force` downloads and writes it again regardless, including over a pin.
 - Parameters: `-Version <tag>`, `-BinDir <dir>`, `-NoPath`, `-NoAutoSetup`, `-Force`, `-Help`. `iwr … | iex` runs the script as a bare expression, which has nowhere to put arguments, so passing one means running it as a script block:
   ```powershell
   & ([scriptblock]::Create((iwr -useb https://devprune.vkrishna04.me/install.ps1))) -NoAutoSetup
   ```
-  The environment variables `DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1`, `DEV_PRUNE_NO_AUTO_SETUP=1` and `DEV_PRUNE_FORCE=1` do the same and work with the plain one-liner. A parameter wins over its variable.
+  The environment variables `DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1`, `DEV_PRUNE_NO_AUTO_SETUP=1` and `DEV_PRUNE_FORCE=1` do the same and work with the plain one-liner. A parameter wins over its variable. `DEV_PRUNE_NO_MIGRATE_PROMPT=1` has no parameter of its own and suppresses the question above.
 - From `cmd.exe`, which has no `Invoke-WebRequest`, the same script runs through PowerShell:
   ```bat
   powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"
@@ -65,13 +69,13 @@ Seven single-binary archives are built automatically for every tagged release an
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.8.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.8.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.8.0-windows-x86.zip` | `i686-pc-windows-msvc` |
-| `dev-prune-v1.8.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.8.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.8.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.8.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.9.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.9.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.9.0-windows-x86.zip` | `i686-pc-windows-msvc` |
+| `dev-prune-v1.9.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.9.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.9.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.9.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
@@ -84,7 +88,7 @@ The install scripts construct these filenames by hand and refuse to install with
 Each archive is additionally signed with GitHub build provenance, which ties it to this repository, the release workflow and the commit it was built from — something a checksum cannot do, because whoever produces an archive also produces its checksum. Verify with no key and no account:
 
 ```bash
-gh attestation verify dev-prune-v1.8.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+gh attestation verify dev-prune-v1.9.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
 ```
 
 ### 4. npm (`npm install -g` / `npx`)
@@ -203,19 +207,29 @@ there, which is how an installation becomes unrepairable rather than merely wron
 What it does do is put its directory **first** on your PATH — prepended in the shell rc
 file on macOS and Linux, prepended in the User PATH on Windows — so `devp` afterwards is
 the copy it just installed, in this terminal and in every later one. Then it names the
-other copy and stops:
+other copy and offers to collapse the two:
 
 ```text
-[!] Another dev-prune was already on your PATH:
+[!] Another dev-prune is on your PATH as well:
         /home/you/.cargo/bin/dev-prune
     A different package manager owns that copy, so this script left it alone.
-    This install comes first on PATH, so 'devp' is the copy installed just now.
+    This directory comes first on PATH, so 'devp' is the copy in /home/you/.config/dev-prune/bin.
+    Moving it over means installing here and uninstalling there, through the
+    manager that put it there. 'devp install --channel installer' does both.
+    Do that now? [y/N]:
 ```
 
+Answering `y` runs `devp install --channel installer --yes` from the *old* binary, which
+is the copy that knows which manager owns it. Anything else prints the command and moves
+on, and where there is nobody to ask — `DEV_PRUNE_NO_MIGRATE_PROMPT=1`, a set `CI`, no
+terminal attached — the question is skipped and the command printed. The script itself
+deletes nothing in any of those cases.
+
 So the answer to “does the one-liner work if I installed some other way first?” is yes,
-on every channel, with no uninstall step first. What you are left with is a second,
-older copy that nothing upgrades. That is untidy rather than broken — but it is the copy
-that starts running the day the new one is removed, so it is worth finishing the job.
+on every channel, with no uninstall step first. Say yes to the question and the two
+collapse there and then; say nothing and you are left with a second, older copy that
+nothing upgrades. That is untidy rather than broken — but it is the copy that starts
+running the day the new one is removed, so it is worth finishing the job.
 
 ### Moving properly: `devp install --channel`
 

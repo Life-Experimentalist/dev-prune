@@ -6,7 +6,7 @@
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.8.0. Written by VKrishna04.
+Version 1.9.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
@@ -44,7 +44,10 @@ off until you switch them on. It is not a generic disk cleaner: directories outs
 repositories are never touched. Machine-wide package caches are *reported* by
 `devp caches` (with the vendor's own clear command) and never deleted by anything that
 runs on its own, because a shared cache cannot be proven recoverable by any one lockfile
-and it is what makes restore fast. `devp caches clear <manager>` empties one when you
+and it is what makes restore fast. Container engines get the same treatment one step
+further: `devp caches docker` reports what Docker, Podman or nerdctl are holding and
+prints the prune commands, and nothing in dev-prune will ever run one.
+`devp caches clear <manager>` empties one when you
 type it, after showing what goes and asking.
 
 ## Install
@@ -112,6 +115,19 @@ or `& ([scriptblock]::Create((iwr -useb …))) -NoAutoSetup`; the equivalent env
 variables (`DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1`,
 `DEV_PRUNE_NO_AUTO_SETUP=1`, `DEV_PRUNE_FORCE=1`) work with the plain one-liner, and a
 flag wins over its variable.
+
+Each installer asks exactly one question, and only when another package manager's copy is
+on PATH: whether to collapse the two by running `devp install --channel installer --yes`
+from that older binary, which is the copy that knows which manager owns it. Anything but
+`y` prints the command instead, and the question is skipped — the command still printed
+— with `DEV_PRUNE_NO_MIGRATE_PROMPT=1` set, with `CI` set, or with no terminal attached
+at all, which covers container builds and CI. Neither script ever deletes another
+manager's file. Each finishes by writing `install.json` beside the binary: schema,
+version, channel, which script wrote it, when, the executable path, and whether `devp` and
+the PATH entry came from it. `devp doctor` reports it as an **Install receipt** line and
+plain `devp install` prints the same summary. It is a record, never a setting: nothing
+reads it to decide anything, `Channel::detect()` still classifies a copy by where its file
+is, and a copy from any other channel simply has none.
 
 Re-running either one-liner is safe and does only what needs doing. An install already at
 the version being installed, with `devp` beside it and on PATH, is left untouched and
@@ -186,6 +202,33 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   root of every filesystem holding a registered repository, plus the current one, and
   each such row names its store in the command it prints: `pnpm store prune --store-dir
   <path>`
+- `devp caches docker` / `devp caches podman` / `devp caches containers [ENGINE]`
+  `[--json]` — what a container engine is holding: images, containers, local volumes and
+  build cache, each with a count, a size, and how much of that size the engine says it
+  could give back. Then the prune commands that would give it back, narrowest first, with
+  what each takes with it. **Read-only, permanently** — there is no flag and no `clear`
+  verb that makes dev-prune run one of them, and no scheduler or Git hook reaches this
+  code at all. That is the same rule as the rest of the tool rather than extra caution: an
+  image has no lockfile to prove it can be rebuilt, the Dockerfile that built it may not
+  be on this disk, and a named volume is the one thing on the machine that cannot be
+  rebuilt at all. `devp caches clear docker` is a usage error that says so. The figures
+  come from the engine's own `system df` rather than a directory walk, because on Docker
+  Desktop and Podman the store lives inside a VM disk image the host filesystem cannot
+  see — a size taken off the disk would be wrong by orders of magnitude, in the
+  reassuring direction — and because asking is the only way to learn what is
+  *reclaimable*, which is the figure that decides anything: 40 GB of images with 38 GB
+  dangling is a different situation from 40 GB with 2 GB dangling. An engine that is
+  installed with its daemon stopped is reported as exactly that, quoting the engine's own
+  first line, and contributes no figures — a blank, not a zero, and `--json` omits the
+  size keys rather than sending `0`. An engine that is not installed is absent rather than
+  listed as missing. Local Kubernetes clusters (kind, k3d, minikube) are listed by name
+  and deliberately not sized: they run their nodes as containers belonging to an engine
+  already in the table, so a figure beside the cluster name would be the same gigabytes
+  twice; the names are read out of your kubeconfig, which contacts nothing. `devp caches`
+  itself prints one summary line per engine under its table, outside its own total —
+  container disk is not a package manager cache and adding the two figures together is
+  always wrong. Exit 0 whether an engine answered, was stopped, or was not installed;
+  2 for an engine name it does not know
 - `devp caches clear <manager|all> [--over-cap] [--unused] [--dry-run] [--yes] [--json]` — empty one manager's
   cache, or every one of them, after listing and sizing what goes and asking. A
   convenience, never automation: only this command clears a cache, and only when you
@@ -208,7 +251,8 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   any cache could not be cleared, 2 for an unknown manager name or for `maven`
 - `devp trust [--json | --fix-ownership [--yes]]` — what dev-prune is allowed to do on this machine, on one
   screen. Two sections: the guarantees the code enforces on every machine (the seven
-  safety invariants, no telemetry, build outputs never deleted — none with a setting or
+  safety invariants, no telemetry, build outputs never deleted, container disk never
+  deleted — none with a setting or
   a flag behind it), and this machine read live (scheduler, Git hooks, registered
   repository count, idle window, managed binary path, and the three settings that widen
   anything: `require_confirmation=false`, `allow_manifest_rewrite`, and
@@ -253,7 +297,7 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   CONVENTIONS.md` in `.aider.conf.yml`, or `aider --read CONVENTIONS.md`, is what
   loads it, and the command prints that after writing
 - `devp update [--offline | --install]` — print the installed version, check GitHub for a newer release, and show the upgrade command. `--install` downloads the release binary for this platform from GitHub Releases, refuses it unless its SHA-256 matches the published sidecar, and writes it to every copy this installation runs: the managed binary under the config directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary. The package manager that delivered the first copy is deliberately not run — its version record goes stale and the single command that resyncs it is printed — and its own upgrade command is the fallback when no binary is published for this platform or the download fails. `auto_update`, on by default, does the verified-download half by itself at the end of a prune pass — never the package-manager half, which can prompt, and nothing at all on WinGet, Scoop and Homebrew, where the manager owns the upgrade; `devp config set auto_update false` stops it. An upgrade never interrupts the scheduler. `version_lock`, off by default, outranks all of it: with `devp config set version_lock true` this copy stays on the version it is — `auto_update` does not run however it is set, `--install` and `devp install --channel` refuse, and a re-run of the install one-liner leaves the binary alone. No flag bypasses it; `devp config set version_lock false` is the way back, and every path that stands down prints the pin rather than going quiet. `DEV_PRUNE_OFFLINE=1` in the environment keeps the process off the network entirely, regardless of any setting
-- `devp install [--channel <NAME>] [--dry-run]` — move this installation from one package manager to another. `devp update` upgrades the copy that is running, through whichever channel installed it; this changes *which* channel owns it. It installs through the manager named first and removes the old copy through the manager that put it there second, so a failed install leaves the working copy untouched. Removing the old copy through its own manager rather than deleting the file is the point: a manager whose record still says dev-prune is present will put the old binary back. Names: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`. With no `--channel` it reports which manager owns the running copy; `--dry-run` prints the numbered plan and runs none of it; `--yes` skips the confirmation. Nothing is migrated because nothing needs to be — settings, the registry and the undo history live in the config directory, which no package manager owns. Running the `install.sh`/`install.ps1` one-liner over an existing install from any other channel is a different thing and is safe: it never fails because of the older copy and never deletes it, it puts its own directory first on PATH (prepended to the rc file on macOS and Linux, prepended to the User PATH on Windows) so the copy it just wrote is the one that answers, and it prints the path of the other one with the `devp install --channel installer` line that would collapse the two properly
+- `devp install [--channel <NAME>] [--dry-run]` — move this installation from one package manager to another. `devp update` upgrades the copy that is running, through whichever channel installed it; this changes *which* channel owns it. It installs through the manager named first and removes the old copy through the manager that put it there second, so a failed install leaves the working copy untouched. Removing the old copy through its own manager rather than deleting the file is the point: a manager whose record still says dev-prune is present will put the old binary back. Names: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`. With no `--channel` it reports which manager owns the running copy; `--dry-run` prints the numbered plan and runs none of it; `--yes` skips the confirmation. Nothing is migrated because nothing needs to be — settings, the registry and the undo history live in the config directory, which no package manager owns. Running the `install.sh`/`install.ps1` one-liner over an existing install from any other channel is a different thing and is safe: it never fails because of the older copy and never deletes it, it puts its own directory first on PATH (prepended to the rc file on macOS and Linux, prepended to the User PATH on Windows) so the copy it just wrote is the one that answers, and it names the other one and asks whether to collapse the two, running `devp install --channel installer --yes` from that older copy if you answer `y` and printing the command otherwise
 - `devp man [command] [--dir <dir>] [--roff]` — the manual, generated from the same clap
   definitions `--help` uses. At a terminal, `devp man` prints the contents page: every
   command grouped by what it is for with one line each, the flags that go before the
@@ -333,6 +377,10 @@ with a `git clone` of possibly-untrusted code.
 - Never deletes a machine-wide cache on its own. `devp caches` reports them with each
   vendor's own clear command, and `devp caches clear` empties one only when you type it —
   no scheduler, Git hook or prune pass ever touches one.
+- Never deletes container disk. `devp caches docker`, `devp caches podman` and `devp
+  caches containers` report what each engine holds and print the prune commands; nothing
+  in dev-prune runs one, with or without `--yes`. `devp caches clear docker` is a usage
+  error that points back at the report.
 - Never empties Maven's local repository at all. `~/.m2/repository` holds artifacts
   `mvn install:install-file` put there that no remote can hand back, so dev-prune sizes
   it, prints the command, and leaves running it to you.

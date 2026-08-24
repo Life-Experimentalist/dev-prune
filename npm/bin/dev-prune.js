@@ -66,7 +66,18 @@ const fallbacks = [
 const binaryPath =
   bundledBinary() || fallbacks.find((c) => fs.existsSync(c)) || exeName;
 
-const child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
+let child;
+try {
+  child = spawn(binaryPath, process.argv.slice(2), { stdio: 'inherit' });
+} catch (err) {
+  // Windows throws out of `spawn` itself when the loader refuses the image — a
+  // wrong-architecture or truncated binary — because there is no child to emit an
+  // 'error' event on. Everywhere else the same failure arrives asynchronously. Without
+  // this branch the message written for exactly that case never runs, and the user gets
+  // a raw Node stack trace instead. `reportLaunchFailure` is a hoisted function
+  // declaration, so it is callable from above its definition; it never returns.
+  reportLaunchFailure(err);
+}
 
 // Forward termination to the child. Ctrl+C already reaches it through the shared
 // process group, but a bare `kill` of this wrapper — process managers, CI timeouts —
@@ -85,11 +96,19 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 
 // Without this, a missing binary surfaces as an unhandled 'error' event and a Node
 // stack trace instead of an actionable message.
-child.on('error', (err) => {
-  if (err.code === 'ENOENT' && binaryPath !== exeName && fs.existsSync(binaryPath)) {
-    // The file is right there, yet the loader said "no such file" — the kernel's
-    // report for a binary it cannot load, typically one built for a different
-    // architecture. "Install what you already installed" would loop the user.
+child.on('error', reportLaunchFailure);
+
+function reportLaunchFailure(err) {
+  // ENOENT on a file that is demonstrably there, or Windows' UNKNOWN: both are a loader
+  // refusing the image rather than a file that is missing.
+  if (
+    (err.code === 'ENOENT' || err.code === 'UNKNOWN') &&
+    binaryPath !== exeName &&
+    fs.existsSync(binaryPath)
+  ) {
+    // The file is right there, yet the loader would not take it — typically a binary
+    // built for a different architecture. "Install what you already installed" would
+    // loop the user.
     console.error(
       `dev-prune: '${binaryPath}' exists but could not be executed.\n\n` +
         `It may be built for a different architecture than ${process.platform}-${process.arch},\n` +
@@ -116,7 +135,7 @@ child.on('error', (err) => {
     console.error(`dev-prune: failed to launch ${binaryPath}: ${err.message}`);
   }
   process.exit(127);
-});
+}
 
 // `code` is null when the child was killed by a signal; `code || 0` reported success
 // in that case. Mirror the shell convention of 128 + signal number instead.

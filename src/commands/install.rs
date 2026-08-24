@@ -210,6 +210,13 @@ fn report(current: Channel, exe: &std::path::Path) -> Result<()> {
     println!();
     println!("  Installed by:  {}", current.label());
     println!("  Binary:        {}", exe.display());
+    // The receipt describes the managed copy, so it is only true of this one when this
+    // one *is* the managed copy.
+    if current == Channel::Installer
+        && let Some(receipt) = crate::receipt::load()
+    {
+        println!("  Receipt:       {}", crate::receipt::summary(&receipt));
+    }
     if let Some(cmd) = current.upgrade_command() {
         println!("  Upgrade:       {cmd}");
     }
@@ -321,6 +328,13 @@ fn spawn(argv: &[String]) -> Result<()> {
     output::print_info(&format!("Running: {}", argv.join(" ")));
     let status = crate::spawn::command(crate::adapters::resolve_program(&argv[0]))
         .args(&argv[1..])
+        // Installing through the `installer` channel re-runs `install.sh` or
+        // `install.ps1`, and those scripts offer to migrate a copy another manager owns.
+        // That is the offer whose answer brought us here — and the old copy is still on
+        // PATH, because it is removed after this command, not before — so without this
+        // the child would ask the same question again, and its answer would run this
+        // command again.
+        .env(crate::constants::ENV_NO_MIGRATE_PROMPT, "1")
         .status()
         .with_context(|| format!("could not start `{}`", argv[0]))?;
     if !status.success() {

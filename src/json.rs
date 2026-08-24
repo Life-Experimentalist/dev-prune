@@ -345,6 +345,89 @@ pub fn stats_document(registry: &Registry) -> Value {
     })
 }
 
+/// One entry per container engine that is installed, for either document that carries
+/// them.
+///
+/// An engine that is not installed is absent rather than present with `available:
+/// false`: a consumer looping over this array is asking "what is on this machine", and a
+/// row for every engine that is not would make every machine look like it had three.
+///
+/// `available: false` is the other case — installed, and its daemon did not answer — and
+/// it carries `reason` instead of sizes. A consumer must not read a missing `total_bytes`
+/// as zero; that is the difference between "Docker is holding nothing" and "dev-prune
+/// could not find out".
+fn container_engines(reports: &[crate::commands::containers::EngineReport]) -> Vec<Value> {
+    use crate::commands::containers::EngineState;
+    reports
+        .iter()
+        .map(|report| match &report.state {
+            EngineState::Unavailable(reason) => json!({
+                "engine": report.name,
+                "available": false,
+                "reason": reason,
+            }),
+            EngineState::Ready(rows) => json!({
+                "engine": report.name,
+                "available": true,
+                "rows": rows.iter().map(|row| {
+                    let mut obj = json!({ "kind": row.kind });
+                    // Every one of these is absent rather than null when the engine did
+                    // not say. `docker system df` reports no count for build cache on
+                    // some versions, and a `"total": 0` there would be a number nobody
+                    // produced.
+                    if let Some(n) = row.total {
+                        obj["total"] = json!(n);
+                    }
+                    if let Some(n) = row.active {
+                        obj["active"] = json!(n);
+                    }
+                    if let Some(n) = row.bytes {
+                        obj["bytes"] = json!(n);
+                    }
+                    if let Some(n) = row.reclaimable {
+                        obj["reclaimable_bytes"] = json!(n);
+                    }
+                    obj
+                }).collect::<Vec<_>>(),
+                "total_bytes": report.total_bytes().unwrap_or(0),
+                "reclaimable_bytes": report.reclaimable_bytes().unwrap_or(0),
+            }),
+        })
+        .collect()
+}
+
+/// The document emitted by `devp caches docker --json` and its siblings.
+///
+/// Deliberately has no `clear_command` anywhere, unlike [`caches_document`]. The prune
+/// commands are in the human report because a person reads them and decides; putting them
+/// in a machine-readable document would be handing an agent an argv for `docker system
+/// prune --volumes`, and no field in this contract should be one command substitution
+/// away from deleting a database. An agent that wants to reclaim container disk should
+/// say so to its human.
+///
+/// `kubernetes_contexts` carries names and no sizes, for the same reason the table does:
+/// a local cluster's disk already belongs to one of the engines above.
+pub fn containers_document(
+    reports: &[crate::commands::containers::EngineReport],
+    kubernetes_contexts: &[String],
+) -> Value {
+    let total: u64 = reports.iter().filter_map(|r| r.total_bytes()).sum();
+    let reclaimable: u64 = reports.iter().filter_map(|r| r.reclaimable_bytes()).sum();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "caches containers",
+        "engines": container_engines(reports),
+        "kubernetes_contexts": kubernetes_contexts,
+        "summary": {
+            "total_bytes": total,
+            "reclaimable_bytes": reclaimable,
+            "engines": reports.len(),
+        },
+    })
+}
+
 /// The document emitted by `devp caches --json`.
 ///
 /// `clear_command` is the one field an agent can act on, and it is the only place in this
@@ -358,6 +441,7 @@ pub fn stats_document(registry: &Registry) -> Value {
 pub fn caches_document(
     reports: &[crate::commands::caches::CacheReport],
     registered_repositories: Option<usize>,
+    containers: &[crate::commands::containers::EngineReport],
 ) -> Value {
     let total: u64 = reports.iter().map(|r| r.bytes).sum();
 
@@ -398,11 +482,15 @@ pub fn caches_document(
         summary["registered_repositories"] = json!(n);
     }
 
+    // Outside `summary.total_bytes` on purpose, and outside `caches` too. Container disk
+    // is not a package manager cache, dev-prune will never clear it, and a consumer
+    // summing one figure for "what devp caches could free" must not pick this up.
     json!({
         "schema": SCHEMA_VERSION,
         "version": constants::VERSION,
         "command": "caches",
         "caches": caches,
+        "containers": container_engines(containers),
         "summary": summary,
     })
 }
@@ -829,6 +917,7 @@ mod tests {
                 },
             ],
             Some(3),
+            &[],
         );
 
         assert_eq!(doc["command"], "caches");
@@ -845,9 +934,82 @@ mod tests {
     fn an_empty_cache_report_is_still_a_document() {
         // A machine with no package manager installed must produce a parseable zero, not
         // an absent `summary` a consumer would have to special-case.
-        let doc = caches_document(&[], None);
+        let doc = caches_document(&[], None, &[]);
         assert_eq!(doc["summary"]["total_bytes"], 0);
         assert_eq!(doc["caches"].as_array().unwrap().len(), 0);
+        assert_eq!(doc["containers"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn container_disk_stays_out_of_the_cache_total() {
+        use crate::commands::containers::{EngineReport, EngineState, Row};
+
+        let docker = EngineReport {
+            name: "docker",
+            state: EngineState::Ready(vec![Row {
+                kind: "Images".to_string(),
+                total: Some(9),
+                active: Some(2),
+                bytes: Some(40_000_000_000),
+                reclaimable: Some(38_000_000_000),
+            }]),
+        };
+        let doc = caches_document(&[], None, std::slice::from_ref(&docker));
+
+        // The whole point of the separate key. A consumer summing `summary.total_bytes`
+        // is asking what `devp caches clear` could free, and 40 GB of images is not that
+        // — dev-prune will never delete them.
+        assert_eq!(doc["summary"]["total_bytes"], 0);
+        assert_eq!(doc["containers"][0]["engine"], "docker");
+        assert_eq!(doc["containers"][0]["total_bytes"], 40_000_000_000u64);
+        assert_eq!(doc["containers"][0]["rows"][0]["kind"], "Images");
+    }
+
+    #[test]
+    fn an_engine_that_did_not_answer_carries_no_zero() {
+        use crate::commands::containers::{EngineReport, EngineState};
+
+        let doc = containers_document(
+            &[EngineReport {
+                name: "docker",
+                state: EngineState::Unavailable("daemon is not running".to_string()),
+            }],
+            &[],
+        );
+
+        assert_eq!(doc["command"], "caches containers");
+        assert_eq!(doc["engines"][0]["available"], false);
+        assert_eq!(doc["engines"][0]["reason"], "daemon is not running");
+        // Absent, not zero: "dev-prune could not find out" and "Docker is holding
+        // nothing" are different answers and a consumer must be able to tell them apart.
+        assert!(doc["engines"][0].get("total_bytes").is_none());
+        assert_eq!(doc["summary"]["total_bytes"], 0);
+    }
+
+    #[test]
+    fn no_prune_command_reaches_the_json_contract() {
+        use crate::commands::containers::{EngineReport, EngineState, Row};
+
+        let doc = containers_document(
+            &[EngineReport {
+                name: "docker",
+                state: EngineState::Ready(vec![Row {
+                    kind: "Build Cache".to_string(),
+                    total: Some(41),
+                    active: Some(0),
+                    bytes: Some(6_750_000_000),
+                    reclaimable: Some(6_750_000_000),
+                }]),
+            }],
+            &["kind-dev".to_string()],
+        );
+
+        // Deliberate: no field here should be one command substitution away from
+        // `docker system prune --volumes`. The prune commands live in the human report.
+        let text = serde_json::to_string(&doc).unwrap();
+        assert!(!text.contains("prune"), "{text}");
+        assert_eq!(doc["kubernetes_contexts"][0], "kind-dev");
+        assert_eq!(doc["summary"]["reclaimable_bytes"], 6_750_000_000u64);
     }
 
     #[test]

@@ -346,8 +346,9 @@ pub(crate) fn build(registry: &Registry) -> TrustReport {
     }
 }
 
-/// The seven safety invariants plus the two promises that are not invariants but are
-/// asked about just as often: no telemetry, and build outputs are never touched.
+/// The seven safety invariants plus the three promises that are not invariants but are
+/// asked about just as often: no telemetry, build outputs are never touched, and neither
+/// is container disk.
 ///
 /// Every string here restates something enforced in `src/engine.rs` or `src/adapters/`.
 /// [`docs/SAFETY_INVARIANTS.md`](../../docs/SAFETY_INVARIANTS.md) is the long form.
@@ -377,6 +378,12 @@ fn guarantees() -> Vec<TrustRow> {
             "build_outputs",
             "Build outputs",
             "Never deleted — no dist/, no .next/, no .gitignore rules",
+            G,
+        ),
+        TrustRow::new(
+            "container_disk",
+            "Container disk",
+            "Reported, never deleted — `devp caches docker` prints the commands",
             G,
         ),
         TrustRow::new(

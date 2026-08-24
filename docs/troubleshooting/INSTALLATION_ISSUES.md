@@ -133,8 +133,8 @@ Unblock-File "$env:APPDATA\dev-prune\bin\dev-prune.exe","$env:APPDATA\dev-prune\
 listed here for the hand-downloaded path — where unblocking the **archive before
 extracting** means nothing inside it is ever marked:
 ```powershell
-Unblock-File .\dev-prune-v1.8.0-windows-x64.zip
-Expand-Archive .\dev-prune-v1.8.0-windows-x64.zip -DestinationPath .
+Unblock-File .\dev-prune-v1.9.0-windows-x64.zip
+Expand-Archive .\dev-prune-v1.9.0-windows-x64.zip -DestinationPath .
 ```
 
 If you are standing in front of the dialog right now, you do not need any of the above:
@@ -515,18 +515,27 @@ The script wrote `dev-prune` and `devp` into the managed `<config>/bin` director
 that directory **first** on your PATH: prepended to the rc file on macOS and Linux,
 prepended to the User PATH on Windows. The other copy is untouched — the script never
 runs another manager's uninstaller, because deleting a file a package manager still has
-on its books is how an install becomes unrepairable. It prints the path it found instead:
+on its books is how an install becomes unrepairable. It names the path it found, and asks
+whether to collapse the two:
 
 ```text
 [!] Another dev-prune is on your PATH as well:
         /home/you/.cargo/bin/dev-prune
     A different package manager owns that copy, so this script left it alone.
     This directory comes first on PATH, so 'devp' is the copy in /home/you/.config/dev-prune/bin.
-    To move the old one over properly — install here, uninstall there through
-    the manager that put it there — run:
-        devp install --channel installer
-    'devp doctor' lists every copy on the machine at any time.
+    Moving it over means installing here and uninstalling there, through the
+    manager that put it there. 'devp install --channel installer' does both.
+    Do that now? [y/N]:
 ```
+
+Answer `y` and the old copy runs `devp install --channel installer --yes` itself —
+installed here first, uninstalled there second, through the manager that owns it. Anything
+else, a bare newline included, prints the command and moves on. Nothing is deleted by the
+script either way.
+
+Where there is nobody to ask, the question is skipped and the command printed: with
+`DEV_PRUNE_NO_MIGRATE_PROMPT=1` set, with `CI` set, or with no terminal attached at all,
+which covers most container builds.
 
 #### Diagnostic
 
@@ -534,10 +543,13 @@ on its books is how an install becomes unrepairable. It prints the path it found
 devp doctor
 ```
 
-Two lines answer this. **Install channel** names the manager that owns the copy that just
-ran, and **Other copies** lists every other `dev-prune` on the machine that reports a
-different version — searching the per-channel install directories as well as your PATH,
-because a copy that is not on PATH is also a copy nothing upgrades.
+Three lines answer this. **Install channel** names the manager that owns the copy that
+just ran. **Install receipt** appears when that copy is one an install script wrote, and
+names its version, which of `install.sh` and `install.ps1` wrote it, and when — read
+from `install.json` beside the binary rather than worked out again. **Other copies** lists
+every other `dev-prune` on the machine that reports a different version — searching the
+per-channel install directories as well as your PATH, because a copy that is not on PATH
+is also a copy nothing upgrades.
 
 To be certain which file answered, ask the shell rather than the tool:
 
@@ -584,7 +596,7 @@ That is the installer working, not refusing. Re-running it is the ordinary answe
 | What it finds at the managed path | What it does |
 | --- | --- |
 | Nothing | Installs. |
-| An **older** version | Updates it in place, without asking. Prints `-> Updating dev-prune v1.7.0 -> v1.8.0`. |
+| An **older** version | Updates it in place, without asking. Prints `-> Updating dev-prune v1.8.0 -> v1.9.0`. |
 | **This** version, with `devp` beside it and on PATH | Nothing at all. Prints `[OK] ... Nothing to do.` and exits `0`. |
 | **This** version, but `devp` or the PATH entry is missing | Reinstalls, which repairs both. |
 | A **newer** version | Leaves it alone, and says so. |

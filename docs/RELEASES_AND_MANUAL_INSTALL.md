@@ -78,6 +78,7 @@ afterwards, for the sake of a single install.
 | `--no-path` | `-NoPath` | `DEV_PRUNE_NO_PATH=1` | Leave every shell rc file and the User PATH alone |
 | `--no-auto-setup` | `-NoAutoSetup` | `DEV_PRUNE_NO_AUTO_SETUP=1` | Install the binary only — no SKILL.md, hooks or scheduler |
 | `--force` | `-Force` | `DEV_PRUNE_FORCE=1` | Download and write the binary even when this version is already installed here, or when the install is pinned with `version_lock` |
+| — | — | `DEV_PRUNE_NO_MIGRATE_PROMPT=1` | Do not ask about a copy another package manager owns — print the command instead |
 | `--help` | `-Help` | — | Print the options and exit |
 
 An install that has `devp config set version_lock true` set is the one thing the script
@@ -102,6 +103,53 @@ The environment variables need no such rewriting, which is why they stay support
 `DEV_PRUNE_NO_AUTO_SETUP=1` in a Dockerfile or CI environment covers install time *and*
 every command after it, since dev-prune itself reads the same variable.
 
+### The one question the installer asks
+
+If another package manager's `dev-prune` is on your `PATH` when the script runs — a
+cargo, npm, uv, pipx, Homebrew, Scoop or WinGet copy — the install still succeeds, still
+puts its own directory first on `PATH`, and still leaves that other file exactly where it
+is. What it does after that is ask whether to collapse the two:
+
+```text
+[!] Another dev-prune is on your PATH as well:
+        /home/you/.cargo/bin/dev-prune
+    A different package manager owns that copy, so this script left it alone.
+    This directory comes first on PATH, so 'devp' is the copy in /home/you/.config/dev-prune/bin.
+    Moving it over means installing here and uninstalling there, through the
+    manager that put it there. 'devp install --channel installer' does both.
+    Do that now? [y/N]:
+```
+
+Answer `y` and the *old* binary runs `devp install --channel installer --yes`: the copy
+that knows which manager owns it hands over, installing here first and uninstalling there
+second, in the order that leaves a working `devp` at every point in between. Anything
+else, a bare newline included, prints the command and moves on. Nothing is deleted by the
+script itself whichever way you answer — the uninstall is always the other manager's own
+command, run by the binary that manager installed.
+
+The question is skipped, and the command printed instead, whenever there is nobody to
+answer it: `DEV_PRUNE_NO_MIGRATE_PROMPT=1` is set, `CI` is set, or no terminal is attached
+at all (`/dev/tty` cannot be opened on POSIX; `[Environment]::UserInteractive` is false on
+Windows). A container build and a provisioning run want the install and none of the
+conversation. On POSIX the stakes are higher than tidiness: `curl … | sh` makes the script
+itself stdin, so a `read` that fell through to the pipe would swallow the rest of the
+install rather than your answer. Every prompt here reads `/dev/tty` by name for that
+reason.
+
+### The install receipt
+
+Both scripts finish by writing `install.json` beside the binary they installed — the
+version, which script wrote it and when, and whether `devp` and the `PATH` entry came from
+them. `devp doctor` reports it as one **Install receipt** line, and plain `devp install`
+prints the same summary; the file's shape is in
+[the `devp install` reference](CLI_REFERENCE.md#19-devp-install---channel-name---dry-run).
+
+It exists because the two scripts and the binary each used to work the same facts out
+independently, and three derivations of one truth is how they drift. It is a record and
+never a setting — nothing reads it to decide anything, and a copy that arrived through
+any other channel simply has none. `devp uninstall` removes it with the binary it
+describes.
+
 ---
 
 ## 🛠️ DIY Option A: Installing Pre-Built GitHub Release Binaries
@@ -110,9 +158,9 @@ Pre-compiled production binaries for all supported operating systems and archite
 
 ### 1. Windows Installation (`x86_64-pc-windows-msvc`)
 
-1. **Download Archive**: Download `dev-prune-v1.8.0-windows-x64.zip` from GitHub Releases.
-   On Windows on ARM take `dev-prune-v1.8.0-windows-arm64.zip` instead, and on a machine
-   with no 64-bit mode at all take `dev-prune-v1.8.0-windows-x86.zip`. Everything below
+1. **Download Archive**: Download `dev-prune-v1.9.0-windows-x64.zip` from GitHub Releases.
+   On Windows on ARM take `dev-prune-v1.9.0-windows-arm64.zip` instead, and on a machine
+   with no 64-bit mode at all take `dev-prune-v1.9.0-windows-x86.zip`. Everything below
    is the same for all three.
 2. **Create Target Directory**:
    Open PowerShell and create the application directory:
@@ -150,14 +198,14 @@ Pre-compiled production binaries for all supported operating systems and archite
 ### 2. macOS Installation (Intel `x86_64` & Apple Silicon `arm64`)
 
 1. **Download Archive**:
-   - Apple Silicon (M1/M2/M3/M4): `dev-prune-v1.8.0-darwin-arm64.tar.gz`
-   - Intel Mac: `dev-prune-v1.8.0-darwin-x64.tar.gz`
+   - Apple Silicon (M1/M2/M3/M4): `dev-prune-v1.9.0-darwin-arm64.tar.gz`
+   - Intel Mac: `dev-prune-v1.9.0-darwin-x64.tar.gz`
 2. **Extract & Relocate Binary**:
    On macOS the config directory is `~/Library/Application Support/dev-prune`, not `~/.config` — that is where dev-prune reads its registry from, so install the binary alongside it.
    ```bash
    BIN="$HOME/Library/Application Support/dev-prune/bin"
    mkdir -p "$BIN"
-   tar -xzf dev-prune-v1.8.0-darwin-*.tar.gz -C "$BIN"
+   tar -xzf dev-prune-v1.9.0-darwin-*.tar.gz -C "$BIN"
    chmod +x "$BIN/dev-prune"
    ```
 3. **Add to Shell PATH**:
@@ -189,11 +237,11 @@ Pre-compiled production binaries for all supported operating systems and archite
 > `aarch64` (`uname -m` tells you which) — and nothing else.
 
 
-1. **Download Archive**: Download `dev-prune-v1.8.0-linux-x64.tar.gz` from GitHub Releases.
+1. **Download Archive**: Download `dev-prune-v1.9.0-linux-x64.tar.gz` from GitHub Releases.
 2. **Extract & Relocate Binary**:
    ```bash
    mkdir -p ~/.config/dev-prune/bin
-   tar -xzf dev-prune-v1.8.0-linux-x64.tar.gz -C ~/.config/dev-prune/bin/
+   tar -xzf dev-prune-v1.9.0-linux-x64.tar.gz -C ~/.config/dev-prune/bin/
    chmod +x ~/.config/dev-prune/bin/dev-prune
    ```
 3. **Configure Shell PATH**:

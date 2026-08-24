@@ -34,7 +34,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.8.0";
+const VERSION = "1.9.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -2010,6 +2010,21 @@ Notes you should rely on, not work around:
                   </tr>
                   <tr>
                     <td className="td-name">
+                      <code>devp caches docker</code>
+                    </td>
+                    <td>
+                      What a container engine is holding — images, containers,
+                      volumes and build cache, each sized, with how much of it
+                      the engine says it could give back — then the prune
+                      commands and what each takes with it. Also{" "}
+                      <code>podman</code>, <code>nerdctl</code>, and{" "}
+                      <code>devp caches containers</code> for every engine at
+                      once plus any local Kubernetes clusters. Read-only,
+                      permanently: it prints the commands, you run them
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
                       <code>devp caches clear &lt;manager&gt;</code>
                     </td>
                     <td>
@@ -2610,6 +2625,29 @@ Notes you should rely on, not work around:
                 that exist in no remote, so dev-prune sizes it, prints the
                 command and lets you decide.
               </Faq>
+              <Faq q="Docker is bigger than all of these put together. Does it help?">
+                It measures it and refuses to touch it, which is the honest
+                answer to a 40&nbsp;GB Docker install.{" "}
+                <code>devp caches docker</code> — or <code>podman</code>,{" "}
+                <code>nerdctl</code>, or <code>devp caches containers</code> for
+                all of them — breaks the space down into images, containers,
+                local volumes and build cache, says how much of each the engine
+                itself calls reclaimable, and then prints the prune commands
+                narrowest first with what each one takes with it. It never runs
+                them. An image has no lockfile to prove it can be rebuilt, the
+                Dockerfile that built it may not be on this disk, and a named
+                volume is the one thing on your machine that cannot be rebuilt at
+                all — so the same rule that governs everything else here says
+                measure, print, and leave the decision with you.{" "}
+                <code>devp caches clear docker</code> is a usage error that says
+                so. The figures come from the engine's own{" "}
+                <code>system df</code> rather than a look at the disk, because on
+                Docker Desktop and Podman the store lives inside a VM disk image
+                your filesystem cannot see — and because asking is the only way
+                to learn what is <em>reclaimable</em>, which is the number that
+                decides anything. If the daemon is stopped, you get that sentence
+                and no figures: a blank, not a zero.
+              </Faq>
               <Faq q="Which of these caches does anything still need?">
                 <code>devp caches</code> answers it per manager: how many of
                 your registered repositories use it, and what its cache works
@@ -2690,7 +2728,14 @@ Notes you should rely on, not work around:
                 pip, npm, cargo or uv leaves copies in several places, and the
                 one first on PATH is not always the one the scheduler and git
                 hooks invoke — doctor reports every copy it finds and the
-                version each is. <code>devp update --install</code> then
+                version each is, plus an <em>Install receipt</em> line for a copy
+                one of the install scripts wrote, naming its version, which
+                script wrote it and when. The one-liner asks about a copy it
+                finds rather than deleting it: answer <code>y</code> and the
+                older binary runs{" "}
+                <code>devp install --channel installer</code> itself, installing
+                here and uninstalling there through the manager that owns it.{" "}
+                <code>devp update --install</code> instead
                 upgrades all of them at once: it downloads the release binary
                 for your platform, checks it against the SHA-256 published
                 beside it, and installs nothing if that does not match.

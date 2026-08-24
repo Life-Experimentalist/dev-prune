@@ -73,6 +73,10 @@ The equivalent environment variables work with the plain `iwr ... | iex` one-lin
   DEV_PRUNE_VERSION  DEV_PRUNE_BIN_DIR  DEV_PRUNE_NO_PATH=1  DEV_PRUNE_NO_AUTO_SETUP=1
   DEV_PRUNE_FORCE=1
 
+DEV_PRUNE_NO_MIGRATE_PROMPT=1 has no parameter. It suppresses the one question this
+script asks -- whether to move a copy another package manager owns -- and prints the
+command instead. CI, and a host with no desktop behind it, suppress it already.
+
 Re-running this is safe. An install that is already here, current and on PATH is left
 alone and exits 0; an older one is replaced in place; a newer one is not downgraded.
 '@
@@ -95,7 +99,7 @@ $repo = 'Life-Experimentalist/dev-prune'
 # redirect carries the tag, so one HEAD request answers without parsing JSON.
 # $fallbackVersion exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-$fallbackVersion = '1.8.0'
+$fallbackVersion = '1.9.0'
 if (-not $version) {
     try {
         $resp = Invoke-WebRequest -Uri "https://github.com/$repo/releases/latest" -Method Head -MaximumRedirection 5 -UseBasicParsing -ErrorAction Stop
@@ -118,6 +122,12 @@ $binDir = if ($BinDir) {
 $exePath = Join-Path $binDir 'dev-prune.exe'
 $aliasPath = Join-Path $binDir 'devp.exe'
 
+# The two facts about this run that nothing on the machine can work out afterwards, so
+# the receipt at the end has to be told them. Both start false and are only ever raised
+# by the step that makes them true.
+$aliasInstalled = $false
+$pathEntry = $false
+
 # Where `dev-prune` resolves *before* this script writes anything, when that is not
 # the copy this script manages. Running the installer over a cargo, WinGet or Scoop
 # install does not fail and does not remove that copy - removing another package
@@ -136,6 +146,86 @@ function Test-OnPath {
     @(($PathValue -split ';') | ForEach-Object { $_.TrimEnd('\') }) -contains $norm
 }
 
+# Whether there is a person at the other end who can answer a question.
+#
+# `iwr ... | iex` runs inside the caller's own process with their console still attached,
+# so unlike the POSIX script there is no pipe standing between Read-Host and the keyboard
+# and no /dev/tty to reach for. What can still be missing is the person: -NonInteractive,
+# a scheduled task, a CI runner, a provisioning script. Every one of those wants the
+# install and none of the conversation.
+function Test-PersonPresent {
+    if ($env:DEV_PRUNE_NO_MIGRATE_PROMPT -eq '1') { return $false }
+    # Set by every CI provider worth naming, and by nothing with a keyboard attached.
+    if ($env:CI) { return $false }
+    # False in a service or a scheduled task running with no desktop behind it.
+    try {
+        if (-not [Environment]::UserInteractive) { return $false }
+    } catch {
+        return $false
+    }
+    return $true
+}
+
+# One yes/no question. Default no, and every non-answer is a no: this is only ever asked
+# before running another package manager, and a stray newline pasted after the one-liner
+# must never be the thing that authorises that.
+#
+# A -NonInteractive host throws from Read-Host rather than returning anything, which is
+# the same answer as a shrug, so the catch says no as well.
+function Read-YesNo {
+    param([string]$Prompt)
+    $answer = ''
+    try {
+        $answer = Read-Host "$Prompt [y/N]"
+    } catch {
+        return $false
+    }
+    if (-not $answer) { return $false }
+    return @('y', 'yes') -contains $answer.Trim().ToLowerInvariant()
+}
+
+# What this run actually did, written down beside the binary it installed.
+#
+# This script, install.sh and the binary each used to derive the same facts on their own,
+# and three derivations of one truth is how they drift. `devp doctor` and `devp install`
+# read this file; it outlives the session that ran the one-liner, which no variable here
+# does. It is a record, never a setting: `Channel::detect()` is still what classifies a
+# copy, because no receipt can describe one that arrived through `cargo install`, and
+# every reader treats a missing file as "no installer of ours wrote one" rather than as
+# an error.
+#
+# Written here by hand rather than by the binary it just installed, because it has to be
+# true even when -NoAutoSetup means that binary is never run. `src/receipt.rs` has a test
+# asserting these exact field names for that reason.
+function Write-Receipt {
+    $receipt = Join-Path $binDir 'install.json'
+    $staged = "$receipt.new"
+    try {
+        # [ordered], not @{}: PowerShell 5.1 hashtables have no order to convert, and a
+        # receipt whose keys move around between installs is a diff nobody can read.
+        $body = [ordered]@{
+            schema       = 1
+            version      = $version
+            channel      = 'installer'
+            installed_by = 'install.ps1'
+            installed_at = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture)
+            exe          = $exePath
+            alias        = $aliasInstalled
+            path_entry   = $pathEntry
+        } | ConvertTo-Json
+        # WriteAllText with an explicit no-BOM encoder. Set-Content -Encoding utf8 on
+        # PowerShell 5.1 writes a byte order mark, and three bytes in front of a '{' are
+        # not JSON to serde_json or to anything else.
+        [IO.File]::WriteAllText($staged, $body, (New-Object Text.UTF8Encoding($false)))
+        # Staged and renamed, so a reader never sees a half-written file.
+        Move-Item -LiteralPath $staged -Destination $receipt -Force -ErrorAction Stop
+    } catch {
+        Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+        Write-Host "[!] Could not write $receipt. Harmless: it is a note about this install," -ForegroundColor Yellow
+        Write-Host "    not a setting, and nothing reads it to decide anything." -ForegroundColor Yellow
+    }
+}
+
 # Printed from three endings now, so it lives in one place.
 function Write-PriorExeNotice {
     if ($priorExe) {
@@ -148,10 +238,45 @@ function Write-PriorExeNotice {
         } else {
             Write-Host "    This directory comes first on PATH, so 'devp' is the copy in $binDir."
         }
-        Write-Host "    To move the old one over properly - install here, uninstall there through"
-        Write-Host "    the manager that put it there - run:"
-        Write-Host "        devp install --channel installer"
-        Write-Host "    'devp doctor' lists every copy on the machine at any time."
+        Write-Host "    Moving it over means installing here and uninstalling there, through the"
+        Write-Host "    manager that put it there. 'devp install --channel installer' does both."
+        if ((Test-PersonPresent) -and (Read-YesNo "    Do that now?")) {
+            Write-Host ""
+            # The *old* binary, not the one just installed. It is the copy that knows
+            # which manager owns it, and `--channel installer` is how it hands over; run
+            # from the new copy the same command would only report that it is already an
+            # installer copy with nothing to move.
+            #
+            # Nothing is deleted by this script either way. The uninstall is the other
+            # manager's own command, run by the binary that manager installed.
+            $moved = $false
+            try {
+                # A native command's stderr becomes an ErrorRecord under 'Stop', and this
+                # one is a whole install: its progress must not be mistaken for failure.
+                # The exit code is the answer. Function-scoped, so the caller's 'Stop' is
+                # untouched.
+                $ErrorActionPreference = 'Continue'
+                & $priorExe install --channel installer --yes
+                $moved = ($LASTEXITCODE -eq 0)
+            } catch {
+                # It could not be started at all, which the message below covers.
+                $moved = $false
+            }
+            Write-Host ""
+            if ($moved) {
+                Write-Host "[OK] Moved. 'devp doctor' will confirm only one copy is left." -ForegroundColor Green
+            } else {
+                Write-Host "[!] That did not finish, and nothing was deleted - the copy at" -ForegroundColor Yellow
+                Write-Host "        $priorExe"
+                Write-Host "    is exactly where it was. A copy older than 1.8.0 has no 'devp"
+                Write-Host "    install' subcommand at all; upgrade it through its own manager"
+                Write-Host "    first, or just remove it. 'devp doctor' shows both copies."
+            }
+        } else {
+            Write-Host "    Run it whenever you like:"
+            Write-Host "        devp install --channel installer"
+            Write-Host "    'devp doctor' lists every copy on the machine at any time."
+        }
     }
 }
 
@@ -372,6 +497,7 @@ try {
     # scheduled task - and it cannot fall out of sync with a profile nobody re-sources.
     try {
         Install-Binary -Source $extracted -Destination $aliasPath
+        $aliasInstalled = $true
         Write-Host "[OK] Installed: $aliasPath" -ForegroundColor Green
     } catch {
         # `dev-prune.exe` is already in place at this point, and it re-installs its own
@@ -441,9 +567,15 @@ if (-not $noPath) {
         $env:PATH = $binDir + ';' + $env:PATH
     }
     $pathReady = $true
+    # The User PATH names this directory now, whether this run wrote the entry or found
+    # one a previous run left. Either way an installer put it there: nothing else on the
+    # machine writes to a directory that holds only these two executables.
+    $pathEntry = $true
 } else {
     $pathReady = Test-OnPath $env:PATH $binDir
 }
+
+Write-Receipt
 
 # Git is not optional: it is how dev-prune recognises a repository at all.
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {

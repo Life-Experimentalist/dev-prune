@@ -5,6 +5,103 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-08-25
+
+### Added
+
+- **`devp caches docker`** reports what the container engine on this machine is holding —
+  images, containers, local volumes and build cache, each with a count, a size, and how
+  much of that size the engine itself believes it could give back — and then prints the
+  commands that would give it back, narrowest first. `devp caches podman` and
+  `devp caches nerdctl` are the same report for those engines, and
+  [`devp caches containers`](docs/CLI_REFERENCE.md#devp-caches-docker--devp-caches-podman--devp-caches-containers-engine)
+  does every engine installed at once. **It is read-only, permanently.** dev-prune deletes
+  only what a lockfile proves it can rebuild, and nothing here clears that bar: an image's
+  registry tag can be retagged or deleted, the Dockerfile that built it may not be on this
+  disk, and a named volume is the one thing on the machine that is not reproducible at
+  all. So the prune commands are printed for you to run, with or without `--yes`.
+
+  The figures come from the engine's own `system df` rather than from a directory walk. On
+  Docker Desktop and Podman the store lives inside a VM disk image the host cannot see and
+  `~/.docker` is configuration rather than data, so a size taken off the filesystem would
+  be wrong by orders of magnitude, in the reassuring direction. Asking the engine is also
+  the only way to learn what is *reclaimable*, which is the figure that decides anything:
+  40 GB of images with 38 GB dangling is a different situation from 40 GB with 2 GB
+  dangling. An engine that is installed with its daemon stopped is reported as exactly
+  that, in the engine's own words, rather than as an absence.
+
+- **A container-engine line at the foot of `devp caches`**, one per engine installed, so
+  the figure is in front of you without your having to go looking for it. The mistake it
+  exists to prevent is someone clearing 6 GiB of npm cache while a Docker install nobody
+  has opened in a year sits on 40 GiB. Container disk is **not** in the cache total above
+  it and never will be, for the reason above, and `devp caches clear docker` is a usage
+  error (exit `2`) that says so and points at the detailed report rather than claiming
+  Docker is not a manager dev-prune knows.
+
+- **Local Kubernetes clusters are listed by name** by `devp caches containers`, and
+  deliberately not sized. kind, k3d and minikube run their nodes as containers, or as a VM
+  disk belonging to an engine already in the table, so their disk is counted there — a
+  figure beside the cluster name would be the same gigabytes twice. Delete one with its
+  own tool (`kind delete cluster`, `minikube delete`, `k3d cluster delete`), which is what
+  actually releases the space. The list is read out of your kubeconfig with
+  `kubectl config get-contexts`, which contacts nothing: a context pointing at a
+  production cluster is filtered out by name here rather than by being dialled.
+
+- **`devp caches --json` carries a `containers` array**, and
+  [`devp caches containers --json`](docs/CLI_REFERENCE.md#devp-caches-containers---json)
+  is a document of its own with `engines[]`, `kubernetes_contexts[]` and a `summary`. An
+  engine that is installed but did not answer appears with `available: false` and a
+  `reason` rather than with zeros, because a missing `total_bytes` read as zero is the
+  difference between “Docker is holding nothing” and “dev-prune could not find
+  out”. Container bytes sit outside `summary.total_bytes` in the `caches` document on
+  purpose, so a consumer adding up what `devp caches` could free cannot pick them up, and
+  neither document carries a prune command anywhere: no field in this contract should be
+  one substitution away from an argv for `docker system prune --volumes`.
+
+- **`container_disk` is now a row in
+  [`devp trust`](docs/CLI_REFERENCE.md#18-devp-trust---json---fix-ownership)** —
+  reported, never deleted. It sits beside the no-telemetry and never-touch-build-outputs
+  rows, which are the other two things people ask about that are promises rather than
+  safety invariants.
+
+- **The install scripts now leave a receipt beside the binary they installed.**
+  `install.json`, in the same directory, records the version, which of `install.sh` and
+  `install.ps1` wrote it, when, whether the `devp` alias was written and whether the PATH
+  entry was made. [`devp doctor`](docs/CLI_REFERENCE.md#12-devp-doctor-path---fix) reads
+  it back as an **Install receipt** line — `v1.9.0 by install.sh on 2026-08-25` —
+  and `devp install` prints the same line at the end of a run. Three separate pieces of
+  code used to work those facts out independently, which is how they drift; now the run
+  that did the work writes them down once, and `devp update --install` updates the version
+  in an existing receipt rather than writing a new one, so a receipt never claims an
+  installer ran when none did. It is a record and never a setting: `--channel` still
+  classifies a copy by where its file is, a missing receipt is not an error, and the line
+  is shown only for the copy the receipt actually describes, because a date belonging to a
+  different file is worse than no date. The
+  [field-by-field shape](docs/CLI_REFERENCE.md#19-devp-install---channel-name---dry-run)
+  is in the reference.
+
+- **The installers now offer to collapse a duplicate copy instead of only naming one.**
+  When `install.sh` or `install.ps1` finds a dev-prune that a different package manager
+  owns — a `cargo install` copy, a Homebrew one, a WinGet one — it says so and asks
+  whether to move it over. Answer `y` and *that* copy runs
+  `devp install --channel installer --yes` itself: it is the one that knows which manager
+  owns it, so it installs here and uninstalls there through that manager, which is the
+  only way the hand-off can be made correctly. Answer anything else and it prints the
+  command and leaves both copies exactly where they were. Neither script deletes another
+  manager's file either way. The question is skipped wherever there is nobody to answer it
+  — `CI` is set, there is no terminal, or `DEV_PRUNE_NO_MIGRATE_PROMPT=1` — and the
+  command is printed instead, so piping the one-liner into a shell from a provisioning
+  script behaves exactly as it did before.
+
+### Fixed
+
+- **`npx dev-prune` on Windows now explains a broken install instead of printing a Node
+  stack trace.** When the loader refuses the binary — a package downloaded for the
+  wrong architecture, or a truncated file — Windows throws out of `spawn` itself rather
+  than emitting an `'error'` event, so the message written for exactly that case never
+  ran. It runs now, from both paths, and names the file it could not launch and what to do
+  about it.
+
 ## [1.8.0] - 2026-08-24
 
 ### Added

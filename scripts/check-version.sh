@@ -70,8 +70,10 @@ fi
 
 # The `--json` samples in the CLI reference each carry a "version" field. `expect` would
 # pass on one correct sample among six stale ones, so this checks every line instead —
-# they were found a release behind, which is how the rule got here.
-stale="$(grep -n '^  "version": ' docs/CLI_REFERENCE.md | grep -vF "\"version\": \"$version\"," || true)"
+# they were found a release behind, which is how the rule got here. Leading whitespace
+# is matched loosely: a fenced sample nested inside a list item is indented, and
+# pinning the indent to two spaces silently skipped the install receipt.
+stale="$(grep -n '^ *"version": ' docs/CLI_REFERENCE.md | grep -vF "\"version\": \"$version\"," || true)"
 if [ -n "$stale" ]; then
     echo "check-version: docs/CLI_REFERENCE.md JSON samples must say \"$version\":" >&2
     echo "$stale" >&2

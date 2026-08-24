@@ -1290,6 +1290,140 @@ fn an_unknown_caches_flag_is_a_usage_error_not_a_report() {
     assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
 }
 
+// The container report runs on whatever the runner happens to have. Docker is present
+// and running on the Linux runners, present with a stopped daemon on the Windows and
+// macOS ones, and absent on a developer machine without it — so nothing below asserts a
+// number. What is worth pinning is that all three shapes exit `0`, that the read-only
+// promise survives whatever the engine said, and that no path can be talked into
+// deleting anything.
+
+#[test]
+fn the_container_report_exits_zero_whether_or_not_an_engine_answers() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    for args in [
+        vec!["caches", "docker"],
+        vec!["caches", "podman"],
+        vec!["caches", "containers"],
+        vec!["caches", "containers", "docker"],
+    ] {
+        let out = devp(&config).args(&args).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "`devp {}` did not exit 0:\n{}",
+            args.join(" "),
+            combined(&out)
+        );
+    }
+}
+
+#[test]
+fn the_container_report_says_it_deleted_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["caches", "containers"])
+        .output()
+        .unwrap();
+    let text = combined(&out);
+
+    // Printed on every path — engine running, engine stopped, no engine at all. This is
+    // the whole safety claim of the command, and it must not be something only the
+    // machines that happen to have Docker running get told.
+    assert!(
+        text.contains("deleted")
+            || text.contains("not installed")
+            || text.contains("No container engine"),
+        "the report said neither what it found nor that it deleted nothing:\n{text}"
+    );
+}
+
+#[test]
+fn an_engine_dev_prune_does_not_know_is_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["caches", "containers", "lxd"])
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+    // Naming the three it does know is the difference between a dead end and a typo
+    // the reader can fix without opening the docs.
+    let text = combined(&out);
+    assert!(text.contains("docker"), "{text}");
+    assert!(text.contains("podman"), "{text}");
+}
+
+#[test]
+fn clearing_a_container_engine_is_refused_rather_than_attempted() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    for engine in ["docker", "podman", "nerdctl"] {
+        let out = devp(&config)
+            .args(["caches", "clear", engine, "--yes"])
+            .output()
+            .unwrap();
+
+        // Exit 2, not 1: asking dev-prune to delete container disk is a usage error,
+        // because there is no configuration under which it would have worked.
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`devp caches clear {engine}` was not refused:\n{}",
+            combined(&out)
+        );
+        let text = combined(&out);
+        assert!(
+            text.contains(&format!("devp caches {engine}")),
+            "the refusal did not point at the report that does work:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn the_container_json_document_carries_no_command_to_run() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["caches", "containers", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", combined(&out));
+
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("not JSON: {e}\n{}", combined(&out)));
+    assert_eq!(doc["command"], "caches containers");
+    assert!(doc["engines"].is_array(), "{doc}");
+    assert!(doc["kubernetes_contexts"].is_array(), "{doc}");
+
+    // The prune commands are in the human report on purpose. A field here would be one
+    // command substitution away from `docker system prune --volumes` in an agent's hands.
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!text.contains("prune"), "{text}");
+}
+
+#[test]
+fn caches_help_names_the_container_report() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).args(["caches", "--help"]).output().unwrap();
+    let text = combined(&out);
+    for expected in ["docker", "podman", "containers"] {
+        assert!(
+            text.contains(expected),
+            "`devp caches --help` does not mention `{expected}`:\n{text}"
+        );
+    }
+}
+
 #[test]
 fn a_disabled_check_keeps_run_and_status_off_the_network() {
     let tmp = TempDir::new().unwrap();
