@@ -80,6 +80,18 @@ if [ -n "$stale" ]; then
     status=1
 fi
 
+# The `devp -V` sample in the same file prints the version twice: once at the end of the
+# ASCII banner and once on the line below it. Nothing generates that block, so it sat at
+# 1.3.0 for six releases while every checked file moved on. Every `vX.Y.Z` in the file
+# belongs to that one sample, so all of them are checked rather than two line numbers
+# being pinned -- a pinned line number goes stale the first time the file is edited.
+banner="$(grep -nE 'v[0-9]+\.[0-9]+\.[0-9]+' docs/CLI_REFERENCE.md | grep -vF "v$version" || true)"
+if [ -n "$banner" ]; then
+    echo "check-version: the devp -V sample in docs/CLI_REFERENCE.md must say v$version:" >&2
+    echo "$banner" >&2
+    status=1
+fi
+
 if [ "$status" -eq 0 ]; then
     echo "Every file that restates the version agrees with Cargo.toml."
 fi
