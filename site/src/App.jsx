@@ -2591,9 +2591,13 @@ Notes you should rely on, not work around:
               </Faq>
               <Faq q="Does it delete build output — dist/, .next/, target/?">
                 Not by default, and never on a rule of its own. A prune only
-                removes a directory a lockfile can prove comes back, and a build
+                removes a directory something can prove comes back, and a build
                 output has no lockfile: nothing can promise <code>dist/</code>{" "}
-                rebuilds byte-for-byte, so it is out of scope permanently. The
+                rebuilds byte-for-byte, so there is no <code>dist/</code> rule
+                and there will not be one. A repository can still declare it —{" "}
+                <code>prunable.directories</code> names the path and the{" "}
+                <code>rebuild</code> command that puts it back, which dev-prune
+                checks is installed before it deletes. The
                 eight exceptions are opt-in and say so —{" "}
                 <code>devp config set enable_cargo true</code> (
                 <code>target/</code>), <code>enable_gradle</code> (

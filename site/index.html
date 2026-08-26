@@ -245,7 +245,7 @@
                 "name": "Does dev-prune delete build output like dist/, .next/ or target/?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "dist/ and .next/ are never touched, and there is no setting that makes them candidates. No lockfile can prove a build output is reproducible, so it falls outside the guarantee the tool is built on. Cargo's target/ is deleted because cargo metadata --locked proves the crates come back from Cargo.lock; Gradle's build/, Maven's target/ and SwiftPM's .build/ are deleted only if you opt in, and then only after a much longer idle window, because they come back by recompiling rather than downloading."
+                  "text": "Never on a rule of dev-prune's own: there is no dist/ rule, no .next/ rule and no delete-what-git-ignores rule, because no lockfile can prove a build output is reproducible. What a repository can do is declare one. A prunable.directories entry names the path and the command that rebuilds it, and dev-prune checks that command's tool is installed before deleting; rebuild is a required field, so the proof moves to whoever wrote the file rather than disappearing. Cargo's target/ is deleted because cargo metadata --locked proves the crates come back from Cargo.lock; Gradle's build/, Maven's target/ and SwiftPM's .build/ are deleted only if you opt in, and then only after a much longer idle window, because they come back by recompiling rather than downloading."
                 }
               },
               {
