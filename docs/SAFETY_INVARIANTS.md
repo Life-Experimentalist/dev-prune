@@ -85,11 +85,12 @@ entry at all is never touched.
 ---
 
 ### 2. Two-Tier Lockfile Pre-Verification
-Before deleting any bloat directory, the project's package manager must confirm that the
-directory is rebuildable. Verification runs under a configurable timeout
+Before deleting any directory an adapter claims, the project's package manager must
+confirm that the directory is rebuildable. Verification runs under a configurable timeout
 (`command_timeout_secs`) and cannot be bypassed — not by `--ignore-idle`, not by any
 setting. `allow_manifest_rewrite` is not an exception: it changes *which* command an
-adapter is allowed to run, never whether the check happens.
+adapter is allowed to run, never whether the check happens. A directory no adapter claims
+is reachable only by declaration, which is checked on its own terms — see invariant 5.
 
 - **Tier 1 (binary installed)**: the manager resolves the manifest against the lockfile.
 - **Tier 2 (binary missing, lockfile present)**: an on-disk lockfile is itself the proof

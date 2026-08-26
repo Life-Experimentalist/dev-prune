@@ -144,7 +144,7 @@ sequenceDiagram
 > **Git Repository Boundary Guarantee**: Operations are strictly restricted to folders containing a valid `.git` root. Non-Git folders are ignored.
 
 > [!NOTE]
-> **Two-Tier Lockfile Pre-Verification**: Before deleting any bloat directory (`node_modules`, `.venv`, `target`, `vendor`), `dev-prune` verifies lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `Cargo.lock`, `go.sum`).
+> **Two-Tier Lockfile Pre-Verification**: Before deleting any directory an adapter claims (`node_modules`, `.venv`, `target`, `vendor`), `dev-prune` verifies lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `Cargo.lock`, `go.sum`).
 
 > [!NOTE]
 > **Any Number of Ecosystems per Repository**: A registered repository may hold any number of projects, in any combination — three managers side by side in the root, one per subtree, or both at once. Each is detected, verified, pruned and restored independently. The discovery walk never leaves the repository, never enters a dependency tree, and never crosses into a nested `.git`.
