@@ -373,6 +373,7 @@ EXAMPLES:
   devp config show                Every global setting and its value
   devp config get idle_days       One setting
   devp config set idle_days 30    Change it (rejects out-of-range values)
+  devp config recommended         Turn on everything the first run recommends
   devp config wizard              Walk through every setting, Enter keeps the current
   devp config project .           Inspect or create this repo's .devprune.json
   devp config daemon status       Is the background pass scheduled?
@@ -442,13 +443,26 @@ fix it, or pass `--update` deliberately.
 
 Writing the file also records it in the repository's `.git/info/exclude`, so the \
 config — one machine's preference, not part of the project — never shows up in \
-`git status`. The shared, tracked `.gitignore` is never modified.";
+`git status`. The shared, tracked `.gitignore` is never modified.
+
+`--team` addresses `project.devprune.json` instead: same keys, same schema, and \
+deliberately not excluded, because it is the half meant to be committed. Every key it \
+names wins over `.devprune.json`; every key it leaves out is still yours to answer. It \
+is created empty apart from the schema line for that reason. Nothing dev-prune writes \
+on your behalf ever edits it.
+
+Both files can also carry `prunable.directories`: directories no lockfile describes, \
+each with the `rebuild` command that puts it back. Unlike every other key, the two \
+files' lists add up rather than one winning — a team declaration never discards your \
+own. Before deleting one, dev-prune checks that it is inside the repository, that Git \
+is tracking nothing in it, and that the rebuild command's tool is on this machine.";
 
 pub const CONFIG_PROJECT_EXAMPLES: &str = "\
 EXAMPLES:
   devp config project .           Show (or create) this repository's config
   devp config project ~/Code/api
-  devp config project . --update  Refresh scaffolding, keep your values";
+  devp config project . --update  Refresh scaffolding, keep your values
+  devp config project . --team    Create the committed project.devprune.json";
 
 pub const CONFIG_DAEMON_LONG: &str = "\
 The OS background scheduler — Task Scheduler on Windows, launchd on macOS, systemd \
@@ -504,15 +518,46 @@ pub const CONFIG_ICON_EXAMPLES: &str = "\
 EXAMPLES:
   devp icon                       Same command, without the leading `config`";
 
+pub const CONFIG_RECOMMENDED_LONG: &str = "\
+Turn on everything the first run recommends, without sitting through the first run.
+
+The recommendations are the adapters and behaviours that are off by default because \
+they are not universally wanted, not because they are risky: Cargo, Gradle, Maven, \
+Swift, Dart, Mix builds, vcpkg and CMake builds. Accepting them all is one command \
+here and one keypress in `devp config wizard`, and both read the same list, so the \
+two can never drift apart.
+
+One recommendation is held back: `allow_manifest_rewrite` lets `cargo` and `go` tidy \
+up their own manifests during a restore, which edits files in your working tree. \
+That is worth having and it is worth knowing about first, so it arrives only when \
+you type --with-cautious. Everything printed is also printed by `devp config show`, \
+which lists whatever you have not taken yet.
+
+Nothing here is irreversible: `devp config set <key> false` puts any of it back, and \
+this command never marks the settings as reviewed — the walkthrough you skipped is \
+still owed to you, and will still open.";
+
+pub const CONFIG_RECOMMENDED_EXAMPLES: &str = "\
+EXAMPLES:
+  devp config recommended                  Everything recommended without a caveat
+  devp config recommended --with-cautious  That, plus allow_manifest_rewrite
+  devp config show                         What is still outstanding
+  devp config set enable_cargo false       Put one back";
+
 pub const CONFIG_WIZARD_LONG: &str = "\
 Open every global setting in a full-screen configurator, with the `devp trust` \
 declaration in front of it: what this tool is allowed to do is on screen before any \
 of it is configurable.
 
 Arrows move; Space changes the highlighted setting — a toggle flips, a number opens \
-a field, `disabled_adapters` opens the adapter checklist; `r` puts one back; `y` \
-accepts everything as shown. The last screen lists exactly what will be written, \
-before it is written. `q` leaves without saving anything.
+a field, `disabled_adapters` opens the adapter checklist; `r` puts one back. The \
+list ends in a Finish line: two presses of Enter there open the last screen, which \
+lists exactly what will be written, before it is written. Two presses rather than \
+one, because one Enter is what people press to dismiss a screen they have stopped \
+reading. `q` leaves without saving anything, from anywhere.
+
+`devp config recommended` is the one-command version of the suggestions screen, for \
+when you know what you want and do not want to walk the list.
 
 It runs itself once on a first install — so the defaults are something you agreed \
 to, not something you inherited — and again after an upgrade adds a setting this \
@@ -553,8 +598,9 @@ EXAMPLES:
 pub const UPDATE_LONG: &str = "\
 Print the installed version, ask GitHub's public API for the latest release, and \
 show the upgrade command for how this copy was installed. `--install` runs the upgrade through the \
-package manager that owns this copy (cargo, npm, uv, pipx, or the installer \
-script). `auto_update` is on by default and does the verified-download half by \
+package manager that owns this copy (cargo, npm, bun, pnpm, yarn, uv, pipx, or the \
+installer script). `--channels` prints the command for every channel instead of only \
+this one, and touches nothing. `auto_update` is on by default and does the verified-download half by \
 itself at the end of a prune pass when a newer release is known — never the \
 package-manager half, and nothing at all on WinGet, Scoop and Homebrew, where the \
 manager owns the upgrade; `devp config set auto_update false` stops it. An upgrade never interrupts the \
@@ -578,6 +624,7 @@ pub const UPDATE_EXAMPLES: &str = "\
 EXAMPLES:
   devp update                     Version, latest release, upgrade command
   devp update --install           Upgrade now, through the owning channel
+  devp update --channels          Every channel's upgrade command, no network
   devp update --offline           No network this run";
 
 pub const INSTALL_LONG: &str = "\
@@ -591,6 +638,11 @@ that order, so a failed install leaves the working copy untouched.
 Removing the old copy through its own manager, rather than deleting the file, is the \
 point: uv, pipx, npm, cargo and the rest each keep a record of what they installed, and \
 a manager whose record still says dev-prune is there will put the old binary back.
+
+bun, pnpm and yarn install the same npm package and are each their own channel, not \
+npm. A copy `bun add -g dev-prune` put in place is upgraded with bun and removed with \
+bun; running npm against it installs a second copy under npm's prefix and leaves the \
+first one stale and still on PATH.
 
 Nothing is migrated, because nothing needs to be. Settings, the repository registry and \
 the undo history live in the config directory, which no package manager owns.
@@ -650,8 +702,8 @@ When a VS Code-family editor is on your PATH (VS Code, VSCodium, Cursor, Windsur
 Positron, Kiro, or an Insiders build) and the dev-prune extension is not installed, \
 one run also asks — once ever, only at a terminal — whether to install it into each \
 editor found. Each editor installs from its own registry; when a fork's registry does \
-not carry the extension, the `.vsix` from the latest GitHub release is installed \
-instead. Decline and it never asks again; install it yourself later with \
+not carry the extension, the `.vsix` from the extension's own newest release is \
+installed instead. Decline and it never asks again; install it yourself later with \
 `code --install-extension VKrishna04.dev-prune`.";
 
 pub const SETUP_EXAMPLES: &str = "\

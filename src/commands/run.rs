@@ -16,6 +16,7 @@ use crate::adapters;
 use crate::config::Registry;
 use crate::constants;
 use crate::engine::{self, AdapterFilter, PruneOptions, PruneResult, PruneStatus};
+use crate::i18n;
 use crate::json;
 use crate::output;
 use crate::tui;
@@ -189,13 +190,19 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
         return Ok(());
     }
 
-    output::print_header(&format!("dev-prune Targeted Run ({clean})"));
+    output::print_header(&i18n::tf(
+        "run.header.targeted",
+        &[("path", clean.as_str())],
+    ));
     if let Some(desc) = filter.describe() {
         output::print_info(&format!("Adapter filter: {desc}"));
     }
 
     if results.is_empty() {
-        output::print_info(&format!("No pruneable bloat directories found in {clean}."));
+        output::print_info(&i18n::tf(
+            "run.nothing.bloat.targeted",
+            &[("path", clean.as_str())],
+        ));
         return Ok(());
     }
 
@@ -248,14 +255,20 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
             PruneStatus::SkippedSymlink(e) => {
                 output::print_warning(&format!("{clean} → {}", e.trim()));
             }
+            PruneStatus::SkippedDeclaration(e) => {
+                output::print_warning(&format!("{clean} → {}", e.trim()));
+            }
             _ => {}
         }
     }
 
     if !args.dry_run && total_freed > 0 {
-        output::print_success(&format!(
-            "Freed: {} in {clean}",
-            output::format_bytes(total_freed)
+        output::print_success(&i18n::tf(
+            "run.freed.targeted",
+            &[
+                ("size", &output::format_bytes(total_freed)),
+                ("path", clean.as_str()),
+            ],
         ));
     }
 
@@ -401,13 +414,27 @@ fn resolve_manifest_rewrite(registry: Option<&Registry>) -> bool {
 fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if !args.json {
         if args.dry_run {
-            output::print_header("dev-prune run (DRY RUN)");
+            output::print_header(i18n::t("run.header.dry"));
         } else {
-            output::print_header("dev-prune run");
+            output::print_header(i18n::t("run.header"));
         }
     }
 
     let mut registry = Registry::load()?;
+
+    // A repository `git init` created fires no Git hook and so never registered itself.
+    // Picking it up here is what keeps `devp run` from reporting "No repositories
+    // registered" while standing inside one. See `link::adopt_enclosing_repo`.
+    let adopted = crate::commands::link::adopt_enclosing_repo(&mut registry);
+    if adopted.is_some() {
+        registry.save()?;
+    }
+    if let Some(path) = &adopted
+        && !args.json
+    {
+        crate::commands::link::report_cwd_adoption(path);
+        println!();
+    }
 
     // Suppressed in JSON mode: the document is a contract, and a version notice printed
     // into it would corrupt the output.
@@ -491,7 +518,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     // only ever sees selected candidates, so it never got the chance.
     let mut candidates: Vec<PruneResult> = Vec::new();
     let mut blocked: Vec<PruneResult> = Vec::new();
-    let mut linked: Vec<PruneResult> = Vec::new();
+    let mut left_alone: Vec<PruneResult> = Vec::new();
     let mut missing: Vec<PruneResult> = Vec::new();
     for result in engine::prune_all_with(&mut registry, &analysis) {
         // An excepted repository leaves the pass entirely — including its failures. The
@@ -508,7 +535,11 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             | PruneStatus::DeleteError(_) => blocked.push(result),
             // Reported, never failed on: the link is permanent and deliberate, and a
             // "failure" here made every scheduled pass over the repo exit 1 forever.
-            PruneStatus::SkippedSymlink(_) => linked.push(result),
+            // A refused declaration joins it for the same reason — it is a standing
+            // state of the repository's own config, not something this pass did wrong.
+            PruneStatus::SkippedSymlink(_) | PruneStatus::SkippedDeclaration(_) => {
+                left_alone.push(result)
+            }
             // Same reasoning: a deleted clone stays deleted, and failing on it would
             // keep every scheduled pass red until the entry is unlinked.
             PruneStatus::PathMissing => missing.push(result),
@@ -544,29 +575,35 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if args.dry_run {
         if args.json {
             json::emit(&json::run_document(
-                &[candidates, blocked, linked, missing].concat(),
+                &[candidates, blocked, left_alone, missing].concat(),
                 true,
             ))?;
             return Ok(());
         }
-        if candidates.is_empty() && blocked.is_empty() && linked.is_empty() && missing.is_empty() {
-            output::print_info("No idle repositories or pruneable bloat directories found.");
+        if candidates.is_empty()
+            && blocked.is_empty()
+            && left_alone.is_empty()
+            && missing.is_empty()
+        {
+            output::print_info(i18n::t("run.nothing"));
             return Ok(());
         }
         if !candidates.is_empty() {
             report_candidates(&candidates);
         }
         let total: u64 = candidates.iter().map(|c| c.size_freed).sum();
-        output::print_header("Summary (Dry Run)");
-        output::print_info(&format!(
-            "Would free {} across {} bloat directories.",
-            output::format_bytes(total),
-            candidates.len()
+        output::print_header(i18n::t("run.summary.dry"));
+        output::print_info(&i18n::tf(
+            "run.would_free",
+            &[
+                ("size", &output::format_bytes(total)),
+                ("count", &candidates.len().to_string()),
+            ],
         ));
         // Reported, but not an error: a dry run's job is to say what it found, and it
         // found this too.
         report_blocked(&blocked);
-        report_linked(&linked);
+        report_left_alone(&left_alone);
         report_missing(&missing);
         return Ok(());
     }
@@ -574,18 +611,18 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if candidates.is_empty() {
         if args.json {
             json::emit(&json::run_document(
-                &[blocked.clone(), linked, missing].concat(),
+                &[blocked.clone(), left_alone, missing].concat(),
                 false,
             ))?;
             return fail_if_blocked(&blocked);
         }
-        if blocked.is_empty() && linked.is_empty() && missing.is_empty() {
-            output::print_info("No idle repositories or pruneable bloat directories found.");
+        if blocked.is_empty() && left_alone.is_empty() && missing.is_empty() {
+            output::print_info(i18n::t("run.nothing"));
             return Ok(());
         }
-        output::print_info("No pruneable bloat directories found.");
+        output::print_info(i18n::t("run.nothing.bloat"));
         report_blocked(&blocked);
-        report_linked(&linked);
+        report_left_alone(&left_alone);
         report_missing(&missing);
         return fail_if_blocked(&blocked);
     }
@@ -595,12 +632,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if !args.json {
         report_binaries(&candidates);
         report_candidates(&candidates);
-        output::print_info(&format!(
-            "Total Reclaimable Space: {}",
-            output::format_bytes_styled(total_reclaimable)
+        output::print_info(&i18n::tf(
+            "run.reclaimable",
+            &[("size", &output::format_bytes_styled(total_reclaimable))],
         ));
         report_blocked(&blocked);
-        report_linked(&linked);
+        report_left_alone(&left_alone);
         report_missing(&missing);
     }
 
@@ -662,10 +699,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
 
     if !args.json {
         let selected_total_bytes: u64 = target_candidates.iter().map(|c| c.size_freed).sum();
-        output::print_header(&format!(
-            "Executing Progressive Deletion ({} repos, {})",
-            target_candidates.len(),
-            output::format_bytes(selected_total_bytes)
+        output::print_header(&i18n::tf(
+            "run.header.deleting",
+            &[
+                ("repos", &target_candidates.len().to_string()),
+                ("size", &output::format_bytes(selected_total_bytes)),
+            ],
         ));
     }
 
@@ -690,10 +729,10 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
 
     // Seeded with what the analysis pass could not get past. Those repositories belong in
     // the document and in the exit code exactly as much as a failure from the loop below.
-    // Symlinked directories ride along for the document only — they are not errors.
+    // Left-alone directories ride along for the document only — they are not errors.
     let mut error_count = blocked.len();
     let mut all_results: Vec<PruneResult> = blocked;
-    all_results.extend(linked);
+    all_results.extend(left_alone);
     all_results.extend(missing);
     let mut total_freed: u64 = 0;
     let mut pruned_count = 0;
@@ -843,14 +882,20 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         return Ok(());
     }
 
-    output::print_header("Summary");
-    output::print_success(&format!(
-        "Freed: {} across {pruned_count} directories",
-        output::format_bytes_styled(total_freed)
+    output::print_header(i18n::t("run.summary"));
+    output::print_success(&i18n::tf(
+        "run.freed",
+        &[
+            ("size", &output::format_bytes_styled(total_freed)),
+            ("count", &pruned_count.to_string()),
+        ],
     ));
 
     if error_count > 0 {
-        output::print_warning(&format!("{error_count} repos were not pruned."));
+        output::print_warning(&i18n::tf(
+            "run.not_pruned",
+            &[("count", &error_count.to_string())],
+        ));
 
         // Only when a lockfile was actually the problem. `error_count` also counts
         // unreadable configs and failed deletions, and a lecture about lockfiles in front
@@ -931,9 +976,9 @@ fn report_blocked(blocked: &[PruneResult]) {
     if blocked.is_empty() {
         return;
     }
-    output::print_header(&format!(
-        "Repositories That Could Not Be Examined ({})",
-        blocked.len()
+    output::print_header(&i18n::tf(
+        "run.header.blocked",
+        &[("count", &blocked.len().to_string())],
     ));
 
     let grouped = |failure: ActivityFailure| -> Vec<&PruneResult> {
@@ -1051,14 +1096,17 @@ fn list_paths(results: &[&PruneResult]) {
     }
 }
 
-/// Report bloat directories that are symlinks and were deliberately left alone.
+/// Report directories that were deliberately left alone: symlinks, and declarations
+/// that did not pass their checks.
 ///
-/// Informational only, never part of the exit code: the storage a link points at is
-/// not this repository's to delete, the state is permanent, and failing on it would
-/// turn every scheduled pass over such a repo red forever.
-fn report_linked(linked: &[PruneResult]) {
-    for result in linked {
-        if let PruneStatus::SkippedSymlink(e) = &result.status {
+/// Informational only, never part of the exit code. The storage a link points at is not
+/// this repository's to delete; a declaration dev-prune refuses is a standing fact about
+/// the repository's own config. Both are permanent until somebody changes something, and
+/// failing on either would turn every scheduled pass over such a repo red forever.
+fn report_left_alone(left_alone: &[PruneResult]) {
+    for result in left_alone {
+        if let PruneStatus::SkippedSymlink(e) | PruneStatus::SkippedDeclaration(e) = &result.status
+        {
             output::print_warning(&format!(
                 "{} → {}",
                 output::clean_path(&result.repo_path),
@@ -1124,7 +1172,7 @@ fn report_binaries(candidates: &[PruneResult]) {
     if binary_statuses.is_empty() {
         return;
     }
-    output::print_header("Required Ecosystem Binaries Pre-Check");
+    output::print_header(i18n::t("run.header.binaries"));
     for b in &binary_statuses {
         if b.available {
             output::print_success(&format!(
@@ -1142,7 +1190,7 @@ fn report_binaries(candidates: &[PruneResult]) {
 }
 
 fn report_candidates(candidates: &[PruneResult]) {
-    output::print_header("Prune Candidates & Space Savings Calculation");
+    output::print_header(i18n::t("run.header.candidates"));
     for candidate in candidates {
         output::print_info(&format!(
             "  • {} → {} ({}) [{}]{}",
@@ -1197,7 +1245,7 @@ pub(crate) fn report_lockfile_failure(result: &PruneResult, error: &str) {
 /// is applied here in the report rather than in the engine, so a too-small directory is
 /// named as too small instead of silently missing.
 fn run_explain(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
-    output::print_header("Why each repository would or would not be pruned");
+    output::print_header(i18n::t("run.header.reasons"));
     if let Some(desc) = filter.describe() {
         output::print_info(&format!("Adapter filter: {desc}"));
     }

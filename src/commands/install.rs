@@ -43,6 +43,12 @@ pub enum TargetChannel {
     Cargo,
     /// `npm install -g dev-prune`.
     Npm,
+    /// `bun add -g dev-prune`.
+    Bun,
+    /// `pnpm add -g dev-prune`.
+    Pnpm,
+    /// `yarn global add dev-prune` — Yarn 1.x only.
+    Yarn,
     /// `uv tool install dev-prune`.
     Uv,
     /// `pipx install dev-prune`.
@@ -61,6 +67,9 @@ impl TargetChannel {
             TargetChannel::Installer => Channel::Installer,
             TargetChannel::Cargo => Channel::Cargo,
             TargetChannel::Npm => Channel::Npm,
+            TargetChannel::Bun => Channel::Bun,
+            TargetChannel::Pnpm => Channel::Pnpm,
+            TargetChannel::Yarn => Channel::Yarn,
             TargetChannel::Uv => Channel::UvTool,
             TargetChannel::Pipx => Channel::Pipx,
             TargetChannel::Winget => Channel::WinGet,
@@ -89,7 +98,7 @@ pub fn run(channel: Option<TargetChannel>, dry_run: bool, yes: bool) -> Result<(
         if let Some(cmd) = current.upgrade_command() {
             output::print_info(&format!("Upgrade it in place with: {cmd}"));
         }
-        return Ok(());
+        return converge(&exe, dry_run, yes);
     }
 
     // A channel move installs the latest release through the new manager, so under a
@@ -203,6 +212,101 @@ pub fn run(channel: Option<TargetChannel>, dry_run: bool, yes: bool) -> Result<(
     Ok(())
 }
 
+/// Finish the job when the channel asked for is the one this copy already came from.
+///
+/// Nobody types `devp install --channel installer` on an installer copy to be told about
+/// provenance. They type it because a second copy is in the way, and they want one left.
+/// That used to be the end of the road: the message said there was nothing to move, and
+/// the installer script, knowing it, handed the same command to the *older* binary
+/// instead — the one copy least able to run it, because nothing before 1.8.0 has an
+/// `install` subcommand at all. The offer dead-ended on precisely the machines that
+/// needed it. This copy is new by definition, so the work happens here.
+///
+/// Only copies outside this binary's own directory count. The alias sitting beside it is
+/// the same install under a second name, and removing it would break `devp`.
+fn converge(exe: &std::path::Path, dry_run: bool, yes: bool) -> Result<()> {
+    use crate::commands::uninstall::{canon_key, find_stray_copies};
+
+    let here = exe.parent().map(canon_key);
+    let others: Vec<_> = find_stray_copies()
+        .into_iter()
+        .filter(|s| s.path.parent().map(canon_key) != here)
+        .collect();
+
+    println!();
+    if others.is_empty() {
+        output::print_info("No other copy of dev-prune is on this machine.");
+        return Ok(());
+    }
+
+    output::print_warning(&format!(
+        "{} other cop{} of dev-prune {} on this machine:",
+        others.len(),
+        if others.len() == 1 { "y" } else { "ies" },
+        if others.len() == 1 { "is" } else { "are" }
+    ));
+    println!();
+    for stray in &others {
+        println!("  {}", output::clean_path(&stray.path));
+        match uninstall_argv(stray.channel) {
+            Some(argv) => println!("      {}: {}", stray.channel.label(), argv.join(" ")),
+            // No manager holds a record of it, so there is no command to run and the
+            // file itself is the whole install.
+            None => println!("      {}: delete the file", stray.channel.label()),
+        }
+    }
+    println!();
+
+    if dry_run {
+        output::print_info("`--dry-run`: nothing was run.");
+        return Ok(());
+    }
+
+    // The same rule the channel move above is refused by, on the path that reaches this
+    // one without passing it: whichever of these copies answers on PATH is the version
+    // that runs, so removing it changes that version just as surely as an upgrade would.
+    if Registry::load().is_ok_and(|r| r.settings.version_lock) {
+        anyhow::bail!(
+            "Removing another copy would change which version answers on PATH. {}",
+            super::update::locked_notice(None)
+        );
+    }
+
+    if !confirm(yes) {
+        output::print_info("Left in place. Nothing was changed.");
+        return Ok(());
+    }
+
+    let mut removed = 0usize;
+    let mut failed: Vec<(std::path::PathBuf, String)> = Vec::new();
+    for stray in &others {
+        let outcome = match uninstall_argv(stray.channel) {
+            Some(argv) => spawn(&argv).map_err(|e| format!("{e:#}")),
+            None => std::fs::remove_file(&stray.path).map_err(|e| e.to_string()),
+        };
+        match outcome {
+            Ok(()) => removed += 1,
+            Err(e) => failed.push((stray.path.clone(), e)),
+        }
+    }
+
+    println!();
+    if removed > 0 {
+        output::print_success(&format!(
+            "Removed {removed} other cop{}.",
+            if removed == 1 { "y" } else { "ies" }
+        ));
+    }
+    for (path, why) in &failed {
+        output::print_warning(&format!(
+            "{} is still there: {why}",
+            output::clean_path(path)
+        ));
+    }
+    output::print_info("Open a new shell, then `devp update` to confirm which copy it finds.");
+    Ok(())
+}
+
 /// What `devp install` prints on its own: which channel owns this copy, and the names
 /// `--channel` accepts.
 fn report(current: Channel, exe: &std::path::Path) -> Result<()> {
@@ -221,10 +325,18 @@ fn report(current: Channel, exe: &std::path::Path) -> Result<()> {
         println!("  Upgrade:       {cmd}");
     }
     println!();
-    output::print_info(
+    // Read off the enum clap itself parses, so the list cannot name a channel
+    // `--channel` rejects, or omit one it accepts.
+    let names = TargetChannel::value_variants()
+        .iter()
+        .filter_map(|t| t.to_possible_value())
+        .map(|v| v.get_name().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    output::print_info(&format!(
         "Move it to another package manager with `devp install --channel <name>`:\n  \
-         installer, cargo, npm, uv, pipx, winget, scoop, homebrew.",
-    );
+         {names}."
+    ));
     output::print_info("`--dry-run` prints the whole plan without running any of it.");
     Ok(())
 }
@@ -267,7 +379,13 @@ fn install_argv(channel: Channel) -> Vec<Vec<String>> {
             }
         }
         Channel::Npm => vec![owned(&["npm", "install", "-g", "dev-prune"])],
-        Channel::UvTool => vec![owned(&["uv", "tool", "install", "dev-prune"])],
+        Channel::Bun => vec![owned(&["bun", "add", "-g", "dev-prune"])],
+        Channel::Pnpm => vec![owned(&["pnpm", "add", "-g", "dev-prune"])],
+        Channel::Yarn => vec![owned(&["yarn", "global", "add", "dev-prune"])],
+        // `@latest` because `uv tool install dev-prune` against an environment uv
+        // already has prints "already installed" and exits successfully without
+        // changing anything — which reads, from here, as a move that worked.
+        Channel::UvTool => vec![owned(&["uv", "tool", "install", "dev-prune@latest"])],
         Channel::Pipx => vec![owned(&["pipx", "install", "dev-prune"])],
         Channel::WinGet => vec![vec![
             "winget".to_string(),
@@ -307,6 +425,9 @@ fn uninstall_argv(channel: Channel) -> Option<Vec<String>> {
     Some(match channel {
         Channel::Cargo => owned(&["cargo", "uninstall", "dev-prune"]),
         Channel::Npm => owned(&["npm", "uninstall", "-g", "dev-prune"]),
+        Channel::Bun => owned(&["bun", "remove", "-g", "dev-prune"]),
+        Channel::Pnpm => owned(&["pnpm", "remove", "-g", "dev-prune"]),
+        Channel::Yarn => owned(&["yarn", "global", "remove", "dev-prune"]),
         Channel::UvTool => owned(&["uv", "tool", "uninstall", "dev-prune"]),
         Channel::Pipx => owned(&["pipx", "uninstall", "dev-prune"]),
         Channel::Pip => owned(&["pip", "uninstall", "-y", "dev-prune"]),
@@ -390,6 +511,9 @@ mod tests {
         for channel in [
             Channel::Cargo,
             Channel::Npm,
+            Channel::Bun,
+            Channel::Pnpm,
+            Channel::Yarn,
             Channel::UvTool,
             Channel::Pipx,
             Channel::Pip,

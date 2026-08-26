@@ -1,0 +1,31 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "dev-prune",
+  "owner": {
+    "name": "VKrishna04",
+    "url": "https://github.com/Life-Experimentalist/dev-prune"
+  },
+  "metadata": {
+    "description": "The dev-prune (devp) skill: reclaim disk space from idle Git repositories, safely."
+  },
+  "plugins": [
+    {
+      "name": "dev-prune",
+      "source": "./",
+      "description": "Teaches Claude the dev-prune (devp) CLI: how to reclaim disk space by deleting dependency and build directories a lockfile can rebuild, how to put them back, the safety rules it will not cross, its exit codes, its --json contract, and its troubleshooting tree.",
+      "author": {
+        "name": "VKrishna04"
+      },
+      "keywords": [
+        "disk-space",
+        "node_modules",
+        "cleanup",
+        "prune",
+        "dependencies",
+        "package-managers",
+        "cli",
+        "rust"
+      ]
+    }
+  ]
+}

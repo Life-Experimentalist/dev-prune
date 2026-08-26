@@ -46,6 +46,7 @@
 		"json schema",
 		"validation",
 		"lockfile",
+		"monorepo",
 		"npm",
 		"pnpm",
 		"yarn",
@@ -53,9 +54,18 @@
 		"python",
 		"venv",
 		"uv",
+		"poetry",
 		"rust",
 		"cargo",
-		"monorepo"
+		"go",
+		"gradle",
+		"maven",
+		"composer",
+		"bundler",
+		"cocoapods",
+		"swift",
+		"elixir",
+		"terraform"
 	],
 	"repository": {
 		"type": "git",
@@ -127,7 +137,9 @@
 			{
 				"fileMatch": [
 					".devprune.json",
-					"**/.devprune.json"
+					"**/.devprune.json",
+					"project.devprune.json",
+					"**/project.devprune.json"
 				],
 				"url": "./schemas/devprune.schema.json"
 			}

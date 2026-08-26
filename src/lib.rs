@@ -7,8 +7,10 @@ pub mod commands;
 pub mod config;
 pub mod constants;
 pub mod daemon;
+pub mod declared;
 pub mod engine;
 pub mod help;
+pub mod i18n;
 pub mod json;
 pub mod output;
 pub mod pathenv;
@@ -387,10 +389,17 @@ pub enum Commands {
         offline: bool,
 
         /// Download and install the newer release, through whichever package manager
-        /// installed this copy (cargo, npm, uv, pipx, or the installer script). Needs
-        /// the network, so it cannot be combined with `--offline`.
+        /// installed this copy (cargo, npm, bun, pnpm, yarn, uv, pipx, or the installer
+        /// script). Needs the network, so it cannot be combined with `--offline`.
         #[arg(long, conflicts_with = "offline")]
         install: bool,
+
+        /// Print the upgrade command for every channel dev-prune ships through, instead
+        /// of only the one that installed this copy. Touches nothing and needs no
+        /// network — useful when the machine in front of you is not the one that has
+        /// the stale copy.
+        #[arg(long, conflicts_with_all = ["offline", "install"])]
+        channels: bool,
     },
 
     /// Export SKILL.md and display ready-to-copy AI Agent onboarding & skill import prompts.
@@ -541,6 +550,13 @@ pub enum ConfigAction {
         #[arg(long, short)]
         update: bool,
     },
+    /// Turn on everything the first run recommends, in one command.
+    #[command(long_about = help::CONFIG_RECOMMENDED_LONG, after_long_help = help::CONFIG_RECOMMENDED_EXAMPLES)]
+    Recommended {
+        /// Include the recommendations that come with something to know first.
+        #[arg(long)]
+        with_cautious: bool,
+    },
     /// Inspect or initialize per-repository config (.devprune.json) for a workspace path.
     #[command(long_about = help::CONFIG_PROJECT_LONG, after_long_help = help::CONFIG_PROJECT_EXAMPLES)]
     Project {
@@ -550,6 +566,9 @@ pub enum ConfigAction {
         /// Force update/sync pass on this project config.
         #[arg(long, short)]
         update: bool,
+        /// Act on the committed project.devprune.json instead of the personal file.
+        #[arg(long)]
+        team: bool,
     },
     /// Configure OS background daemon scheduler globally or for a workspace path.
     #[command(long_about = help::CONFIG_DAEMON_LONG, after_long_help = help::CONFIG_DAEMON_EXAMPLES)]
@@ -780,6 +799,18 @@ pub fn run_cli() {
     }
     let cli = Cli::parse_from(args);
 
+    // After parsing, so `--version` and `--help` never pay for it, and before anything
+    // is printed, because every heading past this line is drawn in whatever it settles
+    // on. `Registry::load` is a pure read, and a registry that will not load is not a
+    // reason to refuse to print in English — the command below reports that failure
+    // properly.
+    i18n::init(
+        config::Registry::load()
+            .ok()
+            .map(|registry| registry.settings.language)
+            .as_deref(),
+    );
+
     // Both spellings mean the same thing; the old one just says so first.
     let ignore_idle = cli.ignore_idle || cli.force;
     if cli.force {
@@ -872,8 +903,11 @@ pub fn run_cli() {
             Some(ConfigAction::Set { key, value }) => commands::config::run_set(&key, &value),
             Some(ConfigAction::Show { update: true }) => commands::config::run_global_update(),
             Some(ConfigAction::Show { update: false }) | None => commands::config::run_show(),
-            Some(ConfigAction::Project { path, update }) => {
-                commands::config::run_path_config(&config::expand_tilde(&path), update)
+            Some(ConfigAction::Recommended { with_cautious }) => {
+                commands::config::run_recommended(with_cautious)
+            }
+            Some(ConfigAction::Project { path, update, team }) => {
+                commands::config::run_path_config(&config::expand_tilde(&path), update, team)
             }
             Some(ConfigAction::Daemon { target, sub_action }) => {
                 // A toggle word (`on`, `off`) never starts with `~`, so expanding the
@@ -906,7 +940,9 @@ pub fn run_cli() {
                 commands::config::run_hook_toggle(path, action, chain)
             }
             Some(ConfigAction::Icon) => commands::icon::run_install(),
-            Some(ConfigAction::Wizard { no_tui }) => commands::config::run_wizard(no_tui),
+            Some(ConfigAction::Wizard { no_tui }) => {
+                commands::config::run_wizard(no_tui, commands::config::Opened::ByRequest)
+            }
         },
         Commands::Restore { path, last_run } => {
             if last_run {
@@ -915,7 +951,11 @@ pub fn run_cli() {
                 commands::restore::run(&config::expand_tilde(path.as_deref().unwrap_or(".")))
             }
         }
-        Commands::Update { offline, install } => commands::update::run(offline, install),
+        Commands::Update {
+            offline,
+            install,
+            channels,
+        } => commands::update::run(offline, install, channels),
         Commands::Skill { agent } => commands::skill::run(agent),
         Commands::Setup { status } => commands::setup::run(status),
         Commands::Doctor { path, fix } => {

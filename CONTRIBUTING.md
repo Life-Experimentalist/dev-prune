@@ -77,6 +77,25 @@ See the detailed step-by-step tutorial: **[How to Add a New Package Manager Adap
 
 ---
 
+## 🌐 How to Add or Fix a Translation
+
+dev-prune prints its own headings and summary lines in twelve languages. Adding a
+thirteenth is one JSON file in `src/i18n/locales/` and one `include_str!` line in
+`src/i18n/mod.rs`; fixing a wrong sentence in an existing one touches no Rust at all.
+
+Translations are deliberately bounded: `--json`, exit codes, flag names, config keys,
+adapter names and lockfile refusals are English in every catalogue, because they are a
+contract or a diagnosis rather than chrome. Read the boundary before you translate
+anything.
+
+Every catalogue but English currently carries `"reviewed": false`, and the tool says so
+when somebody picks it. If you are a native speaker and you have read a file through,
+flipping that flag is a welcome pull request on its own.
+
+See: **[Translating dev-prune (`docs/TRANSLATIONS.md`)](docs/TRANSLATIONS.md)**.
+
+---
+
 ## 🧪 Local Testing Workflow
 
 ### Safe Local Installation

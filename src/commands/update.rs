@@ -37,9 +37,12 @@ use crate::config::Registry;
 use crate::constants;
 use crate::output;
 
-pub fn run(offline: bool, install: bool) -> Result<()> {
+pub fn run(offline: bool, install: bool, channels: bool) -> Result<()> {
     if install {
         return run_install();
+    }
+    if channels {
+        return run_channels();
     }
     output::print_header("dev-prune version & upgrade");
 
@@ -146,6 +149,11 @@ fn print_upgrade_commands() {
             println!("    {command}");
             println!();
             println!("  Or `devp update --install` to let dev-prune do it for you.");
+            println!();
+            // Named, not printed. The channel above is the answer for this copy; the
+            // rest of the table is for the reader who has a second machine, or who does
+            // not believe the detection.
+            println!("  `devp update --channels` lists the command for every channel.");
         }
         // `Unknown` means the binary sits somewhere no channel owns — a dev build, a
         // hand-copied file, a distro package. There is no manager to name, so this is the
@@ -156,14 +164,56 @@ fn print_upgrade_commands() {
             println!("    devp update --install");
             println!();
             println!("  Or install through a channel, which keeps it upgradeable:");
-            println!("    cargo binstall dev-prune --force");
-            println!("    cargo install dev-prune --force");
-            println!("    npm install -g dev-prune@latest");
-            println!("    uv tool upgrade dev-prune  /  pipx upgrade dev-prune");
-            println!("    winget upgrade {}", constants::WINGET_PACKAGE_ID);
-            println!("    scoop update dev-prune  /  brew upgrade dev-prune");
-            println!("    curl -fsSL {} | sh", constants::INSTALL_SH_URL);
-            println!("    iwr -useb {} | iex", constants::INSTALL_PS1_URL);
+            print_every_upgrade_command();
+        }
+    }
+}
+
+/// `devp update --channels`: the whole table, and which row this copy is on.
+///
+/// Deliberately offline. The one question it answers — "what do I type to upgrade a
+/// dev-prune installed through X" — does not depend on what the latest release is, and
+/// making it wait on the network would make it useless on the machine where it is most
+/// often needed.
+fn run_channels() -> Result<()> {
+    output::print_header("dev-prune upgrade commands");
+    let current = Channel::detect();
+    println!();
+    println!("  This copy came from {}.", current.label());
+    println!();
+    print_every_upgrade_command();
+    println!();
+    output::print_info(
+        "`devp update --install` replaces this copy directly, without the manager. \
+         `devp install --channel <name>` moves it to a different one.",
+    );
+    Ok(())
+}
+
+/// Every channel's own upgrade command, one per line, widest label first.
+///
+/// Printed from the table rather than typed out. The version of this list that was typed
+/// out named five channels of the nine that existed, and the copy the user was holding
+/// had been installed through one of the four it did not mention.
+fn print_every_upgrade_command() {
+    let channels = [
+        Channel::Installer,
+        Channel::Cargo,
+        Channel::Npm,
+        Channel::Bun,
+        Channel::Pnpm,
+        Channel::Yarn,
+        Channel::UvTool,
+        Channel::Pipx,
+        Channel::Pip,
+        Channel::WinGet,
+        Channel::Scoop,
+        Channel::Homebrew,
+    ];
+    let width = channels.iter().map(|c| c.label().len()).max().unwrap_or(0);
+    for channel in channels {
+        if let Some(command) = channel.upgrade_command() {
+            println!("    {:<width$}  {command}", channel.label());
         }
     }
 }
@@ -541,7 +591,15 @@ fn spawn_channel_upgrade(channel: Channel) -> Result<()> {
                 vec!["cargo", "install", "dev-prune", "--force"]
             }
         }
+        // The four npm-compatible clients, each run through itself. `@latest` is
+        // load-bearing for the first three: given a bare name they resolve against a
+        // manifest they already have and report the installed version as current.
         Channel::Npm => vec!["npm", "install", "-g", "dev-prune@latest"],
+        Channel::Bun => vec!["bun", "add", "-g", "dev-prune@latest"],
+        Channel::Pnpm => vec!["pnpm", "add", "-g", "dev-prune@latest"],
+        // Yarn 1.x. Berry removed `yarn global` and says so itself when this runs, which
+        // is a better answer than anything this could substitute for it.
+        Channel::Yarn => vec!["yarn", "global", "upgrade", "dev-prune"],
         Channel::UvTool => vec!["uv", "tool", "upgrade", "dev-prune"],
         Channel::Pipx => vec!["pipx", "upgrade", "dev-prune"],
         Channel::Pip => vec!["pip", "install", "--upgrade", "dev-prune"],

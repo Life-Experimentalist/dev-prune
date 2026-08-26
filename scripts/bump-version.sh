@@ -4,7 +4,7 @@
 #
 # Set the release version everywhere at once.
 #
-# `version` in Cargo.toml is the source of truth, and eleven other files restate the
+# `version` in Cargo.toml is the source of truth, and thirteen other files restate the
 # number by hand. scripts/check-version.sh knows where all of them are and fails the
 # build when one drifts; this is that script's inverse, so the answer to "check-version
 # says nine files are stale" is one command rather than nine edits. Every rewrite below
@@ -42,9 +42,12 @@ rewrite scripts/install.sh "s/^FALLBACK_VERSION=\"[^\"]*\"/FALLBACK_VERSION=\"$v
 rewrite scripts/install.ps1 's/^\$fallbackVersion = .*/$fallbackVersion = '"'$version'"'/'
 rewrite site/src/App.jsx "s/^const VERSION = \"[^\"]*\";/const VERSION = \"$version\";/"
 rewrite site/public/llms.txt "s/Version [0-9][0-9A-Za-z.+-]*\./Version $version./"
+rewrite .agents/skills/dev-prune/SKILL.md \
+    "s/\*\*Skill version: [0-9][0-9A-Za-z.+-]*\.\*\*/**Skill version: $version.**/"
 rewrite site/index.html "s/\"softwareVersion\": \"[^\"]*\"/\"softwareVersion\": \"$version\"/"
 rewrite npm/package.json "s/\": \"[0-9][0-9A-Za-z.+-]*\"/\": \"$version\"/"
 rewrite docs/CLI_REFERENCE.md "s/^  \"version\": \"[^\"]*\",/  \"version\": \"$version\",/"
+rewrite .claude-plugin/plugin.json "s/^  \"version\": \"[^\"]*\",/  \"version\": \"$version\",/"
 
 # Whole asset filenames, quoted so a reader can copy them. The version sits in the
 # middle of the name, so these are matched on the surrounding `dev-prune-v...-` shape.

@@ -469,6 +469,43 @@ pub fn ensure_agent_skills() -> Outcome {
     ensure_agent_skills_at(&agent_skill_roots())
 }
 
+/// Every managed copy of `SKILL.md` that is not the one this binary carries.
+///
+/// The copies are refreshed by [`ensure_integrations`], which runs only while
+/// auto-setup is on. With it off, an upgrade leaves the previous release's instructions
+/// sitting in the agent's skills directory, and the agent goes on describing flags that
+/// no longer exist — confidently, because nothing told it otherwise.
+pub fn stale_skill_copies() -> Vec<PathBuf> {
+    let mut copies: Vec<PathBuf> = skill_path().into_iter().collect();
+    copies.extend(agent_skill_roots().into_iter().map(|r| r.join("SKILL.md")));
+    copies
+        .into_iter()
+        .filter(|p| fs::read_to_string(p).is_ok_and(|current| current != EMBEDDED_SKILL_MD))
+        .collect()
+}
+
+/// Rewrite every managed copy of `SKILL.md` from the embedded one.
+///
+/// Both copies, not just the export: the one an assistant actually reads is the one in
+/// its own skills directory, so repairing the export alone would report success and
+/// leave the stale instructions in the only place that matters.
+pub fn ensure_skill_copies() -> Outcome {
+    let mut installed = false;
+    for outcome in [ensure_skill_file(), ensure_agent_skills()] {
+        match outcome {
+            Outcome::Installed => installed = true,
+            // No agent on this machine is not a failure to repair.
+            Outcome::AlreadyPresent | Outcome::Skipped(_) => {}
+            failed => return failed,
+        }
+    }
+    if installed {
+        Outcome::Installed
+    } else {
+        Outcome::AlreadyPresent
+    }
+}
+
 fn ensure_agent_skills_at(roots: &[PathBuf]) -> Outcome {
     if roots.is_empty() {
         return Outcome::Skipped(
@@ -812,10 +849,17 @@ struct EditorCli {
 /// All of these forks keep the upstream CLI protocol (`--version`, `--list-extensions`,
 /// `--install-extension`), so one code path drives them all. What differs is the
 /// registry each one resolves an extension ID against: VS Code uses the Microsoft
-/// Marketplace, VSCodium/Windsurf/Positron/Kiro use OpenVSX, Cursor runs its own
-/// mirror. An ID install can therefore fail on a fork whose registry does not carry
-/// the extension yet — which is why the installer falls back to the `.vsix` from the
-/// GitHub release, the artifact every registry copy is built from.
+/// Marketplace, VSCodium/Windsurf/Positron/Kiro/Trae use OpenVSX, Cursor and
+/// Antigravity run their own mirrors. An ID install can therefore fail on a fork whose
+/// registry does not carry the extension yet — which is why the installer falls back
+/// to the `.vsix` from the GitHub release, the artifact every registry copy is built
+/// from.
+///
+/// The list is candidate CLI names, not a claim that any of them is installed: each is
+/// asked for its `--version` and dropped if it does not answer. Adding a fork therefore
+/// costs one failed spawn on a machine without it, and is what stops the extension
+/// offer from being a VS Code-only courtesy on an editor that is a VS Code build with a
+/// different name on the window.
 fn detect_vscode_editors() -> Vec<EditorCli> {
     const CANDIDATES: &[(&str, &str)] = &[
         ("code", "VS Code"),
@@ -824,6 +868,8 @@ fn detect_vscode_editors() -> Vec<EditorCli> {
         ("codium-insiders", "VSCodium Insiders"),
         ("cursor", "Cursor"),
         ("windsurf", "Windsurf"),
+        ("antigravity", "Antigravity"),
+        ("trae", "Trae"),
         ("positron", "Positron"),
         ("kiro", "Kiro"),
     ];
@@ -862,14 +908,21 @@ fn vscode_extension_installed(cli: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Download the `.vsix` attached to the latest GitHub release into the config directory.
+/// Download the `.vsix` from the newest extension release into the config directory.
 ///
 /// The release asset is the source of truth for the extension — the Marketplace and
-/// OpenVSX listings are built from it — so when an editor's registry cannot resolve the
-/// ID (a fork whose registry does not carry the extension), installing the release file
-/// directly gets the same bits through a channel every fork supports. Editors update a
-/// `.vsix`-installed extension from their registry once a newer listed version appears,
-/// so this install self-heals into the normal update flow.
+/// OpenVSX listings are published from that exact file — so when an editor's registry
+/// cannot resolve the ID (a fork whose registry does not carry the extension),
+/// installing the release file directly gets the same bits through a channel every fork
+/// supports. Editors update a `.vsix`-installed extension from their registry once a
+/// newer listed version appears, so this install self-heals into the normal update flow.
+///
+/// Deliberately not `releases/latest`. The extension has its own tags and its own
+/// release page, and those releases are marked "not latest" so they cannot displace the
+/// binary release that `devp update` reads. The consequence is that the newest one has
+/// to be found by walking the listing for a [`VSCODE_RELEASE_TAG_PREFIX`] tag.
+///
+/// [`VSCODE_RELEASE_TAG_PREFIX`]: crate::constants::VSCODE_RELEASE_TAG_PREFIX
 fn download_release_vsix() -> Option<std::path::PathBuf> {
     use std::time::Duration;
 
@@ -887,19 +940,31 @@ fn download_release_vsix() -> Option<std::path::PathBuf> {
             .call()
     };
 
-    let body = fetch(constants::LATEST_RELEASE_API_URL)
+    let body = fetch(constants::RELEASES_LIST_API_URL)
         .ok()?
         .body_mut()
         .read_to_string()
         .ok()?;
     let json: serde_json::Value = serde_json::from_str(&body).ok()?;
-    let asset = json.get("assets")?.as_array()?.iter().find_map(|asset| {
-        let name = asset.get("name")?.as_str()?;
-        if !name.ends_with(".vsix") {
+    // GitHub returns this listing newest-first, so the first extension release found is
+    // the current one. Draft releases carry no downloadable asset, and a pre-release of
+    // the extension is one deliberately not being offered to people who did not ask.
+    let asset = json.as_array()?.iter().find_map(|release| {
+        let tag = release.get("tag_name")?.as_str()?;
+        if !tag.starts_with(constants::VSCODE_RELEASE_TAG_PREFIX) {
             return None;
         }
-        let url = asset.get("browser_download_url")?.as_str()?;
-        Some((name.to_string(), url.to_string()))
+        if release.get("draft")?.as_bool()? || release.get("prerelease")?.as_bool()? {
+            return None;
+        }
+        release.get("assets")?.as_array()?.iter().find_map(|asset| {
+            let name = asset.get("name")?.as_str()?;
+            if !name.ends_with(".vsix") {
+                return None;
+            }
+            let url = asset.get("browser_download_url")?.as_str()?;
+            Some((name.to_string(), url.to_string()))
+        })
     })?;
 
     let bytes = fetch(&asset.1).ok()?.body_mut().read_to_vec().ok()?;
@@ -1135,14 +1200,22 @@ fn first_run_config_review() {
         return;
     }
 
+    // Deliberately not stamped here. The stamp records that somebody was *shown* the
+    // declaration, and a cron run, a CI job or a container has nobody to show it to.
+    // Writing it anyway meant the first unattended `devp` on a machine silently spent
+    // the one screen that says what dev-prune will not delete — so the person who
+    // installed it never saw it, and nothing ever offered again. Left unstamped, the
+    // walkthrough waits for the first run with a human on the other end of it, which is
+    // the only run it was ever for.
     if !a_person_is_present() {
-        crate::commands::config::skip_config_review();
         return;
     }
 
     // Any error here is the wizard's own reporting; the command the user actually typed
     // still runs. A failed walkthrough must not become a failed `devp status`.
-    if let Err(e) = crate::commands::config::run_wizard(false) {
+    if let Err(e) =
+        crate::commands::config::run_wizard(false, crate::commands::config::Opened::OnItsOwn)
+    {
         output::print_warning(&format!("Could not run the first-run setup ({e:#})."));
     }
     // Marked regardless of how it ended, including a deliberate quit. This is the one

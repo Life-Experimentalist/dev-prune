@@ -39,6 +39,17 @@ pub const HOMEPAGE_URL: &str = "https://devprune.vkrishna04.me";
 pub const ATTRIBUTION_LINE: &str =
     "dev-prune · made with ♥ by VKrishna04 · github.com/Life-Experimentalist/dev-prune";
 
+/// The licence sentence under the declaration, in both wizard paths.
+///
+/// Apache-2.0 needs no click-through and this is not one: the licence governs use
+/// whether or not anybody reads this line. It is here because the screen it sits on is
+/// the first thing a new user meets, and a tool that deletes directories should say what
+/// it does and does not promise at that moment rather than in a file called LICENSE.md.
+/// Sections 7 and 8 are named so the disclaimer can be checked rather than taken on
+/// trust.
+pub const LICENCE_NOTICE: &str =
+    "Apache-2.0 sections 7-8: no warranty, no liability. Using it accepts that.";
+
 /// The body of `devp --version`.
 ///
 /// Built at runtime rather than with `concat!`, which only takes literals and would mean
@@ -159,6 +170,14 @@ pub const DEFAULT_AUTO_CONFIG: bool = false;
 /// Default setting for requiring interactive confirmation before pruning.
 pub const DEFAULT_REQUIRE_CONFIRMATION: bool = true;
 
+/// Language for dev-prune's own headings and summary lines.
+///
+/// English, and English is also the fallback for every key a translation has not
+/// reached yet -- see [`crate::i18n`]. Deliberately not derived from the operating
+/// system locale: a machine configured in one language has said nothing about what
+/// language its owner wants their build tools in.
+pub const DEFAULT_LANGUAGE: &str = "en";
+
 /// Default size floor, in MiB, below which a bloat directory is left alone.
 ///
 /// Zero — every recognised directory is a candidate. Raising it trades a little disk
@@ -259,12 +278,36 @@ pub const INSTALL_PS1_URL: &str = "https://devprune.vkrishna04.me/install.ps1";
 
 /// GitHub API endpoint for the latest published release.
 ///
-/// Contacted by `devp update`, by the interval-gated check behind `run`/`status`/`init`
-/// (off via `update_check false` or `DEV_PRUNE_OFFLINE`), and by the one-time
-/// extension-install offer's `.vsix` fallback. See the network policy in
-/// `docs/PRIVACY.md`.
+/// Contacted by `devp update` and by the interval-gated check behind
+/// `run`/`status`/`init` (off via `update_check false` or `DEV_PRUNE_OFFLINE`). See the
+/// network policy in `docs/PRIVACY.md`.
+///
+/// This answers with the newest release GitHub has marked *latest*, which is the newest
+/// binary release and nothing else: the extension's releases are published with
+/// `make_latest: false` precisely so they never surface here. They must not. This URL's
+/// answer is fed to [`compare_versions`](crate::commands::update::compare_versions)
+/// after a leading `v` is stripped, and a `vscode-v0.4.0` tag arriving here would leave
+/// every installed copy unable to compare its own version for as long as that release
+/// stayed newest.
 pub const LATEST_RELEASE_API_URL: &str =
     "https://api.github.com/repos/Life-Experimentalist/dev-prune/releases/latest";
+
+/// GitHub API endpoint listing releases newest-first, for the extension `.vsix`.
+///
+/// The extension ships on its own tags (`vscode-v*`) and its own release page, because
+/// its version is its own and it changes on its own schedule — see
+/// `.github/workflows/release-extension.yml`. That is also why this is a listing rather
+/// than [`LATEST_RELEASE_API_URL`]: there is no "latest release whose tag starts with"
+/// endpoint, so the caller walks the page and takes the first match.
+///
+/// One page is enough by a wide margin. The extension would have to go a hundred binary
+/// releases without a single release of its own before its newest fell off the end, and
+/// the fallback degrades to "install it by hand" rather than to anything wrong.
+pub const RELEASES_LIST_API_URL: &str =
+    "https://api.github.com/repos/Life-Experimentalist/dev-prune/releases?per_page=100";
+
+/// Tag prefix identifying a release of the VS Code extension rather than of the binary.
+pub const VSCODE_RELEASE_TAG_PREFIX: &str = "vscode-v";
 
 /// Where a release's assets live, with `{tag}` standing in for `v1.4.0`.
 ///
@@ -383,6 +426,14 @@ pub const INSTALL_RECEIPT_FILE: &str = "install.json";
 /// something that will never send one is a hang.
 pub const ENV_NO_TUI: &str = "DEV_PRUNE_NO_TUI";
 
+/// Environment variable that overrides the `language` setting for one invocation.
+///
+/// What a script or a CI job sets when it wants output in a known language whatever the
+/// machine is configured for. An unrecognised code falls back to [`DEFAULT_LANGUAGE`]
+/// rather than failing, because this is read before the command runs and a typo in a
+/// cosmetic setting should not stop a prune.
+pub const ENV_LANGUAGE: &str = "DEV_PRUNE_LANG";
+
 /// Windows environment variable that carries the *machine's* architecture when the
 /// running process is emulated.
 ///
@@ -440,6 +491,24 @@ pub const CACHE_CLEAR_TIMEOUT_SECS: u64 = 600;
 pub const TROUBLESHOOTING_URL: &str = "https://devprune.vkrishna04.me/docs/troubleshooting";
 /// Name of the structured per-repository configuration file stored inside repo roots.
 pub const PER_REPO_CONFIG_FILE: &str = ".devprune.json";
+
+/// Name of the committed, team-wide half of a repository's configuration.
+///
+/// Same shape and same schema as [`PER_REPO_CONFIG_FILE`], and the opposite intent.
+/// `.devprune.json` is written into `.git/info/exclude` so one person's answer stays one
+/// person's; this one is meant to be `git add`-ed, so that "nobody prunes this
+/// repository" is a fact a fresh clone already knows rather than something every
+/// teammate has to be told. The `project.` prefix rather than a new extension is what
+/// keeps one JSON schema covering both files.
+pub const PROJECT_REPO_CONFIG_FILE: &str = "project.devprune.json";
+
+/// The adapter name the declared-directory pass answers to.
+///
+/// Not a package manager and not in `get_all_adapters()`, but it appears in the same
+/// column of the same report, so it needs the same kind of name — and `--only`,
+/// `--skip` and `disabled_adapters` all match on that column. Naming it here is what
+/// keeps the filter, the engine and the report agreeing on the spelling.
+pub const DECLARED_ADAPTER_NAME: &str = "declared";
 
 /// Public URL for the JSON Schema used by IDEs for .devprune.json IntelliSense.
 pub const JSON_SCHEMA_URL: &str = "https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json";

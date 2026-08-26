@@ -99,7 +99,7 @@ $repo = 'Life-Experimentalist/dev-prune'
 # redirect carries the tag, so one HEAD request answers without parsing JSON.
 # $fallbackVersion exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-$fallbackVersion = '1.9.0'
+$fallbackVersion = '1.10.0'
 if (-not $version) {
     try {
         $resp = Invoke-WebRequest -Uri "https://github.com/$repo/releases/latest" -Method Head -MaximumRedirection 5 -UseBasicParsing -ErrorAction Stop
@@ -144,6 +144,54 @@ function Test-OnPath {
     param([string]$PathValue, [string]$Dir)
     $norm = $Dir.TrimEnd('\')
     @(($PathValue -split ';') | ForEach-Object { $_.TrimEnd('\') }) -contains $norm
+}
+
+# Is it the *first* entry, which is the only position that decides anything.
+#
+# Presence was the question this script used to ask, and presence is not the question. A
+# machine that installed dev-prune here once and through another manager later has this
+# directory on PATH and the other copy in front of it; every re-run of the one-liner
+# then agreed there was nothing to do while the wrong binary kept answering.
+function Test-FirstOnPath {
+    param([string]$PathValue, [string]$Dir)
+    $first = @(($PathValue -split ';') | Where-Object { $_ }) | Select-Object -First 1
+    if ($null -eq $first) { return $false }
+    return $first.TrimEnd('\') -eq $Dir.TrimEnd('\')
+}
+
+# The same PATH string with this directory in front and its other occurrences dropped.
+#
+# Everything else keeps its spelling and its order: entries here may be written with
+# %USERPROFILE% or a trailing separator, and a PATH this script rewrote into its own
+# idea of tidy is a PATH somebody has to read a diff of.
+function Move-ToPathFront {
+    param([string]$PathValue, [string]$Dir)
+    $norm = $Dir.TrimEnd('\')
+    $rest = @(($PathValue -split ';') | Where-Object { $_.TrimEnd('\') -ne $norm })
+    $joined = ($rest -join ';').Trim(';')
+    if ($joined) { return $Dir + ';' + $joined }
+    return $Dir
+}
+
+# Which file a bare `dev-prune` finds in this session, resolved by hand.
+#
+# Get-Command would be shorter and is what found $priorExe above, before anything was
+# written. It is not what should answer afterwards: it consults a discovery cache, and a
+# cached miss outliving a PATH change is exactly the kind of almost-true this function
+# exists to stop the script printing.
+function Resolve-OnPath {
+    param([string]$Name)
+    foreach ($dir in ($env:PATH -split ';')) {
+        if (-not $dir) { continue }
+        try {
+            $candidate = Join-Path $dir $Name
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+        } catch {
+            # An unusable PATH entry is the user's to worry about, not this script's.
+            continue
+        }
+    }
+    return $null
 }
 
 # Whether there is a person at the other end who can answer a question.
@@ -233,30 +281,47 @@ function Write-PriorExeNotice {
         Write-Host "[!] Another dev-prune is on your PATH as well:" -ForegroundColor Yellow
         Write-Host "        $priorExe"
         Write-Host "    A different package manager owns that copy, so this script left it alone."
-        if ($noPath) {
-            Write-Host "    PATH was left alone (-NoPath), so which one you get is up to yours."
-        } else {
-            Write-Host "    This directory comes first on PATH, so 'devp' is the copy in $binDir."
+        # Resolved, not asserted. The line here used to claim that $binDir came first on
+        # PATH, which this script only ever made true when the entry was absent - on a
+        # machine where it was present but behind another manager's directory the
+        # prepend was skipped, the older copy kept answering, and the claim was printed
+        # regardless. Saying which file actually answers cannot go wrong that way.
+        $nowExe = Resolve-OnPath 'dev-prune.exe'
+        if ($nowExe -and ($nowExe -eq $exePath)) {
+            Write-Host "    In this session 'dev-prune' now resolves to the copy in $binDir."
+            if ($noPath) {
+                Write-Host "    New terminals are yours to arrange (-NoPath left PATH alone)."
+            }
+        } elseif ($nowExe) {
+            Write-Host "    In this session 'dev-prune' still resolves to:"
+            Write-Host "        $nowExe"
+            if ($noPath) {
+                Write-Host "    -NoPath left PATH alone, so the order is yours to set."
+            }
         }
-        Write-Host "    Moving it over means installing here and uninstalling there, through the"
-        Write-Host "    manager that put it there. 'devp install --channel installer' does both."
-        if ((Test-PersonPresent) -and (Read-YesNo "    Do that now?")) {
+        Write-Host "    Moving it over means uninstalling there, through the manager that put it"
+        Write-Host "    there. 'devp install --channel installer' does that."
+        # Not offered under a pin: the copy at $exePath would refuse, and an offer that
+        # ends in a refusal is worse than no offer.
+        if ((-not $installedLock) -and (Test-Path -LiteralPath $exePath) -and
+            (Test-PersonPresent) -and (Read-YesNo "    Do that now?")) {
             Write-Host ""
-            # The *old* binary, not the one just installed. It is the copy that knows
-            # which manager owns it, and `--channel installer` is how it hands over; run
-            # from the new copy the same command would only report that it is already an
-            # installer copy with nothing to move.
+            # The copy just installed, not the old one. Handing this to the *old* binary
+            # was the whole failure: nothing before 1.8.0 has an `install` subcommand at
+            # all, so on the machines this offer exists for it printed an unrecognised-
+            # subcommand error and nothing moved. The new copy is new by definition, it
+            # can name the manager that owns the file above, and it runs that manager's
+            # own uninstall.
             #
-            # Nothing is deleted by this script either way. The uninstall is the other
-            # manager's own command, run by the binary that manager installed.
+            # Nothing is deleted by this script either way.
             $moved = $false
             try {
                 # A native command's stderr becomes an ErrorRecord under 'Stop', and this
-                # one is a whole install: its progress must not be mistaken for failure.
-                # The exit code is the answer. Function-scoped, so the caller's 'Stop' is
-                # untouched.
+                # one runs another package manager: its progress must not be mistaken for
+                # failure. The exit code is the answer. Function-scoped, so the caller's
+                # 'Stop' is untouched.
                 $ErrorActionPreference = 'Continue'
-                & $priorExe install --channel installer --yes
+                & $exePath install --channel installer --yes
                 $moved = ($LASTEXITCODE -eq 0)
             } catch {
                 # It could not be started at all, which the message below covers.
@@ -264,14 +329,18 @@ function Write-PriorExeNotice {
             }
             Write-Host ""
             if ($moved) {
-                Write-Host "[OK] Moved. 'devp doctor' will confirm only one copy is left." -ForegroundColor Green
+                Write-Host "[OK] Done. 'devp doctor' will confirm only one copy is left." -ForegroundColor Green
             } else {
-                Write-Host "[!] That did not finish, and nothing was deleted - the copy at" -ForegroundColor Yellow
+                Write-Host "[!] That did not finish, and this script deleted nothing - the copy at" -ForegroundColor Yellow
                 Write-Host "        $priorExe"
-                Write-Host "    is exactly where it was. A copy older than 1.8.0 has no 'devp"
-                Write-Host "    install' subcommand at all; upgrade it through its own manager"
-                Write-Host "    first, or just remove it. 'devp doctor' shows both copies."
+                Write-Host "    is exactly where it was. Its own manager can still remove it, and"
+                Write-Host "    'devp doctor' names both copies and the command for each."
             }
+        } elseif ($installedLock) {
+            Write-Host "    Your version pin covers this too: which copy answers on PATH is which"
+            Write-Host "    version runs, so nothing moves while the pin is on. Release it with"
+            Write-Host "        devp config set version_lock false"
+            Write-Host "    'devp doctor' lists every copy on the machine at any time."
         } else {
             Write-Host "    Run it whenever you like:"
             Write-Host "        devp install --channel installer"
@@ -323,6 +392,16 @@ $persistedPath = ''
 try { $persistedPath = [Environment]::GetEnvironmentVariable('Path', 'User') } catch {}
 if ($null -eq $persistedPath) { $persistedPath = '' }
 $pathConfigured = $noPath -or (Test-OnPath $persistedPath $binDir)
+
+# Put this directory in front for the rest of this session, before any ending is chosen.
+# Every ending below reports which copy `dev-prune` resolves to, and the three that
+# change nothing else - already installed, newer already installed, pinned - are exactly
+# the endings somebody re-runs the one-liner to reach when the wrong copy keeps
+# answering. The persisted User PATH is a separate question, settled further down and
+# only when the install goes ahead.
+if ((-not $noPath) -and (Test-Path -LiteralPath $exePath)) {
+    $env:PATH = Move-ToPathFront $env:PATH $binDir
+}
 
 # A release tag that is not three numbers - a `-rc1`, say - simply does not take part
 # in the comparison, and the ordinary install runs.
@@ -525,19 +604,24 @@ if (-not $noPath) {
     if ($null -ne $envKey) {
         $userPath = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     }
-    if (-not (Test-OnPath $userPath $binDir)) {
-        Write-Host "-> Adding $binDir to your User PATH" -ForegroundColor Cyan
-        # Prepended, not appended, and for the same reason the in-session assignment
-        # below prepends: this directory holds nothing but dev-prune.exe and devp.exe,
-        # so it can shadow nothing else, and a machine that already has a copy from
-        # cargo or Scoop on PATH would otherwise keep running that one in every
-        # terminal opened after this. The install would look like it worked - it does
-        # work in the session it ran in - and be silently undone by PATH order.
+    if (-not (Test-FirstOnPath $userPath $binDir)) {
+        if (Test-OnPath $userPath $binDir) {
+            Write-Host "-> Moving $binDir to the front of your User PATH" -ForegroundColor Cyan
+        } else {
+            Write-Host "-> Adding $binDir to your User PATH" -ForegroundColor Cyan
+        }
+        # First, not merely present, and for the same reason the in-session assignment
+        # below puts it first: this directory holds nothing but dev-prune.exe and
+        # devp.exe, so it can shadow nothing else, and a machine that already has a copy
+        # from cargo or Scoop earlier on PATH would otherwise keep running that one in
+        # every terminal opened after this. The install would look like it worked - it
+        # does work in the session it ran in - and be silently undone by PATH order in
+        # the next one.
         #
-        # Trim first: joining an empty Path would leave a stray ';', and an empty PATH
-        # entry on Windows means "search the current directory".
-        $trimmed = $userPath.Trim(';')
-        $newPath = if ($trimmed) { $binDir + ';' + $trimmed } else { $binDir }
+        # Testing only for presence was the bug behind exactly that report: a second
+        # channel installed later sits in front of an entry an earlier run left here,
+        # and every re-run of the one-liner then agreed there was nothing to do.
+        $newPath = Move-ToPathFront $userPath $binDir
         if ($null -ne $envKey) {
             $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
             try { $kind = $envKey.GetValueKind('Path') } catch {}
@@ -563,9 +647,7 @@ if (-not $noPath) {
     # visible to the very next line they type. It is what makes the documented
     # `iwr ... | iex; devp init ~/Code` sequence work as written; the User PATH set
     # above is only for terminals opened later.
-    if (-not (Test-OnPath $env:PATH $binDir)) {
-        $env:PATH = $binDir + ';' + $env:PATH
-    }
+    $env:PATH = Move-ToPathFront $env:PATH $binDir
     $pathReady = $true
     # The User PATH names this directory now, whether this run wrote the entry or found
     # one a previous run left. Either way an installer put it there: nothing else on the
@@ -661,7 +743,7 @@ Write-Host "         devp link ."
 Write-Host ""
 Write-Host "    Then:"
 Write-Host "    devp status             # see what is reclaimable"
-Write-Host "    devp run --dry-run      # preview a prune pass"
+Write-Host "    devp run                # reclaim it (shows the plan, asks before deleting)"
 Write-Host ""
 Write-Host "    devp setup --status     # what got installed alongside the binary"
 Write-Host "    devp uninstall          # remove all of it again"

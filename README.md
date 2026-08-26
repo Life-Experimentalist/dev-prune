@@ -42,7 +42,7 @@ a single Rust binary, installs its own background schedule, and answers to two n
 
 <div align="center">
 
-**Start here**&nbsp;&nbsp; [Install](#install) · [Editors](#in-your-editor) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like)
+**Start here**&nbsp;&nbsp; [Install](#install) · [Where it is published](#every-place-it-is-published) · [Editors](#in-your-editor) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like)
 
 **How it thinks**&nbsp;&nbsp; [Why it is safe](#why-it-is-safe) · [Features](#features) · [Commands](#commands) · [Ecosystems](#supported-ecosystems) · [Monorepos](#repositories-with-more-than-one-ecosystem)
 
@@ -96,6 +96,9 @@ problem.
 
 ```bash
 npm install -g dev-prune      # or: npx dev-prune status
+bun add -g dev-prune          # same package, through bun
+pnpm add -g dev-prune
+yarn global add dev-prune     # Yarn 1.x
 uv tool install dev-prune     # or: uvx dev-prune status
 pipx install dev-prune
 pip install dev-prune
@@ -103,9 +106,10 @@ cargo binstall dev-prune      # fetches the prebuilt release archive
 cargo install dev-prune       # builds from source, needs Rust 1.88+
 ```
 
-The npm and PyPI packages **contain the binary** — there is no download step at install
-time, so they work under `npm ci --ignore-scripts`, behind a registry mirror and offline.
-Everything but `cargo install` ships a prebuilt executable.
+The [npm](https://www.npmjs.com/package/dev-prune) and
+[PyPI](https://pypi.org/project/dev-prune/) packages **contain the binary** — there is no
+download step at install time, so they work under `npm ci --ignore-scripts`, behind a
+registry mirror and offline. Everything but `cargo install` ships a prebuilt executable.
 
 npm delivers it the way esbuild and Biome do: one small `dev-prune` package that lists
 seven platform packages as optional dependencies, of which npm installs exactly the one
@@ -113,8 +117,14 @@ matching your machine. That is why there is no download step to block. Windows w
 1.8.0 onwards — earlier versions installed and then reported no binary to run, so a
 machine still holding `dev-prune@1.7.0` needs `npm install -g dev-prune@latest`.
 
-crates.io stores source and nothing else, so `cargo install` has no binary to fetch and
-always compiles. [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) is the
+bun, pnpm and Yarn install that same package, and dev-prune treats each as a channel of
+its own rather than as npm: a copy `bun add -g` put there is upgraded and removed with
+bun. Running npm against it would install a *second* copy under npm's prefix and leave
+bun's, still on `PATH`, at the old version. `devp update --channels` prints every
+channel's upgrade command if you want to see the whole table.
+
+[crates.io](https://crates.io/crates/dev-prune) stores source and nothing else, so
+`cargo install` has no binary to fetch and always compiles. [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) is the
 one that downloads: `Cargo.toml` tells it where this project's release archives live, so
 it unpacks the same executable the installers use, with no toolchain involved.
 
@@ -190,6 +200,18 @@ rules file that editor actually reads — `.github/copilot-instructions.md`, `.c
 `CLAUDE.md`, `.junie/guidelines.md` and the rest — so an agent working in the repository
 knows what dev-prune will and will not delete before it suggests anything.
 
+**Claude Code can go first**, before `devp` exists on the machine at all — this
+repository is also a Claude Code plugin marketplace:
+
+```text
+/plugin marketplace add Life-Experimentalist/dev-prune
+/plugin install dev-prune@dev-prune
+```
+
+One skill, no hooks and no MCP server, and it is the same `SKILL.md` the binary embeds.
+That is the useful order for an agent: read what dev-prune does and refuses to do, then
+install it.
+
 Everything about editors, in one place:
 [docs/IDE_INTEGRATION.md](docs/IDE_INTEGRATION.md).
 
@@ -245,6 +267,39 @@ Every install channel in detail: [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 > next to `dev-prune`, so the short name works in cmd, PowerShell, bash, fish, an IDE
 > terminal and a scheduled task alike — with no profile to re-source, and no chance of an
 > upgrade leaving `devp` on the old version.
+
+### Every place it is published
+
+Nine channels, one project. The middle column is the **exact** string each registry
+answers to — names this close together are how a typo becomes somebody else's package,
+so they are worth copying rather than typing.
+
+| Where | Published as | What you get |
+|---|---|---|
+| [crates.io](https://crates.io/crates/dev-prune) | **`dev-prune`** | Source. `cargo install` compiles it; `cargo binstall` fetches the release archive instead. |
+| [PyPI](https://pypi.org/project/dev-prune/) | **`dev-prune`** | Six wheels, each containing the binary. `pip`, `pipx`, `uv tool`. |
+| [npm](https://www.npmjs.com/package/dev-prune) | **`dev-prune`** | A dispatcher plus seven platform packages; npm installs the one matching your machine. |
+| [GitHub Releases](https://github.com/Life-Experimentalist/dev-prune/releases) | `dev-prune-v<ver>-<platform>` | Seven checksummed, provenance-attested archives. What the install scripts fetch. |
+| [Homebrew](https://github.com/Life-Experimentalist/homebrew-tap) | **`Life-Experimentalist/tap`** | A one-formula tap, so `brew upgrade` keeps finding new versions. |
+| [Scoop](https://github.com/Life-Experimentalist/scoop-bucket) | **`life-experimentalist`** | A one-manifest bucket, for the same reason. |
+| [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune) | **`VKrishna04.dev-prune`** | The editor extension. VS Code and the forks on Microsoft's gallery. |
+| [Open VSX](https://open-vsx.org/extension/VKrishna04/dev-prune) | **`VKrishna04.dev-prune`** | The same extension, for VSCodium, Cursor, Windsurf, Positron and Kiro. |
+| [SchemaStore](https://www.schemastore.org/) | **`.devprune.json`** | The config schema, by filename. No extension and no `$schema` key needed. |
+
+[WinGet](https://github.com/microsoft/winget-pkgs/pull/422809) is submitted and in
+review. It is not in the table because it does not resolve yet.
+
+Two of those rows are not installs of dev-prune at all. SchemaStore is why JetBrains
+IDEs, Visual Studio, Neovim and Zed validate `.devprune.json` with nothing installed —
+the catalog entry points at a schema this repository hosts. And the editor extension is
+a separate product with a separate version number, released on its own `vscode-v*` tags,
+which is why the release marked *latest* on GitHub is always the CLI.
+
+Anything calling itself dev-prune from anywhere other than these was not published by
+its author. `devp doctor` names the channel the running copy came from, and every
+release archive carries [GitHub build provenance](docs/RELEASING.md) that
+`gh attestation verify` checks against this repository — a checksum only proves a file
+arrived intact, which a substituted pair also does.
 
 ---
 
@@ -516,8 +571,8 @@ process that leaves a dirty working tree is a surprise.
 | 🤖 **Self-installing automation**              | OS-native scheduler (Task Scheduler, LaunchAgent, systemd user timer) and non-blocking Git hooks, installed at install time and restored after an upgrade. `auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1` turn it off                                                                                                             |
 | ⚡ **0ms opt-out**                             | An `ignore.devprune.json` in a repository root is honoured by file presence alone — no read, no parse                                                                                                                                                                                                                                                       |
 | 🔌 **`--json` on every reporting command**     | `run`, `status`, `stats`, `trust` and `caches` each emit one versioned document on stdout, diagnostics on stderr. Built for scripts and agents                                                                                                                                                                                                              |
-| 🧠 **AI agent skill**                          | A token-lean `SKILL.md` embedded in the binary; `devp skill` exports it and prints onboarding prompts for Claude Code, Gemini Antigravity, Cursor, Windsurf, Copilot and OpenClaw                                                                                                                                                                           |
-| 🧰 **Editor extension**                        | Validates `.devprune.json` as you type and shows the workspace's reclaimable size in the status bar. `devp setup` offers to install it — once, only at a terminal — into VS Code, VSCodium, Cursor, Windsurf, Positron or Kiro, each from its own registry with the release `.vsix` as fallback. [docs/IDE_INTEGRATION.md](docs/IDE_INTEGRATION.md)         |
+| 🧠 **AI agent skill**                          | A token-lean `SKILL.md` embedded in the binary; `devp skill` exports it and prints onboarding prompts for Claude Code, Gemini Antigravity, Cursor, Windsurf, Copilot and OpenClaw, and the repository doubles as a Claude Code plugin marketplace                                                                                                                                                                           |
+| 🧰 **Editor extension**                        | Validates `.devprune.json` as you type and shows the workspace's reclaimable size in the status bar. `devp setup` offers to install it — once, only at a terminal — into VS Code, VSCodium, Cursor, Windsurf, Positron or Kiro, each from its own registry, falling back to the `.vsix` from the extension's own release. [docs/IDE_INTEGRATION.md](docs/IDE_INTEGRATION.md)         |
 | 🖼️ **File manager icons**                      | `devp icon` registers `*.devprune.json` with the OS file manager — a real `shared-mime-info` type plus hicolor icons on Linux, a folder icon on Windows. It never edits your editor settings, `PATH` or shell startup files                                                                                                                                 |
 | 🌏 **Unicode-safe paths**                      | A repository at `ワークスペース/项目目录名称测试/프론트엔드` scans, verifies, prunes and restores exactly like an ASCII one, on all three platforms. Terminal tables are padded by display *column*, not by character, so full-width CJK names keep `devp status` and `devp doctor` aligned. Accented Latin, Cyrillic, Arabic and emoji directory names too |
 | 🚫 **No telemetry**                            | One optional unauthenticated `GET` to GitHub's public releases endpoint, at most weekly, no body and no identifier. Nothing else leaves the machine                                                                                                                                                                                                         |
@@ -705,29 +760,158 @@ Global settings live in `%APPDATA%\dev-prune` (Windows),
 once on a first install — so the defaults are something you agreed to rather than
 inherited — and again after an upgrade adds a setting you have never been shown.
 
-| Key                                                                                |  Default  | Meaning                                                                             |
-| :--------------------------------------------------------------------------------- | :-------: | :---------------------------------------------------------------------------------- |
-| `idle_days`                                                                        |   `15`    | How long a repository must be untouched to become a candidate                       |
-| `min_size_mb`                                                                      |    `0`    | Smallest bloat directory worth deleting; `0` disables the floor                     |
-| `scan_depth`                                                                       |    `6`    | Levels below a repository root that discovery descends                              |
-| `require_confirmation`                                                             |  `true`   | Whether a pass asks before deleting                                                 |
-| `allow_manifest_rewrite`                                                           |  `false`  | Whether verification may *repair* a drifted lockfile instead of refusing            |
-| `command_timeout_secs`                                                             |   `600`   | Ceiling on any one package manager command                                          |
-| `auto_setup` · `auto_daemon` · `auto_hooks`                                        |  `true`   | Whether the integration pass may run unattended, and what it may install            |
-| `auto_hooks_chain`                                                                 |  `false`  | Whether it may take a `core.hooksPath` another tool holds, forwarding every hook on |
-| `check_interval_days`                                                              |    `2`    | How often the OS scheduler runs a pass                                              |
-| `update_check`                                                                     |  `true`   | Whether the periodic release check runs                                             |
-| `update_check_interval_days` · `update_check_timeout_secs`                         | `7` · `5` | Minimum gap between checks, and how long one may hang                               |
-| `enable_cargo` … `enable_cmake_build`                                              |  `false`  | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all eight      |
-| `adapter_idle_days`                                                                | *(none)*  | Per-adapter idle floors, as `cargo=90,npm=30` — each raises only its own window     |
-| `disabled_adapters`                                                                | *(none)*  | Adapters to leave alone entirely, by name — as if that ecosystem were not installed |
-| `cache_max_gb`                                                                     | *(none)*  | Per-manager cache caps in GiB, as `uv=10,npm=10` — the cap itself deletes nothing   |
+If you already know what you want, `devp config recommended` is the one-command version:
+it turns on the eight adapters and build trees that are off by default because they are
+not universally wanted, and leaves `allow_manifest_rewrite` — the one recommendation
+that edits files Git tracks — named, explained and off unless you add
+`--with-cautious`. `devp config show` lists whatever you have not taken yet.
+
+Thirty settings, in the seven groups the configurator asks them in — the order the
+decisions actually arrive in. Every key, with its full description and range, is in the
+[CLI reference](docs/CLI_REFERENCE.md#8-devp-config-action).
+
+**The language this is all in** — what dev-prune prints its own headings in.
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `language` | `en` | One of twelve catalogues — `en`, `zh`, `hi`, `te`, `ta`, `kn`, `ml`, `bn`, `mr`, `gu`, `pa`, `sa`. Only dev-prune's own headings and summary lines move; `--json`, exit codes, flag names, config keys and adapter names are English in every one, so nothing a script reads changes. `DEV_PRUNE_LANG` overrides it for one command. See [TRANSLATIONS.md](docs/TRANSLATIONS.md) |
+
+**What gets pruned** — the size and age of what a pass considers at all.
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `idle_days` | `15` | How long a repository must be untouched to become a candidate |
+| `min_size_mb` | `0` | Smallest bloat directory worth deleting; `0` disables the floor |
+| `scan_depth` | `6` | Levels below a repository root that discovery descends |
+| `disabled_adapters` | *(none)* | Adapters to leave alone entirely, by name — as if that ecosystem were not installed |
+| `adapter_idle_days` | *(none)* | Per-adapter idle floors, as `cargo=90,npm=30` — each raises only its own window |
+
+**Before anything is deleted** — what stands between a candidate and a deletion.
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `require_confirmation` | `true` | Whether a pass asks before deleting |
+| `allow_manifest_rewrite` | `false` | Whether verification may *repair* a drifted lockfile instead of refusing |
+| `command_timeout_secs` | `600` | Ceiling on one package manager command; nothing compiles under it |
+
+**Build trees — off by default**, because everything here comes back by recompiling
+rather than downloading. That is the whole reason each one is a switch.
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `enable_cargo` … `enable_cmake_build` | `false` | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all eight |
+
+**Shared download caches** — one key, because the cap only ever marks.
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `cache_max_gb` | *(none)* | Per-manager cache caps in GiB, as `uv=10,npm=10` — the cap itself deletes nothing |
+
+**Running without being asked** — what dev-prune may install here, and how often it may
+act on its own.
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `auto_setup` · `auto_daemon` · `auto_hooks` | `true` | Whether the integration pass may run unattended, and what it may install |
+| `auto_config` | `false` | Whether `devp init` / `devp link` write a `.devprune.json` into newly registered repositories |
+| `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds — off, it is not yours |
+| `check_interval_days` | `2` | How often the OS scheduler runs a pass |
+
+**Keeping dev-prune current** — whether this copy looks for a newer one, and may install it.
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `update_check` | `true` | Whether the periodic release check runs |
+| `update_check_interval_days` · `update_check_timeout_secs` | `7` · `5` | Minimum gap between checks, and how long one may hang |
+| `auto_update` | `true` | Install a newer release at the end of a pass. Stands aside on WinGet, Scoop and Homebrew, where the manager owns the upgrade |
+| `version_lock` | `false` | Pin this copy to the version it is. Nothing dev-prune does then replaces the binary, and there is no flag that bypasses it |
+
+### Per-repository settings
 
 Three of them — `idle_days` (as `override_idle_days`), `min_size_mb` and `scan_depth` —
-also take a per-repository form in that project's `.devprune.json`, where they win for
-that tree only. The rest are deliberately global: a project can commit its
-`.devprune.json`, and a repository you have never read should not be able to grant itself
+also take a per-repository form, where they win for that tree only. The rest are
+deliberately global: a repository you have never read should not be able to grant itself
 permission to have its manifests rewritten during an unattended pass.
+
+A repository can hold **two** config files, and the difference is who they are for.
+
+| File | Committed? | For |
+|---|---|---|
+| `.devprune.json` | No — added to `.git/info/exclude` when written | Your copy of this one repository, on this one machine |
+| `project.devprune.json` | **Yes** — `devp config project . --team` writes it to be staged | What the project decided, reaching a fresh clone by itself |
+
+Where both exist, **every key the project file names wins**, and the personal file
+answers everything it does not. That is the inverse of the usual "local overrides
+global", and deliberately: a colleague's stale local answer should not quietly overrule
+what the project decided, while a personal override still works on every setting the team
+left open. "Names a key" means the key is literally in the file — a project file that
+never mentions `ignore` does not un-ignore your repository, which is why it is created
+holding nothing but its `$schema` line.
+
+```mermaid
+flowchart TD
+    Key["One setting, in one repository"] --> Shared{"Named in<br/>project.devprune.json?"}
+    Shared -->|Yes| WinShared["The team's value.<br/>Committed, so a fresh clone starts here."]
+    Shared -->|No| Personal{"Named in<br/>.devprune.json?"}
+    Personal -->|Yes| WinPersonal["Your value.<br/>Never committed, never in git status."]
+    Personal -->|No| Global["The global setting on this machine,<br/>or its default."]
+```
+
+Nothing dev-prune writes on its own touches the shared file. `devp link`,
+`devp doctor --fix`, `devp config project . --update` and `[i]` in the dashboard all
+write `.devprune.json`, so no routine action of yours turns into a change on a branch
+your colleagues share; `--team` is the only way to write the other file, and you
+have to type it. Run `devp config project .` in a repository that has both and it
+prints which file each effective value came from.
+
+### Directories only the project knows about
+
+Every adapter earns its right to delete the same way: it finds a lockfile, verifies the
+lockfile can rebuild what is about to go, and only then deletes. Some trees have no
+lockfile and are still rebuildable — a generated fixture set, a vendored toolchain, a
+cache with a `make` target behind it. A repository can name those itself, in either
+config file:
+
+```json
+{
+  "prunable": {
+    "directories": [
+      {
+        "path": "tools/vendor",
+        "rebuild": "make vendor",
+        "why": "regenerated from tools/manifest.toml"
+      }
+    ]
+  }
+}
+```
+
+`rebuild` is required, and required is the point: an optional one would make "delete
+this, I have no idea how to get it back" the easiest thing to write in a file that gets
+committed and cloned. If a directory genuinely needs nothing to bring it back, say so
+— `"rebuild": "echo not needed"` is a legal answer and works on every platform.
+dev-prune shows the command; it never runs it.
+
+Declared directories go through the ordinary pass under the adapter name `declared`, so
+they are listed by `devp status`, obey `--dry-run`, `--min-size` and `--only`, and are
+deleted by the scheduled run alongside everything else.
+
+A declaration is a claim, not an instruction. `project.devprune.json` is committed, so a
+repository you cloned can declare whatever it likes, and `devp run` may be running from a
+scheduler with nobody watching. Before deleting one, dev-prune requires that:
+
+- the path is relative, has no `..`, and is neither `.git` nor the repository root;
+- it resolves to somewhere inside the repository, even through a symlinked parent;
+- Git is tracking nothing inside it — a lockfile cannot rebuild a file that is in the
+  repository itself;
+- the first word of `rebuild` is a program this machine actually has.
+
+A claim that fails any of those is printed with the reason, and nothing is deleted.
+
+This section is the one part of either file that does not follow the precedence above:
+the two lists **add up**. A list is not a decision, so a team declaration never discards
+one you wrote yourself, and naming the same path in both leaves one directory, rebuilt
+by the committed command.
 
 An out-of-range value is rejected with the range in the message rather than silently
 clamped. `scan_depth` included: `config set` accepts `1`–`32` and refuses anything else
@@ -791,7 +975,7 @@ flowchart TD
 
     Engine --> FastIgnore{ignore.devprune.json?}
     FastIgnore -->|Exists| Skip["Skip Repo O(1) 0ms"]
-    FastIgnore -->|Missing| PerRepoConfig["Read .devprune.json"]
+    FastIgnore -->|Missing| PerRepoConfig["Read project.devprune.json,<br/>then .devprune.json"]
 
     PerRepoConfig --> GitScanner["Git Scanner & Activity Solver<br/>(.git commits + mtime fallback)"]
     Engine --> PreCheck["Required Ecosystem Binary Pre-Checker"]

@@ -486,16 +486,23 @@ fn run_status_loop(
                         // defaults would have written a fresh file over the broken
                         // one, discarding every other override it held — and the
                         // dashboard already shows such a repo as `config_error`.
-                        let mut per_repo =
-                            crate::config::PerRepoConfig::load_with_diagnostics(&repo.path)
-                                .map_err(|e| anyhow::anyhow!(e))
-                                .with_context(|| {
-                                    format!(
-                                        "Could not toggle ignore for {}",
-                                        crate::output::clean_path(&repo.path)
-                                    )
-                                })?
-                                .unwrap_or_default();
+                        let layers = crate::config::RepoConfigLayers::load(&repo.path)
+                            .map_err(|e| anyhow::anyhow!(e))
+                            .with_context(|| {
+                                format!(
+                                    "Could not toggle ignore for {}",
+                                    crate::output::clean_path(&repo.path)
+                                )
+                            })?;
+                        // A committed `project.devprune.json` that names `ignore` wins over
+                        // anything this key could write, so writing it anyway would leave
+                        // a personal file disagreeing with the row it did not change. Skip
+                        // it the same way a missing path is skipped; the help pane says
+                        // which file to edit instead.
+                        if layers.source_of("ignore") == crate::config::ConfigSource::Project {
+                            continue;
+                        }
+                        let mut per_repo = layers.personal_config().cloned().unwrap_or_default();
                         per_repo.ignore = !per_repo.ignore;
                         // Both writes are propagated rather than swallowed. A silent
                         // failure here redraws the table unchanged, which reads as a
@@ -889,7 +896,7 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    "toggles `ignore` in `.devprune.json` (kept out of `git status` via `.git/info/exclude`) — refreshes instantly.",
+                    "toggles `ignore` in `.devprune.json` (kept out of `git status` via `.git/info/exclude`) — refreshes instantly. Inert where a committed `project.devprune.json` sets `ignore`; edit that file instead.",
                     Style::default().fg(Color::DarkGray),
                 ),
             ]),

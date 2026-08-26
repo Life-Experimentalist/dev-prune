@@ -110,24 +110,12 @@ could be started this afternoon by someone who decided to. These cannot, because
 first workable-looking version of each is worse than not having it, and the cost of
 finding that out in production is measured in somebody's deleted work.
 
-- **A user-declared prune list, as the only sane route to build outputs.** Parked
-  deliberately, the way shared caches were parked before `devp caches` found the right
-  shape. The tempting version — teach adapters to recognise `dist/`, `.next/`, `.plasmo/`
-  and delete them under a framework marker — fails on a case that is common rather than
-  exotic: a built browser extension loaded unpacked from `dist/` is *in use* while the
-  source beside it is mid-refactor and does not currently build. The directory is not
-  reproducible from the tree that produced it, and recovering it from git history is not
-  a sane instruction to give anyone. That is the opposite of the property every tier-one
-  adapter has, where the lockfile makes the rebuild certain.
-
-  So the guess is the wrong mechanism. What would work is declaration: the user, or the
-  agent reading the repository, names the directories that are safe to prune — in
-  `.devprune.json`, per repository, with the rebuild command recorded alongside. Nobody
-  has to infer whether `dist/` is disposable, because whoever knows has said so. It needs
-  a config key, a schema entry, and a decision about whether a declared directory is
-  exempt from lockfile verification or merely has a different proof; none of that is
-  urgent, and the failure mode of getting it wrong is unrecoverable data loss. Revisit
-  when the shape is obvious, not before.
+Nothing is in it. The one item that stood here — a user-declared prune list, as the only
+sane route to build outputs — shipped in 1.10.0 as the `prunable` key, once the shape
+stopped being a guess. What unblocked it was recording the rebuild command beside the
+directory: whoever declares `dist/` also says what puts it back, and dev-prune verifies
+that command's tool exists before it deletes anything. That is a *different* proof from a
+lockfile rather than no proof at all, which was the question that kept it parked.
 
 ## Not planned
 
@@ -148,8 +136,10 @@ product.
   This is the boundary the whole tool is built around, not a gap in it. Gradle's `build/`
   and Maven's `target/` are not an exception to it: they are opt-in, off by default, and
   gated behind their own longer idle window precisely because they are rebuilt rather
-  than re-downloaded. The one route that could ever work is declaration, not detection —
-  see [Waiting on a shape](#waiting-on-a-shape).
+  than re-downloaded. The one route that works is declaration rather than detection, and
+  it shipped in 1.10.0: `prunable` lets whoever knows name the directory *and* the command
+  that rebuilds it, which is a proof dev-prune can check before it deletes. Guessing is
+  still not on the table.
 - **A bypass flag for any safety invariant.** The seven in
   [`SAFETY_INVARIANTS.md`](SAFETY_INVARIANTS.md) — the `.git` boundary, lockfile
   pre-verification, symlink refusal, atomic state writes and the rest — have no escape

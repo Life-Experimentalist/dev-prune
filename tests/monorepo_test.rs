@@ -28,6 +28,14 @@ fn devp() -> Command {
     // temporary fixtures ended up permanently registered on the author's machine, listed
     // as `Path missing` forever, with nothing anywhere reporting a fault.
     cmd.env("DEV_PRUNE_CONFIG_DIR", scratch_config_dir());
+
+    // And the same reasoning for the working directory, which stopped being neutral when
+    // `status` and `run` began registering the repository they stand in — the only way a
+    // repository made by `git init` is ever seen, since Git has no `post-init` hook.
+    // Inherited from cargo that is this crate's own root, so a case that registers
+    // nothing and then prunes would have found it adopted, with `site/node_modules`
+    // inside it. A case that cares sets its own after this, and wins.
+    cmd.current_dir(std::env::temp_dir());
     cmd
 }
 

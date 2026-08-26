@@ -110,7 +110,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 
 ### 1. `devp init [PATHS...]`
 - **Aliases**: `scan`, `onboard`
-- **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#11-devp-setup---status), installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#10-devp-update---offline----install) does.
+- **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#11-devp-setup---status), installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#10-devp-update---offline----install----channels) does.
 - **Examples**:
   ```bash
   devp init ~/Code
@@ -296,7 +296,7 @@ reads unambiguously:
   | `Space` | Toggle the current row (Prune-Select mode) |
   | `a` | Toggle every candidate on screen (Prune-Select mode) |
   | `Enter` | Prune the selected repositories (Prune-Select mode) |
-  | `i` | Toggle `ignore` in the repository's `.devprune.json`; the table refreshes immediately |
+  | `i` | Toggle `ignore` in the repository's `.devprune.json`; the table refreshes immediately. Inert where a committed `project.devprune.json` sets `ignore` — that file wins, so edit it instead |
   | `Esc` | Leave Prune-Select mode, or exit from the browse view |
   | `q` / `Ctrl-C` | Exit the dashboard |
 
@@ -468,46 +468,81 @@ reads unambiguously:
 - **Sub-Actions**:
   - `config get <key>`: View a global setting.
 
+    **The language this is all in** — What dev-prune prints its own headings and summary lines in.
+
+    | Key | Default | Meaning |
+    | :--- | :---: | :--- |
+    | `language` | `en` | Which catalogue dev-prune draws its own headings and summary lines from: `en`, `zh`, `hi`, `te`, `ta`, `kn`, `ml`, `bn`, `mr`, `gu`, `pa` or `sa`. Everything a script reads stays English in every one of them — `--json`, exit codes, flag names, config keys and adapter names — so translating the interface can never change what a pipeline sees. A key a catalogue has not translated falls back to English rather than printing blank. `DEV_PRUNE_LANG=te devp run` overrides the setting for one command; the OS locale is deliberately never consulted. English is the only catalogue a native speaker has reviewed, and `devp config set language` says so when the one you picked has not been — see [TRANSLATIONS.md](TRANSLATIONS.md) |
+
+    **What gets pruned** — The size and age of what a pass will consider at all.
+
     | Key | Default | Meaning |
     | :--- | :---: | :--- |
     | `idle_days` | `15` | How long a repository must be untouched before it is a prune candidate |
     | `min_size_mb` | `0` | Smallest bloat directory worth deleting, in MiB; `0` disables the floor |
     | `scan_depth` | `6` | How many directory levels below a repository root discovery descends. Accepts `1`–`32`; every extra level costs walk time |
+    | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, by name, comma-separated. A disabled adapter is not detected, not counted by `stats`, not probed for by `doctor` and never pruned — as if the ecosystem were not installed. `devp config set disabled_adapters -` clears the list |
+    | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. Each raises only its own adapter's wait — `max(idle_days, build_idle_days, this)` — and can never lower one. `devp config set adapter_idle_days -` clears the map |
+
+    **Before anything is deleted** — The checks that stand between a candidate and a deletion.
+
+    | Key | Default | Meaning |
+    | :--- | :---: | :--- |
     | `require_confirmation` | `true` | Whether a prune pass asks before deleting |
     | `allow_manifest_rewrite` | `false` | Whether verification may *repair* a lockfile that has drifted from its manifest, instead of refusing. Off, every adapter verifies read-only; on, each runs its writing form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`, `go mod tidy`, …) |
-    | `command_timeout_secs` | `600` | Ceiling on any one package-manager command run during lockfile verification |
-    | `auto_setup` | `true` | Whether the integration pass may run unattended at all |
-    | `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
-    | `check_interval_days` | `2` | How often the OS scheduler runs a pass |
-    | `auto_hooks` | `true` | Whether that pass may install the global Git hooks |
-    | `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds, forwarding every hook on to it |
-    | `update_check` | `true` | Whether the periodic release check runs (see [`devp update`](#10-devp-update---offline----install)) |
-    | `update_check_interval_days` | `7` | Minimum gap between two release checks |
-    | `update_check_timeout_secs` | `5` | How long that one request may hang before it is abandoned |
-    | `auto_config` | `false` | Whether `devp init` / `devp link` write a default `.devprune.json` into newly registered repositories |
+    | `command_timeout_secs` | `600` | Ceiling on any one package-manager command dev-prune runs — the lockfile check before a delete, and the reinstall `devp restore` performs. Nothing is compiled under it: the opt-in build adapters run no command at all during a prune. The one exception is a restore whose install builds a native module |
+
+    **Build trees — off by default** — Everything here comes back by recompiling rather than downloading, which is minutes rather than seconds. That is the whole reason each one is a switch.
+
+    | Key | Default | Meaning |
+    | :--- | :---: | :--- |
     | `enable_cargo` | `false` | Turn on the opt-in Cargo adapter (`target/` — compiler output, so it comes back by recompiling rather than downloading) |
     | `enable_gradle` | `false` | Turn on the opt-in Gradle adapter (`build/`, `.gradle/` — they come back by recompiling) |
     | `enable_maven` | `false` | Turn on the opt-in Maven adapter (`target/`) |
     | `enable_swift` | `false` | Turn on the opt-in Swift Package Manager adapter (`.build/` — compiled modules, so they come back by recompiling) |
     | `enable_dart` | `false` | Turn on the opt-in Dart/Flutter adapter (`.dart_tool/` — pub metadata restores in a second, but the `build_runner` and `flutter_build` caches beside it come back by recompiling) |
-    | `enable_mix_build` | `false` | Turn on the opt-in Mix build-tree adapter (`_build/` — separate from the always-on `mix` adapter, which claims only `deps/`: that comes back by downloading, this one only by recompiling the project and every dependency in it) |
+    | `enable_mix_build` | `false` | Turn on the opt-in **Elixir** Mix build-tree adapter (`_build/` — Mix is Elixir's build tool, and this is where it puts the compiled project and every compiled dependency. Separate from the always-on `mix` adapter, which claims only the downloaded `deps/` beside it: that comes back by downloading, this one only by recompiling) |
     | `enable_vcpkg` | `false` | Turn on the opt-in vcpkg adapter (`vcpkg_installed/` — manifest mode's per-project install tree, holding ports vcpkg compiled from source; `vcpkg install` builds them again) |
-    | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, by name, comma-separated. A disabled adapter is not detected, not counted by `stats`, not probed for by `doctor` and never pruned — as if the ecosystem were not installed. `devp config set disabled_adapters -` clears the list |
     | `enable_cmake_build` | `false` | Turn on the opt-in CMake adapter (any tree holding a `CMakeCache.txt` that records a source directory inside this repository — the next `cmake --build` compiles it again; a `build/` you made by hand has no cache file and is never claimed) |
     | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart, mix_build, vcpkg, cmake_build), applied as `max(build_idle_days, idle_days)` |
-    | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. Each raises only its own adapter's wait — `max(idle_days, build_idle_days, this)` — and can never lower one. `devp config set adapter_idle_days -` clears the map |
+
+    **Shared download caches** — One key, because the cap only ever marks — the clearing is a command you type.
+
+    | Key | Default | Meaning |
+    | :--- | :---: | :--- |
     | `cache_max_gb` | *(none)* | Per-manager cache size caps in GiB, as `uv=10,npm=10`. Keyed by the names [`devp caches clear`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) takes, not by adapter name. A capped manager over its ceiling is marked in `devp caches`; nothing is ever deleted by the cap itself. `devp config set cache_max_gb -` clears the map |
+
+    **Running without being asked** — What dev-prune may install on this machine, and how often it may act on its own.
+
+    | Key | Default | Meaning |
+    | :--- | :---: | :--- |
+    | `auto_setup` | `true` | Whether the integration pass may run unattended at all |
+    | `auto_config` | `false` | Whether `devp init` / `devp link` write a default `.devprune.json` into newly registered repositories |
+    | `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
+    | `check_interval_days` | `2` | How often the OS scheduler runs a pass |
+    | `auto_hooks` | `true` | Whether that pass may install the global Git hooks |
+    | `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds, forwarding every hook on to it. Off by default because that setting is one slot, global to the machine, and already somebody else's: taking it rewires husky, pre-commit or lefthook for every repository you have |
+
+    **Keeping dev-prune current** — Whether this copy looks for a newer one, and whether it may install it.
+
+    | Key | Default | Meaning |
+    | :--- | :---: | :--- |
+    | `update_check` | `true` | Whether the periodic release check runs (see [`devp update`](#10-devp-update---offline----install----channels)) |
+    | `update_check_interval_days` | `7` | Minimum gap between two release checks |
+    | `update_check_timeout_secs` | `5` | How long that one request may hang before it is abandoned |
     | `auto_update` | `true` | Download and install a newer release by itself at the end of a prune pass, once the release check has found one. Never runs a package manager unattended, and stands aside entirely on WinGet, Scoop and Homebrew, where the manager owns the upgrade |
     | `version_lock` | `false` | Pin this copy to the version it is. While it is on, nothing dev-prune does replaces the binary: `auto_update` does not run however it is set, `devp update --install` and `devp install --channel` refuse, and the install scripts leave it alone. There is no flag that bypasses it — `devp config set version_lock false` is the only way back |
 
-    Three of these have a per-repository form in that repository's `.devprune.json`,
-    where they win for that tree only: `idle_days` (spelled `override_idle_days` there),
-    `min_size_mb` and `scan_depth` — the three whose right value genuinely depends on the
-    project rather than on you. The rest are deliberately global. Nothing stops a project
-    from committing its `.devprune.json`, so a per-repository `allow_manifest_rewrite`
-    would let a repository you have never read grant itself permission to have its own
-    tracked manifests rewritten during an unattended pass; `auto_*` and `update_check*`
-    describe your machine, not a project, and would mean nothing per repository.
+
+    Three of these have a per-repository form in that repository's `.devprune.json` or
+    `project.devprune.json`, where they win for that tree only: `idle_days` (spelled
+    `override_idle_days` there), `min_size_mb` and `scan_depth` — the three whose right
+    value genuinely depends on the project rather than on you. The rest are deliberately
+    global. A repository config can arrive in a clone somebody else wrote, so a
+    per-repository `allow_manifest_rewrite` would let a repository you have never read
+    grant itself permission to have its own tracked manifests rewritten during an
+    unattended pass; `auto_*` and `update_check*` describe your machine, not a project,
+    and would mean nothing per repository.
 
     A value outside the accepted range is rejected with the range in the message, not
     silently clamped. `scan_depth` included: `config set` refuses `0` and anything above
@@ -517,13 +552,40 @@ reads unambiguously:
 
   - `config set <key> <value>`: Modify global setting value.
   - `config show [--update]`: View all configuration values or force global update.
+
+    It ends with whatever the first run recommends and this machine has not taken yet,
+    in two tiers. **Recommended** is the eight adapters and build trees that are off by
+    default because they are not universally wanted, not because they are risky:
+    `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`,
+    `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`. **Recommended, with one
+    thing to know first** is `allow_manifest_rewrite` alone, printed with the reason it
+    is in a tier of its own. Nothing outstanding prints nothing.
+  - `config recommended [--with-cautious]`: Turn on everything in the first tier, in one
+    command. It reads the same table the configurator reads, so the shortcut and the
+    walkthrough can never disagree about what "recommended" means.
+
+    `--with-cautious` adds the second tier. Without it, `allow_manifest_rewrite` is
+    named, explained and left alone — a command nobody passed a flag to is not the
+    thing that starts editing files Git tracks.
+
+    It never marks the settings as reviewed. This is a shortcut past the decision, not
+    the screen that puts the decision in front of somebody, so a machine configured this
+    way still gets the walkthrough it is owed. Put any of it back with
+    `devp config set <key> false`.
   - `config wizard [--no-tui]`: Open the configurator — a full-screen view of
     every setting, with the [`devp trust`](#18-devp-trust---json---fix-ownership) declaration in front of
     it so what the tool is allowed to do is on screen before any of it is configurable.
     Arrow keys move, `Space` changes the highlighted setting (a toggle flips, a number
-    opens a field, `disabled_adapters` opens the adapter checklist), `r` puts one back,
-    `y` accepts everything as shown, and the last screen lists exactly what will be
-    written before it is written. `q` leaves without saving anything.
+    opens a field, `disabled_adapters` opens the adapter checklist), `r` puts one back.
+    The list ends in a **Finish** line: two presses of `Enter` there open the last
+    screen, which lists exactly what will be written before it is written. Two presses
+    rather than one, because a single `Enter` is what people press to dismiss a screen
+    they have stopped reading — and because there is now no other way out that skips
+    the summary. `q` leaves without saving anything, from any screen.
+
+    The line-by-line form (`--no-tui`) uses the same gesture: two empty lines to keep
+    the defaults, and, if you changed anything, a list of every change and a second
+    two-press confirmation before any of it is written.
 
     It runs itself twice: once on a fresh install, so the defaults are something you
     agreed to rather than inherited, and again after an upgrade that added a setting you
@@ -535,11 +597,84 @@ reads unambiguously:
     for terminals the full-screen view cannot drive, and for agents, which hold a real
     terminal and will never press a key. An agent configuring dev-prune should use
     `devp config set <key> <value>`, which needs no interaction at all.
-  - `config project [PATH] [--update]`: Inspect or create per-repository `.devprune.json` config.
-    Whenever the CLI writes this file it also records `.devprune.json` and
-    `ignore.devprune.json` in the repository's `.git/info/exclude`, so the config —
-    one machine's preference, not part of the project — never shows up in `git status`
-    and the shared, tracked `.gitignore` is never modified.
+  - `config project [PATH] [--update] [--team]`: Inspect or create per-repository
+    config.
+
+    Without `--team` this is `.devprune.json`, the personal half. Whenever the CLI
+    writes it, it also records `.devprune.json` and `ignore.devprune.json` in the
+    repository's `.git/info/exclude`, so the config — one machine's preference, not part
+    of the project — never shows up in `git status` and the shared, tracked `.gitignore`
+    is never modified.
+
+    `--team` addresses `project.devprune.json`, the half meant to be committed. Same
+    keys, same schema, and deliberately *not* excluded — being visible to git is the
+    entire reason it exists. Use it for decisions that belong to the project rather than
+    to your machine: "this repository is never pruned", "the build here takes long enough
+    that 45 days is too eager", "do not scan below three levels".
+
+    | | `project.devprune.json` | `.devprune.json` |
+    |---|---|---|
+    | In `git status` | yes — commit it | no, `.git/info/exclude` hides it |
+    | Decides | every key it names | every key the project file does not name |
+    | Written by dev-prune | never | `--update`, the workspace toggles, `[i]` in the dashboard |
+    | Repaired by `devp doctor --fix` | no — reported, then left to `git checkout` | yes, renamed aside |
+
+    **Precedence is project-then-personal, which is the inverse of the usual
+    local-overrides-shared convention, and deliberate.** These settings are ones a
+    *project* decides; a team that has written down "this repository is not worth
+    pruning" wants that to survive a colleague's stale personal file rather than lose to
+    it. A personal override still works on every key the project file leaves open.
+
+    "Names a key" means the key is literally in the file. A project file that never
+    mentions `ignore` does not overrule your `"ignore": true` with a default — a value
+    serde filled in is not a value anybody wrote down. This is why `--team` creates the
+    file holding nothing but its `$schema` line.
+
+    Run `devp config project` in a repository that has both and it prints an **Effective
+    values** table naming, per setting, which file the value in force came from. That is
+    printed rather than mirrored into `.devprune.json`: a copied value is a second copy
+    free to drift from the first and then be believed.
+
+    Either file may also carry a `prunable` section naming directories no adapter can
+    recognise, each with the command that puts it back:
+
+    ```json
+    {
+      "prunable": {
+        "directories": [
+          {
+            "path": "tools/vendor",
+            "rebuild": "make vendor",
+            "why": "regenerated from tools/manifest.toml"
+          }
+        ]
+      }
+    }
+    ```
+
+    `rebuild` is required. If nothing has to rebuild the directory, say that —
+    `"rebuild": "echo not needed"` is a legal answer and works on every platform. These
+    are pruned by the ordinary pass under the adapter name `declared`, so they appear in
+    `devp status`, obey `--dry-run`, `--min-size` and `--only`, and go with the scheduled
+    run.
+
+    This section is the one part of either file that does **not** follow the precedence
+    above: the two lists add up. A list is not a decision, so a team declaration never
+    discards one you wrote yourself; naming the same path in both leaves one directory,
+    with the committed `rebuild`.
+
+    Because `project.devprune.json` is committed, a declaration is treated as a claim to
+    be checked rather than an instruction to be followed. Before deleting one, dev-prune
+    requires that the path is relative with no `..`, that it resolves to somewhere inside
+    the repository even through a symlinked parent, that Git is tracking nothing inside
+    it, and that the first word of `rebuild` is a program on this machine. A claim that
+    fails any of those is reported as `skipped_declaration` with the reason, and nothing
+    is deleted.
+
+    Neither file can widen what dev-prune is allowed to do. Both deserialize into the
+    same seven keys, so a repository still cannot grant itself `allow_manifest_rewrite`
+    or ask for a post-prune command — see
+    [`docs/SAFETY_INVARIANTS.md`](SAFETY_INVARIANTS.md).
   - `config daemon [PATH] [enable|disable|status]`: Configure OS background scheduler globally or for workspace.
   - `config hook [PATH] [enable|disable|status] [--chain]`: Configure Git auto-registration hooks globally or for workspace.
 
@@ -616,7 +751,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.9.0",
+  "version": "1.10.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -629,7 +764,7 @@ silently when none is available.
       "shared_bytes": 0   // bytes hardlinked into a pnpm/bun store — excluded from `bytes`
       // "message"     — present on the statuses that carry detail: `lockfile_error`,
       //                 `activity_check_error`, `delete_error`, `config_error`,
-      //                 `skipped_symlink`
+      //                 `skipped_symlink`, `skipped_declaration`
       // "fix_command" — present only on `lockfile_error`, and only when the fix is a
       //                 single mechanical command an agent can run unattended
     }
@@ -649,6 +784,7 @@ silently when none is available.
 | `skipped_dry_run` | A candidate, left in place because this was a dry run. |
 | `skipped_active` | The repository has been touched inside its idle window. |
 | `skipped_symlink` | The directory is (or contains) a symlink, so deleting it could reach outside the project. Left in place; `message` names the link. |
+| `skipped_declaration` | A directory named in `prunable.directories` did not pass its checks — it leaves the repository, holds Git-tracked files, or its `rebuild` command names a tool this machine does not have. Left in place; `message` says which. Not counted in `summary.errors`: nothing was attempted. |
 | `ignored` | The repository sets `"ignore": true`, or has an `ignore.devprune.json`. |
 | `no_bloat` | Nothing to delete. |
 | `disabled` | The registry entry is disabled. |
@@ -656,14 +792,14 @@ silently when none is available.
 | `lockfile_error` | The lockfile could not be verified, so nothing was deleted. |
 | `activity_check_error` | The idle check itself failed, so idleness could not be proven and nothing was deleted. Counts as an error. |
 | `delete_error` | Deletion was attempted and failed. |
-| `config_error` | `.devprune.json` does not parse; the repository was not touched. |
+| `config_error` | `.devprune.json` or `project.devprune.json` does not parse; the repository was not touched. |
 
 ### `devp status --json`
 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.9.0",
+  "version": "1.10.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -708,7 +844,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.9.0",
+  "version": "1.10.0",
   "command": "status --drift",
   "drift": [
     {
@@ -736,7 +872,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.9.0",
+  "version": "1.10.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -777,7 +913,7 @@ to separate them again.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.9.0",
+  "version": "1.10.0",
   "command": "caches",
   "caches": [
     {
@@ -838,7 +974,7 @@ narrowed by which engines it was asked about.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.9.0",
+  "version": "1.10.0",
   "command": "caches containers",
   "engines": [
     {
@@ -902,7 +1038,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.9.0",
+  "version": "1.10.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -950,7 +1086,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.9.0",
+  "version": "1.10.0",
   "command": "trust",
   "guarantees": [
     {
@@ -1002,15 +1138,18 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 
 ---
 
-### 10. `devp update [--offline | --install]`
+### 10. `devp update [--offline | --install | --channels]`
 - **Description**: Prints the installed version, asks GitHub's public API for the latest release, and shows the upgrade command for how you installed it. By default it never downloads or replaces its own binary — upgrade with `cargo binstall dev-prune --force`, `cargo install dev-prune --force`, or by re-running the installer script.
 - **Flags**:
   - `--offline` — skip the release check for this run without changing the setting.
+  - `--channels` — print the upgrade command for every channel dev-prune ships through, not only the one that owns this copy. Reads nothing, writes nothing, opens no connection, and cannot be combined with `--offline` or `--install`. It is the answer to "how do I upgrade the copy on the *other* machine", which the default output deliberately does not try to guess.
   - `--install` — actually perform the upgrade. It downloads the release binary for this platform straight from GitHub Releases, verifies it against the SHA-256 sidecar published beside it, and writes it to every copy this installation runs: the managed binary under the config `bin` directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary if that is a different file — unless that file lives in a directory WinGet, Scoop or Homebrew owns, which each replace wholesale on upgrade, so writing into one produces a copy the next upgrade throws away. **Nothing is installed if the checksum does not match.** The managed copy is the one whose failure aborts the upgrade — it is what the git hooks and the scheduler invoke — and a copy in a directory this process cannot write is reported rather than fatal.
 
-    The package manager that delivered the first copy is deliberately *not* run. Its record of the installed version therefore goes stale, and the one command that resyncs it (`cargo install dev-prune --force`, `npm install -g dev-prune@latest`, `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`, `brew upgrade dev-prune`) is printed after a successful install. Run it or don't — the binaries are already current either way.
+    The package manager that delivered the first copy is deliberately *not* run. Its record of the installed version therefore goes stale, and the one command that resyncs it (`cargo install dev-prune --force`, `npm install -g dev-prune@latest`, `bun add -g dev-prune@latest`, `pnpm add -g dev-prune@latest`, `yarn global upgrade dev-prune`, `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`, `brew upgrade dev-prune`) is printed after a successful install. Run it or don't — the binaries are already current either way. `devp update --channels` prints the same table without checking anything.
 
-    Falls back to that channel's own upgrade command when the release publishes no binary for this platform or the download fails, so a release-page outage costs the fast path and not the upgrade. The channel is detected from where the binary lives, by the one classifier `devp doctor` and `devp uninstall` also read: the managed `bin` directory means the installer script, `.cargo` means cargo (`cargo binstall` when available, `cargo install` otherwise), a `node_modules` tree means npm, uv's tool directory means `uv tool upgrade`, a `pipx` venv means `pipx upgrade`, a `pip` script beside the binary means `pip install --upgrade`, and a WinGet, Scoop or Homebrew package directory means that manager's own upgrade; an unrecognised location prints every channel's command instead. It refuses under `DEV_PRUNE_OFFLINE`, cannot be combined with `--offline`, and does nothing when the installed build is already the latest.
+    Falls back to that channel's own upgrade command when the release publishes no binary for this platform or the download fails, so a release-page outage costs the fast path and not the upgrade. The channel is detected from where the binary lives, by the one classifier `devp doctor` and `devp uninstall` also read: the managed `bin` directory means the installer script, `.cargo` means cargo (`cargo binstall` when available, `cargo install` otherwise), `~/.bun` means bun, pnpm's and Yarn's global directories mean pnpm and yarn, any other `node_modules` tree means npm, uv's tool directory means `uv tool upgrade`, a `pipx` venv means `pipx upgrade`, a `pip` script beside the binary means `pip install --upgrade`, and a WinGet, Scoop or Homebrew package directory means that manager's own upgrade; an unrecognised location prints every channel's command instead. It refuses under `DEV_PRUNE_OFFLINE`, cannot be combined with `--offline`, and does nothing when the installed build is already the latest.
+
+    **The three npm-compatible clients are each their own channel.** dev-prune's npm package is a dispatcher plus one binary package per platform, so a global install through any client puts the executable inside a `node_modules` tree — which is npm's own fingerprint. bun, pnpm and Yarn are therefore checked first, by their own directories. Getting this wrong is not cosmetic: running `npm install -g` against a copy bun installed adds a *second* copy under npm's prefix and leaves bun's, still on `PATH`, at the old version.
 - **`auto_update`** (`true` by default): a newer release installs itself at the end of a prune pass, once the release check has found one. `devp config set auto_update false` stops it. Only the download-and-replace half runs here — the same verified download `--install` uses; the package-manager fallback deliberately does not, because this path runs unattended (from the scheduler, from a git hook) and a package manager can prompt for elevation or pull in upgrades nobody asked for. On WinGet, Scoop and Homebrew it does nothing at all: those managers replace their whole package directory on upgrade, so new bytes written there would be silently reverted, and the one-line notice naming their upgrade command is printed instead. A failed upgrade warns and never fails the pass. **An upgrade never interrupts the scheduled pass**: the scheduler runs the managed copy under the config `bin` directory, package managers replace binaries by atomic rename (a running pass keeps its loaded image), and the managed copy and hidden `devpw` twin refresh themselves from the new binary on their next healthy run.
 - **`version_lock`** (`false` by default): the one setting that outranks all of this. `devp config set version_lock true` pins this copy to the version it is, and from then on `auto_update` does not run however it is set, `--install` refuses before it touches the network, [`devp install --channel`](#19-devp-install---channel-name---dry-run) refuses because moving channels installs the latest release through the new manager, and re-running the install one-liner leaves the binary exactly where it finds it. It is deliberately not bypassable: no flag, no environment variable. `devp config set version_lock false` is the way back, and it has to be typed. Every path that stands down prints the pin and that command rather than going quiet, because a lock that silently does nothing is indistinguishable from an update path that has broken. `devp doctor` reports it as a note, and stops warning that you are behind while it is on — being behind is the state that was asked for. It exists for machines that have to keep shipping the same tool for months: a CI image, a reproduction that stops reproducing the moment the tool changes underneath it, a build box somebody else re-provisions.
 - **The check is opt-out, not opt-in.** It also runs quietly from `devp run` and `devp status`, at most once every 7 days, and prints one line only when a newer version exists. Disable it permanently with `devp config set update_check false`. It sends no body, no identifier and no usage data — see [PRIVACY.md](PRIVACY.md).
@@ -1019,6 +1158,7 @@ jq` is always safe. Exit codes are unchanged by `--json`.
   ```bash
   devp update
   devp update --install
+  devp update --channels
   devp update --offline
   ```
 
@@ -1031,7 +1171,7 @@ jq` is always safe. Exit codes are unchanged by `--json`.
   - Git hooks, when `git` is not on `PATH` (with instructions to install it), or when `core.hooksPath` already belongs to husky, pre-commit or lefthook and `auto_hooks_chain` is off. Take the slot without displacing that tool: `devp hook install --chain`.
   - The alias, when the running process *is* `devp` and the file cannot be replaced under it (Windows).
   - Anything switched off by `auto_setup`, `auto_hooks`, `auto_daemon`, or `DEV_PRUNE_NO_AUTO_SETUP=1`.
-- **Editor extension**: when a VS Code-family CLI is on `PATH` — `code`, `code-insiders`, `codium`, `codium-insiders`, `cursor`, `windsurf`, `positron` or `kiro` — and the [dev-prune extension](IDE_INTEGRATION.md) is not installed, one run asks — once ever, only at an interactive terminal, never in CI or containers — whether to install it into each editor found. Each editor installs from its own registry (Marketplace for VS Code, OpenVSX for most forks); if a fork's registry does not carry the extension, the `.vsix` attached to the latest GitHub release is installed instead. Decline and it never asks again; `code --install-extension VKrishna04.dev-prune` installs it by hand later.
+- **Editor extension**: when a VS Code-family CLI is on `PATH` — `code`, `code-insiders`, `codium`, `codium-insiders`, `cursor`, `windsurf`, `positron` or `kiro` — and the [dev-prune extension](IDE_INTEGRATION.md) is not installed, one run asks — once ever, only at an interactive terminal, never in CI or containers — whether to install it into each editor found. Each editor installs from its own registry (Marketplace for VS Code, OpenVSX for most forks); if a fork's registry does not carry the extension, the `.vsix` from the newest `vscode-v*` release is installed instead — the extension ships on its own tags, so that is a different release from the one `devp update` tracks. Decline and it never asks again; `code --install-extension VKrishna04.dev-prune` installs it by hand later.
 - **Examples**:
   ```bash
   devp setup
@@ -1045,7 +1185,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ### 12. `devp doctor [PATH] [--fix]`
 - **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. Plain `doctor` changes nothing — no config is created, no integration installed, no package manager run — and when some of what it found is repairable, its verdict says how many findings `--fix` would mend.
-- **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **which package manager installed this copy, and the exact commands that upgrade and remove it through that manager** — the installers, cargo, npm, uv, pipx, pip, WinGet, Scoop or Homebrew, never a warning, because an unrecognised location is a valid way to run a binary; **the install receipt**, for a copy one of the install scripts wrote — its version, which of `install.sh` and `install.ps1` wrote it, and the date, read from `<bindir>/install.json` rather than worked out again, and simply absent for every other channel because a date belonging to a different file is worse than no date; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus every fixed directory those managers install into, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
+- **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **which package manager installed this copy, and the exact commands that upgrade and remove it through that manager** — the installers, cargo, npm, bun, pnpm, yarn, uv, pipx, pip, WinGet, Scoop or Homebrew, never a warning, because an unrecognised location is a valid way to run a binary; **the install receipt**, for a copy one of the install scripts wrote — its version, which of `install.sh` and `install.ps1` wrote it, and the date, read from `<bindir>/install.json` rather than worked out again, and simply absent for every other channel because a date belonging to a different file is worse than no date; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus every fixed directory those managers install into, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
 - **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses and what it overrides, the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.
 - **`--fix`** — diagnosis first, then treatment: run the same checks, then repair what they found. It mends *installed-but-broken* only — a stale or missing `devp` twin, a missing `SKILL.md` export, Git hooks or a scheduler entry whose recorded binary no longer exists, a chained hook set that has drifted from the tool it forwards to, and registry entries whose repository is gone (the same cleanup as `devp unlink --missing`). Each repair is the corresponding `devp setup` pass re-run, so a repair can never do more than setup itself would; each re-checks state first, so a finding that healed in the meantime reports "already in place". It never performs a first-time install (that is `devp setup`'s job, gated by your `auto_*` settings), never touches an unreadable `registry.json` (a parse failure is for you to look at, not for a tool to guess at), and with `DEV_PRUNE_NO_AUTO_SETUP=1` set it skips every repair that writes outside the config directory, naming the command to run yourself. Problems `--fix` cannot mend are re-listed as such. Cannot be combined with a `PATH` — repository findings (not a Git repo, opted out, idle) are facts about your project, not breakage to mend.
 - **Exit codes**: `0` when everything works, warnings included — a missing scheduler should not fail a script. `1` only for something actually broken: an unreadable `registry.json`, an out-of-range setting, a registered path that no longer exists, a directory that is not a Git repository. `--fix` exits `0` when everything it found was repaired, `1` when any repair failed, was skipped, or was out of its reach.
@@ -1094,7 +1234,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ### 14. `devp uninstall [--deep]`
 - **Description**: Removes dev-prune from the machine: the OS daemon scheduler, the global `core.hooksPath` (only if it still points at dev-prune), the installed agent skill, the `PATH` entry (or `~/.local/bin` symlinks), and the binaries themselves — both the managed pair and the copy you invoked. On Windows, where a running executable cannot delete itself, a detached helper removes the last files a few seconds after the command exits; nothing needs a reboot or a closed terminal. Without `--deep` the configuration survives, so a reinstall picks up where you left off. With `--deep`, also wipes the global configuration folder (`~/.config/dev-prune/`) and every registered repository's `.devprune.json`; `--deep` asks for confirmation, and refuses outright with no terminal to ask on unless `-y` is passed. Exits `1` if anything could not be removed, naming each leftover. With `DEV_PRUNE_NO_AUTO_SETUP=1` set, the uninstall is hands-off about the integrations that variable told setup never to install: the scheduler and agent skills are left alone (with a note), and the sweep searches only `PATH` instead of also guessing install directories from the home folder.
-- **The stray-copy sweep**: installing from pip, npm, cargo and uv over time leaves copies of `devp` in `~/.cargo/bin`, `~/.local/bin`, npm's global directory and one `Scripts` folder per virtualenv — some on PATH, some not, and any one of them keeps the command resolving after an "uninstall". Both modes therefore end by scanning every directory on your PATH plus the well-known install locations for other copies of `dev-prune`/`devp` (matched by name only; nothing else in those directories is ever touched, and dev builds under a `target/` folder are skipped). What it finds is listed — each copy annotated with the package manager that owns it — and removed after **one confirmation**: `[y/N]` interactively — a bare Enter declines, `--yes` auto-confirms, and with no terminal and no `--yes` the copies are left in place with a note, without failing the uninstall. For each manager-owned copy the manager's own line (`pip uninstall dev-prune`, `npm uninstall -g dev-prune`, `cargo uninstall dev-prune`, `uv tool uninstall dev-prune`, `pipx uninstall dev-prune`) is printed at the end so its records get cleared too.
+- **The stray-copy sweep**: installing from pip, npm, cargo and uv over time leaves copies of `devp` in `~/.cargo/bin`, `~/.local/bin`, npm's global directory and one `Scripts` folder per virtualenv — some on PATH, some not, and any one of them keeps the command resolving after an "uninstall". Both modes therefore end by scanning every directory on your PATH plus the well-known install locations for other copies of `dev-prune`/`devp` (matched by name only; nothing else in those directories is ever touched, and dev builds under a `target/` folder are skipped). What it finds is listed — each copy annotated with the package manager that owns it — and removed after **one confirmation**: `[y/N]` interactively — a bare Enter declines, `--yes` auto-confirms, and with no terminal and no `--yes` the copies are left in place with a note, without failing the uninstall. For each manager-owned copy the manager's own line (`pip uninstall dev-prune`, `npm uninstall -g dev-prune`, `bun remove -g dev-prune`, `pnpm remove -g dev-prune`, `yarn global remove dev-prune`, `cargo uninstall dev-prune`, `uv tool uninstall dev-prune`, `pipx uninstall dev-prune`) is printed at the end so its records get cleared too.
 - **Examples**:
   ```bash
   devp uninstall
@@ -1191,7 +1331,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ---
 
 ### 19. `devp install [--channel <NAME>] [--dry-run]`
-- **Description**: Move this installation from one package manager to another. [`devp update`](#10-devp-update---offline----install) always upgrades the copy that is running, through whichever channel installed it; this command changes *which* channel owns it. With no `--channel` it reports the channel that owns the running binary and lists the names `--channel` accepts.
+- **Description**: Move this installation from one package manager to another. [`devp update`](#10-devp-update---offline----install----channels) always upgrades the copy that is running, through whichever channel installed it; this command changes *which* channel owns it. With no `--channel` it reports the channel that owns the running binary and lists the names `--channel` accepts.
 - **The order is the safety property**: it installs through the manager you name first, then removes the old copy through the manager that put it there. An install that fails leaves the working copy exactly where it was, so there is no window in which the machine has no `devp`.
 - **Why it uninstalls through the old manager rather than deleting the file**: cargo, npm, uv, pipx and the rest each keep a record of what they installed. A manager whose record still says `dev-prune` is present will put the old binary back on its next upgrade, and two copies on `PATH` means which one wins is an accident of ordering.
 - **Nothing is migrated, because nothing needs to be.** Settings, the repository registry and the undo history live in the config directory, which no package manager owns and none of them touch.
@@ -1199,7 +1339,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```json
   {
     "schema": 1,
-    "version": "1.9.0",
+    "version": "1.10.0",
     "channel": "installer",
     "installed_by": "install.sh",
     "installed_at": "2026-08-25T09:14:02Z",
@@ -1209,7 +1349,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   }
   ```
   It exists because the two scripts and the binary each used to work the same facts out independently, and three derivations of one truth is how they drift; it also outlives the shell that ran the one-liner, which no variable inside the script does. It is a record and never a setting: nothing reads it to decide anything, `--channel` still classifies the running copy by where its file is — no receipt can describe a copy that arrived through `cargo install` — and a missing file means "no installer of ours wrote one" rather than an error. `alias` records whether `devp` was installed beside `dev-prune`; `path_entry` whether the directory is on `PATH` because one of the scripts put it there.
-- **Channel names**: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`. `cargo` uses `cargo binstall` when it is available and `cargo install` otherwise; `scoop` and `homebrew` add the project's bucket or tap first, best-effort, because re-adding one that is already there fails harmlessly. A bare `pip install` is not offered as a destination: it puts the console script wherever the active interpreter happens to be, which is the ambiguity `uv tool` and `pipx` exist to remove.
+- **Channel names**: `installer`, `cargo`, `npm`, `bun`, `pnpm`, `yarn`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`. `cargo` uses `cargo binstall` when it is available and `cargo install` otherwise; `yarn` means Yarn 1.x, the only Yarn with `yarn global`; `uv` installs `dev-prune@latest`, because `uv tool install dev-prune` against an environment uv already has reports "already installed" and exits successfully having changed nothing; `scoop` and `homebrew` add the project's bucket or tap first, best-effort, because re-adding one that is already there fails harmlessly. A bare `pip install` is not offered as a destination: it puts the console script wherever the active interpreter happens to be, which is the ambiguity `uv tool` and `pipx` exist to remove.
 - **Flags**:
   - `--channel <NAME>` — the manager to move to. Omit to report the current one.
   - `--dry-run` — print the numbered plan and run none of it.
@@ -1234,9 +1374,9 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.9.0
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.10.0
 
-dev-prune (devp) v1.9.0
+dev-prune (devp) v1.10.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune

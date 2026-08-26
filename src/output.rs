@@ -316,9 +316,28 @@ pub fn print_header(msg: &str) {
     println!("\n{}", msg.bold());
 }
 
+/// A heading *inside* a report that already opened with a [`print_header`].
+///
+/// Same reasoning as `print_header` — weight, not colour — set one indent in, so it reads
+/// as a division of the list under it rather than the start of a second report.
+pub fn print_section(msg: &str) {
+    println!("\n  {}", msg.bold());
+}
+
 /// A byte figure styled as "space you got back" — the number this tool exists for.
 pub fn format_bytes_styled(bytes: u64) -> String {
     format_bytes(bytes).green().bold().to_string()
+}
+
+/// A byte figure styled as "this is the number to look at", saying nothing about whether
+/// it is good news.
+///
+/// [`format_bytes_styled`]'s green means "space you got back". A cache's cost per
+/// repository is not that: it is the figure a decision turns on, and green would promise
+/// the reader something the number does not mean. Weight rather than colour, the same
+/// choice [`print_header`] makes and for the same reason.
+pub fn format_bytes_weighted(bytes: u64) -> String {
+    format_bytes(bytes).bold().to_string()
 }
 
 /// A filesystem path, styled. One place to change if cyan-on-cyan ever clashes.

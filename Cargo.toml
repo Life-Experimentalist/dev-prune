@@ -1,6 +1,6 @@
 [package]
 name = "dev-prune"
-version = "1.9.0"
+version = "1.10.0"
 edition = "2024"
 authors = ["VKrishna04"]
 description = "Universal, lockfile-safe workspace pruner and background dependency cleaner"
@@ -12,7 +12,12 @@ homepage = "https://devprune.vkrishna04.me"
 # nothing anyone installing `dev-prune` wants to read. Point at the docs that describe
 # the commands instead — crates.io links this field directly.
 documentation = "https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/README.md"
-keywords = ["cli", "workspace", "cleanup", "node_modules", "venv"]
+# Five is the crates.io maximum, and they are a search box rather than a description:
+# `cli` and `workspace` matched thousands of crates apiece, and the
+# `command-line-utilities` category below already says "this is a CLI" on the page
+# people browse. Twelve ecosystems will not fit in five words, so these name the
+# problem instead — what somebody types when they have it.
+keywords = ["cleanup", "disk-space", "node_modules", "monorepo", "dependencies"]
 # Five is the crates.io maximum and every one of them is a category page this tool
 # genuinely belongs on — those pages are how people browsing crates.io find it at all.
 categories = [

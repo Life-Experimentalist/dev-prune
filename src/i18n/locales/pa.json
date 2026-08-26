@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "pa",
+    "english_name": "Punjabi",
+    "native_name": "ਪੰਜਾਬੀ",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (ਸਿਰਫ਼ ਜਾਂਚ)",
+  "run.header.targeted": "dev-prune ਨਿਸ਼ਾਨਾ ਰਨ ({path})",
+  "run.header.binaries": "ਲੋੜੀਂਦੀਆਂ ਈਕੋਸਿਸਟਮ ਬਾਈਨਰੀਆਂ ਦੀ ਜਾਂਚ",
+  "run.header.candidates": "ਹਟਾਉਣਯੋਗ ਡਾਇਰੈਕਟਰੀਆਂ ਅਤੇ ਬਚਣ ਵਾਲੀ ਥਾਂ",
+  "run.header.blocked": "ਜਿਹੜੀਆਂ ਰਿਪੋਜ਼ਟਰੀਆਂ ਜਾਂਚੀਆਂ ਨਹੀਂ ਜਾ ਸਕੀਆਂ ({count})",
+  "run.header.deleting": "ਪੜਾਅਵਾਰ ਹਟਾਇਆ ਜਾ ਰਿਹਾ ਹੈ ({repos} ਰਿਪੋਜ਼ਟਰੀਆਂ, {size})",
+  "run.header.reasons": "ਹਰ ਰਿਪੋਜ਼ਟਰੀ ਕਿਉਂ ਹਟੇਗੀ ਜਾਂ ਕਿਉਂ ਨਹੀਂ",
+  "run.summary": "ਸੰਖੇਪ",
+  "run.summary.dry": "ਸੰਖੇਪ (ਸਿਰਫ਼ ਜਾਂਚ)",
+  "run.nothing": "ਕੋਈ ਨਿਸ਼ਕਿਰਿਆ ਰਿਪੋਜ਼ਟਰੀ ਜਾਂ ਹਟਾਉਣਯੋਗ ਡਾਇਰੈਕਟਰੀ ਨਹੀਂ ਮਿਲੀ।",
+  "run.nothing.bloat": "ਹਟਾਉਣਯੋਗ ਕੋਈ ਡਾਇਰੈਕਟਰੀ ਨਹੀਂ ਮਿਲੀ।",
+  "run.nothing.bloat.targeted": "{path} ਵਿੱਚ ਹਟਾਉਣਯੋਗ ਕੋਈ ਡਾਇਰੈਕਟਰੀ ਨਹੀਂ ਮਿਲੀ।",
+  "run.freed": "ਖਾਲੀ ਕੀਤਾ: {count} ਡਾਇਰੈਕਟਰੀਆਂ ਵਿੱਚੋਂ {size}",
+  "run.freed.targeted": "ਖਾਲੀ ਕੀਤਾ: {path} ਵਿੱਚ {size}",
+  "run.would_free": "{count} ਡਾਇਰੈਕਟਰੀਆਂ ਵਿੱਚੋਂ {size} ਖਾਲੀ ਹੁੰਦਾ।",
+  "run.reclaimable": "ਕੁੱਲ ਮੁੜ ਪ੍ਰਾਪਤ ਹੋਣ ਵਾਲੀ ਥਾਂ: {size}",
+  "run.not_pruned": "{count} ਰਿਪੋਜ਼ਟਰੀਆਂ ਨਹੀਂ ਹਟਾਈਆਂ ਗਈਆਂ।",
+
+  "status.header.pruning": "ਚੁਣੀਆਂ ਹੋਈਆਂ ਰਿਪੋਜ਼ਟਰੀਆਂ ਹਟਾਈਆਂ ਜਾ ਰਹੀਆਂ ਹਨ",
+  "status.header.drift": "ਲਾਕਫ਼ਾਈਲ ਫ਼ਰਕ",
+
+  "caches.header": "ਪੈਕੇਜ ਮੈਨੇਜਰ ਕੈਸ਼",
+  "caches.nothing": "ਇਸ ਮਸ਼ੀਨ ਉੱਤੇ ਕੋਈ ਪੈਕੇਜ ਮੈਨੇਜਰ ਕੈਸ਼ ਨਹੀਂ ਮਿਲੀ।",
+  "caches.header.would_clear": "ਕੀ ਸਾਫ਼ ਹੁੰਦਾ",
+  "caches.header.about_to_clear": "ਇਹ ਸਾਫ਼ ਕੀਤਾ ਜਾਵੇਗਾ",
+
+  "config.category.presentation": "ਇਹ ਸਭ ਕਿਸ ਭਾਸ਼ਾ ਵਿੱਚ",
+  "config.category.scope": "ਕੀ ਹਟਾਇਆ ਜਾਵੇਗਾ",
+  "config.category.safety": "ਕੁਝ ਵੀ ਹਟਾਉਣ ਤੋਂ ਪਹਿਲਾਂ",
+  "config.category.build_trees": "ਬਿਲਡ ਡਾਇਰੈਕਟਰੀਆਂ — ਮੂਲ ਰੂਪ ਵਿੱਚ ਬੰਦ",
+  "config.category.caches": "ਸਾਂਝੀਆਂ ਡਾਊਨਲੋਡ ਕੈਸ਼ਾਂ",
+  "config.category.unattended": "ਪੁੱਛੇ ਬਿਨਾਂ ਚੱਲਣਾ",
+  "config.category.updates": "dev-prune ਨੂੰ ਨਵਾਂ ਰੱਖਣਾ"
+}

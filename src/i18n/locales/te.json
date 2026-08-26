@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "te",
+    "english_name": "Telugu",
+    "native_name": "తెలుగు",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (పరీక్ష మాత్రమే)",
+  "run.header.targeted": "dev-prune లక్ష్య రన్ ({path})",
+  "run.header.binaries": "అవసరమైన ఎకోసిస్టమ్ బైనరీల తనిఖీ",
+  "run.header.candidates": "తొలగించదగిన డైరెక్టరీలు, ఆదా అయ్యే స్థలం",
+  "run.header.blocked": "పరిశీలించలేకపోయిన రిపాజిటరీలు ({count})",
+  "run.header.deleting": "క్రమంగా తొలగిస్తోంది ({repos} రిపాజిటరీలు, {size})",
+  "run.header.reasons": "ప్రతి రిపాజిటరీ ఎందుకు తొలగించబడుతుంది లేదా తొలగించబడదు",
+  "run.summary": "సారాంశం",
+  "run.summary.dry": "సారాంశం (పరీక్ష మాత్రమే)",
+  "run.nothing": "నిష్క్రియ రిపాజిటరీలు గానీ తొలగించదగిన డైరెక్టరీలు గానీ కనిపించలేదు.",
+  "run.nothing.bloat": "తొలగించదగిన డైరెక్టరీలు ఏవీ కనిపించలేదు.",
+  "run.nothing.bloat.targeted": "{path}లో తొలగించదగిన డైరెక్టరీలు ఏవీ కనిపించలేదు.",
+  "run.freed": "ఖాళీ చేసినది: {count} డైరెక్టరీల నుండి {size}",
+  "run.freed.targeted": "ఖాళీ చేయబడింది: {path}లో {size}",
+  "run.would_free": "{count} డైరెక్టరీల నుండి {size} ఖాళీ అయ్యేది.",
+  "run.reclaimable": "తిరిగి పొందగల మొత్తం స్థలం: {size}",
+  "run.not_pruned": "{count} రిపాజిటరీలు తొలగించబడలేదు.",
+
+  "status.header.pruning": "ఎంచుకున్న రిపాజిటరీలను తొలగిస్తోంది",
+  "status.header.drift": "లాక్‌ఫైల్ తేడా",
+
+  "caches.header": "ప్యాకేజ్ మేనేజర్ కాష్‌లు",
+  "caches.nothing": "ఈ మెషీన్‌లో ప్యాకేజ్ మేనేజర్ కాష్‌లు ఏవీ కనిపించలేదు.",
+  "caches.header.would_clear": "ఏమి తొలగించబడేది",
+  "caches.header.about_to_clear": "ఇవి తొలగించబడతాయి",
+
+  "config.category.presentation": "ఇదంతా ఏ భాషలో",
+  "config.category.scope": "ఏమి తొలగించబడుతుంది",
+  "config.category.safety": "ఏదైనా తొలగించే ముందు",
+  "config.category.build_trees": "బిల్డ్ ఫోల్డర్లు — డిఫాల్ట్‌గా ఆఫ్",
+  "config.category.caches": "ఉమ్మడి డౌన్‌లోడ్ కాష్‌లు",
+  "config.category.unattended": "అడగకుండా నడవడం",
+  "config.category.updates": "dev-prune ను తాజాగా ఉంచడం"
+}

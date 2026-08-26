@@ -92,9 +92,9 @@ interactively — whether to install the dev-prune editor extension. Saying yes 
 editor's own `--install-extension` command; any download that triggers is the editor's
 traffic against its own marketplace, not dev-prune's. If the editor's registry cannot
 resolve the extension (some forks' registries do not carry it), dev-prune itself
-downloads the `.vsix` attached to the latest GitHub release — the same
-`api.github.com/...releases` endpoint as the update check, same headers, no body — and
-hands that file to the editor. This never happens without the explicit confirmation,
+downloads the `.vsix` from the newest extension release — two requests to
+`api.github.com/...releases`, one to list the releases and one for the file, with the
+same headers as the update check and no body — and hands that file to the editor. This never happens without the explicit confirmation,
 and a "no" is remembered: nothing asks twice.
 
 ---

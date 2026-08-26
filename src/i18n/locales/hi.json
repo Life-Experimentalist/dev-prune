@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "hi",
+    "english_name": "Hindi",
+    "native_name": "हिन्दी",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (केवल परीक्षण)",
+  "run.header.targeted": "dev-prune लक्षित रन ({path})",
+  "run.header.binaries": "आवश्यक इकोसिस्टम बाइनरी की जाँच",
+  "run.header.candidates": "हटाने योग्य निर्देशिकाएँ और बचने वाली जगह",
+  "run.header.blocked": "जिन रिपॉज़िटरी की जाँच नहीं हो सकी ({count})",
+  "run.header.deleting": "क्रमिक विलोपन चल रहा है ({repos} रिपॉज़िटरी, {size})",
+  "run.header.reasons": "हर रिपॉज़िटरी क्यों हटेगी या नहीं हटेगी",
+  "run.summary": "सारांश",
+  "run.summary.dry": "सारांश (केवल परीक्षण)",
+  "run.nothing": "कोई निष्क्रिय रिपॉज़िटरी या हटाने योग्य निर्देशिका नहीं मिली।",
+  "run.nothing.bloat": "हटाने योग्य कोई निर्देशिका नहीं मिली।",
+  "run.nothing.bloat.targeted": "{path} में हटाने योग्य कोई डायरेक्टरी नहीं मिली।",
+  "run.freed": "मुक्त किया गया: {count} निर्देशिकाओं से {size}",
+  "run.freed.targeted": "मुक्त किया: {path} में {size}",
+  "run.would_free": "{count} निर्देशिकाओं से {size} मुक्त होती।",
+  "run.reclaimable": "कुल पुनः प्राप्य जगह: {size}",
+  "run.not_pruned": "{count} रिपॉज़िटरी नहीं हटाई गईं।",
+
+  "status.header.pruning": "चुनी गई रिपॉज़िटरी हटाई जा रही हैं",
+  "status.header.drift": "लॉकफ़ाइल में अंतर",
+
+  "caches.header": "पैकेज मैनेजर कैश",
+  "caches.nothing": "इस मशीन पर कोई पैकेज मैनेजर कैश नहीं मिला।",
+  "caches.header.would_clear": "क्या-क्या हटता",
+  "caches.header.about_to_clear": "यह सब हटाया जाएगा",
+
+  "config.category.presentation": "यह सब किस भाषा में है",
+  "config.category.scope": "क्या-क्या हटाया जाएगा",
+  "config.category.safety": "कुछ भी हटाने से पहले",
+  "config.category.build_trees": "बिल्ड फ़ोल्डर — डिफ़ॉल्ट रूप से बंद",
+  "config.category.caches": "साझा डाउनलोड कैश",
+  "config.category.unattended": "बिना पूछे चलना",
+  "config.category.updates": "dev-prune को अद्यतन रखना"
+}

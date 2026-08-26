@@ -3,7 +3,7 @@
 
 // Handlers for `dev-prune link` and `dev-prune unlink` commands.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -132,6 +132,88 @@ pub(crate) fn ensure_default_repo_config(path: &Path) {
             output::clean_path(path)
         )),
     }
+}
+
+/// Register the repository the caller is standing in, when nothing has registered it yet.
+///
+/// Git has no `post-init` hook. The three hooks dev-prune installs — `post-commit`,
+/// `post-checkout` and `post-merge` — between them cover every way a repository arrives
+/// from somewhere else, and none of them covers one created here: `git init` runs no hook
+/// at all, and the first hook a new repository ever sees belongs to its first commit.
+/// Until then it is invisible to the mechanism whose whole job was to find it — which is
+/// precisely when somebody runs `devp status` to check whether that worked, sees nothing,
+/// and concludes the hooks are broken. They are not; there was never a hook to fire.
+///
+/// So the commands that read the registry check the working directory first. The guards
+/// are the hook's guards, deliberately: a throwaway checkout, a repository whose config
+/// sets `disable_hooks`, a config that does not parse — every case
+/// `devp link . --quiet` declines to register is declined here for the same reason, so
+/// this can never track something the hook would have left alone.
+///
+/// Returns the path when one was added, so the caller can say so. Persisting is the
+/// caller's: it holds the registry and already saves for its own reasons.
+pub fn adopt_enclosing_repo(registry: &mut Registry) -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    adopt_repo_at(registry, &cwd)
+}
+
+/// [`adopt_enclosing_repo`], against a named directory rather than the process's own.
+///
+/// Split out so the guards can be tested without a test changing the working directory,
+/// which is process-global and would race every other test in the binary.
+pub(crate) fn adopt_repo_at(registry: &mut Registry, start: &Path) -> Option<PathBuf> {
+    let path = enclosing_repo(start)?;
+
+    if is_ephemeral_location(&path) {
+        return None;
+    }
+
+    if !matches!(
+        PerRepoConfig::load_with_diagnostics(&path),
+        Ok(None)
+            | Ok(Some(PerRepoConfig {
+                disable_hooks: false,
+                ..
+            }))
+    ) {
+        return None;
+    }
+
+    if !registry.add_repo(path.clone()) {
+        return None;
+    }
+
+    registry.adopt_moved_entry(&path, scanner::git::repo_identity(&path));
+    Some(path)
+}
+
+/// Say that the working directory was just registered, and why nothing had done it.
+///
+/// The "why" is not padding. Somebody who ran `git init` and then `devp status` has
+/// already formed the theory that the hooks are broken, and a bare "Registered ..." line
+/// leaves that theory standing. One sentence replaces it with the truth.
+pub(crate) fn report_cwd_adoption(path: &Path) {
+    output::print_success(&format!("Registered {}", output::clean_path(path)));
+    output::print_info(
+        "  You are standing in it and nothing had tracked it yet. `git init` runs no Git \
+         hook, so a repository created since the last pass stays unseen until its first \
+         commit — found here instead.",
+    );
+}
+
+/// The Git repository `start` is inside, if any.
+///
+/// Walks up rather than testing `start` alone: `devp status` from `src/` in a new
+/// repository is the same question as running it from the root, and answering it only at
+/// the root would leave the gap open for everyone who does not happen to be standing
+/// there.
+fn enclosing_repo(start: &Path) -> Option<PathBuf> {
+    start
+        .canonicalize()
+        .ok()?
+        .ancestors()
+        .find(|dir| scanner::is_git_repo(dir))
+        .map(Path::to_path_buf)
 }
 
 /// Is this directory called something only a tool would call a checkout?
@@ -327,6 +409,60 @@ mod tests {
             let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join(name);
             assert!(!is_ephemeral_location(&repo), "{name} is a real repository");
         }
+    }
+
+    #[test]
+    fn the_repository_you_are_standing_in_is_adopted_when_nothing_tracks_it() {
+        // The `git init` gap, from the inside: a real repository (this crate's own),
+        // a registry that has never heard of it, and a starting directory well below
+        // the root — which is where people actually are when they run `devp status`.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .unwrap();
+        let mut registry = Registry::default();
+
+        let adopted = adopt_repo_at(&mut registry, &root.join("src").join("commands"));
+        assert_eq!(adopted.as_deref(), Some(root.as_path()));
+        assert_eq!(registry.repo_count(), 1);
+    }
+
+    #[test]
+    fn a_repository_already_registered_is_not_adopted_twice() {
+        // Every `devp status` would otherwise report registering the same repository,
+        // and the caller would save the registry once per invocation for no change.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .canonicalize()
+            .unwrap();
+        let mut registry = Registry::default();
+
+        assert!(adopt_repo_at(&mut registry, &root).is_some());
+        assert!(adopt_repo_at(&mut registry, &root).is_none());
+        assert_eq!(registry.repo_count(), 1);
+    }
+
+    #[test]
+    fn adoption_declines_everything_the_hook_declines() {
+        // Symmetry is the whole safety argument: this path must never register something
+        // `devp link . --quiet` would have left alone. A temp directory is the case that
+        // is cheap to build — and the one every test fixture on the machine lives in.
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+
+        let mut registry = Registry::default();
+        assert!(adopt_repo_at(&mut registry, &repo).is_none());
+        assert_eq!(registry.repo_count(), 0);
+    }
+
+    #[test]
+    fn a_directory_in_no_repository_at_all_is_left_alone() {
+        // `devp status` from a home directory must not invent a repository, and must not
+        // walk to the filesystem root looking for one that is not there.
+        let tmp = TempDir::new().unwrap();
+        let plain = tmp.path().canonicalize().unwrap();
+
+        let mut registry = Registry::default();
+        assert!(adopt_repo_at(&mut registry, &plain).is_none());
     }
 
     #[test]

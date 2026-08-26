@@ -4,23 +4,26 @@
 import { useEffect, useState } from "react";
 import { LazyMotion, domAnimation, m, useReducedMotion } from "framer-motion";
 
-// Hand-written, not machine-translated, and deliberately only the pitch: the CLI
-// itself speaks English, and claiming otherwise on the marketing page would be a
-// promise the binary does not keep.
+// The pitch, in the languages dev-prune is read in. Twelve of these — English,
+// Chinese and the Indic block — are also languages the binary prints its own headings in,
+// and their note says so; the rest are the pitch only, because there is no catalogue
+// for them yet. Nothing here has been proofread by a native speaker, which is the
+// same thing `devp config set language` says out loud: docs/TRANSLATIONS.md is where
+// a correction goes.
 const LANGS = [
   {
     code: "en",
     label: "English",
     pitch:
       "Your disk is full of dependencies you can rebuild. dev-prune deletes them — only after the package manager proves a lockfile can put them back.",
-    note: "Terminal output is English.",
+    note: "The CLI speaks twelve languages: devp config set language en",
   },
   {
     code: "zh-Hans",
     label: "中文",
     pitch:
       "你的硬盘里塞满了可以重新构建的依赖。dev-prune 会删除它们——但只在包管理器证明锁文件能够将其还原之后。",
-    note: "命令行输出为英文。",
+    note: "dev-prune 用简体中文打印自己的标题：devp config set language zh",
   },
   {
     code: "ja",
@@ -76,7 +79,70 @@ const LANGS = [
     label: "हिन्दी",
     pitch:
       "आपकी डिस्क उन डिपेंडेंसी से भरी है जिन्हें दोबारा बनाया जा सकता है। dev-prune उन्हें हटाता है — लेकिन तभी, जब पैकेज मैनेजर यह साबित कर दे कि लॉकफ़ाइल उन्हें वापस ला सकती है।",
-    note: "टर्मिनल आउटपुट अंग्रेज़ी में है।",
+    note: "dev-prune अपने शीर्षक हिन्दी में छापता है: devp config set language hi",
+  },
+  {
+    code: "te",
+    label: "తెలుగు",
+    pitch:
+      "మీ డిస్క్ మళ్ళీ నిర్మించగలిగే డిపెండెన్సీలతో నిండిపోయింది. dev-prune వాటిని తొలగిస్తుంది — లాక్‌ఫైల్ వాటిని తిరిగి తీసుకురాగలదని ప్యాకేజ్ మేనేజర్ నిరూపించిన తర్వాతే.",
+    note: "dev-prune తన శీర్షికలను తెలుగులో చూపుతుంది: devp config set language te",
+  },
+  {
+    code: "ta",
+    label: "தமிழ்",
+    pitch:
+      "உங்கள் வட்டு மீண்டும் உருவாக்கக்கூடிய சார்புகளால் நிரம்பியுள்ளது. dev-prune அவற்றை நீக்குகிறது — லாக்ஃபைல் அவற்றை மீட்டெடுக்க முடியும் என்பதைப் பொதி மேலாளர் நிரூபித்த பிறகுதான்.",
+    note: "dev-prune தன் தலைப்புகளைத் தமிழில் அச்சிடுகிறது: devp config set language ta",
+  },
+  {
+    code: "kn",
+    label: "ಕನ್ನಡ",
+    pitch:
+      "ನಿಮ್ಮ ಡಿಸ್ಕ್ ಮತ್ತೆ ನಿರ್ಮಿಸಬಹುದಾದ ಅವಲಂಬನೆಗಳಿಂದ ತುಂಬಿದೆ. dev-prune ಅವುಗಳನ್ನು ಅಳಿಸುತ್ತದೆ — ಲಾಕ್‌ಫೈಲ್ ಅವುಗಳನ್ನು ಮರಳಿ ತರಬಲ್ಲದು ಎಂದು ಪ್ಯಾಕೇజ್ ಮ್ಯಾನೇజರ್ ಸಾಬೀತುಪಡಿಸಿದ ನಂತರವೇ.",
+    note: "dev-prune ತನ್ನ ಶೀರ್ಷಿಕೆಗಳನ್ನು ಕನ್ನಡದಲ್ಲಿ ಮುದ್ರಿಸುತ್ತದೆ: devp config set language kn",
+  },
+  {
+    code: "ml",
+    label: "മലയാളം",
+    pitch:
+      "നിങ്ങളുടെ ഡിസ്ക് വീണ്ടും നിർമ്മിക്കാവുന്ന ഡിപൻഡൻസികളാൽ നിറഞ്ഞിരിക്കുന്നു. dev-prune അവ ഇല്ലാതാക്കുന്നു — ലോക്ക്ഫയലിന് അവ തിരികെ കൊണ്ടുവരാനാകുമെന്ന് പാക്കേജ് മാനേജർ തെളിയിച്ചതിനു ശേഷം മാത്രം.",
+    note: "dev-prune തന്റെ തലക്കെട്ടുകൾ മലയാളത്തിൽ അച്ചടിക്കുന്നു: devp config set language ml",
+  },
+  {
+    code: "bn",
+    label: "বাংলা",
+    pitch:
+      "আপনার ডিস্ক এমন ডিপেন্ডেন্সিতে ভরা, যেগুলো আবার তৈরি করা যায়। dev-prune সেগুলো মুছে ফেলে — তবে কেবল প্যাকেজ ম্যানেজার প্রমাণ করার পরেই যে লকফাইল সেগুলো ফিরিয়ে আনতে পারে।",
+    note: "dev-prune তার নিজস্ব শিরোনাম বাংলায় ছাপে: devp config set language bn",
+  },
+  {
+    code: "mr",
+    label: "मराठी",
+    pitch:
+      "तुमची डिस्क पुन्हा तयार करता येणाऱ्या डिपेंडन्सींनी भरलेली आहे. dev-prune त्या हटवते — पण फक्त पॅकेज मॅनेजरने हे सिद्ध केल्यावरच की लॉकफाईल त्या परत आणू शकते.",
+    note: "dev-prune स्वतःची शीर्षके मराठीत छापते: devp config set language mr",
+  },
+  {
+    code: "gu",
+    label: "ગુજરાતી",
+    pitch:
+      "તમારી ડિસ્ક એવી ડિપેન્ડન્સીથી ભરેલી છે જે ફરીથી બનાવી શકાય છે. dev-prune તેમને કાઢી નાખે છે — પણ ત્યારે જ, જ્યારે પેકેજ મેનેજર સાબિત કરે કે લ્ટ ફાઇલ તેમને પાછી લાવી શકે છે.",
+    note: "dev-prune પોતાનાં મથાળાં ગુજરાતીમાં છાપે છે: devp config set language gu",
+  },
+  {
+    code: "pa",
+    label: "ਪੰਜਾਬੀ",
+    pitch:
+      "ਤੁਹਾਡੀ ਡਿਸਕ ਉਹਨਾਂ ਡਿਪੈਂਡੈਂਸੀਆਂ ਨਾਲ ਭਰੀ ਹੋਈ ਹੈ ਜੋ ਦੁਬਾਰਾ ਬਣਾਈਆਂ ਜਾ ਸਕਦੀਆਂ ਹਨ। dev-prune ਉਹਨਾਂ ਨੂੰ ਮਿਟਾ ਦਿੰਦਾ ਹੈ — ਪਰ ਸਿਰਫ਼ ਉਦੋਂ, ਜਦੋਂ ਪੈਕੇਜ ਮੈਨੇਜਰ ਸਾਬਤ ਕਰ ਦੇਵੇ ਕਿ ਲਾਕਫ਼ਾਈਲ ਉਹਨਾਂ ਨੂੰ ਵਾਪਸ ਲਿਆ ਸਕਦੀ ਹੈ।",
+    note: "dev-prune ਆਪਣੇ ਸਿਰਲੇਖ ਪੰਜਾਬੀ ਵਿੱਚ ਛਾਪਦਾ ਹੈ: devp config set language pa",
+  },
+  {
+    code: "sa",
+    label: "संस्कृतम्",
+    pitch:
+      "तव सङ्गणकस्य कोशः पुनर्निर्मातुं शक्यैः परावलम्बनैः पूर्णः अस्ति। dev-prune तानि अपनयति — किन्तु तदैव, यदा पेटिकाप्रबन्धकः प्रमाणयति यत् तालसञ्चिका तानि पुनः आनेतुं शक्नोति।",
+    note: "dev-prune स्वकीयानि शीर्षकानि संस्कृते मुद्रयति: devp config set language sa",
   },
 ];
 

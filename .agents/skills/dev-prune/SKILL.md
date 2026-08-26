@@ -14,6 +14,16 @@ name, and either works everywhere.
 run it, and explain the result. Everything you need is below; the docs map at the end is
 for anything that isn't.
 
+**Skill version: 1.10.0.** This file describes that release of `devp` and no other, and
+it is rewritten from the binary rather than maintained by hand. Before you rely on
+anything below, run `devp --version`. If it prints a different number, you are reading
+another release's instructions — its flags, JSON statuses and exit codes may not be
+the ones installed, and a command you quote from here may not exist. The fix is one
+command: `devp skill` rewrites every copy of this file from the installed binary,
+including the one in your own skills directory. Re-read it afterwards, and use the file,
+not what you remember of it. `devp doctor` reports a stale copy and `devp doctor --fix`
+replaces it.
+
 ---
 
 ## 🔒 Non-negotiable rules
@@ -45,11 +55,14 @@ for anything that isn't.
    dev-prune does replaces the binary, including a re-run of the install one-liner, and
    there is no flag that bypasses it. The alternative is the install
    channel's own command — re-run the `install.sh`/`install.ps1` one-liner,
+   `npm install -g dev-prune@latest`, `bun add -g dev-prune@latest`, `pnpm add -g
+   dev-prune@latest`, `yarn global upgrade dev-prune`,
    `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade
    dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`,
    re-running the `brew install <formula URL>` line (a formula installed by URL has no
    tap for `brew upgrade` to consult), `cargo binstall dev-prune --force` (prebuilt), or
-   `cargo install dev-prune --force` (compiles).
+   `cargo install dev-prune --force` (compiles). `devp update --channels` prints that
+   whole table offline, for when the stale copy is on a machine you are not sitting at.
 
 ## What it will never do
 
@@ -61,8 +74,10 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 - Never follows a symlinked or junctioned bloat directory — that storage belongs to
   something else.
 - Never crosses into a nested repository; a submodule is pruned as itself or not at all.
-- Never executes anything named in a repository-tracked file. `.devprune.json` holds
-  inert data only.
+- Never executes anything named in a repository-tracked file. `.devprune.json` and
+  `project.devprune.json` hold inert data only, and deserialize into the same seven keys —
+  so a cloned repository cannot grant itself `allow_manifest_rewrite` or name a
+  post-prune command however it is configured.
 - Never touches a package-manager cache on its own. No prune pass, scheduler or Git hook
   clears one, ever. `devp caches` reports their sizes and prints the clear command, and
   `devp caches clear <manager>` runs it — but only when the user asks for it, and it asks
@@ -134,7 +149,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed (add `--deep` to wipe config — confirm first) |
 | "is there a newer version?" | `devp update` — prints the installed and latest versions plus the right upgrade command; never installs anything by itself |
 | "upgrade it" | `devp update --install` — downloads the release binary from GitHub, verifies its SHA-256, and replaces every copy this install runs (managed binary, `devp` alias, `devpw` scheduler twin, the running binary); the package manager that delivered the first copy is not run, and the one command that resyncs its version record is printed. Falls back to that manager's own upgrade command if there is no binary for this platform. `auto_update` does the download half by itself after a pass and is on by default; `devp config set auto_update false` stops it, and `devp config set version_lock true` stops every update path at once |
-| "I installed it with cargo, I want it from winget instead" / "move it to uv" | `devp install --channel <name>` — installs through the manager named, then removes the old copy through the manager that owns it, in that order. `devp install` alone reports which channel owns this copy; `--dry-run` prints the plan and runs none of it. Names: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`, `homebrew` |
+| "I installed it with cargo, I want it from winget instead" / "move it to uv" | `devp install --channel <name>` — installs through the manager named, then removes the old copy through the manager that owns it, in that order. `devp install` alone reports which channel owns this copy; `--dry-run` prints the plan and runs none of it. Names: `installer`, `cargo`, `npm`, `bun`, `pnpm`, `yarn`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`. bun, pnpm and yarn install the same npm package but are each their own channel: a copy bun put there is upgraded and removed with bun, and running npm against it adds a second copy under npm's prefix while bun's stays stale on `PATH` |
 | "I ran the one-liner but cargo/brew installed it first — which one runs?" | The one the one-liner installed. It works over any previous channel, needs no uninstall first, and never fails because of one; it puts its own directory *first* on PATH (prepended to the rc file on macOS/Linux, prepended to the User PATH on Windows) and names the copy it found rather than deleting another manager's file — then asks whether to collapse the two, running `devp install --channel installer --yes` from that older binary if you answer `y`. Anything else prints the command instead, and the question is skipped entirely with `DEV_PRUNE_NO_MIGRATE_PROMPT=1`, in CI, or with no terminal attached. The script deletes nothing either way. `devp doctor` lists every copy at any time, and reports the install receipt (`install.json`, written beside the binary by whichever script installed it: version, which script, when) |
 | "clean my Rust `target/` too" / "clean my Java/Gradle/Maven builds too" / "clean my Flutter build caches too" / "clean my Elixir `_build/` too" / "clean my C++ `vcpkg_installed/` too" / "clean my CMake `build/` too" | `devp config set enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` / `enable_dart true` / `enable_mix_build true` / `enable_vcpkg true` / `enable_cmake_build true` — opt-in adapters, idle-gated separately by `build_idle_days` (45). cmake_build claims only a tree holding a `CMakeCache.txt` that names a source directory inside the same repository, so a `build/` made by hand is never touched |
 | "make npm wait a month" / "give one adapter its own idle window" | `devp config set adapter_idle_days npm=30,cargo=90` — a floor per adapter, applied as `max(idle_days, build_idle_days, this)`; `-` clears it. `devp config wizard` edits it beside the adapter checklist, where a language heading sets every adapter under it at once |
@@ -211,8 +226,8 @@ The fields worth reading first:
 | Path | Use it for |
 | :--- | :--- |
 | `summary.errors` (run) | "did anything go wrong" — the whole answer, in one integer (counts `lockfile_error`, `activity_check_error`, `delete_error` and `config_error`) |
-| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_symlink`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
-| `results[].message` | the failure detail — present on the four error statuses and on `skipped_symlink`, where it names the link |
+| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_symlink`, `skipped_declaration`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
+| `results[].message` | the failure detail — present on the four error statuses, on `skipped_symlink`, where it names the link, and on `skipped_declaration`, where it says why the declaration was refused |
 | `results[].fix_command` | present only on `lockfile_error`, and only when the fix is one mechanical command you may run unattended |
 | `repositories[].state` (status) | `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, `config_error` |
 | `repositories[].error` | the parse failure — present only on `config_error` |
@@ -321,48 +336,124 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 **Global** (`devp config get|set|show`) — in `%APPDATA%\dev-prune` on Windows,
 `~/Library/Application Support/dev-prune` on macOS, `$XDG_CONFIG_HOME/dev-prune` on Linux:
 
+**The language this is all in**
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `language` | `en` | Catalogue for dev-prune's own headings and summary lines: `en`, `zh`, `hi`, `te`, `ta`, `kn`, `ml`, `bn`, `mr`, `gu`, `pa`, `sa`. **Never translate a value you read out of `--json`, a key you pass to `config set`, a flag name or an adapter name** — those are English in every catalogue by design. `DEV_PRUNE_LANG` overrides it for one command; an untranslated key falls back to English |
+
+**What gets pruned**
+
 | Key | Default | Meaning |
 | :--- | :---: | :--- |
 | `idle_days` | `15` | Days untouched before a repository is a candidate |
-| `check_interval_days` | `2` | How often the OS scheduler runs |
-| `auto_setup` | `true` | Whether the integration pass may run unattended |
-| `auto_hooks` | `true` | Whether that pass may install global Git hooks |
-| `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
-| `command_timeout_secs` | `600` | Ceiling on any package-manager command |
-| `require_confirmation` | `true` | Whether a prune pass asks before deleting |
 | `min_size_mb` | `0` | Smallest bloat directory worth deleting, in MiB; `0` means no floor |
 | `scan_depth` | `6` | How many directory levels below a repository root discovery descends; `config set` accepts `1`–`32` |
+| `disabled_adapters` | *(none)* | Adapters to leave alone entirely, comma-separated by name. A disabled adapter is not detected, not counted, not pruned — as if that ecosystem were not installed. `-` clears the list |
+| `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. A floor, never a bypass: `max(idle_days, build_idle_days, this)`. `-` clears it |
+
+**Before anything is deleted**
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `require_confirmation` | `true` | Whether a prune pass asks before deleting |
 | `allow_manifest_rewrite` | `false` | Whether a pass may run the *writing* sync form that repairs a drifted or missing lockfile |
-| `auto_hooks_chain` | `false` | Whether unattended setup may take `core.hooksPath` from another tool and forward to it |
-| `update_check` | `true` | Whether to ask GitHub for the latest release. Sends nothing but the request itself |
-| `update_check_interval_days` | `7` | Days between automatic release checks; `devp update` always asks |
-| `update_check_timeout_secs` | `5` | How long the release check waits for GitHub before giving up |
-| `auto_update` | `true` | Download and install a newer release by itself at the end of a prune pass, once the release check has found one. Never runs a package manager unattended, and does nothing on WinGet/Scoop/Homebrew, where the manager owns the upgrade; a failed upgrade warns and never fails the pass |
-| `version_lock` | `false` | Pin this copy to the version it is. Outranks everything above: `auto_update` does not run however it is set, `devp update --install` and `devp install --channel` refuse, and the install scripts leave the binary alone. No flag bypasses it; `devp config set version_lock false` is the only way back |
-| `auto_config` | `false` | Whether `link`/`init` write a default `.devprune.json` into repositories they register |
+| `command_timeout_secs` | `600` | Ceiling on any one package-manager command dev-prune runs: the lockfile check before a delete, and the reinstall `devp restore` performs. Nothing is compiled under it — the opt-in build adapters run no command at all during a prune — except a restore whose install builds a native module |
+
+**Build trees — every one off by default**
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
 | `enable_cargo` | `false` | Turn the opt-in Cargo adapter on (`target/` is compiler output — it comes back by recompiling, not downloading) |
 | `enable_gradle` | `false` | Turn the opt-in Gradle adapter on |
 | `enable_maven` | `false` | Turn the opt-in Maven adapter on |
 | `enable_swift` | `false` | Turn the opt-in Swift Package Manager adapter on |
 | `enable_dart` | `false` | Turn the opt-in Dart/Flutter adapter on |
-| `enable_mix_build` | `false` | Turn the opt-in Mix build-tree adapter on (`_build/` comes back by recompiling, not downloading) |
+| `enable_mix_build` | `false` | Turn the opt-in **Elixir** Mix build-tree adapter on. Mix is Elixir's build tool; `_build/` is where it puts the compiled project and every compiled dependency, so it comes back by recompiling. Distinct from the always-on `mix` adapter, which claims only the downloaded `deps/` beside it |
 | `enable_vcpkg` | `false` | Turn the opt-in vcpkg adapter on (`vcpkg_installed/` holds ports vcpkg built from source — it comes back by recompiling) |
 | `enable_cmake_build` | `false` | Turn the opt-in CMake adapter on (claims only a tree holding a `CMakeCache.txt` that names a source directory inside the same repository — a `build/` you made by hand is never touched) |
 | `build_idle_days` | `45` | Extra idle gate for the build-tool adapters (cargo, gradle, maven, swift, dart, mix_build, vcpkg, cmake_build); applied as `max(build_idle_days, idle_days)` |
-| `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. A floor, never a bypass: `max(idle_days, build_idle_days, this)`. `-` clears it |
+
+**Shared download caches**
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
 | `cache_max_gb` | *(none)* | Per-manager cache size caps in GiB, as `uv=10,npm=10`. Keyed by cache-manager name (`npm`, `pnpm`, `uv`, `pip`, `cargo`, `go`, `nuget`, …), not adapter name. Marks an over-cap manager in `devp caches`; only `devp caches clear --over-cap` acts on it. `-` clears it |
-| `disabled_adapters` | *(none)* | Adapters to leave alone entirely, comma-separated by name. A disabled adapter is not detected, not counted, not pruned — as if that ecosystem were not installed. `-` clears the list |
+
+**Running without being asked**
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `auto_setup` | `true` | Whether the integration pass may run unattended |
+| `auto_config` | `false` | Whether `link`/`init` write a default `.devprune.json` into repositories they register |
+| `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
+| `check_interval_days` | `2` | How often the OS scheduler runs |
+| `auto_hooks` | `true` | Whether that pass may install global Git hooks |
+| `auto_hooks_chain` | `false` | Whether unattended setup may take a `core.hooksPath` another tool holds, forwarding every hook on to it. Off by default: that setting is one slot, global to the machine, and taking it rewires husky, pre-commit or lefthook for every repository the user has |
+
+**Keeping dev-prune current**
+
+| Key | Default | Meaning |
+| :--- | :---: | :--- |
+| `update_check` | `true` | Whether to ask GitHub for the latest release. Sends nothing but the request itself |
+| `update_check_interval_days` | `7` | Days between automatic release checks; `devp update` always asks |
+| `update_check_timeout_secs` | `5` | How long the release check waits for GitHub before giving up |
+| `auto_update` | `true` | Download and install a newer release by itself at the end of a prune pass, once the release check has found one. Never runs a package manager unattended, and does nothing on WinGet/Scoop/Homebrew, where the manager owns the upgrade; a failed upgrade warns and never fails the pass |
+| `version_lock` | `false` | Pin this copy to the version it is. Outranks everything above: `auto_update` does not run however it is set, `devp update --install` and `devp install --channel` refuse, and the install scripts leave the binary alone. No flag bypasses it; `devp config set version_lock false` is the only way back |
+
 
 **Per repository:**
 - `ignore.devprune.json` in the root — instant skip, checked before anything is parsed.
 - `.devprune.json` — `"project_name"`, `"ignore": true`, `"override_idle_days": 30`,
   `"min_size_mb": 100`, `"scan_depth": 10`, `"disable_daemon": true` (excluded from
   scheduled passes only), `"disable_hooks": true` (not auto-registered by the global
-  hook). Inert data only.
+  hook). Inert data only. Written into `.git/info/exclude`, so it never reaches a commit.
+- `project.devprune.json` — the same keys, the same schema, and committed. Created by
+  `devp config project . --team`, and deliberately not excluded.
 
-A `.devprune.json` that will not parse skips the repository and reports the syntax error
-rather than falling back to defaults — the unreadable file may have been the one saying
-`"ignore": true`.
+Where both exist, **every key the project file names wins; the personal file answers every
+key it does not.** That is the inverse of the usual local-overrides-shared convention and
+is deliberate: these are decisions a project makes, and "this repository is not worth
+pruning" should survive a colleague's stale local file. "Names a key" means the key is
+literally in the file — a project file that never mentions `ignore` does not un-ignore
+anything, which is why `--team` creates it holding only its `$schema` line.
+
+**Declared directories.** Either file may also carry a `prunable` section:
+
+```json
+{ "prunable": { "directories": [
+  { "path": "tools/vendor", "rebuild": "make vendor", "why": "regenerated from tools/manifest.toml" }
+] } }
+```
+
+That is how a repository names a tree no adapter can recognise. `rebuild` is required; if
+nothing has to rebuild the directory, write `"rebuild": "echo not needed"`, which works on
+every platform. dev-prune prints the command and never runs it. These are pruned by the
+ordinary pass under the adapter name `declared`, so they obey `--dry-run`, `--min-size`,
+`--only` and the schedule. This is the one section where the two files' lists **add up**
+rather than one winning.
+
+When you fill this in for a user, name only directories you have confirmed are
+regenerated — and give a `rebuild` you have actually seen work in that repository, not
+a plausible-looking one. dev-prune will refuse a declaration whose path leaves the
+repository, holds Git-tracked files, or whose `rebuild` names a tool the machine does not
+have, and report it as `skipped_declaration`; that refusal is a backstop, not a substitute
+for checking.
+
+`devp config project <PATH>` prints an **Effective values** table naming the file each
+value in force came from, whenever both files exist. Prefer reading that over inferring
+precedence from the two files yourself.
+
+Only ever write `.devprune.json`. `devp config --update`, the workspace toggles and the
+dashboard's `i` key all do, and none of them touches the shared file — a tool editing a
+tracked file on somebody's branch is a change they did not ask for. Edit
+`project.devprune.json` only when the user has asked for a project-wide decision, and tell
+them it is a commit.
+
+Either file failing to parse skips the repository and reports the syntax error rather
+than falling back to defaults — the unreadable file may have been the one saying
+`"ignore": true`. `devp doctor --fix` repairs the personal file by renaming it aside; it
+reports a broken `project.devprune.json` and leaves it for `git checkout`.
 
 ## 🤖 Background automation
 
@@ -415,6 +506,30 @@ drive, and an agent holding a pty passes every terminal check it makes while nev
 sending the keypress it waits for. If something must run it anyway, `--no-tui` or
 `DEV_PRUNE_NO_TUI=1` gets the line-by-line form instead — but `config set` is the
 right answer, because it does not need a terminal at all.
+
+There is a second reason, and it is the more important one. The configurator's first
+screen is a **declaration**: what dev-prune is, who published it, the channels a real
+copy comes from, the guarantees the code enforces, and the Apache-2.0 terms the whole
+thing is offered under. It is shown **once**, and running the configurator marks it as
+seen. An agent that opens it therefore spends the one screen that exists so a human can
+decide whether to trust this tool — and the human never gets it. Do not consume it on
+their behalf.
+
+`devp trust` and `devp trust --json` report the same facts, read-only, as often as you
+like. Use those. If the user has never run dev-prune interactively, say so and let them
+run `devp config wizard` themselves rather than doing it for them.
+
+**`devp config recommended` is safe for you to run** when the user has asked for the
+recommended setup. It is one-shot, prints every change, needs no terminal, and does not
+mark the declaration as seen — the walkthrough still opens for them later. It turns on
+`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`,
+`enable_mix_build`, `enable_vcpkg` and `enable_cmake_build`, all of which make build
+trees deletable.
+
+`--with-cautious` additionally sets `allow_manifest_rewrite`, which lets `cargo` and
+`go` update `Cargo.lock` and `go.mod` during a restore — files Git tracks. **Do not
+pass it unless the user asked for that specifically.** An unexpected working-tree change
+is exactly the kind of thing an agent must not cause on somebody’s behalf.
 
 To switch one ecosystem off without touching anything else:
 

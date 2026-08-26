@@ -1,0 +1,253 @@
+name: Release VS Code extension
+
+# The extension used to ride along with every binary release: packaged on each `v*` tag,
+# attached to that release page, and pushed to both marketplaces whether or not a single
+# line of it had changed. That is the wrong cadence in both directions. The CLI ships
+# often and the extension rarely, so most releases published an identical `.vsix` over
+# itself — and when the extension *did* need a fix, shipping it meant cutting a CLI
+# release that had nothing in it.
+#
+# So the extension has its own tag namespace, its own version, its own changelog and its
+# own release page. `editors/vscode/package.json` is the source of truth for the version,
+# exactly as `Cargo.toml` is for the binary.
+#
+#   git tag vscode-v0.4.0 && git push origin vscode-v0.4.0
+on:
+  push:
+    tags:
+      - "vscode-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. vscode-v0.4.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Package and release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    permissions:
+      contents: write
+      # Both are required by actions/attest-build-provenance: the OIDC token identifies
+      # this workflow, and the attestation is written to the repository's store.
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The marketplaces take the version from `package.json` and ignore the tag
+      # entirely, so a tag that disagrees with it produces a release page named one
+      # thing and two marketplace listings named another — and the next tag at the real
+      # version is then rejected as a duplicate. Cheaper to refuse here.
+      - name: Resolve and verify the version
+        id: version
+        run: |
+          set -eu
+          ref="${{ github.event.inputs.tag || github.ref_name }}"
+          case "$ref" in
+            vscode-v*) version="${ref#vscode-v}" ;;
+            *)
+              echo "::error::'$ref' is not an extension tag. Extension tags are vscode-v<version>."
+              exit 1 ;;
+          esac
+          manifest=$(node -p "require('./editors/vscode/package.json').version")
+          if [ "$version" != "$manifest" ]; then
+            echo "::error::tag says $version, editors/vscode/package.json says $manifest. Bump the manifest, or tag the version it already carries."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # `vsce package` runs the `vscode:prepublish` script, which copies the current
+      # schema into the extension — so the bundled copy is always the one from this
+      # commit rather than whatever was vendored last.
+      - name: Package the .vsix
+        working-directory: editors/vscode
+        run: npx --yes @vscode/vsce package --out "dev-prune-vscode-${{ steps.version.outputs.version }}.vsix"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vscode-extension
+          path: editors/vscode/*.vsix
+          if-no-files-found: error
+
+      # The same reasoning as the binary release: a checksum says a file was not altered
+      # in transit, and nothing more. This binds the `.vsix` to this repository, this
+      # workflow file and this commit, which is what `gh attestation verify` checks.
+      - name: Attest the .vsix
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: editors/vscode/*.vsix
+
+      - name: Build the release body from the extension changelog
+        run: |
+          set -eu
+          sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" editors/vscode/CHANGELOG.md > release-body.md
+          cat >> release-body.md <<EOF
+
+          ---
+
+          Install it from your editor rather than from this page: **VKrishna04.dev-prune**
+          on the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune)
+          and on [Open VSX](https://open-vsx.org/extension/VKrishna04/dev-prune), which
+          is where VSCodium, Cursor, Windsurf and the other forks look.
+
+          The \`.vsix\` below is the same file both marketplaces are published from. Take
+          it if your editor cannot reach either registry:
+
+          \`\`\`bash
+          code --install-extension dev-prune-vscode-${{ steps.version.outputs.version }}.vsix
+          \`\`\`
+
+          (\`codium\`, \`cursor\` and \`windsurf\` accept the same flag.)
+
+          \`\`\`bash
+          gh attestation verify dev-prune-vscode-${{ steps.version.outputs.version }}.vsix --repo ${{ github.repository }}
+          \`\`\`
+
+          The extension needs the \`devp\` CLI for everything except schema validation.
+          It is released separately — the [latest release](https://github.com/${{ github.repository }}/releases/latest)
+          is always the CLI, never this.
+          EOF
+
+      # `make_latest: false`, and this is load-bearing rather than cosmetic. Every
+      # installed copy of dev-prune asks the API for `releases/latest` to decide whether
+      # it is out of date, and it reads the version out of the tag name. An extension
+      # release allowed to become "latest" would answer that question with
+      # `vscode-v0.4.0`, which is not a version any copy can compare against — so every
+      # `devp update` in the world would report that it could not check, for as long as
+      # this release stayed newest.
+      #
+      # Deliberately not `prerelease: true`, which would achieve the same thing by
+      # telling a lie: a released extension is not a pre-release, and the badge would say
+      # so on the page for the next year.
+      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: dev-prune VS Code extension v${{ steps.version.outputs.version }}
+          files: editors/vscode/*.vsix
+          body_path: release-body.md
+          make_latest: "false"
+          fail_on_unmatched_files: true
+
+  # Two marketplaces, because the editors dev-prune writes rules files for are split
+  # between them: VS Code and the forks that use Microsoft's gallery on one side,
+  # VSCodium, Cursor, Windsurf and the rest of Open VSX on the other. Publishing to only
+  # one is how an extension ends up "available" for half its audience.
+  #
+  # Gated on a repository variable rather than on the presence of the secrets: the
+  # `secrets` context is not readable from a job-level `if:`, so a secret check can only
+  # happen inside a step — and a step that returns early still paints the job green. Set
+  # VSIX_PUBLISH to "true" once both PATs exist; docs/RELEASING.md has the scopes.
+  publish-marketplaces:
+    name: Publish to both marketplaces
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # A pre-release tag (vscode-v0.5.0-rc1) never reaches a marketplace: neither of them
+    # has a channel for it, so it would publish as the general release and leave the real
+    # one with nothing left to publish.
+    if: ${{ vars.VSIX_PUBLISH == 'true' && !contains(github.event.inputs.tag || github.ref_name, '-rc') }}
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The artifact the release job uploaded, not a fresh build: a second packaging of
+      # the same commit would put a `.vsix` on the marketplaces that no attestation
+      # covers, and the one on the release page would no longer be the one people run.
+      - uses: actions/download-artifact@v8
+        with:
+          name: vscode-extension
+          path: dist
+
+      - name: Publish
+        env:
+          # Both CLIs read their token from the environment, so it never reaches a
+          # command line and cannot be read out of the runner's process list.
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          set -eu
+          if [ -z "${VSCE_PAT:-}" ]; then
+            echo "::error::VSIX_PUBLISH is 'true' but the VSCE_PAT secret is empty or unset."
+            exit 1
+          fi
+          if [ -z "${OVSX_PAT:-}" ]; then
+            echo "::error::VSIX_PUBLISH is 'true' but the OVSX_PAT secret is empty or unset."
+            exit 1
+          fi
+
+          vsix=$(ls dist/*.vsix)
+          echo "publishing $vsix"
+
+          # Re-running a release after one channel failed is normal, and by then this
+          # version is already on the marketplace that succeeded. That answer is a
+          # success that has already happened, not a failure; anything else stops the
+          # job. It is still a warning rather than a notice, because the other way to
+          # reach it is a re-tag of a version that was already published — and that one
+          # must not read as a tick on the summary page.
+          publish() {
+            label=$1
+            shift
+            if out=$("$@" 2>&1); then
+              echo "$out"
+              return 0
+            fi
+            echo "$out"
+            case "$out" in
+              *already*exists*|*already*published*|*same*version*)
+                echo "::warning::$label already has this version. If that was not intended, bump the version in editors/vscode/package.json." ;;
+              *) return 1 ;;
+            esac
+          }
+
+          publish "the VS Code Marketplace" npx --yes @vscode/vsce publish --packagePath "$vsix"
+          publish "Open VSX" npx --yes ovsx publish "$vsix"
+
+  # A release that creates a page and touches no marketplace is the failure this project
+  # has already had once, on the CLI side, and it is invisible from the jobs list: every
+  # job is green and `publish-marketplaces` simply is not there. This says so in words.
+  summary:
+    name: What actually shipped
+    needs: [release, publish-marketplaces]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Write the channel report
+        env:
+          VERSION: ${{ needs.release.outputs.version }}
+          RELEASE: ${{ needs.release.result }}
+          MARKETS: ${{ needs.publish-marketplaces.result }}
+        run: |
+          set -eu
+          {
+            echo "## dev-prune VS Code extension v${VERSION}"
+            echo
+            echo "| Channel | Result |"
+            echo "|---|---|"
+            case "$RELEASE" in
+              success) echo "| GitHub release | ✅ published (deliberately not marked *latest* — that stays the CLI) |" ;;
+              *)       echo "| GitHub release | ❌ **failed** — see the job log |" ;;
+            esac
+            case "$MARKETS" in
+              success) echo "| VS Code Marketplace + Open VSX | ✅ published |" ;;
+              skipped) echo "| VS Code Marketplace + Open VSX | ⚠️ **not published** — channel not enabled (set \`VSIX_PUBLISH\`), or the tag was a pre-release |" ;;
+              *)       echo "| VS Code Marketplace + Open VSX | ❌ **failed** — see the job log |" ;;
+            esac
+            echo
+            echo "The CLI is released separately, by \`release.yml\` on a \`v*\` tag."
+          } >> "$GITHUB_STEP_SUMMARY"

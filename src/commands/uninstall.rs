@@ -177,6 +177,12 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
 
     if deep {
         // Per-repo configs, then the config directory itself.
+        //
+        // Only the personal file. `project.devprune.json` is a tracked file somebody
+        // committed, and uninstalling a tool from one machine is not a mandate to delete
+        // a file from a shared repository -- the deletion would show up in `git status`
+        // on a branch the user never meant to touch, and reach their colleagues on the
+        // next push.
         if let Some(reg) = registry {
             for repo_path in reg.repositories.keys() {
                 let cfg_file = repo_path.join(crate::constants::PER_REPO_CONFIG_FILE);
@@ -355,9 +361,9 @@ fn remove_binaries(
 }
 
 /// One copy of dev-prune found somewhere other than the managed directory.
-struct StrayCopy {
-    path: PathBuf,
-    channel: Channel,
+pub(crate) struct StrayCopy {
+    pub(crate) path: PathBuf,
+    pub(crate) channel: Channel,
 }
 
 /// Find every other copy of the pair, show the list, and — with the user's yes —
@@ -484,7 +490,7 @@ fn confirm_sweep(yes: bool) -> bool {
 ///
 /// A dangling symlink still counts — it is exactly the kind of leftover the sweep
 /// exists to clean up — which is why this checks `symlink_metadata`, not `is_file`.
-fn find_stray_copies() -> Vec<StrayCopy> {
+pub(crate) fn find_stray_copies() -> Vec<StrayCopy> {
     let managed = setup::managed_bin_dir().ok().map(|d| canon_key(&d));
     let managed_exe = setup::managed_exe_path().ok();
     let names = sweep_names();
@@ -586,7 +592,7 @@ fn sweep_names() -> Vec<String> {
 }
 
 /// One canonical string per path, so `C:\X\Bin\` and `c:\x\bin` count once.
-fn canon_key(path: &Path) -> String {
+pub(crate) fn canon_key(path: &Path) -> String {
     let key = path.to_string_lossy().replace('\\', "/");
     let key = key.trim_end_matches('/').to_string();
     if cfg!(windows) {

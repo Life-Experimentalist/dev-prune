@@ -46,9 +46,11 @@ this extension ships is immune, but a file with its own `$schema` link fetches r
   or search *dev-prune* in the Extensions view, or `code --install-extension VKrishna04.dev-prune`.
 - **VSCodium / Cursor**: [OpenVSX listing](https://open-vsx.org/extension/VKrishna04/dev-prune) —
   the same search and command work there.
-- **Anything without marketplace access**: every
-  [GitHub release](https://github.com/Life-Experimentalist/dev-prune/releases) attaches
-  the packaged extension as `dev-prune-vscode-<version>.vsix`. Download it and run:
+- **Anything without marketplace access**: the extension has its own releases, tagged
+  `vscode-v<version>`, and each one attaches
+  [`dev-prune-vscode-<version>.vsix`](https://github.com/Life-Experimentalist/dev-prune/releases?q=vscode-v&expanded=true).
+  (The releases marked *latest* are the `devp` CLI, which is a separate download.)
+  Take the `.vsix` and run:
 
   ```
   code --install-extension dev-prune-vscode-<version>.vsix

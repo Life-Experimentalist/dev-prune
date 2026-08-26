@@ -79,6 +79,14 @@ contains, for the day it needs updating.
    irrelevant by design (presence alone opts the repository out) and it is usually
    empty, which a JSON schema would flag as an error.
 
+**The merged entry predates `project.devprune.json` and does not list it.** Its
+`fileMatch` is `[".devprune.json"]` only, so a subscribed editor gives the committed
+file no IntelliSense by filename. Nothing is broken by that: `devp config project
+<PATH> --team` writes the `$schema` line into the file it creates, and every editor
+here prefers an in-file `$schema` over any catalog match. It costs a hand-written
+`project.devprune.json` its autocomplete until someone adds the name — which is a
+one-line PR against the entry above, and the reason that entry is recorded here.
+
 The URL in that entry is the one thing here this repository cannot change on its own —
 moving the published path needs a second SchemaStore PR, and until it merges every
 subscribed editor is asking for a file that is no longer served. `scripts/check-schema.sh`
@@ -104,10 +112,22 @@ Code prefers, so those keep tracking the hosted URL. The bundled copy cannot dri
 `sync-schema.mjs` runs as `vscode:prepublish`, so every packaging pass — CI or by
 hand — refreshes it from `schemas/devprune.schema.json` first. `npx @vscode/vsce
 package` in that directory produces the `.vsix` (verified working end to end in a live
-VS Code), and the release workflow packages it on every tag and attaches it to the
-GitHub release as `dev-prune-vscode-<version>.vsix` — the side-load path
+VS Code).
+
+**The extension releases on its own tags, not with the CLI.** It has its own version in
+`editors/vscode/package.json`, its own changelog in `editors/vscode/CHANGELOG.md` and
+its own workflow, `.github/workflows/release-extension.yml`, triggered by
+`vscode-v<version>`. The CLI ships often and the extension rarely, so riding along with
+every `v*` tag meant republishing an identical package over itself most of the time —
+and shipping an extension fix meant cutting a CLI release with nothing in it. Its
+release page carries `dev-prune-vscode-<version>.vsix`, the side-load path
 (`code`/`codium`/`cursor --install-extension <file>`) for editors that cannot reach a
-marketplace.
+marketplace, and it is the exact file both marketplaces are published from.
+
+That release is deliberately **not** marked *latest*. `devp update` asks GitHub for the
+latest release and reads the version out of its tag; a `vscode-v0.4.0` sitting there
+would leave every installed copy unable to compare its own version. The extension
+fallback in `devp setup` walks the release list for the newest `vscode-v*` instead.
 
 **Deliberate deviation from the obvious plan:** the extension does *not* use
 `contributes.languages` to claim the filename with an icon. Declaring a new language id
@@ -129,9 +149,12 @@ guidelines require) and
 (brand gradient kept, filed against
 [icon request #4222](https://github.com/vscode-icons/vscode-icons/issues/4222)).
 
-**Status: published on both** (2026-08-19, current version 0.2.0) —
+**Status: published on both** —
 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune)
-and [OpenVSX](https://open-vsx.org/extension/VKrishna04/dev-prune), publisher `VKrishna04`.
+and [OpenVSX](https://open-vsx.org/extension/VKrishna04/dev-prune), publisher
+`VKrishna04`, extension ID `VKrishna04.dev-prune`. Each carries whatever the last
+`vscode-v*` tag published; the two listings are the source of truth for that, not this
+page.
 
 **If validation goes quiet** — a file full of stale keys showing zero problems — the
 cause is almost always VS Code's remote-schema cache: the JSON language server keeps a
@@ -142,12 +165,28 @@ schema — only files with their own `$schema` link still fetch remotely.
 
 **Publishing a new version (maintainer):**
 
-1. Bump `version` in `editors/vscode/package.json`.
-2. `npx @vscode/vsce publish` from `editors/vscode/` (Azure DevOps PAT with
-   Marketplace → Manage scope), or upload the `.vsix` in the
-   [manage UI](https://marketplace.visualstudio.com/manage/publishers/VKrishna04).
-3. `npx ovsx publish dev-prune-vscode-<version>.vsix -p <token>` for OpenVSX, which is
-   what VSCodium and some Cursor builds resolve against — both uploads matter.
+1. Bump `version` in `editors/vscode/package.json`. Nothing derives it from the CLI's
+   version and nothing should — they are two products with two changelogs.
+2. Add a `## [<version>] - <YYYY-MM-DD>` section to `editors/vscode/CHANGELOG.md`. The
+   workflow extracts it with the same `scripts/changelog-section.sh` the CLI uses, and
+   it *becomes* the release body, so write it for the person reading the release page.
+3. Commit, then tag and push:
+
+   ```bash
+   git tag -a vscode-v0.4.0 -m "vscode-v0.4.0"
+   git push origin vscode-v0.4.0
+   ```
+
+The workflow refuses the tag if it disagrees with `package.json` — the marketplaces
+take the version from the manifest and ignore the tag entirely, so a mismatch would
+produce a release page named one thing and two listings named another. Both uploads
+matter: VS Code and the forks on Microsoft's gallery read one registry, VSCodium,
+Cursor, Windsurf and the rest read Open VSX.
+
+By hand, if the workflow is not an option: `npx @vscode/vsce publish` from
+`editors/vscode/` (Azure DevOps PAT with Marketplace → Manage scope), or upload the
+`.vsix` in the [manage UI](https://marketplace.visualstudio.com/manage/publishers/VKrishna04);
+then `npx ovsx publish dev-prune-vscode-<version>.vsix -p <token>` for Open VSX.
 
 ---
 
@@ -187,8 +226,9 @@ the file still needs: `read: CONVENTIONS.md` in `.aider.conf.yml`, or
 `aider --read CONVENTIONS.md` at the command line. Rules an agent never loads are
 worse than no rules at all — the repository looks configured and nothing is.
 
-Claude Code is deliberately absent: its skill installs globally (`devp skill`,
-`devp setup`), so there is nothing to write per repository.
+Claude Code is deliberately absent from that table: its skill installs globally
+(`devp skill`, `devp setup`), so there is nothing to write per repository. It has a
+section of its own [below](#claude-code-the-plugin-marketplace).
 
 **Contributing a new editor** is four small changes in
 [`src/commands/skill.rs`](../src/commands/skill.rs) and
@@ -209,6 +249,50 @@ Claude Code is deliberately absent: its skill installs globally (`devp skill`,
 
 If the editor instead reads the cross-tool `AGENTS.md` convention, no code is needed —
 it is already covered by `--agent agents-md`.
+
+---
+
+## Claude Code: the plugin marketplace
+
+Every other editor on this page needs `devp` on the machine before its agent learns
+anything, because the rules file is written by the binary. Claude Code is the one that
+can go the other way round, because this repository is also a plugin marketplace:
+
+```text
+/plugin marketplace add Life-Experimentalist/dev-prune
+/plugin install dev-prune@dev-prune
+```
+
+Two commands, no account, and nothing queued for review. A Claude Code marketplace is a
+Git repository with a `.claude-plugin/marketplace.json` in it, so the plugin is
+installable the moment that file is on `main`, and `/plugin update` picks up a change the
+moment one lands. Nobody is submitting anything to anybody.
+
+What it installs is one skill and nothing else — no hooks, no MCP server, no agents, no
+commands. `claude plugin details dev-prune` reports the whole cost:
+
+| | |
+| :--- | :--- |
+| Skills | `dev-prune` — the same `SKILL.md` the binary embeds |
+| Always on | ~110 tokens: the skill's name and description, so the agent knows it exists |
+| On invoke | ~20k tokens, paid only when the skill actually fires |
+
+`.claude-plugin/plugin.json` points its `skills` field at `./.agents/skills/`, which is
+where the skill already lives — the same file `devp skill` exports and the same one
+`include_str!` compiles into the binary. There is no second copy to drift. Everything
+else under `.agents/skills/` is git-ignored, so a clone carries exactly one skill.
+
+**The version field matters more than it looks.** `plugin.json` carries the release
+version and Claude Code caches an installed plugin under it, so a stale one is not
+cosmetic: the cache key never changes, and an install that already has that version
+believes it is current forever. `scripts/check-version.sh` reads it on every push for
+that reason, the same way it reads the skill's own version stamp.
+
+**If `devp` is installed too, the skill is now on disk twice** — once at
+`~/.claude/skills/dev-prune/` from `devp skill` or `devp setup`, once from the plugin.
+That is not a collision; Claude Code namespaces plugin skills. But only one of the two
+tracks the binary you have: `devp skill` re-exports the version you installed, while the
+plugin follows `main`. Keep whichever matches how you got dev-prune.
 
 ---
 

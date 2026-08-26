@@ -34,7 +34,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.9.0";
+const VERSION = "1.10.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -554,7 +554,7 @@ const ECOSYSTEMS = [
         ),
       },
       {
-        name: "Mix _build",
+        name: "Elixir Mix _build",
         detect: <code>mix.exs</code>,
         deletes: <code>_build</code>,
         verify: (
@@ -893,7 +893,7 @@ export default function App() {
     npm: {
       group: "manager",
       label: "npm",
-      note: "One small package that pulls in the single platform binary matching your machine — no postinstall download, so it works under npm ci --ignore-scripts and behind a registry mirror. Swap in npx dev-prune status to run it once without installing. Windows needs 1.8.0 or later.",
+      note: "One small package that pulls in the single platform binary matching your machine — no postinstall download, so it works under npm ci --ignore-scripts and behind a registry mirror. Swap in npx dev-prune status to run it once without installing. Windows needs 1.8.0 or later. bun add -g dev-prune, pnpm add -g dev-prune and yarn global add dev-prune install the same package, and dev-prune treats each as its own channel: a copy bun installed is upgraded and removed with bun.",
       cmd: "npm install -g dev-prune",
     },
     python: {
@@ -1498,7 +1498,7 @@ Notes you should rely on, not work around:
 
             <div className="hero-stats">
               <div>
-                <strong>21</strong>
+                <strong>23</strong>
                 <span>package managers</span>
               </div>
               <div>
@@ -1633,9 +1633,11 @@ Notes you should rely on, not work around:
                 </div>
                 <h3>Execute anything from your repo</h3>
                 <p>
-                  <code>.devprune.json</code> holds inert data only: an ignore
-                  flag, an idle-day override, a display name, automation
-                  opt-outs. It can never name a command.
+                  <code>.devprune.json</code> and the committed{" "}
+                  <code>project.devprune.json</code> hold inert data only: an
+                  ignore flag, an idle-day override, a display name, automation
+                  opt-outs. Neither can name a command, so a repository you have
+                  just cloned cannot run anything on your machine.
                 </p>
               </div>
               <div className="f-card">
@@ -1644,9 +1646,9 @@ Notes you should rely on, not work around:
                 </div>
                 <h3>Guess when it cannot read your config</h3>
                 <p>
-                  A <code>.devprune.json</code> that will not parse skips the
-                  repository and reports the syntax error. The unreadable file
-                  may have been the one saying <code>"ignore": true</code>.
+                  A repository config that will not parse skips the repository
+                  and reports the syntax error. The unreadable file may have
+                  been the one saying <code>"ignore": true</code>.
                 </p>
               </div>
               <div className="f-card">
@@ -1712,7 +1714,7 @@ Notes you should rely on, not work around:
           <div className="container">
             <div className="section-header">
               <h2 className="section-title">
-                Eleven managers.{" "}
+                Twenty-three managers.{" "}
                 <span className="gradient-text">
                   Any number per repository.
                 </span>
@@ -2097,7 +2099,9 @@ Notes you should rely on, not work around:
                       Global settings, per-repo config, scheduler, hooks, file
                       manager icons. <code>devp config wizard</code> opens every
                       setting in a full-screen configurator, including which
-                      adapters to switch off
+                      adapters to switch off;{" "}
+                      <code>devp config recommended</code> applies the
+                      recommended ones in one command
                     </td>
                   </tr>
                   <tr>
@@ -2256,8 +2260,13 @@ Notes you should rely on, not work around:
   "disable_hooks": false
 }`}</pre>
                 <p className="muted">
-                  Or drop an empty <code>ignore.devprune.json</code> in the root
-                  to opt out entirely.
+                  <code>.devprune.json</code> is yours: dev-prune writes it into{" "}
+                  <code>.git/info/exclude</code>, so it never reaches a commit.{" "}
+                  <code>devp config project . --team</code> writes the same
+                  keys to <code>project.devprune.json</code>, which is meant to be
+                  committed — every key it names wins, and your file answers
+                  the rest. Or drop an empty <code>ignore.devprune.json</code> in
+                  the root to opt out entirely.
                 </p>
               </div>
             </div>
@@ -2725,7 +2734,17 @@ Notes you should rely on, not work around:
                 published manifest cannot be edited, so a machine still holding{" "}
                 <code>dev-prune@1.7.0</code> needs{" "}
                 <code>npm install -g dev-prune@latest</code> rather than a
-                repair.
+                repair. bun, pnpm and Yarn install that same package —{" "}
+                <code>bun add -g dev-prune</code>,{" "}
+                <code>pnpm add -g dev-prune</code>,{" "}
+                <code>yarn global add dev-prune</code> — and dev-prune treats
+                each as a channel of its own rather than as npm, because the four
+                do not share records. A copy bun installed is upgraded with bun
+                and removed with bun; running npm against it would add a second
+                copy under npm&rsquo;s prefix and leave bun&rsquo;s, still on
+                PATH, at the old version.{" "}
+                <code>devp update --channels</code> prints every
+                channel&rsquo;s upgrade command.
               </Faq>
               <Faq q="Which copy of devp am I actually running?">
                 <code>devp doctor</code> answers that. Installing over time from
@@ -2778,8 +2797,8 @@ Notes you should rely on, not work around:
           <div className="container narrow">
             <h2 className="section-title">Everywhere developers have disks</h2>
             <p className="section-subtitle">
-              Paths in any script prune and restore the same way — the pitch, at
-              least, is in your language.
+              Paths in any script prune and restore the same way — and the
+              headings above them come in twelve languages, not just this pitch.
             </p>
             <Languages />
           </div>

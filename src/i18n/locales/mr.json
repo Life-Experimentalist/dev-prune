@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "mr",
+    "english_name": "Marathi",
+    "native_name": "मराठी",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (फक्त चाचणी)",
+  "run.header.targeted": "dev-prune लक्ष्यित रन ({path})",
+  "run.header.binaries": "आवश्यक इकोसिस्टम बायनरींची तपासणी",
+  "run.header.candidates": "काढता येण्याजोग्या निर्देशिका आणि वाचणारी जागा",
+  "run.header.blocked": "तपासता न आलेल्या रिपॉझिटरी ({count})",
+  "run.header.deleting": "टप्प्याटप्प्याने काढले जात आहे ({repos} रिपॉझिटरी, {size})",
+  "run.header.reasons": "प्रत्येक रिपॉझिटरी का काढली जाईल किंवा का नाही",
+  "run.summary": "सारांश",
+  "run.summary.dry": "सारांश (फक्त चाचणी)",
+  "run.nothing": "निष्क्रिय रिपॉझिटरी किंवा काढता येण्याजोग्या निर्देशिका आढळल्या नाहीत.",
+  "run.nothing.bloat": "काढता येण्याजोगी कोणतीही निर्देशिका आढळली नाही.",
+  "run.nothing.bloat.targeted": "{path} मध्ये काढता येण्याजोगी कोणतीही निर्देशिका आढळली नाही.",
+  "run.freed": "मोकळी केली: {count} निर्देशिकांमधून {size}",
+  "run.freed.targeted": "मोकळी केली: {path} मध्ये {size}",
+  "run.would_free": "{count} निर्देशिकांमधून {size} मोकळी झाली असती.",
+  "run.reclaimable": "एकूण परत मिळवता येणारी जागा: {size}",
+  "run.not_pruned": "{count} रिपॉझिटरी काढल्या गेल्या नाहीत.",
+
+  "status.header.pruning": "निवडलेल्या रिपॉझिटरी काढल्या जात आहेत",
+  "status.header.drift": "लॉकफाइलमधील फरक",
+
+  "caches.header": "पॅकेज मॅनेजर कॅशे",
+  "caches.nothing": "या मशीनवर कोणतेही पॅकेज मॅनेजर कॅशे आढळले नाहीत.",
+  "caches.header.would_clear": "काय काढले गेले असते",
+  "caches.header.about_to_clear": "हे काढले जाईल",
+
+  "config.category.presentation": "हे सर्व कोणत्या भाषेत",
+  "config.category.scope": "काय काढले जाईल",
+  "config.category.safety": "काहीही काढण्यापूर्वी",
+  "config.category.build_trees": "बिल्ड निर्देशिका — डीफॉल्टनुसार बंद",
+  "config.category.caches": "सामायिक डाउनलोड कॅशे",
+  "config.category.unattended": "न विचारता चालणे",
+  "config.category.updates": "dev-prune अद्ययावत ठेवणे"
+}

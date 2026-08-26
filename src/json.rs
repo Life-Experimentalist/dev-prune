@@ -44,6 +44,7 @@ fn status_tag(status: &PruneStatus) -> &'static str {
         PruneStatus::DeleteError(_) => "delete_error",
         PruneStatus::ConfigError(_) => "config_error",
         PruneStatus::SkippedSymlink(_) => "skipped_symlink",
+        PruneStatus::SkippedDeclaration(_) => "skipped_declaration",
     }
 }
 
@@ -54,7 +55,8 @@ fn status_message(status: &PruneStatus) -> Option<&str> {
         | PruneStatus::ActivityCheckError(e)
         | PruneStatus::DeleteError(e)
         | PruneStatus::ConfigError(e)
-        | PruneStatus::SkippedSymlink(e) => Some(e.trim()),
+        | PruneStatus::SkippedSymlink(e)
+        | PruneStatus::SkippedDeclaration(e) => Some(e.trim()),
         _ => None,
     }
 }
@@ -783,6 +785,7 @@ mod tests {
             PruneStatus::DeleteError("x".into()),
             PruneStatus::ConfigError("x".into()),
             PruneStatus::SkippedSymlink("x".into()),
+            PruneStatus::SkippedDeclaration("x".into()),
         ];
         let mut tags: Vec<&str> = all.iter().map(status_tag).collect();
         let count = tags.len();

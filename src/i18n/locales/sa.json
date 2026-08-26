@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "sa",
+    "english_name": "Sanskrit",
+    "native_name": "संस्कृतम्",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (परीक्षणमात्रम्)",
+  "run.header.targeted": "dev-prune लक्षितसञ्चालनम् ({path})",
+  "run.header.binaries": "आवश्यकपरितन्त्रसाधनानां परीक्षा",
+  "run.header.candidates": "अपनेयाः निर्देशिकाः रक्ष्यमाणश्च अवकाशः",
+  "run.header.blocked": "याः संग्रहालयाः परीक्षितुं न शक्याः ({count})",
+  "run.header.deleting": "क्रमशः अपनयनं प्रवर्तते ({repos} संग्रहालयाः, {size})",
+  "run.header.reasons": "प्रतिसंग्रहालयं किमर्थम् अपनीयते न वा",
+  "run.summary": "सारांशः",
+  "run.summary.dry": "सारांशः (परीक्षणमात्रम्)",
+  "run.nothing": "न काचित् निष्क्रिया संग्रहालया न वा अपनेया निर्देशिका प्राप्ता।",
+  "run.nothing.bloat": "अपनेया काचित् निर्देशिका न प्राप्ता।",
+  "run.nothing.bloat.targeted": "{path} इत्यत्र अपनेया काचित् निर्देशिका न प्राप्ता।",
+  "run.freed": "मुक्तम्: {count} निर्देशिकाभ्यः {size}",
+  "run.freed.targeted": "मुक्तम्: {path} इत्यत्र {size}",
+  "run.would_free": "{count} निर्देशिकाभ्यः {size} मुक्तम् अभविष्यत्।",
+  "run.reclaimable": "पुनःप्राप्यः समग्रावकाशः: {size}",
+  "run.not_pruned": "{count} संग्रहालयाः न अपनीताः।",
+
+  "status.header.pruning": "चितानां संग्रहालयानाम् अपनयनं प्रवर्तते",
+  "status.header.drift": "लॉक्-सञ्चिकायां भेदः",
+
+  "caches.header": "पेटकप्रबन्धकानां संग्रहाः",
+  "caches.nothing": "अस्मिन् यन्त्रे पेटकप्रबन्धकानां संग्रहाः न प्राप्ताः।",
+  "caches.header.would_clear": "किम् अपनीतम् अभविष्यत्",
+  "caches.header.about_to_clear": "एतत् अपनीयते",
+
+  "config.category.presentation": "एतत् सर्वं कस्यां भाषायाम्",
+  "config.category.scope": "किम् अपनीयते",
+  "config.category.safety": "किमपि अपनेतुं प्राक्",
+  "config.category.build_trees": "निर्माणनिर्देशिकाः — प्रथमतः निष्क्रियाः",
+  "config.category.caches": "साझाः अवतरणसंग्रहाः",
+  "config.category.unattended": "अपृष्ट्वा प्रवर्तनम्",
+  "config.category.updates": "dev-prune इत्यस्य नवीनीकरणम्"
+}

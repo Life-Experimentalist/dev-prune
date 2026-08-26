@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "kn",
+    "english_name": "Kannada",
+    "native_name": "ಕನ್ನಡ",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (ಪರೀಕ್ಷೆ ಮಾತ್ರ)",
+  "run.header.targeted": "dev-prune ಗುರಿ ರನ್ ({path})",
+  "run.header.binaries": "ಅಗತ್ಯ ಪರಿಸರ ಬೈನರಿಗಳ ಪರಿಶೀಲನೆ",
+  "run.header.candidates": "ಅಳಿಸಬಹುದಾದ ಕೋಶಗಳು ಮತ್ತು ಉಳಿಯುವ ಜಾಗ",
+  "run.header.blocked": "ಪರಿಶೀಲಿಸಲಾಗದ ರೆಪೊಸಿಟರಿಗಳು ({count})",
+  "run.header.deleting": "ಹಂತಹಂತವಾಗಿ ಅಳಿಸಲಾಗುತ್ತಿದೆ ({repos} ರೆಪೊಸಿಟರಿಗಳು, {size})",
+  "run.header.reasons": "ಪ್ರತಿ ರೆಪೊಸಿಟರಿ ಏಕೆ ಅಳಿಸಲ್ಪಡುತ್ತದೆ ಅಥವಾ ಅಳಿಸಲ್ಪಡುವುದಿಲ್ಲ",
+  "run.summary": "ಸಾರಾಂಶ",
+  "run.summary.dry": "ಸಾರಾಂಶ (ಪರೀಕ್ಷೆ ಮಾತ್ರ)",
+  "run.nothing": "ನಿಷ್ಕ್ರಿಯ ರೆಪೊಸಿಟರಿಗಳಾಗಲಿ ಅಳಿಸಬಹುದಾದ ಕೋಶಗಳಾಗಲಿ ಸಿಗಲಿಲ್ಲ.",
+  "run.nothing.bloat": "ಅಳಿಸಬಹುದಾದ ಯಾವುದೇ ಕೋಶ ಸಿಗಲಿಲ್ಲ.",
+  "run.nothing.bloat.targeted": "{path} ನಲ್ಲಿ ತೆಗೆದುಹಾಕಬಹುದಾದ ಡೈರೆಕ್ಟರಿಗಳು ಸಿಗಲಿಲ್ಲ.",
+  "run.freed": "ಮುಕ್ತಗೊಳಿಸಿದ್ದು: {count} ಕೋಶಗಳಿಂದ {size}",
+  "run.freed.targeted": "ಮುಕ್ತಗೊಳಿಸಲಾಗಿದೆ: {path} ನಲ್ಲಿ {size}",
+  "run.would_free": "{count} ಕೋಶಗಳಿಂದ {size} ಮುಕ್ತವಾಗುತ್ತಿತ್ತು.",
+  "run.reclaimable": "ಮರಳಿ ಪಡೆಯಬಹುದಾದ ಒಟ್ಟು ಜಾಗ: {size}",
+  "run.not_pruned": "{count} ರೆಪೊಸಿಟರಿಗಳನ್ನು ಅಳಿಸಲಾಗಿಲ್ಲ.",
+
+  "status.header.pruning": "ಆಯ್ದ ರೆಪೊಸಿಟರಿಗಳನ್ನು ಅಳಿಸಲಾಗುತ್ತಿದೆ",
+  "status.header.drift": "ಲಾಕ್‌ಫೈಲ್ ವ್ಯತ್ಯಾಸ",
+
+  "caches.header": "ಪ್ಯಾಕೇಜ್ ಮ್ಯಾನೇಜರ್ ಕ್ಯಾಶ್‌ಗಳು",
+  "caches.nothing": "ಈ ಯಂತ್ರದಲ್ಲಿ ಯಾವುದೇ ಪ್ಯಾಕೇಜ್ ಮ್ಯಾನೇಜರ್ ಕ್ಯಾಶ್ ಸಿಗಲಿಲ್ಲ.",
+  "caches.header.would_clear": "ಏನು ಅಳಿಸಲ್ಪಡುತ್ತಿತ್ತು",
+  "caches.header.about_to_clear": "ಇವು ಅಳಿಸಲ್ಪಡುತ್ತವೆ",
+
+  "config.category.presentation": "ಇದೆಲ್ಲಾ ಯಾವ ಭಾಷೆಯಲ್ಲಿ",
+  "config.category.scope": "ಏನು ಅಳಿಸಲ್ಪಡುತ್ತದೆ",
+  "config.category.safety": "ಏನನ್ನಾದರೂ ಅಳಿಸುವ ಮೊದಲು",
+  "config.category.build_trees": "ಬಿಲ್ಡ್ ಕೋಶಗಳು — ಪೂರ್ವನಿಯೋಜಿತವಾಗಿ ಆಫ್",
+  "config.category.caches": "ಹಂಚಿಕೆಯ ಡೌನ್‌ಲೋಡ್ ಕ್ಯಾಶ್‌ಗಳು",
+  "config.category.unattended": "ಕೇಳದೆ ಚಲಿಸುವುದು",
+  "config.category.updates": "dev-prune ಅನ್ನು ಪ್ರಸ್ತುತವಾಗಿ ಇಡುವುದು"
+}

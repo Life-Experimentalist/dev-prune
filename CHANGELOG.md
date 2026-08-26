@@ -5,6 +5,366 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-08-26
+
+### Added
+
+- **`devp caches` now names the cache that costs a single repository the most.** The
+  report is ordered by total size, and the biggest cache is routinely not the one worth
+  emptying: a 2 GiB pnpm store that exists for one project is a worse deal than a 10 GiB
+  npm cache shared by eighteen. A `Costliest per repository` line under the total ranks
+  the top three by that figure, so the arithmetic is done for you rather than left in
+  thirteen separate blocks. It is a ranking and not a recommendation — nothing is
+  called "too big", because whether it is depends on what you are about to do with the
+  machine.
+
+- **The line saying who still needs a cache is now the line you see.** Every block
+  prints a path, a clear command, and a sentence like
+  `cargo is used by 1 of 46 registered repositories · 207.51 MiB each`. That sentence is
+  the only part you make a decision on, and it was set in the same weight as the
+  plumbing above it, so finding it meant reading the whole report line by line. It is
+  now bold.
+
+- **The configurator tells you why it opened when you did not ask for it.** `devp caches`
+  or `devp status` on a fresh install used to hand you a full-screen settings walkthrough
+  with no explanation, which reads as the wrong command having run. The first screen now
+  says so in as many words: that you did not ask for this, that dev-prune opens it once
+  so you see what its defaults do before they start doing it, that whatever you typed
+  runs as soon as you leave, and that it will not open by itself again unless an upgrade
+  adds a setting. After such an upgrade it says that instead, with the number of new
+  settings and a note that nothing else about your configuration changed.
+
+- **The first screen now says what dev-prune is and where a real copy of it comes
+  from.** It listed seven things dev-prune will not do without ever saying whose binary
+  was promising them — which is the one claim on that screen a reader can go and check
+  for themselves. Above the guarantees it now gives the version, the author, the
+  repository, the two official download locations, the three package registries and the
+  two editor marketplaces dev-prune is published to, and says plainly that anything from
+  anywhere else is not a copy the author published. Under them it gives the terms the whole screen is offered on:
+  Apache-2.0, sections 7 and 8, no warranty and no liability, and using it accepts that.
+  The same block prints in the plain-prompt configurator that a narrow terminal and
+  `DEV_PRUNE_NO_TUI` get, so the short path is not also the vague one.
+
+- **`devp config project --team`** writes `project.devprune.json`, the half of a
+  repository's settings meant to be committed. `.devprune.json` is added to
+  `.git/info/exclude` the moment it is written, which is right for "keep my copy of this
+  one repo out of the sweep" and wrong for "nobody prunes this repository" — a decision
+  that should reach a fresh clone by itself rather than being something every teammate
+  has to be told. The new file is the same shape and the same schema, and deliberately
+  not excluded.
+
+  Where both exist, every key the project file names wins, and the personal file answers
+  everything it does not — so a colleague's stale local answer cannot quietly overrule
+  what the project decided, and a personal override still works on every setting the
+  team left open. "Names a key" means the key is literally in the file: a project file
+  that never mentions `ignore` does not un-ignore your repository. It is created holding
+  nothing but its `$schema` line for exactly that reason. Run `devp config project` in a
+  repository that has both and it prints which file each effective value came from.
+
+  Nothing dev-prune writes for you touches it. `devp config --update`, the workspace
+  toggles and `[i]` in the dashboard all still write `.devprune.json` only, so no local
+  action of yours turns into a change on a branch your colleagues share. `devp doctor`
+  reports a `project.devprune.json` that does not parse and leaves it alone; `--fix`
+  repairs the personal file by renaming it aside, and doing that to a tracked file would
+  be an unexplained working-tree change.
+
+- **A repository can declare its own prunable directories.** Either config file can
+  carry a `prunable.directories` list, and each entry is a path plus the `rebuild`
+  command that puts it back:
+
+  ```json
+  {
+    "prunable": {
+      "directories": [
+        {
+          "path": "tools/vendor",
+          "rebuild": "make vendor",
+          "why": "regenerated from tools/manifest.toml"
+        }
+      ]
+    }
+  }
+  ```
+
+  Until now dev-prune could only delete what an adapter recognised, which meant a
+  generated fixture set or a vendored toolchain sat there taking gigabytes because no
+  lockfile happened to describe it. These go through the ordinary pass under the adapter
+  name `declared`: `devp status` lists them, `--dry-run`, `--min-size` and
+  `--only declared` all apply, and the scheduled run takes them with everything else.
+
+  `rebuild` is required, and required is the point — an optional one would have made
+  "delete this, I have no idea how to get it back" the easiest thing to write in a file
+  that gets committed and cloned. When a directory genuinely needs nothing to come back,
+  say that: `"rebuild": "echo not needed"` is a legal answer and works on Windows too.
+  dev-prune shows the command next to the directory and never runs it.
+
+  Because `project.devprune.json` is committed, a declaration is treated as a claim to be
+  checked rather than an instruction to be followed — a repository you cloned this
+  morning can say anything, and the pass that acts on it may be a scheduled one with
+  nobody watching. Before deleting, dev-prune requires that the path is relative with no
+  `..`, that it resolves inside the repository even through a symlinked parent, that Git
+  is tracking nothing inside it, and that the first word of `rebuild` is a program this
+  machine has. A claim that fails any of those is printed with the reason, reported in
+  `--json` as the new `skipped_declaration` status, and nothing is deleted. It is not
+  counted in `summary.errors`: nothing was attempted, so nothing failed.
+
+  This is the one part of either config file where the two lists **add up** rather than
+  one winning. A list is not a decision, so a team declaration never discards one you
+  wrote yourself; naming the same path in both leaves one directory, rebuilt by the
+  committed command.
+
+- **`devp update --channels`** prints the upgrade command for every channel dev-prune
+  ships through, not only the one that owns the copy in front of you. It reads nothing,
+  writes nothing and opens no connection, which is the point: the machine with the stale
+  copy is usually not the machine you are sitting at, and the answer to "what do I type
+  to upgrade a dev-prune installed through pnpm" does not depend on what the latest
+  release is. `devp update` still names one command — the right one — and now says this
+  flag exists underneath it.
+
+- **bun, pnpm and Yarn are install channels of their own.** `bun add -g dev-prune`,
+  `pnpm add -g dev-prune` and `yarn global add dev-prune` install the same npm package
+  npm does, and dev-prune now recognises each by the client's own global directory rather
+  than lumping all four together. `devp update`, `devp doctor` and `devp uninstall` name
+  the client that actually owns the copy, and `devp install --channel bun|pnpm|yarn`
+  moves an installation onto one. Deno is deliberately not a channel: `deno install -g
+  npm:dev-prune` writes a shim that re-enters Deno, so the running executable is Deno
+  itself and there is nothing to recognise.
+
+- **`devp config recommended`** turns on everything the first run recommends, in one
+  command, without the first run. The eight adapters and build trees that are off by
+  default because they are not universally wanted — `enable_cargo`, `enable_gradle`,
+  `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`,
+  `enable_cmake_build` — used to be reachable only by walking the configurator, which is
+  the wrong price for "yes, all of it", and impossible from a script or a fresh machine
+  set up by an agent. It reads the same table the configurator reads, so the shortcut
+  and the walkthrough cannot drift apart, and it never marks the settings as reviewed:
+  the screen that explains what dev-prune is is still owed to you, and still opens.
+
+- **A second recommendation tier, for the one that comes with something to know first.**
+  `allow_manifest_rewrite` lets `cargo` and `go` tidy up `Cargo.lock` and `go.mod` while
+  restoring — files Git tracks, so the next `git status` can show a change you did not
+  make by hand. It is worth having and it is worth understanding first, so it now sits
+  in a tier of its own called **Recommended, with one thing to know first**, printed
+  with its reason wherever recommendations are printed, and applied only when you type
+  `devp config recommended --with-cautious`. A command nobody passed a flag to is not
+  the thing that starts editing your working tree.
+
+- **`devp config show` ends with what you have not taken yet.** The recommendations
+  existed only on the first-run screen, so a machine that had already been through it
+  had no way left to find out that a recommendation existed at all, let alone that one
+  of them carried a caveat. Both tiers are now listed, with the command that applies
+  them. Nothing outstanding prints nothing.
+
+- **`devp config set language <code>` prints dev-prune's own headings in one of twelve
+  languages.** English, Simplified Chinese, and then Hindi, Telugu, Tamil, Kannada,
+  Malayalam, Bengali, Marathi, Gujarati, Punjabi and Sanskrit. What moves is the chrome — section headings,
+  summary lines, and the group titles in the configurator, the words that repeat on
+  every run. What deliberately never moves is everything a script or a bug report reads:
+  `--json`, exit codes, flag and subcommand names, config keys, adapter names, and the
+  lockfile refusals that get pasted into issues. A translated interface therefore cannot
+  change what a pipeline sees, and a refusal stays readable to whoever upstream has to
+  fix it.
+
+  `DEV_PRUNE_LANG=te devp run` overrides the setting for one command. The operating
+  system's locale is deliberately never consulted: a machine set to French does not
+  start printing French at somebody who has spent a year reading the English. An
+  unrecognised code falls back to English at runtime rather than refusing to prune, but
+  `devp config set language` rejects it outright and lists what exists — that is the one
+  place a typo can still be fixed.
+
+  English is the only catalogue a native speaker has reviewed, and `devp config set
+  language` says so when the one you picked has not been. A catalogue is a single JSON
+  file in `src/i18n/locales/`, compiled into the binary, so adding a thirteenth language is
+  that file plus one line of Rust and fixing a wrong sentence in an existing one touches
+  no code at all. Both are written up in
+  [Translating dev-prune](docs/TRANSLATIONS.md).
+
+- **`/plugin marketplace add Life-Experimentalist/dev-prune` installs the dev-prune skill
+  into Claude Code, before dev-prune itself is on the machine.** Then
+  `/plugin install dev-prune@dev-prune`. This repository is now a Claude Code plugin
+  marketplace as well as a repository, which is a `.claude-plugin/marketplace.json` and
+  nothing more: there is no submission, no account and no review queue, so the plugin is
+  installable the moment the file is on `main` and `/plugin update` picks up a change the
+  moment one lands.
+
+  Every other editor gets its rules written by the binary, which means installing
+  dev-prune first. This is the one that can go in the useful order instead: the agent
+  reads how dev-prune works, and then installs it. What arrives is one skill and nothing
+  else — no hooks, no MCP server, no agents, no commands — costing about 110 tokens a
+  session for its name and description, and about 20k only on the turns it actually
+  fires. It is the same `SKILL.md` the binary embeds and `devp skill` exports, pointed at
+  rather than copied, so the two cannot drift.
+
+  If you have `devp` installed as well you now have that skill twice, which is not a
+  collision but is a choice: `devp skill` re-exports the version you have installed,
+  while the plugin follows `main`. [IDE & editor integration](docs/IDE_INTEGRATION.md#claude-code-the-plugin-marketplace)
+  covers which to keep.
+
+### Changed
+
+- **The configurator now ends on a Finish line, and finishing takes two presses of
+  Enter.** Every way out of it used to be a single keypress — `y` on the declaration,
+  `y` on the suggestions, `y` anywhere in the settings list — and two of those three
+  wrote your configuration without ever showing you what was about to be written. One
+  Enter is also exactly what somebody presses to dismiss a screen they have stopped
+  reading. The list now ends in a visible **Finish — review the changes** line, two
+  presses of Enter there open the summary, and the summary is now the only exit that
+  saves anything. The `y` shortcuts are gone rather than rebound. `q` still leaves
+  without saving, from any screen.
+
+  The line-by-line form (`--no-tui`, `DEV_PRUNE_NO_TUI=1`) got the same gesture and the
+  same summary: `Keep all of these? [Y/n]` is now two empty lines, and a walk that
+  changed anything prints every change as `key  old → new` and asks again before
+  writing. It reads each value back after setting it, so a value the setter normalised
+  is reported as what will actually be stored rather than as what you typed.
+
+- **`devp config wizard` and `devp config show` now ask in seven groups rather than one
+  list of thirty.** The groups are the order the decisions actually arrive in: the
+  language the rest of the screen is printed in, what is in scope, what has to be proved before a delete, the build trees that stay off until
+  they are asked for, the shared caches nothing deletes on its own, then what may run
+  when nobody typed anything, and last whether this copy keeps itself current. A setting
+  is now filed by what it does instead of by where there happened to be room for it, and
+  the same seven groups appear in `README.md`, the
+  [CLI reference](docs/CLI_REFERENCE.md#8-devp-config-action) and `llms.txt`, so "the
+  third thing on the build-trees screen" means one thing everywhere.
+
+- **Three settings now say what they actually do.**
+  `command_timeout_secs` said "how long a lockfile command may run", which read as though
+  it might also cap a Cargo or Gradle recompile. It does not: it bounds the lockfile check
+  before a delete and the reinstall `devp restore` performs, the opt-in build adapters run
+  no command at all during a prune, and the one place a compile happens under it is a
+  restore whose install builds a native module.
+  `auto_hooks_chain` said what it does but not why it is off — `core.hooksPath` is a
+  single slot, global to the machine, and taking it rewires husky, pre-commit or lefthook
+  for every repository you have.
+  `enable_mix_build` said "Mix build-tree adapter", which tells somebody who has never
+  met Elixir nothing; it now names the language, and says how `_build/` differs from the
+  `deps/` the always-on `mix` adapter claims.
+
+- **The published packages now name every ecosystem dev-prune supports.** The keywords on
+  crates.io, npm, PyPI and the VS Code marketplace, and the topics on the GitHub
+  repository, were all written when this handled npm and pip. It ships twenty-three
+  adapters across twelve language groups, and a Go, PHP, Ruby, Swift, Elixir, Dart or C++
+  developer searching any of those registries for a cleaner found nothing — not because
+  the support was missing but because nothing in the index mentioned it. PyPI also gains
+  the two classifiers that were true and unstated: this finds its work by walking Git
+  repositories, and emptying a shared cache on a build machine is systems administration.
+
+- **The configurator now shows what each setting ships as, and which ones to turn on.**
+  A row said what a setting did and what it was currently set to, which leaves "what
+  happens if I just close this" unanswerable without leaving the screen. Every row now
+  carries its shipped default alongside the current value, so a changed setting is
+  visible as changed.
+
+  Nine settings carry a `REC` badge: the eight build-tree adapters that are off until
+  asked for — Rust, Gradle, Maven, Swift, Dart, Elixir, vcpkg and CMake — and the one
+  that lets `cargo` and `go` tidy a manifest. The eight arrive already accepted, because
+  a first-time reader has no way to tell which of thirty switches matter and the
+  answer should not depend on guessing. The ninth does not, and `[a]` will not accept it
+  either: it is the one you were told to read about first, and a shortcut that accepts
+  that on your behalf is a trap rather than a convenience.
+
+  They are suggestions and the screen says so — every one of them can stay off and
+  nothing stops working, they are the settings that make the rest of the tool earn its
+  keep. The recommendation stays visible in the settings list on every later run, not
+  just on the screen that first offered it; "what did the author think this should be"
+  is not a question that expires.
+
+- **The editor-extension offer now recognises the VS Code forks people actually use.**
+  It asked VS Code, VSCodium, Cursor, Windsurf, Positron and Kiro for their versions;
+  Antigravity and Trae are VS Code builds with a different name on the window, and got
+  nothing. Both are now asked too. A fork whose own registry does not carry the
+  extension still gets it, from the `.vsix` on the extension's own release that every
+  registry copy is built from.
+
+- **The VS Code extension is released separately from the CLI, on its own tags.** Both
+  used to ship on one `v*` tag, which was the wrong cadence in both directions: the CLI
+  releases often and the extension rarely, so most releases republished an identical
+  `.vsix` over itself — and when the extension did need a fix, shipping it meant cutting
+  a CLI release with nothing in it. It now has its own version, its own changelog and
+  its own release page, tagged `vscode-v<version>`. Nothing changes for installing it:
+  it is still **VKrishna04.dev-prune** on the
+  [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune)
+  and on [Open VSX](https://open-vsx.org/extension/VKrishna04/dev-prune), still attested
+  the same way, and `devp setup` still falls back to the `.vsix` for a fork whose
+  registry does not carry it. What changes is that a CLI release page no longer carries
+  one, and that the release marked *latest* — the one `devp update` reads — is always
+  the CLI.
+
+### Fixed
+
+- **An unattended first run no longer spends the declaration screen.** `devp` on a
+  schedule, in CI or inside a container has nobody to show the walkthrough to, and
+  correctly skipped it — but it also wrote the marker recording that the walkthrough had
+  been shown. On any machine where something automated ran first, the one screen saying
+  what dev-prune will not delete was consumed by a process with no screen, and the person
+  who installed it never saw it. The marker is now written only when somebody was
+  actually there to read it.
+
+- **A repository you have just created with `git init` now shows up.** The three Git
+  hooks dev-prune installs all fire *after* an operation a brand-new repository has not
+  performed yet, and Git has no `post-init` hook to add — so between `git init` and the
+  first commit the repository was invisible, and `devp status`, run to check exactly
+  that, reported nothing. `devp status` and `devp run` now register the repository you
+  are standing in and say so, under precisely the rules the hook applies: a throwaway
+  checkout or a repository whose `.devprune.json` sets `disable_hooks` is still left
+  alone.
+
+- **Re-running the install one-liner now wins your PATH instead of reporting that it
+  did.** The installer added its directory to PATH only when that directory was missing
+  altogether. On a machine where a second copy had arrived from another package manager
+  since, the entry was already present — behind the newcomer — so nothing moved, the
+  older binary went on answering `devp --version`, and the script printed "this directory
+  comes first on PATH" anyway. It now moves its directory to the front of both your
+  session PATH and your persisted PATH, and instead of asserting an order it names the
+  file that actually answers.
+
+- **`devp install --channel installer` now removes the other copies rather than saying
+  there is nothing to move.** When the installer found a copy owned by another manager it
+  offered to migrate it, and ran that command against the *old* binary — which, on
+  anything before 1.8.0, has no `install` subcommand at all. The offer therefore failed
+  on exactly the machines it existed for. The copy just installed does the work now:
+  asked for the channel it already came from, it lists every other copy on the machine
+  beside the uninstall command of the manager that owns it, and runs them once you
+  confirm. `devp config set version_lock true` outranks it, as it outranks every other
+  path that could change which version answers.
+
+- `llms.txt` said dev-prune had twenty-six settings while listing twenty-nine of them.
+  The list was right and the number was three releases stale, which is exactly the kind
+  of error a model repeats confidently.
+
+- **A dev-prune installed with bun, pnpm or Yarn was upgraded and removed with npm.** The
+  npm package is a dispatcher plus one binary package per platform, so a global install
+  through any of the four clients ends up with the executable inside a `node_modules`
+  tree — which was the only thing the channel detector looked for. `devp update` then
+  offered `npm install -g dev-prune@latest`, which does not upgrade the copy you have: it
+  installs a *second* one under npm's prefix and leaves the first, still on `PATH` and
+  still owned by bun, at the old version. `devp uninstall` had the mirror of the same
+  problem, telling npm to remove something npm never installed. Each client is now
+  checked by its own global directory before the shared `node_modules` fingerprint is
+  considered.
+
+- **`devp install --channel uv` reported success without installing anything.** It ran
+  `uv tool install dev-prune`, and uv answers that with "already installed" and exit `0`
+  when it has any version of the tool — so moving a channel onto uv from an older copy
+  looked like it had worked and left the old version in place. It now installs
+  `dev-prune@latest`, which is what the command was always meant to say.
+
+- **Two lists of install channels were typed out by hand, and both were wrong.**
+  `devp install` with no `--channel` named eight destinations of the eleven it accepts,
+  and `devp update` on an unrecognised copy named five upgrade commands out of twelve
+  channels — including, on the machine that prompted this, not the one that had
+  actually installed it. Both lists are now generated from the same tables the commands
+  parse and dispatch on, so neither can name a channel that does not exist or omit one
+  that does.
+
+- **The quickstart the installers print now says how to reclaim the space.** Its four
+  lines offered `devp status` to "see what is reclaimable" and `devp run --dry-run` to
+  "preview a prune pass", which are the same sentence to somebody who has not used the
+  tool yet, and between them never said what to type to actually get the gigabytes back.
+  The second line is now `devp run`, which shows the same plan and asks before it deletes
+  anything.
+
 ## [1.9.0] - 2026-08-25
 
 ### Added

@@ -14,6 +14,7 @@ use crate::adapters::DriftReport;
 use crate::commands::hook::HookState;
 use crate::config::Registry;
 use crate::engine::{self, PruneStatus};
+use crate::i18n;
 use crate::output;
 use crate::tui::status_view;
 use crate::workspace;
@@ -34,8 +35,10 @@ pub struct ProjectDrift {
 /// Run the `status` command.
 ///
 /// `json` replaces the dashboard with one machine-readable document — no banner, no
-/// TUI, no prompt to prune. It is a pure read of state, which is what makes it safe to
-/// hand to an agent or a monitoring job.
+/// TUI, no prompt to prune. It deletes nothing, which is what makes it safe to hand to
+/// an agent or a monitoring job. It may still *register* the repository the caller is
+/// standing in, on both paths and deliberately: an agent that asks about a repository
+/// and a human who asks about the same one must not get different answers.
 ///
 /// `top` trims the repository list to the biggest reclaims. It never changes the totals:
 /// those are computed over every registered repository, so `--top 5` cannot make a
@@ -49,6 +52,16 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
         return run_drift(json_output);
     }
     let mut registry = Registry::load()?;
+
+    // Before anything is reported: the repository the user is standing in may be one
+    // `git init` created, which fires no Git hook and so has never registered itself.
+    // Asking `devp status` about it is the most likely way to notice, so answer it here
+    // rather than showing a dashboard that is missing the one repository being asked
+    // about. See `link::adopt_enclosing_repo` for the guards.
+    let adopted = crate::commands::link::adopt_enclosing_repo(&mut registry);
+    if adopted.is_some() {
+        registry.save()?;
+    }
 
     let daemon_st = crate::daemon::daemon_status()
         .map(|s| s.to_string())
@@ -77,6 +90,11 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     }
 
     output::print_banner();
+
+    if let Some(path) = &adopted {
+        crate::commands::link::report_cwd_adoption(path);
+        println!();
+    }
 
     // Only on the human path: JSON output is a contract, and a version notice printed
     // into it would corrupt the document.
@@ -176,7 +194,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                 // User confirmed a prune from within the status view. The TUI hands
                 // back paths, not indices — an `i` toggle reloads its list, and
                 // indices into the reloaded list do not address `repos` above.
-                output::print_header("Pruning Selected Repositories");
+                output::print_header(i18n::t("status.header.pruning"));
 
                 let mut total_freed: u64 = 0;
                 let mut pruned_count = 0;
@@ -266,9 +284,10 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                                     e,
                                 ));
                             }
-                            // A warning, not an error: linked storage is deliberately
-                            // left alone and must not fail the pass.
-                            PruneStatus::SkippedSymlink(e) => {
+                            // A warning, not an error: linked storage and a refused
+                            // declaration are both deliberately left alone and must
+                            // not fail the pass.
+                            PruneStatus::SkippedSymlink(e) | PruneStatus::SkippedDeclaration(e) => {
                                 output::print_warning(&format!(
                                     "{} → {}",
                                     output::clean_path(&result.repo_path),
@@ -292,10 +311,13 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                 registry.record_prune_progress(pass_at, pruned_dirs);
                 registry.save()?;
 
-                output::print_header("Summary");
-                output::print_success(&format!(
-                    "Freed: {} across {pruned_count} directories",
-                    output::format_bytes(total_freed)
+                output::print_header(i18n::t("run.summary"));
+                output::print_success(&i18n::tf(
+                    "run.freed",
+                    &[
+                        ("size", &output::format_bytes(total_freed)),
+                        ("count", &pruned_count.to_string()),
+                    ],
                 ));
                 // Same contract as `devp run`: a prune that failed exits non-zero,
                 // whether it was started from the dashboard or from the command line.
@@ -373,7 +395,7 @@ fn run_drift(json_output: bool) -> Result<()> {
         return crate::json::emit(&crate::json::drift_document(&findings));
     }
 
-    output::print_header("Lockfile drift");
+    output::print_header(i18n::t("status.header.drift"));
     println!();
 
     if findings.is_empty() {

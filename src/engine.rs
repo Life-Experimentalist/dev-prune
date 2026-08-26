@@ -61,6 +61,12 @@ pub enum PruneStatus {
     SkippedSymlink(String),
     /// `.devprune.json` exists but could not be parsed, so the repo was left alone.
     ConfigError(String),
+    /// A directory the project declared prunable did not survive its checks.
+    ///
+    /// Not a `LockfileError` even though it is the same kind of refusal: that tag
+    /// carries a `fix_command` in `--json`, and there is no command that fixes "your
+    /// repository declares its own source directory".
+    SkippedDeclaration(String),
 }
 
 impl std::fmt::Display for PruneStatus {
@@ -86,6 +92,7 @@ impl std::fmt::Display for PruneStatus {
             PruneStatus::DeleteError(e) => write!(f, "Delete error: {e}"),
             PruneStatus::SkippedSymlink(e) => write!(f, "Skipped (symlink): {e}"),
             PruneStatus::ConfigError(e) => write!(f, "Unreadable .devprune.json: {e}"),
+            PruneStatus::SkippedDeclaration(e) => write!(f, "Skipped (declaration): {e}"),
         }
     }
 }
@@ -112,9 +119,13 @@ impl AdapterFilter {
     /// Names are matched case-insensitively. Listing the same adapter in both lists is
     /// a contradiction rather than a precedence puzzle, so it is rejected outright.
     pub fn new(only: Option<&str>, skip: Option<&str>) -> Result<Self> {
+        // `declared` is not a package manager and has no adapter, but it fills the
+        // same column of the same report, and a user who can see `declared` in
+        // `devp status` will reasonably try to `--only` it.
         let known: Vec<&'static str> = crate::adapters::get_all_adapters()
             .iter()
             .map(|a| a.name())
+            .chain(std::iter::once(constants::DECLARED_ADAPTER_NAME))
             .collect();
 
         let parse = |raw: &str, flag: &str| -> Result<Vec<String>> {
@@ -576,14 +587,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             // deleted, the exact background-pass surprise the config forbids.
             let mut deletable: Vec<(String, BloatDir)> = Vec::new();
             for (label, bd) in bloat_dirs {
-                // A symlinked/junctioned bloat dir points at storage we do not own —
-                // in a monorepo it is usually the workspace root's real
-                // `node_modules`. Refuse rather than risk a recursive delete outside
-                // the repo.
-                if fs::symlink_metadata(&bd.path)
-                    .map(|m| m.file_type().is_symlink())
-                    .unwrap_or(false)
-                {
+                if let Some(status) = shared_storage_refusal(&bd.path) {
                     results.push(PruneResult {
                         repo_path: repo_path.to_path_buf(),
                         adapter_name: adapter.name().to_string(),
@@ -591,57 +595,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                         size_freed: 0,
                         shared_bytes: 0,
                         runtime: None,
-                        status: PruneStatus::SkippedSymlink(format!(
-                            "`{}` is a symlink to storage dev-prune does not own — \
-                             left alone. Remove the link yourself if you really want \
-                             it gone.",
-                            bd.path.display()
-                        )),
-                    });
-                    continue;
-                }
-
-                // A mount point is the same problem wearing different clothes: the
-                // name is inside the repository but the storage is somebody else's,
-                // and here there is no link to remove — unmounting is the only way
-                // out, which is a decision for whoever mounted it.
-                if is_mount_point(&bd.path) {
-                    results.push(PruneResult {
-                        repo_path: repo_path.to_path_buf(),
-                        adapter_name: adapter.name().to_string(),
-                        bloat_dir: label,
-                        size_freed: 0,
-                        shared_bytes: 0,
-                        runtime: None,
-                        status: PruneStatus::SkippedSymlink(format!(
-                            "`{}` is a mount point — it is on a different filesystem \
-                             than the repository around it, so its contents are shared \
-                             with whatever mounted it. Left alone.",
-                            bd.path.display()
-                        )),
-                    });
-                    continue;
-                }
-
-                // Invariant 7 keeps the *walk* out of nested repositories, but the
-                // directory about to be deleted can hold one inside it — a `file:`
-                // dependency, a vendored checkout — with its own unpushed history.
-                // No lockfile rebuilds somebody else's git history, so refuse.
-                if let Some(nested) = find_nested_git(&bd.path) {
-                    results.push(PruneResult {
-                        repo_path: repo_path.to_path_buf(),
-                        adapter_name: adapter.name().to_string(),
-                        bloat_dir: label,
-                        size_freed: 0,
-                        shared_bytes: 0,
-                        runtime: None,
-                        status: PruneStatus::DeleteError(format!(
-                            "`{}` contains a git repository at `{}` — refusing to \
-                             delete it. Move or remove that checkout yourself if it \
-                             holds nothing you need.",
-                            bd.path.display(),
-                            nested.display()
-                        )),
+                        status,
                     });
                     continue;
                 }
@@ -689,80 +643,23 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     continue;
                 }
 
-                let size = bd.size_bytes;
                 // Asked *before* the delete: the record of which interpreter built a
                 // virtual environment lives inside the environment, so a moment later
                 // there is nothing left to ask.
                 let runtime = adapter.runtime_tag(&project.path, &bd.name);
-                // `remove_dir_all` is not atomic: one locked file — an antivirus scan,
-                // an editor's file watcher — aborts it half-way, leaving a directory
-                // that is neither usable nor gone. Retry once after a beat, because
-                // such locks are usually released within moments of being hit — and a
-                // back-to-back retry lost the race to the very scanners it was meant
-                // to outwait.
-                let delete = fs::remove_dir_all(&bd.path).or_else(|_| {
-                    std::thread::sleep(std::time::Duration::from_millis(250));
-                    fs::remove_dir_all(&bd.path)
-                });
-                match delete {
-                    // "Not found" after a failed first attempt means the delete *did*
-                    // complete — treat both the same.
-                    Ok(()) => {
-                        results.push(PruneResult {
-                            repo_path: repo_path.to_path_buf(),
-                            adapter_name: adapter.name().to_string(),
-                            bloat_dir: label,
-                            size_freed: size,
-                            shared_bytes: bd.shared_bytes,
-                            runtime: runtime.clone(),
-                            status: PruneStatus::Pruned,
-                        });
-                    }
-                    Err(_) if !bd.path.exists() => {
-                        results.push(PruneResult {
-                            repo_path: repo_path.to_path_buf(),
-                            adapter_name: adapter.name().to_string(),
-                            bloat_dir: label,
-                            size_freed: size,
-                            shared_bytes: bd.shared_bytes,
-                            runtime: runtime.clone(),
-                            status: PruneStatus::Pruned,
-                        });
-                    }
-                    Err(e) => {
-                        // Say what state the failure left behind. A half-deleted
-                        // `node_modules` is corrupt whatever caused the abort, so the
-                        // honest report is "no longer usable, rebuild it" — and the
-                        // bytes already freed, so callers can record the partial pass
-                        // and `devp restore` knows what to rebuild.
-                        let remaining = crate::adapters::dir_size(&bd.path);
-                        let freed = size.saturating_sub(remaining);
-                        let message = if freed > 0 {
-                            format!(
-                                "{e} — `{}` was partially deleted ({} of {} remains) \
-                                 and is no longer usable. Close whatever holds it open, \
-                                 then run `devp restore` to rebuild it.",
-                                bd.path.display(),
-                                crate::output::format_bytes(remaining),
-                                crate::output::format_bytes(size)
-                            )
-                        } else {
-                            e.to_string()
-                        };
-                        results.push(PruneResult {
-                            repo_path: repo_path.to_path_buf(),
-                            adapter_name: adapter.name().to_string(),
-                            bloat_dir: label,
-                            size_freed: freed,
-                            shared_bytes: 0,
-                            runtime,
-                            status: PruneStatus::DeleteError(message),
-                        });
-                    }
-                }
+                results.push(delete_bloat(repo_path, adapter.name(), label, &bd, runtime));
             }
         }
     }
+
+    results.extend(prune_declarations(
+        repo_path,
+        per_repo_config.as_ref(),
+        opts,
+        min_size_bytes,
+        only,
+        &mut claimed,
+    ));
 
     // Nothing recognised, or recognised but nothing on disk to reclaim.
     if results.is_empty() {
@@ -777,6 +674,211 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
         });
     }
 
+    results
+}
+
+/// The refusals that apply to any directory, whoever nominated it.
+///
+/// Shared by the adapter loop, the declared-directory pass and `collect_bloat`, because
+/// the three of them disagreeing is exactly the bug this prevents: what `devp status`
+/// counts as reclaimable has to be what `devp run` actually deletes, and a directory
+/// declared by hand is no more deletable than one an adapter found.
+///
+/// `None` means nothing here stands in the way.
+fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
+    // A symlinked/junctioned directory points at storage we do not own — in a monorepo
+    // it is usually the workspace root's real `node_modules`. Refuse rather than risk a
+    // recursive delete outside the repo.
+    if fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Some(PruneStatus::SkippedSymlink(format!(
+            "`{}` is a symlink to storage dev-prune does not own — left alone. Remove \
+             the link yourself if you really want it gone.",
+            path.display()
+        )));
+    }
+
+    // A mount point is the same problem wearing different clothes: the name is inside
+    // the repository but the storage is somebody else's, and here there is no link to
+    // remove — unmounting is the only way out, which is a decision for whoever mounted
+    // it.
+    if is_mount_point(path) {
+        return Some(PruneStatus::SkippedSymlink(format!(
+            "`{}` is a mount point — it is on a different filesystem than the repository \
+             around it, so its contents are shared with whatever mounted it. Left alone.",
+            path.display()
+        )));
+    }
+
+    // Invariant 7 keeps the *walk* out of nested repositories, but the directory about
+    // to be deleted can hold one inside it — a `file:` dependency, a vendored checkout —
+    // with its own unpushed history. No lockfile rebuilds somebody else's git history,
+    // so refuse.
+    if let Some(nested) = find_nested_git(path) {
+        return Some(PruneStatus::DeleteError(format!(
+            "`{}` contains a git repository at `{}` — refusing to delete it. Move or \
+             remove that checkout yourself if it holds nothing you need.",
+            path.display(),
+            nested.display()
+        )));
+    }
+
+    None
+}
+
+/// Delete one directory and report what happened, with one retry.
+fn delete_bloat(
+    repo_path: &Path,
+    adapter_name: &str,
+    label: String,
+    bd: &BloatDir,
+    runtime: Option<String>,
+) -> PruneResult {
+    let size = bd.size_bytes;
+    // `remove_dir_all` is not atomic: one locked file — an antivirus scan, an editor's
+    // file watcher — aborts it half-way, leaving a directory that is neither usable nor
+    // gone. Retry once after a beat, because such locks are usually released within
+    // moments of being hit — and a back-to-back retry lost the race to the very
+    // scanners it was meant to outwait.
+    let delete = fs::remove_dir_all(&bd.path).or_else(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        fs::remove_dir_all(&bd.path)
+    });
+    // "Not found" after a failed first attempt means the delete *did* complete — treat
+    // both the same.
+    let (size_freed, shared_bytes, status) = match delete {
+        Ok(()) => (size, bd.shared_bytes, PruneStatus::Pruned),
+        Err(_) if !bd.path.exists() => (size, bd.shared_bytes, PruneStatus::Pruned),
+        Err(e) => {
+            // Say what state the failure left behind. A half-deleted `node_modules` is
+            // corrupt whatever caused the abort, so the honest report is "no longer
+            // usable, rebuild it" — and the bytes already freed, so callers can record
+            // the partial pass and `devp restore` knows what to rebuild.
+            let remaining = crate::adapters::dir_size(&bd.path);
+            let freed = size.saturating_sub(remaining);
+            let message = if freed > 0 {
+                format!(
+                    "{e} — `{}` was partially deleted ({} of {} remains) and is no \
+                     longer usable. Close whatever holds it open, then run `devp \
+                     restore` to rebuild it.",
+                    bd.path.display(),
+                    crate::output::format_bytes(remaining),
+                    crate::output::format_bytes(size)
+                )
+            } else {
+                e.to_string()
+            };
+            (freed, 0, PruneStatus::DeleteError(message))
+        }
+    };
+    PruneResult {
+        repo_path: repo_path.to_path_buf(),
+        adapter_name: adapter_name.to_string(),
+        bloat_dir: label,
+        size_freed,
+        shared_bytes,
+        runtime,
+        status,
+    }
+}
+
+/// The directories this repository declared prunable, checked and then treated as bloat.
+///
+/// Runs after the adapters and shares their `claimed` set, so a project that declares
+/// something an adapter already found is not charged for it twice — and so the adapter's
+/// version, which has a lockfile behind it, is the one that wins.
+fn prune_declarations(
+    repo_path: &Path,
+    config: Option<&crate::config::PerRepoConfig>,
+    opts: &PruneOptions,
+    min_size_bytes: u64,
+    only: Option<&[String]>,
+    claimed: &mut std::collections::HashSet<PathBuf>,
+) -> Vec<PruneResult> {
+    let name = constants::DECLARED_ADAPTER_NAME;
+    if !opts.adapters.allows(name) {
+        return Vec::new();
+    }
+    let Some(declared) = config.and_then(|c| c.prunable.as_ref()) else {
+        return Vec::new();
+    };
+
+    let mut results = Vec::new();
+    for outcome in crate::declared::resolve(repo_path, &declared.directories) {
+        let target = match outcome {
+            crate::declared::Declaration::Prunable(target) => target,
+            // Printed even under `--only`, and even when the directory is below the
+            // size floor: a refusal means the repository asked for something dev-prune
+            // will not do, and silently doing nothing is how that stays unnoticed.
+            crate::declared::Declaration::Refused { label, reason } => {
+                results.push(PruneResult {
+                    repo_path: repo_path.to_path_buf(),
+                    adapter_name: name.to_string(),
+                    bloat_dir: label,
+                    size_freed: 0,
+                    shared_bytes: 0,
+                    runtime: None,
+                    status: PruneStatus::SkippedDeclaration(reason),
+                });
+                continue;
+            }
+        };
+
+        if only.is_some_and(|names| !names.contains(&target.label)) {
+            continue;
+        }
+        if target.size_bytes < min_size_bytes {
+            continue;
+        }
+        if !claimed.insert(target.path.clone()) {
+            continue;
+        }
+
+        let bd = BloatDir {
+            name: target.label.clone(),
+            path: target.path.clone(),
+            size_bytes: target.size_bytes,
+            shared_bytes: 0,
+        };
+        if let Some(status) = shared_storage_refusal(&bd.path) {
+            results.push(PruneResult {
+                repo_path: repo_path.to_path_buf(),
+                adapter_name: name.to_string(),
+                bloat_dir: target.label,
+                size_freed: 0,
+                shared_bytes: 0,
+                runtime: None,
+                status,
+            });
+            continue;
+        }
+        if opts.dry_run {
+            results.push(PruneResult {
+                repo_path: repo_path.to_path_buf(),
+                adapter_name: name.to_string(),
+                bloat_dir: target.label,
+                size_freed: target.size_bytes,
+                shared_bytes: 0,
+                runtime: None,
+                status: PruneStatus::SkippedDryRun,
+            });
+            continue;
+        }
+
+        // The rebuild command travels with the result the way an adapter's runtime tag
+        // does. It is the only record of how to put this directory back, and once the
+        // directory is gone the config file is the only place left holding it — which
+        // is no help at all to somebody reading a finished run report.
+        results.push(delete_bloat(
+            repo_path,
+            name,
+            target.label.clone(),
+            &bd,
+            Some(target.rebuild.clone()),
+        ));
+    }
     results
 }
 
@@ -853,17 +955,12 @@ fn collect_bloat(
                 if bd.size_bytes < min_size_bytes {
                     continue;
                 }
-                // The same three refusals the prune pass applies, for the same reason
-                // the size floor is applied here: what `devp status` reports as
-                // reclaimable must be what `devp run` would actually delete. A
-                // junctioned `node_modules` even sizes somebody else's storage, so
-                // counting it overstates the dashboard twice over.
-                if fs::symlink_metadata(&bd.path)
-                    .map(|m| m.file_type().is_symlink())
-                    .unwrap_or(false)
-                    || is_mount_point(&bd.path)
-                    || find_nested_git(&bd.path).is_some()
-                {
+                // The same refusals the prune pass applies, for the same reason the
+                // size floor is applied here: what `devp status` reports as reclaimable
+                // must be what `devp run` would actually delete. A junctioned
+                // `node_modules` even sizes somebody else's storage, so counting it
+                // overstates the dashboard twice over.
+                if shared_storage_refusal(&bd.path).is_some() {
                     continue;
                 }
                 if claimed.insert(bd.path.clone()) {
@@ -875,6 +972,38 @@ fn collect_bloat(
                 }
             }
         }
+    }
+
+    // Declared directories count towards the dashboard exactly as adapter-found ones
+    // do. A repository whose largest reclaimable tree is a declared one would otherwise
+    // read as empty in `devp status` and then delete gigabytes in `devp run`.
+    let declared = crate::config::PerRepoConfig::load_with_diagnostics(repo_path)
+        .ok()
+        .flatten()
+        .and_then(|c| c.prunable)
+        .map(|p| p.directories)
+        .unwrap_or_default();
+    for outcome in crate::declared::resolve(repo_path, &declared) {
+        let crate::declared::Declaration::Prunable(target) = outcome else {
+            continue;
+        };
+        if target.size_bytes < min_size_bytes
+            || shared_storage_refusal(&target.path).is_some()
+            || !claimed.insert(target.path.clone())
+        {
+            continue;
+        }
+        let name = constants::DECLARED_ADAPTER_NAME;
+        if !adapter_names.iter().any(|existing| existing == name) {
+            adapter_names.push(name.to_string());
+        }
+        *by_adapter.entry(name.to_string()).or_default() += target.size_bytes;
+        bloat.push(BloatDir {
+            name: target.label,
+            path: target.path,
+            size_bytes: target.size_bytes,
+            shared_bytes: 0,
+        });
     }
 
     (adapter_names, bloat, by_adapter.into_iter().collect())

@@ -94,7 +94,7 @@ REPO="Life-Experimentalist/dev-prune"
 # /releases/latest carries the tag, so one HEAD request answers without parsing JSON.
 # FALLBACK_VERSION exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-FALLBACK_VERSION="1.9.0"
+FALLBACK_VERSION="1.10.0"
 if [ -z "$VERSION" ]; then
     LATEST_URL="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
     case "$LATEST_URL" in
@@ -234,33 +234,46 @@ report_prior_exe() {
         echo "[!] Another dev-prune is on your PATH as well:"
         echo "        $PRIOR_EXE"
         echo "    A different package manager owns that copy, so this script left it alone."
+        # Not "this directory comes first on PATH". Nothing here can promise that: the
+        # rc line this script writes does put $BIN_DIR in front, but another manager's
+        # rc line sourced after it puts its own directory in front of that, and the
+        # claim was printed either way. What is true is where to look.
         if [ "$NO_PATH" = "1" ]; then
             echo "    PATH was left alone (--no-path), so which one you get is up to yours."
         else
-            echo "    This directory comes first on PATH, so 'devp' is the copy in $BIN_DIR."
+            echo "    Which one a new shell finds is PATH order, and other managers write"
+            echo "    their own rc lines too. 'devp doctor' names the copy that answered."
         fi
-        echo "    Moving it over means installing here and uninstalling there, through the"
-        echo "    manager that put it there. 'devp install --channel installer' does both."
-        if a_person_is_present && ask_yes_no "    Do that now?"; then
+        echo "    Moving it over means uninstalling there, through the manager that put it"
+        echo "    there. 'devp install --channel installer' does that."
+        # Not offered under a pin: the copy at $EXE_PATH would refuse, and an offer that
+        # ends in a refusal is worse than no offer.
+        if [ "$INSTALLED_LOCK" != "1" ] && [ -x "$EXE_PATH" ] &&
+            a_person_is_present && ask_yes_no "    Do that now?"; then
             echo ""
-            # The *old* binary, not the one just installed. It is the copy that knows
-            # which manager owns it, and `--channel installer` is how it hands over; run
-            # from the new copy the same command would only report that it is already an
-            # installer copy with nothing to move.
+            # The copy just installed, not the old one. Handing this to the *old* binary
+            # was the whole failure: nothing before 1.8.0 has an `install` subcommand at
+            # all, so on the machines this offer exists for it printed an unrecognised-
+            # subcommand error and nothing moved. The new copy is new by definition, it
+            # can name the manager that owns the file above, and it runs that manager's
+            # own uninstall.
             #
-            # Nothing is deleted by this script either way. The uninstall is the other
-            # manager's own command, run by the binary that manager installed.
-            if "$PRIOR_EXE" install --channel installer --yes; then
+            # Nothing is deleted by this script either way.
+            if "$EXE_PATH" install --channel installer --yes; then
                 echo ""
-                echo "[OK] Moved. 'devp doctor' will confirm only one copy is left."
+                echo "[OK] Done. 'devp doctor' will confirm only one copy is left."
             else
                 echo ""
-                echo "[!] That did not finish, and nothing was deleted — the copy at"
+                echo "[!] That did not finish, and this script deleted nothing — the copy at"
                 echo "        $PRIOR_EXE"
-                echo "    is exactly where it was. A copy older than 1.8.0 has no 'devp"
-                echo "    install' subcommand at all; upgrade it through its own manager"
-                echo "    first, or just remove it. 'devp doctor' shows both copies."
+                echo "    is exactly where it was. Its own manager can still remove it, and"
+                echo "    'devp doctor' names both copies and the command for each."
             fi
+        elif [ "$INSTALLED_LOCK" = "1" ]; then
+            echo "    Your version pin covers this too: which copy answers on PATH is which"
+            echo "    version runs, so nothing moves while the pin is on. Release it with"
+            echo "        devp config set version_lock false"
+            echo "    'devp doctor' lists every copy on the machine at any time."
         else
             echo "    Run it whenever you like:"
             echo "        devp install --channel installer"
@@ -716,7 +729,7 @@ echo "         devp link ."
 echo ""
 echo "    Then:"
 echo "    devp status             # see what is reclaimable"
-echo "    devp run --dry-run      # preview a prune pass"
+echo "    devp run                # reclaim it (shows the plan, asks before deleting)"
 echo ""
 echo "    devp setup --status     # what got installed alongside the binary"
 echo "    devp uninstall          # remove all of it again"

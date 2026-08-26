@@ -22,6 +22,14 @@ fn devp(config_dir: &Path) -> Command {
     cmd.env("DEV_PRUNE_OFFLINE", "1");
     cmd.env("DEV_PRUNE_CONFIG_DIR", config_dir);
 
+    // The working directory is not neutral any more: `status` and `run` register the
+    // repository they are standing in, which is how a repository created by `git init`
+    // is ever seen (Git has no `post-init` hook). Inherited from cargo, that directory
+    // is this crate's own root — so three tests were quietly measuring the developer's
+    // 21 GB `target/` instead of their fixture. Any test that cares about the working
+    // directory sets its own after this, which wins.
+    cmd.current_dir(std::env::temp_dir());
+
     // `doctor` warns when the running executable's own directory is not on PATH. The
     // test binary lives in `target/debug`, which is on PATH only because cargo puts it
     // there so Windows can find DLLs. Linux and macOS get `LD_LIBRARY_PATH`/`DYLD_*`
@@ -768,6 +776,89 @@ fn doctor_fix_replaces_a_broken_repo_config_and_keeps_the_original() {
     assert_eq!(
         fs::read_to_string(repo.join(".devprune.json.broken")).unwrap(),
         "{ not json at all"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// config recommended
+// ---------------------------------------------------------------------------
+
+#[test]
+fn recommended_takes_the_safe_tier_and_leaves_the_cautious_one() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["config", "recommended"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+
+    let out = devp(&config)
+        .args(["config", "get", "enable_cargo"])
+        .output()
+        .unwrap();
+    assert!(
+        stdout_of(&out).contains("enable_cargo = true"),
+        "the safe tier was not applied:\n{}",
+        combined(&out)
+    );
+
+    // The whole point of the second tier: a command nobody passed a flag to must not
+    // be the thing that starts editing files Git tracks.
+    let out = devp(&config)
+        .args(["config", "get", "allow_manifest_rewrite"])
+        .output()
+        .unwrap();
+    assert!(
+        stdout_of(&out).contains("allow_manifest_rewrite = false"),
+        "the cautious tier arrived without --with-cautious:\n{}",
+        combined(&out)
+    );
+}
+
+#[test]
+fn recommended_with_cautious_includes_the_one_it_holds_back() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["config", "recommended", "--with-cautious"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+
+    let out = devp(&config)
+        .args(["config", "get", "allow_manifest_rewrite"])
+        .output()
+        .unwrap();
+    assert!(
+        stdout_of(&out).contains("allow_manifest_rewrite = true"),
+        "--with-cautious did not apply it:\n{}",
+        combined(&out)
+    );
+}
+
+#[test]
+fn recommended_is_a_shortcut_past_the_walkthrough_not_a_substitute_for_it() {
+    // It must not mark the settings reviewed: the configurator is what puts the
+    // decisions in front of somebody, and a machine set up from a script is still owed
+    // that. Running it twice is also a no-op, not an error.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    devp(&config)
+        .args(["config", "recommended"])
+        .output()
+        .unwrap();
+    let out = devp(&config)
+        .args(["config", "recommended"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(
+        !config.join("config-reviewed").exists(),
+        "`config recommended` marked the settings reviewed"
     );
 }
 

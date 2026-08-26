@@ -22,6 +22,14 @@ fn devp() -> Command {
     // temporary fixtures ended up permanently registered on the author's machine, listed
     // as `Path missing` forever, with nothing anywhere reporting a fault.
     cmd.env("DEV_PRUNE_CONFIG_DIR", scratch_config_dir());
+
+    // And the same reasoning for the working directory, which stopped being neutral when
+    // `status` and `run` began registering the repository they stand in — the only way a
+    // repository made by `git init` is ever seen, since Git has no `post-init` hook.
+    // Inherited from cargo that is this crate's own root, so a case that registers
+    // nothing and then prunes would have found it adopted, with `site/node_modules`
+    // inside it. A case that cares sets its own after this, and wins.
+    cmd.current_dir(std::env::temp_dir());
     cmd
 }
 
@@ -475,4 +483,63 @@ fn test_mistyped_toggle_action_is_rejected() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("enabel"), "{stderr}");
+}
+
+/// A refused declaration has to reach the person running the pass.
+///
+/// It was computed correctly and emitted correctly in `--json`, and then dropped by
+/// every human-facing reporter, which is the one place a refusal exists to be seen. The
+/// whole suite stayed green while the only user-visible half of the feature did nothing.
+#[test]
+fn test_a_refused_declaration_is_reported_without_failing_the_run() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let repo = tmp.path().join("declaring-repo");
+    fs::create_dir_all(repo.join("tools").join("vendor")).unwrap();
+    fs::write(
+        repo.join("tools").join("vendor").join("blob.bin"),
+        vec![0u8; 4096],
+    )
+    .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    // The rebuild tool is absent on every machine, so the refusal is the same everywhere.
+    fs::write(
+        repo.join(".devprune.json"),
+        r#"{"prunable":{"directories":[{"path":"tools/vendor","rebuild":"definitely-not-a-real-tool-xyz build"}]}}"#,
+    )
+    .unwrap();
+
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["--force", "-y", "run"])
+        .output()
+        .expect("Failed to run");
+
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        printed.contains("definitely-not-a-real-tool-xyz"),
+        "the refusal never reached the user:\n{printed}"
+    );
+    assert!(
+        !printed.contains("No idle repositories or pruneable bloat directories found."),
+        "the run claimed there was nothing to say:\n{printed}"
+    );
+    assert!(
+        out.status.success(),
+        "a refused declaration is a warning, not a failure:\n{printed}"
+    );
 }

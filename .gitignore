@@ -40,7 +40,7 @@ ignore.devprune.json
 # Release archives are published as GitHub Release assets, never committed.
 /releases/
 
-# Built editor-extension artifacts (the .vsix is deliberately committed)
+# Built editor-extension artifacts. The .vsix is ignored above, with the reason.
 editors/jetbrains/build/
 editors/jetbrains/.gradle/
 editors/jetbrains/gradle/

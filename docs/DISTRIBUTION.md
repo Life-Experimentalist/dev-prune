@@ -69,13 +69,13 @@ Seven single-binary archives are built automatically for every tagged release an
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.9.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.9.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.9.0-windows-x86.zip` | `i686-pc-windows-msvc` |
-| `dev-prune-v1.9.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.9.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.9.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.9.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.10.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.10.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.10.0-windows-x86.zip` | `i686-pc-windows-msvc` |
+| `dev-prune-v1.10.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.10.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.10.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.10.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
@@ -88,13 +88,16 @@ The install scripts construct these filenames by hand and refuse to install with
 Each archive is additionally signed with GitHub build provenance, which ties it to this repository, the release workflow and the commit it was built from — something a checksum cannot do, because whoever produces an archive also produces its checksum. Verify with no key and no account:
 
 ```bash
-gh attestation verify dev-prune-v1.9.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+gh attestation verify dev-prune-v1.10.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
 ```
 
-### 4. npm (`npm install -g` / `npx`)
+### 4. npm (`npm install -g` / `npx` / bun / pnpm / Yarn)
 ```bash
 npm install -g dev-prune   # persistent
 npx dev-prune status       # run once, nothing installed
+bun add -g dev-prune       # same package, through bun
+pnpm add -g dev-prune
+yarn global add dev-prune  # Yarn 1.x
 ```
 Every release publishes here. The channel was completed in 1.8.0, when the last three of
 the eight package names were claimed; 1.6.0 and 1.7.0 published a Linux and macOS half.
@@ -105,6 +108,7 @@ the eight package names were claimed; 1.6.0 and 1.7.0 published a Linux and macO
 - Both `dev-prune` and `devp` are registered as `bin` entries.
 - Every tarball carries [npm provenance](https://docs.npmjs.com/generating-provenance-statements) — a signed attestation tying it to the workflow run, commit and tag that produced it. Publishing uses npm Trusted Publishing: the workflow's OIDC token is the whole credential and no npm token exists anywhere.
 - Upgrading from a Windows machine that still holds 1.7.0 needs `npm install -g dev-prune@latest`. A published manifest cannot be edited, so `dev-prune@1.7.0` names the old, never-created Windows packages permanently and no repair reaches it.
+- **bun, pnpm and Yarn install the same package, and each is its own channel.** The dispatcher-plus-platform-package layout means every one of the four clients ends up with the executable inside a `node_modules` tree, so the location alone cannot tell them apart; dev-prune checks each client's own global directory (`~/.bun`, pnpm's store, `~/.config/yarn/global`) before falling back to npm. That matters because the managers do not share records: `npm install -g dev-prune@latest` against a copy bun installed adds a *second* copy under npm's prefix and leaves bun's, still on `PATH`, at the old version. `devp update`, `devp doctor` and `devp uninstall` all name the client that actually owns the copy. Deno is not a channel: `deno install -g npm:dev-prune` writes a shim that re-enters Deno, so the running executable is Deno itself and there is nothing for the classifier to recognise.
 
 ### 5. PyPI (`uv tool install` / `uvx` / `pipx` / `pip`)
 ```bash
@@ -248,8 +252,9 @@ point — a manager whose records still say dev-prune is present will put it bac
 Nothing has to be migrated. Settings, the repository registry and the undo history live
 in the config directory, which no channel owns and none of them touch.
 
-Names `--channel` accepts: `installer`, `cargo`, `npm`, `uv`, `pipx`, `winget`, `scoop`,
-`homebrew`. Full reference: [CLI_REFERENCE.md](CLI_REFERENCE.md#19-devp-install---channel-name---dry-run).
+Names `--channel` accepts: `installer`, `cargo`, `npm`, `bun`, `pnpm`, `yarn`, `uv`,
+`pipx`, `winget`, `scoop`, `homebrew`. The three npm-compatible clients install the same
+package but are each their own channel, because each keeps its own record of it. Full reference: [CLI_REFERENCE.md](CLI_REFERENCE.md#19-devp-install---channel-name---dry-run).
 
 ### Finding copies you have forgotten
 

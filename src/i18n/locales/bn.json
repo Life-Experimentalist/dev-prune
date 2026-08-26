@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "bn",
+    "english_name": "Bengali",
+    "native_name": "বাংলা",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (শুধু পরীক্ষা)",
+  "run.header.targeted": "dev-prune লক্ষ্যযুক্ত রান ({path})",
+  "run.header.binaries": "প্রয়োজনীয় ইকোসিস্টেম বাইনারি যাচাই",
+  "run.header.candidates": "মুছে ফেলার যোগ্য ডিরেক্টরি ও সাশ্রয় হওয়া জায়গা",
+  "run.header.blocked": "যে রিপোজিটরিগুলি পরীক্ষা করা যায়নি ({count})",
+  "run.header.deleting": "ধাপে ধাপে মোছা হচ্ছে ({repos}টি রিপোজিটরি, {size})",
+  "run.header.reasons": "প্রতিটি রিপোজিটরি কেন মোছা হবে বা হবে না",
+  "run.summary": "সারসংক্ষেপ",
+  "run.summary.dry": "সারসংক্ষেপ (শুধু পরীক্ষা)",
+  "run.nothing": "কোনও নিষ্ক্রিয় রিপোজিটরি বা মুছে ফেলার যোগ্য ডিরেক্টরি পাওয়া যায়নি।",
+  "run.nothing.bloat": "মুছে ফেলার যোগ্য কোনও ডিরেক্টরি পাওয়া যায়নি।",
+  "run.nothing.bloat.targeted": "{path}-এ মুছে ফেলার যোগ্য কোনও ডিরেক্টরি পাওয়া যায়নি।",
+  "run.freed": "খালি করা হয়েছে: {count}টি ডিরেক্টরি থেকে {size}",
+  "run.freed.targeted": "খালি করা হয়েছে: {path}-এ {size}",
+  "run.would_free": "{count}টি ডিরেক্টরি থেকে {size} খালি হত।",
+  "run.reclaimable": "মোট পুনরুদ্ধারযোগ্য জায়গা: {size}",
+  "run.not_pruned": "{count}টি রিপোজিটরি মোছা হয়নি।",
+
+  "status.header.pruning": "নির্বাচিত রিপোজিটরি মোছা হচ্ছে",
+  "status.header.drift": "লকফাইল অমিল",
+
+  "caches.header": "প্যাকেজ ম্যানেজার ক্যাশ",
+  "caches.nothing": "এই মেশিনে কোনও প্যাকেজ ম্যানেজার ক্যাশ পাওয়া যায়নি।",
+  "caches.header.would_clear": "কী মোছা হত",
+  "caches.header.about_to_clear": "এগুলি মোছা হবে",
+
+  "config.category.presentation": "এসব কোন ভাষায়",
+  "config.category.scope": "কী মোছা হবে",
+  "config.category.safety": "কিছু মোছার আগে",
+  "config.category.build_trees": "বিল্ড ডিরেক্টরি — ডিফল্টভাবে বন্ধ",
+  "config.category.caches": "ভাগ করা ডাউনলোড ক্যাশ",
+  "config.category.unattended": "না জিজ্ঞেস করেই চলা",
+  "config.category.updates": "dev-prune হালনাগাদ রাখা"
+}

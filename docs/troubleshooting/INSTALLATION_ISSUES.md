@@ -133,8 +133,8 @@ Unblock-File "$env:APPDATA\dev-prune\bin\dev-prune.exe","$env:APPDATA\dev-prune\
 listed here for the hand-downloaded path — where unblocking the **archive before
 extracting** means nothing inside it is ever marked:
 ```powershell
-Unblock-File .\dev-prune-v1.9.0-windows-x64.zip
-Expand-Archive .\dev-prune-v1.9.0-windows-x64.zip -DestinationPath .
+Unblock-File .\dev-prune-v1.10.0-windows-x64.zip
+Expand-Archive .\dev-prune-v1.10.0-windows-x64.zip -DestinationPath .
 ```
 
 If you are standing in front of the dialog right now, you do not need any of the above:
@@ -506,8 +506,8 @@ terminal instead. The `devpw.exe` task does not have this limitation.
 ### 11. I installed with one manager, then ran the one-liner — which copy am I running?
 
 The one this install put there. The one-liner works over any previous channel — cargo,
-npm, uv, pipx, Homebrew, Scoop, WinGet, or an earlier run of itself — and it needs no
-uninstall step first.
+npm, bun, pnpm, yarn, uv, pipx, Homebrew, Scoop, WinGet, or an earlier run of itself — and
+it needs no uninstall step first.
 
 #### What actually happened
 
@@ -572,8 +572,8 @@ devp install --channel installer
 That installs through the target manager first and then uninstalls through the manager
 that owns the old copy — in that order, so a failure leaves you with a working `devp`
 either way. `--dry-run` prints the numbered plan and runs none of it. Substitute any
-channel name for `installer` to go the other direction: `cargo`, `npm`, `uv`, `pipx`,
-`winget`, `scoop`, `homebrew`.
+channel name for `installer` to go the other direction: `cargo`, `npm`, `bun`, `pnpm`,
+`yarn`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`.
 
 Nothing is migrated because nothing needs to be. Your settings, the repository registry
 and the undo history live in the config directory, which no package manager owns and none

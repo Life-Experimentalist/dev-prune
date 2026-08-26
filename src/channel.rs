@@ -31,6 +31,17 @@ mod marker {
     pub const SCOOP: &[&str] = &["/scoop/apps/", "/scoop/shims/"];
     pub const HOMEBREW: &[&str] = &["/cellar/", "/homebrew/", "/linuxbrew/"];
     pub const CARGO: &[&str] = &["/.cargo/"];
+    // The three npm-compatible clients, which have to be told apart from npm itself and
+    // from each other. All four end up with the executable inside a `node_modules` tree,
+    // so `NPM` matches every one of them and these have to be tried first.
+    pub const BUN: &[&str] = &["/.bun/"];
+    pub const PNPM: &[&str] = &["/pnpm/global/", "/.pnpm-global/"];
+    pub const YARN: &[&str] = &[
+        "/yarn/global/",
+        "/yarn/data/global/",
+        "/.yarn/bin/",
+        "/yarn/bin/",
+    ];
     pub const NPM: &[&str] = &["/node_modules/", "/_npx/"];
     pub const UV_TOOL: &[&str] = &["/uv/tools/", "/uv-tool/"];
     pub const PIPX: &[&str] = &["/pipx/"];
@@ -49,6 +60,13 @@ pub enum Channel {
     Cargo,
     /// `npm install -g` — the binary lives under a `node_modules` tree.
     Npm,
+    /// `bun add -g` — under `~/.bun/install/global`.
+    Bun,
+    /// `pnpm add -g` — under pnpm's own global store.
+    Pnpm,
+    /// `yarn global add` (Yarn 1.x) — under `~/.config/yarn/global`, shimmed from
+    /// `~/.yarn/bin`.
+    Yarn,
     /// `uv tool install` — under uv's tool environments.
     UvTool,
     /// `pipx install` — under a `pipx` venv.
@@ -84,9 +102,12 @@ impl Channel {
     /// the classification without a config directory on disk.
     ///
     /// The managed path is checked first and the three directory-owning managers next.
-    /// Order is load-bearing at least once already: a Scoop install of a Rust toolchain
-    /// can put `.cargo` inside `~/scoop`, and misreading that as `Cargo` would send
-    /// `devp update` to run `cargo install` against a directory Scoop replaces wholesale.
+    /// Order is load-bearing twice over. A Scoop install of a Rust toolchain can put
+    /// `.cargo` inside `~/scoop`, and misreading that as `Cargo` would send `devp update`
+    /// to run `cargo install` against a directory Scoop replaces wholesale. And bun,
+    /// pnpm and yarn all install npm packages into a `node_modules` tree of their own, so
+    /// each of them matches npm's marker as well as its own and has to be tried
+    /// before it.
     pub fn detect_at(exe: &Path, managed: Option<&Path>) -> Self {
         if let Some(managed) = managed
             && exe == managed
@@ -104,6 +125,12 @@ impl Channel {
             Channel::Homebrew
         } else if any(marker::CARGO) {
             Channel::Cargo
+        } else if any(marker::BUN) {
+            Channel::Bun
+        } else if any(marker::PNPM) {
+            Channel::Pnpm
+        } else if any(marker::YARN) {
+            Channel::Yarn
         } else if any(marker::NPM) || npm_shim_beside(exe) {
             Channel::Npm
         } else if any(marker::UV_TOOL) {
@@ -123,6 +150,9 @@ impl Channel {
             Channel::Installer => "the install script",
             Channel::Cargo => "cargo",
             Channel::Npm => "npm",
+            Channel::Bun => "bun",
+            Channel::Pnpm => "pnpm",
+            Channel::Yarn => "yarn",
             Channel::UvTool => "uv",
             Channel::Pipx => "pipx",
             Channel::Pip => "pip",
@@ -151,6 +181,15 @@ impl Channel {
                 }
                 Channel::Cargo => "cargo install dev-prune --force",
                 Channel::Npm => "npm install -g dev-prune@latest",
+                // `@latest` is not decoration for these two: both resolve a bare name
+                // against a cached manifest and report the version already installed as
+                // up to date.
+                Channel::Bun => "bun add -g dev-prune@latest",
+                Channel::Pnpm => "pnpm add -g dev-prune@latest",
+                // Yarn 1.x, which is the only Yarn that has `yarn global` at all. Berry
+                // removed it, and prints its own explanation of what to use instead —
+                // a better message than any guess this could make on its behalf.
+                Channel::Yarn => "yarn global upgrade dev-prune",
                 Channel::UvTool => "uv tool upgrade dev-prune",
                 Channel::Pipx => "pipx upgrade dev-prune",
                 Channel::Pip => "pip install --upgrade dev-prune",
@@ -177,6 +216,9 @@ impl Channel {
             match self {
                 Channel::Cargo => "cargo uninstall dev-prune",
                 Channel::Npm => "npm uninstall -g dev-prune",
+                Channel::Bun => "bun remove -g dev-prune",
+                Channel::Pnpm => "pnpm remove -g dev-prune",
+                Channel::Yarn => "yarn global remove dev-prune",
                 Channel::UvTool => "uv tool uninstall dev-prune",
                 Channel::Pipx => "pipx uninstall dev-prune",
                 Channel::Pip => "pip uninstall dev-prune",
@@ -324,6 +366,9 @@ pub fn install_dirs(home: Option<&Path>) -> Vec<PathBuf> {
             .join(scripts),
     );
 
+    // bun keeps its global bin in the same place on every platform.
+    dirs.push(home.join(".bun").join("bin"));
+
     if cfg!(windows) {
         // uv keeps its tool environments under `%APPDATA%` on Windows, which is not
         // under `.local` at all.
@@ -344,8 +389,12 @@ pub fn install_dirs(home: Option<&Path>) -> Vec<PathBuf> {
                 .join("Links"),
         );
         dirs.push(home.join("scoop").join("shims"));
+        dirs.push(home.join("AppData").join("Local").join("pnpm"));
+        dirs.push(home.join("AppData").join("Local").join("Yarn").join("bin"));
     } else {
         dirs.push(home.join(".npm-global").join("bin"));
+        dirs.push(home.join(".local").join("share").join("pnpm"));
+        dirs.push(home.join(".yarn").join("bin"));
         dirs.push(PathBuf::from("/opt/homebrew/bin"));
         dirs.push(PathBuf::from("/usr/local/bin"));
         dirs.push(PathBuf::from("/home/linuxbrew/.linuxbrew/bin"));
@@ -372,6 +421,30 @@ mod tests {
             (
                 "/usr/lib/node_modules/dev-prune-linux-x64/bin/dev-prune",
                 Channel::Npm,
+            ),
+            // The three npm-compatible clients, at the path a *global* install of
+            // dev-prune actually produces: the npm package is a dispatcher plus one
+            // platform package, so the executable is always inside a `node_modules`
+            // tree and every one of these used to read as `Channel::Npm`.
+            (
+                "/home/k/.bun/install/global/node_modules/@dev-prune/linux-x64/dev-prune",
+                Channel::Bun,
+            ),
+            (
+                "/home/k/.local/share/pnpm/global/5/node_modules/@dev-prune/linux-x64/dev-prune",
+                Channel::Pnpm,
+            ),
+            (
+                "/home/k/.config/yarn/global/node_modules/@dev-prune/linux-x64/dev-prune",
+                Channel::Yarn,
+            ),
+            (
+                r"C:\Users\k\AppData\Local\pnpm\global\5\node_modules\@dev-prune\win32-x64\dev-prune.exe",
+                Channel::Pnpm,
+            ),
+            (
+                r"C:\Users\k\AppData\Local\Yarn\Data\global\node_modules\@dev-prune\win32-x64\dev-prune.exe",
+                Channel::Yarn,
             ),
             (
                 "/home/k/.local/share/uv/tools/dev-prune/bin/dev-prune",
@@ -433,6 +506,9 @@ mod tests {
             Channel::Installer,
             Channel::Cargo,
             Channel::Npm,
+            Channel::Bun,
+            Channel::Pnpm,
+            Channel::Yarn,
             Channel::UvTool,
             Channel::Pipx,
             Channel::Pip,
@@ -459,6 +535,9 @@ mod tests {
         for channel in [
             Channel::Cargo,
             Channel::Npm,
+            Channel::Bun,
+            Channel::Pnpm,
+            Channel::Yarn,
             Channel::UvTool,
             Channel::Pipx,
             Channel::Pip,
@@ -468,6 +547,25 @@ mod tests {
         ] {
             assert!(channel.upgrade_command().is_some(), "{channel:?}");
             assert!(channel.uninstall_command().is_some(), "{channel:?}");
+        }
+        // Each of the four npm-compatible clients has to name *its own* client. Getting
+        // this wrong is not a cosmetic slip: it installs a second copy under a second
+        // manager's prefix and leaves the first one stale and still on PATH.
+        for (channel, client) in [
+            (Channel::Npm, "npm"),
+            (Channel::Bun, "bun"),
+            (Channel::Pnpm, "pnpm"),
+            (Channel::Yarn, "yarn"),
+        ] {
+            for command in [
+                channel.upgrade_command().unwrap(),
+                channel.uninstall_command().unwrap(),
+            ] {
+                assert!(
+                    command.starts_with(client),
+                    "{channel:?} names `{command}`, not {client}"
+                );
+            }
         }
         // The installer replaces its own copy and has no manager to uninstall through.
         assert!(Channel::Installer.upgrade_command().is_some());
@@ -492,7 +590,7 @@ mod tests {
         // A copy nobody can see is a copy nobody upgrades, and it becomes the one that
         // runs the day PATH changes — so each of these is searched whether or not the
         // manager that owns it ever put itself on PATH.
-        for marker in ["cargo", "uv", "pipx"] {
+        for marker in ["cargo", "uv", "pipx", "bun", "pnpm", "yarn"] {
             assert!(joined.contains(marker), "{marker} missing from {joined}");
         }
         let platform = if cfg!(windows) { "winget" } else { "homebrew" };

@@ -28,6 +28,12 @@ use crate::tui::Tui;
 pub enum Control {
     /// Flipped in place with Space.
     Toggle,
+    /// Cycled in place with Space, one `(value, label)` pair at a time.
+    ///
+    /// A toggle with more than two positions. Carries its own options because the label
+    /// is the only part a reader can act on: `te` is not a word, and a picker that shows
+    /// only the stored value is a picker for people who already knew the answer.
+    Choice(&'static [(&'static str, &'static str)]),
     /// Typed into an inline field.
     Number,
     /// Opens the adapter checklist.
@@ -59,6 +65,9 @@ enum PickerField {
 #[derive(Debug, Clone)]
 pub struct ConfigRow {
     pub key: &'static str,
+    /// The heading this row is drawn under. Rows sharing one are drawn together, in the
+    /// order they arrive; the caller owns which group a setting is in.
+    pub category: &'static str,
     pub help: &'static str,
     /// The same setting said again without jargon, shown under `help` rather than
     /// instead of it. Someone who knows what a build tree is skips the second line;
@@ -70,6 +79,18 @@ pub struct ConfigRow {
     pub value: String,
     /// What it was when the view opened, so the summary shows only real changes.
     pub original: String,
+    /// What a fresh install would hold, spelled the same way as `value`.
+    ///
+    /// Not the same question as `original`, which is what this machine happens to hold.
+    /// Somebody looking at a setting they have never touched cannot tell those apart,
+    /// and the one they need in order to decide whether to touch it is this one.
+    pub default: String,
+    /// The value the first-run screen suggests, if this setting is suggested at all.
+    ///
+    /// A recommendation, never a requirement: everything here works with all of them
+    /// declined. It is shown on every visit rather than only on the first run, because
+    /// the screen that suggested it appears once and the settings list is forever.
+    pub recommended: Option<&'static str>,
     /// Introduced in a release newer than the one this machine last reviewed at.
     pub is_new: bool,
 }
@@ -77,6 +98,14 @@ pub struct ConfigRow {
 impl ConfigRow {
     pub fn changed(&self) -> bool {
         self.value != self.original
+    }
+
+    /// Whether this row already holds what is recommended for it.
+    ///
+    /// `None` when nothing is recommended, which is a different answer from "no" and is
+    /// why the badge has three states rather than two.
+    pub fn takes_advice(&self) -> Option<bool> {
+        self.recommended.map(|r| self.value == r)
     }
 }
 
@@ -159,13 +188,108 @@ pub struct ConfigSession<'a> {
     pub validate: &'a dyn Fn(&str, &str) -> std::result::Result<(), String>,
     /// Title bar text — the walkthrough and `config wizard` arrive here differently.
     pub title: &'a str,
+    /// Why this opened, when nobody pointed a command at it.
+    ///
+    /// `None` for `devp config wizard`, which was typed on purpose. `Some(_)` on the
+    /// first run and after an upgrade that added a setting — the two times this takes
+    /// a terminal in the middle of a command somebody typed for another reason, and so
+    /// the two times it owes them a reason before it asks for anything.
+    pub uninvited: Option<&'a str>,
+}
+
+/// The settings list as it is drawn: category headings interleaved with their settings.
+///
+/// The same shape as [`PickerEntry`] on the adapter checklist, for the same reason — a
+/// column of thirty keys is a list nobody reads to the end of. Unlike a group
+/// there, a heading here has nothing to toggle, so [`step`] walks past it: a cursor
+/// that can rest on a line where no key does anything reads as a broken cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SettingEntry {
+    Heading(&'static str),
+    Row(usize),
+    /// The last line of the list: where the walk ends and the summary begins. A cursor
+    /// stop rather than a line in the footer, because "press some key when you are
+    /// done" is the part of a configurator people report as having no way out of.
+    Finish,
+}
+
+/// Interleave headings, keeping the caller's order within each group.
+///
+/// A heading is emitted whenever the category changes, not once per distinct category,
+/// so a caller that interleaves groups gets what it asked for rather than a silent
+/// regrouping.
+fn settings_entries(rows: &[ConfigRow]) -> Vec<SettingEntry> {
+    let mut entries = Vec::with_capacity(rows.len() + 8);
+    let mut current: Option<&str> = None;
+    for (i, row) in rows.iter().enumerate() {
+        if current != Some(row.category) {
+            entries.push(SettingEntry::Heading(row.category));
+            current = Some(row.category);
+        }
+        entries.push(SettingEntry::Row(i));
+    }
+    entries.push(SettingEntry::Finish);
+    entries
+}
+
+/// Which [`ConfigRow`] the cursor is on.
+fn selected_row(state: &State<'_>) -> usize {
+    let at = state.list.selected().unwrap_or(0);
+    match state.setting_entries.get(at) {
+        Some(SettingEntry::Row(i)) => *i,
+        // Unreachable while every move goes through `step`, which never stops on a
+        // heading. Falling forward to the first real row beats panicking mid-redraw.
+        _ => first_row(&state.setting_entries).map_or(0, |at| match state.setting_entries[at] {
+            SettingEntry::Row(i) => i,
+            SettingEntry::Heading(_) | SettingEntry::Finish => 0,
+        }),
+    }
+}
+
+/// The next entry the cursor may rest on, wrapping at both ends.
+fn step(entries: &[SettingEntry], from: usize, forward: bool) -> usize {
+    let len = entries.len();
+    let mut at = from;
+    for _ in 0..len {
+        at = if forward {
+            if at + 1 >= len { 0 } else { at + 1 }
+        } else if at == 0 {
+            len - 1
+        } else {
+            at - 1
+        };
+        if matches!(entries[at], SettingEntry::Row(_) | SettingEntry::Finish) {
+            return at;
+        }
+    }
+    from
+}
+
+fn first_row(entries: &[SettingEntry]) -> Option<usize> {
+    entries
+        .iter()
+        .position(|e| matches!(e, SettingEntry::Row(_)))
+}
+
+/// The last entry the cursor may rest on, which is the finish line rather than a row.
+fn last_stop(entries: &[SettingEntry]) -> Option<usize> {
+    entries
+        .iter()
+        .rposition(|e| matches!(e, SettingEntry::Row(_) | SettingEntry::Finish))
 }
 
 /// Where the cursor starts: the first setting the user has never been shown, when there
 /// is one. After an upgrade that setting is the only reason this screen is in front of
 /// them, and making them hunt for it down a list of twenty is how it gets skipped.
-fn opening_index(rows: &[ConfigRow]) -> usize {
-    rows.iter().position(|r| r.is_new).unwrap_or(0)
+///
+/// An index into the drawn entries, not into `rows`: the two stopped being the same
+/// thing when headings joined the list.
+fn opening_index(entries: &[SettingEntry], rows: &[ConfigRow]) -> usize {
+    entries
+        .iter()
+        .position(|e| matches!(e, SettingEntry::Row(i) if rows[*i].is_new))
+        .or_else(|| first_row(entries))
+        .unwrap_or(0)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -263,6 +387,9 @@ struct State<'a> {
     /// Rebuilt when the screen opens, because it depends on nothing that changes while
     /// it is open.
     picker_entries: Vec<PickerEntry>,
+    /// The settings list as it is drawn: category headings interleaved with their rows.
+    /// Built once, because it depends on nothing that changes while the view is open.
+    setting_entries: Vec<SettingEntry>,
     /// Buffer for an in-progress number edit on the checklist.
     picker_editing: Option<String>,
     /// Which column [`State::picker_editing`] is being typed into.
@@ -272,6 +399,9 @@ struct State<'a> {
     decl_list: ListState,
     /// Cursor on the first-run suggestions screen.
     sugg_list: ListState,
+    /// Whether the last key was the first Enter of the two-press finish. Any other key
+    /// clears it, so it can only ever describe the keypress immediately before this one.
+    enter_armed: bool,
 }
 
 /// Run the configurator. Returns what the user decided; writing is the caller's job.
@@ -280,8 +410,9 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
         return Ok(Outcome::KeepAll);
     }
 
+    let setting_entries = settings_entries(&session.rows);
     let mut list = ListState::default();
-    list.select(Some(opening_index(&session.rows)));
+    list.select(Some(opening_index(&setting_entries, &session.rows)));
 
     let mut picker_list = ListState::default();
     picker_list.select(Some(0));
@@ -297,6 +428,7 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
         picker_days: vec![None; session.adapters.len()],
         picker_caps: vec![None; session.adapters.len()],
         picker_entries: Vec::new(),
+        setting_entries,
         picker_editing: None,
         picker_field: PickerField::Days,
         session,
@@ -307,7 +439,10 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
         picker_list,
         decl_list,
         sugg_list,
+        enter_armed: false,
     };
+
+    preaccept_recommended(&mut state);
 
     // The guard owns raw mode, the alternate screen and the panic hook, and puts all
     // three back on every exit path — including the `?` below.
@@ -350,6 +485,11 @@ fn event_loop(
 
 /// Apply one keypress. `Some` ends the view.
 fn handle_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
+    // "Twice" means twice in a row. Anything in between disarms, so an Enter pressed
+    // minutes later cannot finish a gesture nobody remembers starting.
+    if code != KeyCode::Enter {
+        state.enter_armed = false;
+    }
     match state.screen {
         Screen::Declaration => declaration_key(state, code),
         Screen::Suggestions => suggestions_key(state, code),
@@ -372,9 +512,10 @@ fn declaration_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
             state.decl_list.select(Some((current + 1).min(len - 1)));
             None
         }
-        // `y` has meant "yes, all of it, carry on" at this prompt since 1.0.0, and it
-        // still does — this screen must not turn a habit into a detour.
-        KeyCode::Char('y') | KeyCode::Char('Y') => Some(Outcome::KeepAll),
+        // No `y` here any more. It used to mean "keep everything and go", which was
+        // the one exit that never showed what was about to be written. Every exit goes
+        // through the summary now, so the key that skipped it is gone rather than
+        // rebound to something else.
         KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('c') | KeyCode::Char('C') => {
             state.screen = if state.session.suggestions.is_empty() {
                 Screen::Settings
@@ -385,6 +526,28 @@ fn declaration_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
         }
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => Some(Outcome::Cancelled),
         _ => None,
+    }
+}
+
+/// Arrive with the safe recommendations already accepted.
+///
+/// This screen used to open with every box empty, on the reasoning that a pre-ticked
+/// box teaches people to tick boxes. That reasoning is sound about consent and wrong
+/// about this list: everything on the safe tier is a build directory a build command
+/// puts back, under a 45-day idle window, and leaving them off by default meant the
+/// common outcome of the first run was a tool that had been installed and configured to
+/// reclaim almost nothing. The honest version of a default is not an empty one, it is a
+/// visible one — so the header says what is accepted and which key clears the lot, and
+/// `r` undoes all of it in one keystroke.
+///
+/// The cautious tier is deliberately untouched. `allow_manifest_rewrite` can leave a
+/// change in `git status`, and the tier exists precisely because that is a thing to be
+/// told before rather than after.
+fn preaccept_recommended(state: &mut State<'_>) {
+    for i in 0..state.session.suggestions.len() {
+        if !state.session.suggestions[i].cautious {
+            apply_suggestion(state, i, true);
+        }
     }
 }
 
@@ -451,12 +614,21 @@ fn suggestions_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
                 apply_suggestion(state, i, false);
             }
         }
-        KeyCode::Enter | KeyCode::Char('c') | KeyCode::Char('C') => {
+        KeyCode::Char('c') | KeyCode::Char('C') => {
             state.screen = Screen::Settings;
         }
-        // Straight to the summary: someone who accepted the suggestions and wants nothing
-        // else should not have to walk the full list to get out.
-        KeyCode::Char('y') | KeyCode::Char('Y') => state.screen = Screen::Summary,
+        // Straight to the summary: someone who took the suggestions and wants nothing
+        // else should not have to walk the full list to get out. Twice, because one
+        // Enter is what a person presses to dismiss a screen they have stopped reading,
+        // and this one leaves the rest of the settings unvisited.
+        KeyCode::Enter => {
+            if state.enter_armed {
+                state.enter_armed = false;
+                state.screen = Screen::Summary;
+            } else {
+                state.enter_armed = true;
+            }
+        }
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Outcome::Cancelled),
         _ => {}
     }
@@ -469,31 +641,39 @@ fn settings_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
         return number_edit_key(state, code);
     }
 
-    let len = state.session.rows.len();
-    let current = state.list.selected().unwrap_or(0);
+    let at = state.list.selected().unwrap_or(0);
+    let current = selected_row(state);
+    // `selected_row` falls forward to the first row when the cursor is not on one, so
+    // every arm that touches `current` has to know when the cursor is on the finish
+    // line instead — otherwise Space down there would silently flip the top of the list.
+    let on_finish = matches!(state.setting_entries.get(at), Some(SettingEntry::Finish));
     match code {
         KeyCode::Up | KeyCode::Char('k') => {
             state.error = None;
-            state
-                .list
-                .select(Some(if current == 0 { len - 1 } else { current - 1 }));
+            let to = step(&state.setting_entries, at, false);
+            state.list.select(Some(to));
         }
         KeyCode::Down | KeyCode::Char('j') => {
             state.error = None;
-            state
-                .list
-                .select(Some(if current + 1 >= len { 0 } else { current + 1 }));
+            let to = step(&state.setting_entries, at, true);
+            state.list.select(Some(to));
         }
-        KeyCode::Home | KeyCode::Char('g') => state.list.select(Some(0)),
-        KeyCode::End | KeyCode::Char('G') => state.list.select(Some(len - 1)),
-        KeyCode::Char(' ') | KeyCode::Enter => activate(state, current),
-        KeyCode::Char('r') | KeyCode::Char('R') => {
+        KeyCode::Home | KeyCode::Char('g') => state.list.select(first_row(&state.setting_entries)),
+        KeyCode::End | KeyCode::Char('G') => state.list.select(last_stop(&state.setting_entries)),
+        KeyCode::Enter if on_finish => {
+            state.error = None;
+            if state.enter_armed {
+                state.enter_armed = false;
+                state.screen = Screen::Summary;
+            } else {
+                state.enter_armed = true;
+            }
+        }
+        KeyCode::Char(' ') | KeyCode::Enter if !on_finish => activate(state, current),
+        KeyCode::Char('r') | KeyCode::Char('R') if !on_finish => {
             state.error = None;
             let row = &mut state.session.rows[current];
             row.value = row.original.clone();
-        }
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('s') | KeyCode::Char('S') => {
-            state.screen = Screen::Summary;
         }
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Outcome::Cancelled),
         _ => {}
@@ -512,6 +692,17 @@ fn activate(state: &mut State<'_>, index: usize) {
             } else {
                 "true".to_string()
             };
+        }
+        Control::Choice(options) => {
+            let row = &mut state.session.rows[index];
+            // A value the list does not contain lands on the first option rather than
+            // sticking: the row has to be able to leave a state the binary no longer
+            // supports, which is what a config written by a newer version looks like.
+            let next = options
+                .iter()
+                .position(|(value, _)| *value == row.value)
+                .map_or(0, |at| (at + 1) % options.len());
+            row.value = options[next].0.to_string();
         }
         Control::Number => state.editing = Some(state.session.rows[index].value.clone()),
         Control::Adapters | Control::AdapterDays | Control::CacheCaps => open_picker(state),
@@ -573,7 +764,7 @@ fn open_picker(state: &mut State<'_>) {
 }
 
 fn number_edit_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
-    let index = state.list.selected().unwrap_or(0);
+    let index = selected_row(state);
     match code {
         KeyCode::Char(c) if c.is_ascii_digit() => {
             if let Some(buf) = state.editing.as_mut() {
@@ -859,7 +1050,7 @@ fn commit_picker(state: &mut State<'_>) {
 
 fn summary_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
     match code {
-        KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('s') => {
+        KeyCode::Enter => {
             let changed: Vec<ConfigRow> = state
                 .session
                 .rows
@@ -959,21 +1150,48 @@ fn footer(keys: &[(&str, &str)]) -> Paragraph<'static> {
 }
 
 fn render_declaration(frame: &mut Frame, state: &mut State<'_>) {
-    let chunks = Layout::vertical([
-        Constraint::Length(3),
+    // The reason block is in the layout only when there is a reason to give, rather than
+    // always present and sometimes empty: an empty bordered box on the screen somebody
+    // meets this tool on reads as something having failed to load.
+    let notice = state.session.uninvited;
+    let mut constraints = vec![Constraint::Length(3)];
+    if notice.is_some() {
+        constraints.push(Constraint::Length(6));
+    }
+    constraints.extend([
         Constraint::Min(5),
-        Constraint::Length(3),
+        // Four rather than three: two borders and two lines. What is true right now, and
+        // what is true about the licence the whole screen is offered under.
+        Constraint::Length(4),
         Constraint::Length(2),
-    ])
-    .split(frame.area());
+    ]);
+    let chunks = Layout::vertical(constraints).split(frame.area());
+    let mut at = 0;
 
     frame.render_widget(
         header(
             state.session.title,
             "What this tool is allowed to do on this machine, before it does any of it.",
         ),
-        chunks[0],
+        chunks[at],
     );
+    at += 1;
+
+    if let Some(why) = notice {
+        frame.render_widget(
+            Paragraph::new(why)
+                .wrap(Wrap { trim: true })
+                .style(Style::default().fg(Color::Yellow))
+                .block(
+                    Block::default()
+                        .title(" Why this opened on its own ")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::Yellow)),
+                ),
+            chunks[at],
+        );
+        at += 1;
+    }
 
     let items: Vec<ListItem> = state
         .session
@@ -1010,27 +1228,33 @@ fn render_declaration(frame: &mut Frame, state: &mut State<'_>) {
                 .borders(Borders::ALL)
                 .border_style(dim()),
         ),
-        chunks[1],
+        chunks[at],
         &mut state.decl_list,
     );
+    at += 1;
 
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            format!("  {}", state.session.standing),
-            Style::default().fg(Color::Green),
-        )))
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                format!("  {}", state.session.standing),
+                Style::default().fg(Color::Green),
+            )),
+            // Dim, and under the green line rather than over it. The promise is the
+            // reason to keep reading; the licence is the terms that promise is made on,
+            // and putting the terms first is how a screen becomes one nobody finishes.
+            Line::from(Span::styled(
+                format!("  {}", crate::constants::LICENCE_NOTICE),
+                dim(),
+            )),
+        ])
         .block(Block::default().borders(Borders::ALL).border_style(dim())),
-        chunks[2],
+        chunks[at],
     );
+    at += 1;
 
     frame.render_widget(
-        footer(&[
-            ("↑↓", "read"),
-            ("y", "keep all defaults and go"),
-            ("Enter", "configure"),
-            ("q", "cancel"),
-        ]),
-        chunks[3],
+        footer(&[("↑↓", "read"), ("Enter", "configure"), ("q", "cancel")]),
+        chunks[at],
     );
 }
 
@@ -1066,8 +1290,8 @@ fn render_suggestions(frame: &mut Frame, state: &mut State<'_>) {
             // nobody arrows through an unfamiliar list to find out whether anything
             // appears elsewhere on screen. The panel below is the point of the screen.
             &format!(
-                "{} of {} accepted \u{2014} press \u{2191}\u{2193} to read what each one does \
-                 before deciding. Every one is off until you accept it.",
+                "{} of {} accepted \u{2014} press \u{2191}\u{2193} to read what each one does. \
+                 The safe ones start accepted; `r` turns every one of them back off.",
                 on,
                 state.session.suggestions.len()
             ),
@@ -1165,8 +1389,8 @@ fn render_suggestions(frame: &mut Frame, state: &mut State<'_>) {
             ("Space", "accept one"),
             ("a", "accept all suggested"),
             ("r", "undo"),
-            ("Enter", "all settings"),
-            ("y", "done"),
+            ("c", "all settings"),
+            ("Enter Enter", "review and finish"),
         ]),
         chunks[3],
     );
@@ -1176,7 +1400,9 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
     let chunks = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(5),
-        Constraint::Length(6),
+        // Seven rather than six: the pane gained the line that says what a fresh install
+        // would hold, and losing a list row to it is the cheaper of the two trades.
+        Constraint::Length(7),
         Constraint::Length(2),
     ])
     .split(frame.area());
@@ -1193,11 +1419,43 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
 
     let selected = state.list.selected();
     let items: Vec<ListItem> = state
-        .session
-        .rows
+        .setting_entries
         .iter()
         .enumerate()
-        .map(|(i, row)| {
+        .map(|(at, entry)| {
+            // Styled the way the declaration screen styles a `'#'` line and the checklist
+            // styles a group label: one program, one way of saying "heading".
+            let row = match entry {
+                SettingEntry::Heading(title) => {
+                    return ListItem::new(Line::from(Span::styled(
+                        format!(" {title}"),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                }
+                SettingEntry::Row(i) => &state.session.rows[*i],
+                SettingEntry::Finish => {
+                    return ListItem::new(Line::from(vec![
+                        Span::styled(
+                            " Finish — review the changes  ",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        if state.enter_armed {
+                            Span::styled(
+                                "Press Enter again for the summary",
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::BOLD),
+                            )
+                        } else {
+                            Span::styled("Press Enter twice when you are done", dim())
+                        },
+                    ]));
+                }
+            };
             let control = match row.control {
                 Control::Toggle if row.value == "true" => Span::styled(
                     "[x] ",
@@ -1206,14 +1464,25 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Control::Toggle => Span::styled("[ ] ", dim()),
+                Control::Choice(_) => Span::styled("(o) ", dim()),
                 Control::Number => Span::styled("123 ", dim()),
                 Control::Adapters | Control::AdapterDays | Control::CacheCaps => {
                     Span::styled("••• ", dim())
                 }
             };
 
-            let shown = if state.editing.is_some() && selected == Some(i) {
+            let shown = if state.editing.is_some() && selected == Some(at) {
                 format!("{}_", state.editing.clone().unwrap_or_default())
+            } else if let Control::Choice(options) = row.control {
+                // The stored value *and* what it means. `en` alone would make this row
+                // unreadable to the one person it exists for.
+                options
+                    .iter()
+                    .find(|(value, _)| *value == row.value)
+                    .map_or_else(
+                        || row.value.clone(),
+                        |(value, label)| format!("{value} {label}"),
+                    )
             } else {
                 row.value.clone()
             };
@@ -1222,7 +1491,7 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
                 control,
                 Span::styled(
                     crate::output::pad_display(row.key, 28),
-                    if selected == Some(i) {
+                    if selected == Some(at) {
                         Style::default().fg(Color::White)
                     } else {
                         Style::default()
@@ -1244,6 +1513,15 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
                         .fg(Color::Magenta)
                         .add_modifier(Modifier::BOLD),
                 ));
+            }
+            // Green for "already what is suggested", yellow for "suggested, and this is
+            // not it". Both are drawn, because a badge that disappears once taken tells
+            // you nothing about the row you are looking at — only about the row you are
+            // not.
+            match row.takes_advice() {
+                Some(true) => spans.push(Span::styled("REC ", Style::default().fg(Color::Green))),
+                Some(false) => spans.push(Span::styled("REC ", Style::default().fg(Color::Yellow))),
+                None => {}
             }
             if row.changed() {
                 spans.push(Span::styled(format!("was {}", row.original), dim()));
@@ -1267,10 +1545,58 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
         .highlight_symbol("▶ ");
     frame.render_stateful_widget(list, chunks[1], &mut state.list);
 
+    // The finish line has no row behind it, so it gets a pane of its own: what has
+    // changed so far, and the fact that none of it has been written.
+    if matches!(
+        state
+            .setting_entries
+            .get(state.list.selected().unwrap_or(0)),
+        Some(SettingEntry::Finish)
+    ) {
+        let mut detail = vec![
+            Line::from(Span::styled(
+                "  Two presses of Enter open a summary of every change. \
+                 Nothing has been written yet.",
+                Style::default(),
+            )),
+            Line::from(vec![
+                Span::styled("  Changed so far  ", dim()),
+                Span::styled(
+                    match changed {
+                        0 => "nothing".to_string(),
+                        1 => "1 setting".to_string(),
+                        n => format!("{n} settings"),
+                    },
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+        ];
+        if state.enter_armed {
+            detail.push(Line::from(Span::styled(
+                "  Press Enter again for the summary.",
+                Style::default().fg(Color::Green),
+            )));
+        }
+        frame.render_widget(
+            Paragraph::new(detail)
+                .wrap(Wrap { trim: true })
+                .block(Block::default().borders(Borders::ALL).border_style(dim())),
+            chunks[2],
+        );
+        frame.render_widget(
+            footer(&[
+                ("↑↓", "move"),
+                ("Enter Enter", "review and finish"),
+                ("q", "cancel"),
+            ]),
+            chunks[3],
+        );
+        return;
+    }
+
     // The help for the highlighted row, and any refusal, in the same place: a message
     // about a field belongs next to the field.
-    let index = selected.unwrap_or(0);
-    let row = &state.session.rows[index];
+    let row = &state.session.rows[selected_row(state)];
     let mut detail = vec![
         Line::from(Span::styled(format!("  {}", row.help), Style::default())),
         Line::from(vec![
@@ -1278,6 +1604,32 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
             Span::styled(row.plain.to_string(), Style::default().fg(Color::Cyan)),
         ]),
     ];
+    // The two questions a row cannot answer about itself: what it would be if nobody had
+    // ever touched it, and what it is suggested to be. Neither is what it currently is,
+    // which is the only one the list column shows.
+    let mut facts = vec![
+        Span::styled("  Default  ", dim()),
+        Span::styled(
+            crate::output::pad_display(&row.default, 12),
+            Style::default(),
+        ),
+    ];
+    if let Some(rec) = row.recommended {
+        facts.push(Span::styled("Recommended  ", dim()));
+        facts.push(Span::styled(
+            crate::output::pad_display(rec, 12),
+            Style::default().fg(Color::Green),
+        ));
+        facts.push(Span::styled(
+            if row.takes_advice() == Some(true) {
+                "— already set"
+            } else {
+                "— suggested, not required; everything works without it"
+            },
+            dim(),
+        ));
+    }
+    detail.push(Line::from(facts));
     if row.is_new {
         detail.push(Line::from(Span::styled(
             "  New in this version — it has been applying its default since the upgrade.",
@@ -1304,7 +1656,7 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
             ("↑↓", "move"),
             ("Space", "change"),
             ("r", "reset"),
-            ("y", "done"),
+            ("End", "finish"),
             ("q", "cancel"),
         ]
     };
@@ -1597,13 +1949,26 @@ mod tests {
     use super::*;
 
     fn row(key: &'static str, control: Control, value: &str) -> ConfigRow {
+        categorised_row(key, "Settings", control, value)
+    }
+
+    /// A row in a named group, for the tests that are about the grouping itself.
+    fn categorised_row(
+        key: &'static str,
+        category: &'static str,
+        control: Control,
+        value: &str,
+    ) -> ConfigRow {
         ConfigRow {
             key,
+            category,
             help: "help",
             plain: "plain",
             control,
             value: value.to_string(),
             original: value.to_string(),
+            default: value.to_string(),
+            recommended: None,
             is_new: false,
         }
     }
@@ -1632,12 +1997,16 @@ mod tests {
                     .map_err(|_| "not a number".to_string())
             },
             title: "test",
+            uninvited: None,
         }
     }
 
     fn state<'a>(s: ConfigSession<'a>) -> State<'a> {
+        let setting_entries = settings_entries(&s.rows);
         let mut list = ListState::default();
-        list.select(Some(0));
+        // The first row, not entry 0 — entry 0 is a heading, which is the one
+        // place the cursor is never allowed to be.
+        list.select(first_row(&setting_entries));
         let mut picker_list = ListState::default();
         picker_list.select(Some(0));
         State {
@@ -1645,6 +2014,7 @@ mod tests {
             picker_days: vec![None; s.adapters.len()],
             picker_caps: vec![None; s.adapters.len()],
             picker_entries: build_entries(s.adapters, s.groups),
+            setting_entries,
             picker_editing: None,
             picker_field: PickerField::Days,
             session: s,
@@ -1655,6 +2025,7 @@ mod tests {
             picker_list,
             decl_list: ListState::default(),
             sugg_list: ListState::default(),
+            enter_armed: false,
         }
     }
 
@@ -1714,15 +2085,59 @@ mod tests {
     }
 
     #[test]
-    fn y_on_the_declaration_still_means_yes_to_everything() {
-        // The prompt this replaced was `Keep all of these? [Y/n]`. Anyone who has typed
-        // `y` at it once will type `y` at this, and must get the same result.
+    fn the_declaration_no_longer_leaves_on_y() {
+        // `y` used to mean "keep everything and go", and it was the one exit that never
+        // showed what was about to be written. Rebinding it to something else would be
+        // worse than dropping it: the habit would then do a different thing silently.
         let mut st = state(session(vec![row("idle_days", Control::Number, "14")], &[]));
         st.screen = Screen::Declaration;
-        assert!(matches!(
-            handle_key(&mut st, KeyCode::Char('y')),
-            Some(Outcome::KeepAll)
+        assert!(handle_key(&mut st, KeyCode::Char('y')).is_none());
+        assert_eq!(st.screen, Screen::Declaration);
+    }
+
+    #[test]
+    fn finishing_takes_two_presses_of_enter() {
+        // One Enter is what people press to dismiss a screen they have stopped reading.
+        // Two is a decision, and the second one opens the summary rather than saving.
+        let mut st = state(session(
+            vec![row("auto_update", Control::Toggle, "false")],
+            &[],
         ));
+        handle_key(&mut st, KeyCode::End);
+        assert!(handle_key(&mut st, KeyCode::Enter).is_none());
+        assert_eq!(st.screen, Screen::Settings, "one press must not leave");
+        assert!(st.enter_armed);
+        assert!(handle_key(&mut st, KeyCode::Enter).is_none());
+        assert_eq!(st.screen, Screen::Summary);
+
+        // And the two have to be consecutive.
+        st.screen = Screen::Settings;
+        handle_key(&mut st, KeyCode::End);
+        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Up);
+        handle_key(&mut st, KeyCode::End);
+        handle_key(&mut st, KeyCode::Enter);
+        assert_eq!(
+            st.screen,
+            Screen::Settings,
+            "a keypress in between must disarm the first Enter"
+        );
+    }
+
+    #[test]
+    fn the_finish_line_is_not_a_setting() {
+        // It shares the list with the rows, and `selected_row` answers with the first
+        // row when the cursor is not on one. Space there must do nothing at all rather
+        // than reach past the cursor and flip the top of the list.
+        let mut st = state(session(
+            vec![row("auto_update", Control::Toggle, "false")],
+            &[],
+        ));
+        handle_key(&mut st, KeyCode::End);
+        handle_key(&mut st, KeyCode::Char(' '));
+        handle_key(&mut st, KeyCode::Char('r'));
+        assert_eq!(st.session.rows[0].value, "false");
+        assert!(!st.session.rows[0].changed());
     }
 
     #[test]
@@ -2028,7 +2443,9 @@ mod tests {
             &[],
         ));
         handle_key(&mut st, KeyCode::Char(' ')); // flip the first
-        handle_key(&mut st, KeyCode::Char('y')); // to the summary
+        handle_key(&mut st, KeyCode::End); // onto the finish line
+        handle_key(&mut st, KeyCode::Enter); // arm
+        handle_key(&mut st, KeyCode::Enter); // to the summary
         let Some(Outcome::Save(changed)) = handle_key(&mut st, KeyCode::Enter) else {
             panic!("expected a save");
         };
@@ -2056,17 +2473,62 @@ mod tests {
     #[test]
     fn the_view_opens_on_the_first_setting_the_user_has_never_seen() {
         let mut rows = [
-            row("idle_days", Control::Number, "14"),
-            row("auto_update", Control::Toggle, "false"),
-            row("auto_config", Control::Toggle, "false"),
+            categorised_row("idle_days", "Scope", Control::Number, "14"),
+            categorised_row("auto_update", "Updates", Control::Toggle, "false"),
+            categorised_row("auto_config", "Updates", Control::Toggle, "false"),
         ];
+        let entries = settings_entries(&rows);
+        // Heading, idle_days, heading, auto_update, auto_config, finish.
+        assert_eq!(entries.len(), 6);
         assert_eq!(
-            opening_index(&rows),
-            0,
-            "with nothing new, start at the top"
+            opening_index(&entries, &rows),
+            1,
+            "with nothing new, start at the first row — never on a heading"
         );
         rows[2].is_new = true;
-        assert_eq!(opening_index(&rows), 2);
+        assert_eq!(
+            opening_index(&entries, &rows),
+            4,
+            "an index into the drawn list, not into the rows"
+        );
+    }
+
+    #[test]
+    fn the_cursor_never_lands_on_a_heading() {
+        let rows = vec![
+            categorised_row("idle_days", "Scope", Control::Number, "14"),
+            categorised_row("auto_update", "Updates", Control::Toggle, "false"),
+        ];
+        let entries = settings_entries(&rows);
+        assert_eq!(entries.len(), 5, "two rows, two headings, one finish line");
+
+        // Every stop, in both directions and all the way round, is a row.
+        for forward in [true, false] {
+            let mut at = first_row(&entries).expect("a row");
+            for _ in 0..entries.len() * 2 {
+                at = step(&entries, at, forward);
+                assert!(
+                    matches!(entries[at], SettingEntry::Row(_) | SettingEntry::Finish),
+                    "stopped on entry {at}, which is a heading"
+                );
+            }
+        }
+
+        // And it wraps between the ends rather than sticking on the last heading.
+        let last = last_stop(&entries).expect("a stop");
+        assert_eq!(step(&entries, last, true), first_row(&entries).unwrap());
+        assert_eq!(step(&entries, first_row(&entries).unwrap(), false), last);
+    }
+
+    #[test]
+    fn a_run_of_one_category_gets_one_heading() {
+        let rows = vec![
+            categorised_row("a", "Scope", Control::Toggle, "false"),
+            categorised_row("b", "Scope", Control::Toggle, "false"),
+            categorised_row("c", "Scope", Control::Toggle, "false"),
+        ];
+        // Three rows, one heading, one finish line.
+        assert_eq!(settings_entries(&rows).len(), 5);
     }
 
     fn suggestion(key: &'static str, cautious: bool) -> Suggestion {
@@ -2079,6 +2541,71 @@ mod tests {
             value: "true",
             cautious,
         }
+    }
+
+    #[test]
+    fn the_safe_tier_arrives_accepted_and_the_cautious_one_does_not() {
+        // The setting that reads best on this screen is the one nobody has to press a
+        // key for. The setting that reads worst is the one that edits a tracked file
+        // and was accepted by a screen the user had not finished reading.
+        let adapters: &[&str] = &["npm"];
+        let mut s = session(
+            vec![
+                row("enable_cargo", Control::Toggle, "false"),
+                row("allow_manifest_rewrite", Control::Toggle, "false"),
+            ],
+            adapters,
+        );
+        s.suggestions = vec![
+            suggestion("enable_cargo", false),
+            suggestion("allow_manifest_rewrite", true),
+        ];
+        let mut st = state(s);
+        preaccept_recommended(&mut st);
+
+        assert_eq!(
+            row_value(&st.session.rows, "enable_cargo").as_deref(),
+            Some("true"),
+            "the safe tier should already be on"
+        );
+        assert_eq!(
+            row_value(&st.session.rows, "allow_manifest_rewrite").as_deref(),
+            Some("false"),
+            "the cautious tier must still be a deliberate choice"
+        );
+
+        // And `r` still means what the footer says it means: one keystroke back to
+        // exactly what the machine held before this screen opened.
+        st.screen = Screen::Suggestions;
+        st.sugg_list.select(Some(0));
+        assert!(suggestions_key(&mut st, KeyCode::Char('r')).is_none());
+        assert_eq!(
+            row_value(&st.session.rows, "enable_cargo").as_deref(),
+            Some("false")
+        );
+    }
+
+    #[test]
+    fn a_recommended_row_says_so_and_names_the_fresh_default() {
+        let adapters: &[&str] = &["npm"];
+        let mut rows = vec![row("enable_cargo", Control::Toggle, "false")];
+        rows[0].recommended = Some("true");
+        let mut st = state(session(rows, adapters));
+
+        let shot = screenshot(&mut st, Screen::Settings);
+        assert!(
+            shot.contains("REC"),
+            "the badge is the only thing on the row \
+                                       that says a recommendation exists"
+        );
+        assert!(
+            shot.contains("Default"),
+            "a value nobody chose is unreadable without the one they would have got"
+        );
+        // Worded as advice. A configurator that says "required" about a setting the
+        // tool runs perfectly well without has spent the word it needs for the ones
+        // that are.
+        assert!(shot.contains("not required"));
     }
 
     #[test]

@@ -44,6 +44,15 @@ expect scripts/install.sh "FALLBACK_VERSION=\"$version\""
 expect scripts/install.ps1 "\$fallbackVersion = '$version'"
 expect site/src/App.jsx "const VERSION = \"$version\";"
 expect site/public/llms.txt "Version $version."
+# The AI skill states which release it describes so an agent can compare it against
+# `devp --version` and re-copy itself when the two disagree. A stale stamp defeats the
+# whole check: the agent would confirm a match against the wrong number.
+expect .agents/skills/dev-prune/SKILL.md "**Skill version: $version.**"
+# The Claude Code plugin manifest. Nothing in this repository reads it -- it is read by
+# other people's Claude Code installs, which cache the plugin under a directory named
+# after this field. A stale one means an install that already has 1.10.0 believes it is
+# current forever, because the cache key never changes.
+expect .claude-plugin/plugin.json "\"version\": \"$version\","
 # The site's JSON-LD carries the version too, and nothing renders it: a stale one is
 # invisible to every reader and served to every crawler. It was found two releases
 # behind, which is how it got here.

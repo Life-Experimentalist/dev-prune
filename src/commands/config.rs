@@ -10,6 +10,7 @@ use anyhow::{Result, bail};
 use std::path::Path;
 
 use crate::config::{PerRepoConfig, Registry, Settings};
+use crate::i18n;
 use crate::output;
 
 /// One tunable in the global config: how to read it, how to write it, and what to say
@@ -21,6 +22,12 @@ use crate::output;
 /// line in `config show`.
 struct Setting {
     key: &'static str,
+    /// Which group of the configurator this setting is asked about under.
+    ///
+    /// Display order is derived from this rather than from the order of the literal
+    /// below, so a new setting is filed by what it does instead of by where there
+    /// happened to be room for it.
+    category: Category,
     /// The release this key first appeared in.
     ///
     /// Not decoration: the first-run marker records the version it was written at, so
@@ -45,6 +52,84 @@ struct Setting {
     set: fn(&mut Settings, &str) -> Result<()>,
 }
 
+/// Which part of the configurator a setting belongs to.
+///
+/// Thirty keys in one column is a list nobody reads to the end of. The order of
+/// [`CATEGORIES`] is the order the groups are drawn in, and it is the order the
+/// decisions actually arrive in: first the language the rest of the screen is printed
+/// in, then what is in scope, what has to be proved before a delete, the build trees
+/// that stay off until they are asked for, the shared caches nothing deletes on its
+/// own, and only then the two groups about dev-prune running itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Category {
+    /// The language dev-prune's own headings and summaries are printed in.
+    ///
+    /// First because every heading under it is printed in whatever this says, which
+    /// makes it the one answer that changes how the rest of the screen reads.
+    Presentation,
+    /// Which repositories, and which directories inside them, are eligible at all.
+    Scope,
+    /// What has to hold before anything is deleted, and what verification may do.
+    Safety,
+    /// The opt-in adapters, whose directories come back by recompiling rather than
+    /// by downloading.
+    BuildTrees,
+    /// Machine-wide download caches: reported on, never deleted unasked.
+    Caches,
+    /// What happens when nobody typed anything.
+    Unattended,
+    /// Keeping this copy of dev-prune current.
+    Updates,
+}
+
+impl Category {
+    /// The heading drawn above the group, in `devp config show` and in the
+    /// configurator. Written as the question the group answers, not as a noun: a
+    /// heading that says "Caches" tells you nothing you could not read off the keys.
+    ///
+    /// The English wording lives in `src/i18n/locales/en.json` with the rest of the
+    /// chrome, so translating a heading never means touching Rust.
+    fn title(self) -> &'static str {
+        match self {
+            Category::Presentation => i18n::t("config.category.presentation"),
+            Category::Scope => i18n::t("config.category.scope"),
+            Category::Safety => i18n::t("config.category.safety"),
+            Category::BuildTrees => i18n::t("config.category.build_trees"),
+            Category::Caches => i18n::t("config.category.caches"),
+            Category::Unattended => i18n::t("config.category.unattended"),
+            Category::Updates => i18n::t("config.category.updates"),
+        }
+    }
+}
+
+/// The groups in the order they are drawn.
+const CATEGORIES: &[Category] = &[
+    Category::Presentation,
+    Category::Scope,
+    Category::Safety,
+    Category::BuildTrees,
+    Category::Caches,
+    Category::Unattended,
+    Category::Updates,
+];
+
+/// Every setting, grouped, in display order.
+///
+/// The single place that decides what order settings are shown in, so `config show`
+/// and the configurator cannot drift into two different orders. Within a group the
+/// order of [`SETTINGS`] is kept.
+fn settings_by_category() -> Vec<(Category, Vec<&'static Setting>)> {
+    CATEGORIES
+        .iter()
+        .map(|&category| {
+            (
+                category,
+                SETTINGS.iter().filter(|s| s.category == category).collect(),
+            )
+        })
+        .collect()
+}
+
 /// How a setting should be *asked* about, as opposed to how it is stored.
 ///
 /// Every value round-trips through `get`/`set` as a string either way — this only
@@ -64,6 +149,11 @@ enum Kind {
     /// which ecosystems run, how long each waits, and how big each one's cache may get
     /// are one table, not three screens.
     CacheCaps,
+    /// One of a fixed set of values, cycled in place.
+    ///
+    /// Which values is supplied when the row is built rather than stored here: the only
+    /// thing that knows what the options are is the module that owns them.
+    Choice,
     /// Adapter names with a number each, as `cargo=60,npm=30`.
     ///
     /// Edited on the same screen as [`Kind::Adapters`] rather than in a field of its
@@ -90,6 +180,18 @@ struct Recommendation {
     /// The second tier: recommended, with one specific thing to understand first.
     cautious: bool,
 }
+
+/// The safe tier, by the name every command that prints it uses.
+///
+/// Named once, here, because the configurator, `devp config show` and
+/// `devp config recommended` all print these two lists — and a tier that is called
+/// something different in each of the three is three lists as far as the reader is
+/// concerned.
+const SAFE_TIER: &str = "Recommended";
+
+/// The second tier: still recommended, still not risky, but with one specific
+/// consequence to understand before accepting it.
+const CAUTIOUS_TIER: &str = "Recommended, with one thing to know first";
 
 /// What the first run suggests turning on.
 ///
@@ -182,7 +284,28 @@ const RECOMMENDED: &[Recommendation] = &[
 /// Every global setting, in the order a person would want to be asked about them.
 const SETTINGS: &[Setting] = &[
     Setting {
+        key: "language",
+        category: Category::Presentation,
+        since: "1.10.0",
+        kind: Kind::Choice,
+        help: "Language for dev-prune's own headings and summary lines. `--json`, exit codes, flag names and config keys stay English in every language.",
+        plain: "What language dev-prune talks to you in. Only its own headings change — the words you type and anything a script reads stay in English, so nothing breaks. Everything but English is a community translation, and some have not been proofread yet.",
+        get: |s| s.language.clone(),
+        set: |s, v| {
+            let code = v.trim();
+            let Some(meta) = i18n::language(code) else {
+                bail!(
+                    "unknown language `{code}` — available: {}",
+                    i18n::catalogue_line()
+                );
+            };
+            s.language = meta.code.clone();
+            Ok(())
+        },
+    },
+    Setting {
         key: "idle_days",
+        category: Category::Scope,
         since: "1.0.0",
         kind: Kind::Number,
         help: "Days a repository must sit untouched before it is eligible for pruning.",
@@ -197,6 +320,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "min_size_mb",
+        category: Category::Scope,
         since: "1.0.0",
         kind: Kind::Number,
         help: "Smallest bloat directory worth deleting, in MiB. 0 removes the floor.",
@@ -211,6 +335,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "scan_depth",
+        category: Category::Scope,
         since: "1.0.0",
         kind: Kind::Number,
         help: "How many directory levels below a repo root project discovery descends.",
@@ -238,6 +363,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "require_confirmation",
+        category: Category::Safety,
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Ask before deleting anything. Turning this off makes every run unattended.",
@@ -250,6 +376,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "allow_manifest_rewrite",
+        category: Category::Safety,
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Let cargo and go run the sync command that rewrites tracked manifests.",
@@ -262,10 +389,11 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "command_timeout_secs",
+        category: Category::Safety,
         since: "1.0.0",
         kind: Kind::Number,
-        help: "How long a lockfile command may run before it is killed.",
-        plain: "How long to wait for a rebuild command before giving up on it. Raise it on a slow connection.",
+        help: "How long one package-manager command may run before it is killed — the lockfile check and `devp restore`, never a recompile.",
+        plain: "How long to wait for a package manager to answer before giving up on it: the lockfile check before a delete, and the reinstall `devp restore` runs. Nothing is compiled under it — the opt-in build adapters run no command at all during a prune — except a restore whose install builds a native module. Raise it on a slow connection.",
         get: |s| s.command_timeout_secs.to_string(),
         set: |s, v| {
             let secs: u64 = v
@@ -286,6 +414,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_setup",
+        category: Category::Unattended,
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Install missing integrations by itself, once per installed version.",
@@ -298,6 +427,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_config",
+        category: Category::Unattended,
         since: "1.3.0",
         kind: Kind::Toggle,
         help: "Write a default .devprune.json into repositories that link/init register.",
@@ -310,6 +440,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_daemon",
+        category: Category::Unattended,
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Register the OS scheduler so passes run without being remembered.",
@@ -322,6 +453,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "check_interval_days",
+        category: Category::Unattended,
         since: "1.0.0",
         kind: Kind::Number,
         help: "Days between scheduled background passes.",
@@ -341,6 +473,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_hooks",
+        category: Category::Unattended,
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Install the Git hooks that register repositories as you clone them.",
@@ -353,10 +486,11 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_hooks_chain",
+        category: Category::Unattended,
         since: "1.0.0",
         kind: Kind::Toggle,
-        help: "If another tool owns core.hooksPath, install in front of it and forward.",
-        plain: "Git only has one slot for this kind of automation. If something else — husky, pre-commit, lefthook — is already using it, share the slot instead of taking it over.",
+        help: "If another tool owns core.hooksPath, install in front of it and forward. Off by default: that slot is machine-wide and already someone else's.",
+        plain: "Git only has one slot for this kind of automation. If something else — husky, pre-commit, lefthook — is already using it, share the slot instead of taking it over. Off by default because the slot is global to your machine and dev-prune would be taking over another tool's setup to use it. `devp doctor` names the command when it finds one of those tools holding it.",
         get: |s| s.auto_hooks_chain.to_string(),
         set: |s, v| {
             s.auto_hooks_chain = parse_bool("auto_hooks_chain", v)?;
@@ -365,6 +499,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "update_check",
+        category: Category::Updates,
         since: "1.0.0",
         kind: Kind::Toggle,
         help: "Ask GitHub for the latest release from time to time. Sends nothing but the request.",
@@ -377,6 +512,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "update_check_interval_days",
+        category: Category::Updates,
         since: "1.0.0",
         kind: Kind::Number,
         help: "Days between automatic release checks.",
@@ -395,6 +531,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "update_check_timeout_secs",
+        category: Category::Updates,
         since: "1.0.0",
         kind: Kind::Number,
         help: "Seconds the release check waits for GitHub. Raise it behind a slow proxy.",
@@ -413,10 +550,11 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_cargo",
+        category: Category::BuildTrees,
         since: "1.5.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in Cargo adapter (target/ comes back by recompiling, not downloading).",
-        plain: "Clean Rust build folders too. These come back by recompiling, which takes minutes rather than a download — so this is off unless you say otherwise.",
+        plain: "Clean Rust build folders too. These come back by recompiling, which takes minutes rather than a download — so it is off by default.",
         get: |s| s.enable_cargo.to_string(),
         set: |s, v| {
             s.enable_cargo = parse_bool("enable_cargo", v)?;
@@ -425,6 +563,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_gradle",
+        category: Category::BuildTrees,
         since: "1.3.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in Gradle adapter (build/ and .gradle/ come back by recompiling).",
@@ -437,6 +576,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_maven",
+        category: Category::BuildTrees,
         since: "1.3.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in Maven adapter (target/ comes back by recompiling).",
@@ -449,6 +589,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_swift",
+        category: Category::BuildTrees,
         since: "1.4.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in SwiftPM adapter (.build/ comes back by recompiling).",
@@ -461,6 +602,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_dart",
+        category: Category::BuildTrees,
         since: "1.6.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in Dart/Flutter adapter (.dart_tool/ holds build caches).",
@@ -473,10 +615,11 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_mix_build",
+        category: Category::BuildTrees,
         since: "1.7.0",
         kind: Kind::Toggle,
-        help: "Turn on the opt-in Mix build-tree adapter (_build/ comes back by recompiling).",
-        plain: "Clean Elixir _build/ folders too. They come back by recompiling.",
+        help: "Turn on the opt-in Elixir Mix build-tree adapter (_build/ comes back by recompiling).",
+        plain: "Elixir projects only. Mix is Elixir's build tool, and it compiles your project and every dependency into `_build/` — this cleans that folder. The downloaded `deps/` folder beside it belongs to a different adapter that is already on. Off by default, because `_build/` comes back by recompiling rather than by downloading.",
         get: |s| s.enable_mix_build.to_string(),
         set: |s, v| {
             s.enable_mix_build = parse_bool("enable_mix_build", v)?;
@@ -485,6 +628,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_vcpkg",
+        category: Category::BuildTrees,
         since: "1.8.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in vcpkg adapter (vcpkg_installed/ comes back by recompiling).",
@@ -497,6 +641,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "enable_cmake_build",
+        category: Category::BuildTrees,
         since: "1.8.0",
         kind: Kind::Toggle,
         help: "Turn on the opt-in CMake adapter (build trees proven by their CMakeCache.txt).",
@@ -510,6 +655,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "build_idle_days",
+        category: Category::BuildTrees,
         since: "1.3.0",
         kind: Kind::Number,
         help: "Idle days before the opt-in adapters' build trees are pruned. Applied as max(this, idle_days).",
@@ -525,6 +671,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "auto_update",
+        category: Category::Updates,
         since: "1.3.0",
         kind: Kind::Toggle,
         help: "Install a newer release by itself at the end of a prune pass. On by default.",
@@ -537,6 +684,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "version_lock",
+        category: Category::Updates,
         since: "1.8.0",
         kind: Kind::Toggle,
         help: "Pin this copy to the version it is. Overrides auto_update, `devp update \
@@ -552,6 +700,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "disabled_adapters",
+        category: Category::Scope,
         since: "1.4.0",
         kind: Kind::Adapters,
         help: "Adapters to leave alone entirely, by name. Empty means every one of them is active.",
@@ -570,6 +719,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "adapter_idle_days",
+        category: Category::Scope,
         since: "1.5.0",
         kind: Kind::AdapterDays,
         help: "Per-adapter idle windows, as `cargo=60,npm=30`. Each one can only raise its own wait.",
@@ -592,6 +742,7 @@ const SETTINGS: &[Setting] = &[
     },
     Setting {
         key: "cache_max_gb",
+        category: Category::Caches,
         since: "1.8.0",
         kind: Kind::CacheCaps,
         help: "Per-manager cache size caps in GiB, as `npm=10,uv=10`. Reported by `devp caches`; cleared only by `devp caches clear --over-cap`.",
@@ -855,6 +1006,19 @@ pub fn run_set(key: &str, value: &str) -> Result<()> {
     // The stored value, not the typed one: `devp config set auto_daemon yes` stores
     // `true`, and echoing "auto_daemon = yes" would describe a file that does not exist.
     output::print_success(&format!("{key} = {}", (setting.get)(&registry.settings)));
+
+    // The one value that carries a caveat. A catalogue nobody has proofread is still
+    // worth shipping — it is how the first speaker of that language finds the mistakes
+    // — but they should hear it here rather than infer it from a wrong heading.
+    if key == "language"
+        && let Some(meta) = i18n::language(&registry.settings.language)
+        && !meta.reviewed
+    {
+        output::print_info(&format!(
+            "No native speaker has reviewed the {} translation yet. Corrections are welcome — see docs/TRANSLATIONS.md.",
+            meta.english_name
+        ));
+    }
     Ok(())
 }
 
@@ -869,24 +1033,78 @@ pub fn run_show() -> Result<()> {
     let width = key_column_width();
 
     output::print_header("dev-prune Global Configuration");
-    for setting in SETTINGS {
-        println!(
-            "  {:<width$} = {}",
-            setting.key,
-            (setting.get)(&registry.settings)
-        );
+    for (category, settings) in settings_by_category() {
+        output::print_section(category.title());
+        for setting in settings {
+            println!(
+                "    {:<width$} = {}",
+                setting.key,
+                (setting.get)(&registry.settings)
+            );
+        }
     }
-    println!("  {:<width$} = {}", "tracked_repos", registry.repo_count());
 
+    // Not settings, and so not in a group with any: one is a count and the other is a
+    // path, and neither is something `devp config set` will take.
+    output::print_section("This machine");
+    println!(
+        "    {:<width$} = {}",
+        "tracked_repos",
+        registry.repo_count()
+    );
     let reg_path = Registry::registry_path()
         .map(|p| output::clean_path(&p))
         .unwrap_or_else(|_| "unknown".to_string());
-    println!("\n  {:<width$} = {reg_path}", "registry_file");
+    println!("    {:<width$} = {reg_path}", "registry_file");
+
+    // Until 1.10.0 the recommendations existed only on the first-run screen, so a
+    // machine that had already been through it had no way left to find out that a
+    // recommendation existed at all — let alone that one of them carries a caveat.
+    print_recommendation_summary(&registry.settings);
+
     println!();
     output::print_info("Change any of these with `devp config set <key> <value>`.");
     output::print_info("Walk through them one at a time with `devp config wizard`.");
 
     Ok(())
+}
+
+/// Whether anybody asked for the configurator, or it opened on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Opened {
+    /// `devp config wizard`, typed on purpose.
+    ByRequest,
+    /// The first run after an install, or the first after an upgrade added a setting —
+    /// the two times this takes a terminal in the middle of a command that asked for
+    /// something else.
+    OnItsOwn,
+}
+
+/// What to tell someone who did not ask to be here, or `None` when they did ask.
+///
+/// Two different situations and so two different sentences: a fresh install has never
+/// seen any of this, while an upgrade has added a handful of keys to a list somebody
+/// already went through. Both close on the same promise, which is the one the reader
+/// actually wants — the command they typed is still going to run.
+fn why_this_opened(opened: Opened) -> Option<String> {
+    if opened == Opened::ByRequest {
+        return None;
+    }
+    let new = settings_added_since_review().len();
+    Some(if reviewed_version().is_none() || new == 0 {
+        "You did not ask for this screen. dev-prune opens it once, on the first command \
+         after it is installed, so that you see what its defaults do before they start \
+         doing it. Whatever you typed runs as soon as you leave. It will not open by \
+         itself again unless an upgrade adds a setting."
+            .to_string()
+    } else {
+        format!(
+            "You did not ask for this screen. This upgrade added {new} {}, and dev-prune \
+             shows a new one once before its default goes on applying. Nothing else about \
+             your configuration changed. Whatever you typed runs as soon as you leave.",
+            output::plural(new, "setting", "settings"),
+        )
+    })
 }
 
 /// Put every global setting in front of the user, and let them change any of it.
@@ -899,11 +1117,11 @@ pub fn run_show() -> Result<()> {
 /// Two implementations, one meaning. [`run_wizard_tui`] is the full-screen one; the
 /// line-by-line [`run_wizard_prompts`] runs wherever that cannot, which is less a
 /// degraded mode than the only honest option on a pipe.
-pub fn run_wizard(no_tui: bool) -> Result<()> {
+pub fn run_wizard(no_tui: bool, opened: Opened) -> Result<()> {
     if !no_tui && full_screen_is_usable() {
-        return run_wizard_tui();
+        return run_wizard_tui(opened);
     }
-    run_wizard_prompts()
+    run_wizard_prompts(opened)
 }
 
 /// Whether a full-screen view can be opened, and should be.
@@ -922,28 +1140,41 @@ fn full_screen_is_usable() -> bool {
 }
 
 /// The full-screen configurator: declaration, then every setting, then the summary.
-fn run_wizard_tui() -> Result<()> {
+fn run_wizard_tui(opened: Opened) -> Result<()> {
     use crate::tui::config_view::{ConfigRow, ConfigSession, Control, Outcome};
 
     let mut registry = Registry::load()?;
     let new_keys = settings_added_since_review();
+    // What a machine that had never run this would hold, read through the same getters
+    // rather than restated. A second spelling of every default is a second spelling free
+    // to drift from `Settings::default()`, and this one is shown as fact.
+    let fresh = Settings::default();
 
-    let rows: Vec<ConfigRow> = SETTINGS
-        .iter()
-        .map(|setting| {
+    // Grouped, not in the order of the table — the view draws a heading wherever the
+    // category changes, so the order rows arrive in is the order they are read in.
+    let rows: Vec<ConfigRow> = settings_by_category()
+        .into_iter()
+        .flat_map(|(category, settings)| {
+            settings.into_iter().map(move |setting| (category, setting))
+        })
+        .map(|(category, setting)| {
             let value = (setting.get)(&registry.settings);
             ConfigRow {
                 key: setting.key,
+                category: category.title(),
                 help: setting.help,
                 plain: setting.plain,
                 control: match setting.kind {
                     Kind::Toggle => Control::Toggle,
+                    Kind::Choice => Control::Choice(i18n::choices()),
                     Kind::Number => Control::Number,
                     Kind::Adapters => Control::Adapters,
                     Kind::AdapterDays => Control::AdapterDays,
                     Kind::CacheCaps => Control::CacheCaps,
                 },
                 original: value.clone(),
+                default: (setting.get)(&fresh),
+                recommended: recommended_value(setting.key),
                 value,
                 is_new: new_keys.contains(&setting.key),
             }
@@ -970,6 +1201,7 @@ fn run_wizard_tui() -> Result<()> {
         .filter(|name| crate::commands::caches::is_cache_manager(name))
         .collect();
 
+    let why = why_this_opened(opened);
     let outcome = crate::tui::config_view::run(ConfigSession {
         declaration: declaration_lines(&report),
         standing: NOTHING_DELETED_YET.to_string(),
@@ -981,6 +1213,7 @@ fn run_wizard_tui() -> Result<()> {
         groups: crate::adapters::ADAPTER_GROUPS,
         validate: &validate,
         title: "dev-prune configuration",
+        uninvited: why.as_deref(),
     })?;
 
     match outcome {
@@ -1037,6 +1270,154 @@ fn run_wizard_tui() -> Result<()> {
 /// The descriptions are read off the settings table rather than written again here.
 /// Two copies of "what does `enable_cargo` do" is one copy free to drift, and the copy
 /// on this screen is the one a brand-new user reads first.
+/// The value [`RECOMMENDED`] suggests for a key, if it suggests one.
+///
+/// Unlike [`first_run_suggestions`] this answers on every run, not only the first. The
+/// suggestions screen is shown once; the settings list is where somebody goes back to a
+/// year later, and "what did the author think this should be" is a question that does
+/// not expire with the screen that first asked it.
+fn recommended_value(key: &str) -> Option<&'static str> {
+    recommendation(key).map(|r| r.value)
+}
+
+/// The recommendation covering a setting, when one does.
+fn recommendation(key: &str) -> Option<&'static Recommendation> {
+    RECOMMENDED.iter().find(|r| r.key == key)
+}
+
+/// Which recommendations a machine has not taken yet, in table order.
+fn outstanding(settings: &Settings) -> Vec<&'static Recommendation> {
+    RECOMMENDED
+        .iter()
+        .filter(|r| {
+            find_setting(r.key)
+                .map(|s| (s.get)(settings))
+                .ok()
+                .as_deref()
+                != Some(r.value)
+        })
+        .collect()
+}
+
+/// The outstanding recommendations, in their two tiers, under the names both tiers are
+/// known by everywhere else.
+///
+/// Prints nothing when there is nothing outstanding: a section whose entire content is
+/// "nothing to do" is a section people learn to scroll past, and it would then be in the
+/// way on every later reading of `devp config show`.
+fn print_recommendation_summary(settings: &Settings) {
+    let outstanding = outstanding(settings);
+    if outstanding.is_empty() {
+        return;
+    }
+    let width = key_column_width();
+
+    let safe: Vec<_> = outstanding.iter().filter(|r| !r.cautious).collect();
+    if !safe.is_empty() {
+        output::print_section(SAFE_TIER);
+        for r in &safe {
+            println!("    {:<width$} = {}   {}", r.key, r.value, r.label);
+        }
+        println!();
+        output::print_info(&format!(
+            "`devp config recommended` sets {} {} in one command.",
+            safe.len(),
+            output::plural(safe.len(), "setting", "settings")
+        ));
+    }
+
+    let cautious: Vec<_> = outstanding.iter().filter(|r| r.cautious).collect();
+    if !cautious.is_empty() {
+        output::print_section(CAUTIOUS_TIER);
+        for r in &cautious {
+            println!("    {:<width$} = {}   {}", r.key, r.value, r.label);
+            println!("    {:<width$}   {}", "", r.why);
+        }
+        println!();
+        output::print_info(
+            "Not included above. `devp config recommended --with-cautious` includes it; \
+             `devp config set <key> <value>` sets one on its own.",
+        );
+    }
+}
+
+/// Turn on everything the first run recommends, without the first run.
+///
+/// Reads the same table the configurator reads, so the one-command path and the
+/// walkthrough cannot end up disagreeing about what "recommended" means.
+///
+/// The cautious tier is held back unless `--with-cautious` is typed. That is not the
+/// same prohibition the configurator's `[a]` key is under: `[a]` would accept, on
+/// somebody's behalf, the thing the screen had just told them to read about, whereas a
+/// flag is the reading having happened. What it must not do is arrive by default.
+///
+/// It does not mark the settings as reviewed. This is a shortcut past the decision, not
+/// the screen that puts the decision in front of somebody — so a machine configured
+/// this way still gets the walkthrough it is owed.
+pub fn run_recommended(with_cautious: bool) -> Result<()> {
+    let mut registry = Registry::load()?;
+    let width = key_column_width();
+
+    output::print_header("dev-prune recommended settings");
+
+    let mut applied: Vec<(&'static str, String, &'static str)> = Vec::new();
+    let mut already: Vec<&'static Recommendation> = Vec::new();
+    let mut held_back: Vec<&'static Recommendation> = Vec::new();
+
+    for rec in RECOMMENDED {
+        let setting = find_setting(rec.key)?;
+        let current = (setting.get)(&registry.settings);
+        if current == rec.value {
+            already.push(rec);
+        } else if rec.cautious && !with_cautious {
+            held_back.push(rec);
+        } else {
+            (setting.set)(&mut registry.settings, rec.value)?;
+            applied.push((rec.key, current, rec.value));
+        }
+    }
+
+    if !applied.is_empty() {
+        registry.save()?;
+        output::print_section("Turned on");
+        for (key, from, to) in &applied {
+            println!("    {:<width$}   {from} → {to}", key);
+        }
+    }
+    if !already.is_empty() {
+        output::print_section("Already set");
+        for rec in &already {
+            println!("    {:<width$}   {}", rec.key, rec.label);
+        }
+    }
+    if !held_back.is_empty() {
+        output::print_section(CAUTIOUS_TIER);
+        for rec in &held_back {
+            println!("    {:<width$} = {}   {}", rec.key, rec.value, rec.label);
+            println!("    {:<width$}   {}", "", rec.why);
+        }
+        println!();
+        output::print_info(
+            "Left alone. `devp config recommended --with-cautious` includes it; \
+             `devp config set <key> <value>` sets one on its own.",
+        );
+    }
+
+    println!();
+    if applied.is_empty() {
+        output::print_success(
+            "Nothing changed — everything recommended without a caveat is already set.",
+        );
+    } else {
+        output::print_success(&format!(
+            "{} {} changed. `devp config show` lists them all.",
+            applied.len(),
+            output::plural(applied.len(), "setting", "settings")
+        ));
+    }
+    Ok(())
+}
+
 fn first_run_suggestions() -> Vec<crate::tui::config_view::Suggestion> {
     use crate::tui::config_view::Suggestion;
 
@@ -1064,6 +1445,59 @@ fn first_run_suggestions() -> Vec<crate::tui::config_view::Suggestion> {
 const NOTHING_DELETED_YET: &str =
     "Nothing has been deleted, and nothing will be until a lockfile proves it comes back.";
 
+/// Who wrote this, and where a copy of it legitimately comes from.
+///
+/// Everything else on the declaration screen is a promise about what dev-prune will not
+/// do, and a promise is worth what the thing making it is: the screen listed seven
+/// guarantees without ever saying whose binary was guaranteeing them. This is that
+/// block, and it is the one place on the screen a reader can act on before trusting the
+/// rest — by checking the download against a name and a URL they can verify.
+///
+/// Read from `constants` rather than written out here, because `devp --version` reads
+/// the same values: a stray copy of the executable and the screen that vouches for it
+/// must not be able to disagree about who built it.
+///
+/// Every channel listed is one dev-prune is actually published to today. WinGet is
+/// deliberately absent until it is, because a provenance list that names a channel
+/// nobody publishes to teaches people to trust a name instead of a source, which is the
+/// exact habit this block exists to prevent.
+fn provenance_rows() -> Vec<(&'static str, String)> {
+    // Trimmed of the scheme so the longest line still fits an 80-column terminal beside
+    // a 26-cell label column; nothing here is a link to click.
+    let url = |u: &str| u.trim_start_matches("https://").to_string();
+    vec![
+        (
+            "What you are running",
+            format!(
+                "{} v{}",
+                crate::constants::APP_NAME,
+                crate::constants::VERSION
+            ),
+        ),
+        (
+            "Written by",
+            format!("{}, under Apache-2.0", crate::constants::AUTHOR),
+        ),
+        ("Source code", url(crate::constants::REPO_URL)),
+        (
+            "Official downloads",
+            format!("{} · GitHub releases", url(crate::constants::HOMEPAGE_URL)),
+        ),
+        (
+            "Package registries",
+            "crates.io · PyPI · npm, all named dev-prune".to_string(),
+        ),
+        (
+            "Editor extension",
+            "VS Code Marketplace · Open VSX".to_string(),
+        ),
+        (
+            "Any other source",
+            "is not a copy the author published".to_string(),
+        ),
+    ]
+}
+
 /// The declaration screen's contents: `devp trust`, shown before rather than after.
 ///
 /// Read off the same report that command prints rather than written out again here. A
@@ -1090,7 +1524,18 @@ fn declaration_lines(
         state: r.state.clone(),
     };
 
-    let mut lines = vec![heading("Guaranteed by the code")];
+    let mut lines = vec![heading("What this is, and where it came from")];
+    lines.extend(
+        provenance_rows()
+            .into_iter()
+            .map(|(subject, state)| DeclarationLine {
+                mark: ' ',
+                subject: subject.to_string(),
+                state,
+            }),
+    );
+    lines.push(heading(""));
+    lines.push(heading("Guaranteed by the code"));
     lines.extend(report.guarantees.iter().map(&row));
     lines.push(heading(""));
     lines.push(heading("On this machine"));
@@ -1101,7 +1546,7 @@ fn declaration_lines(
 /// Walk the global settings one line at a time, offering each current value.
 ///
 /// Refuses without a terminal instead of hanging on a read that will never return.
-fn run_wizard_prompts() -> Result<()> {
+fn run_wizard_prompts(opened: Opened) -> Result<()> {
     use std::io::{self, IsTerminal, Write};
 
     if !io::stdin().is_terminal() {
@@ -1115,37 +1560,76 @@ fn run_wizard_prompts() -> Result<()> {
     let mut registry = Registry::load()?;
     let width = key_column_width();
     let new_keys = settings_added_since_review();
+    let fresh = Settings::default();
 
     output::print_header("dev-prune configuration");
+    // Before the list rather than after it: somebody who typed `devp caches` and got this
+    // needs the reason at the top, where they are already looking, not under thirty keys.
+    if let Some(why) = why_this_opened(opened) {
+        output::print_warning(&why);
+        println!();
+    }
+    output::print_section("What this is, and where it came from");
+    for (subject, state) in provenance_rows() {
+        println!("    {}  {state}", output::pad_display(subject, 22));
+    }
+    println!("    {}", crate::constants::LICENCE_NOTICE);
+    println!();
+
     output::print_info("These are the defaults every run will use. Nothing has been changed yet.");
     println!();
-    for setting in SETTINGS {
-        // A setting that arrived in an upgrade has been applying its default since the
-        // upgrade, so naming those is the whole reason this reopened.
-        let badge = if new_keys.contains(&setting.key) {
-            "   (new in this version)"
-        } else {
-            ""
-        };
-        println!(
-            "  {:<width$} = {}{badge}",
-            setting.key,
-            (setting.get)(&registry.settings)
-        );
-        println!("  {:<width$}   {}", "", setting.help);
-        // Both lines here too. This path is what a pipe, a narrow terminal and
-        // `DEV_PRUNE_NO_TUI` all get, and it is no place to be the terse one.
-        println!("  {:<width$}   {}", "", setting.plain);
+    for (category, settings) in settings_by_category() {
+        output::print_section(category.title());
+        for setting in settings {
+            // A setting that arrived in an upgrade has been applying its default since
+            // the upgrade, so naming those is the whole reason this reopened.
+            let badge = if new_keys.contains(&setting.key) {
+                "   (new in this version)"
+            } else {
+                ""
+            };
+            println!(
+                "    {:<width$} = {}{badge}",
+                setting.key,
+                (setting.get)(&registry.settings)
+            );
+            println!("    {:<width$}   {}", "", setting.help);
+            // Both lines here too. This path is what a pipe, a narrow terminal and
+            // `DEV_PRUNE_NO_TUI` all get, and it is no place to be the terse one.
+            println!("    {:<width$}   {}", "", setting.plain);
+            // Same two facts the full-screen detail pane carries. The short path is
+            // allowed to be shorter; it is not allowed to be the one that leaves out
+            // what a fresh install would have done.
+            let mut facts = format!("default {}", (setting.get)(&fresh));
+            // Which tier, not just "recommended". The cautious one is the whole reason
+            // the distinction exists, and a line that prints both the same way is the
+            // line that loses it.
+            if let Some(rec) = recommendation(setting.key) {
+                facts.push_str(&format!(
+                    "  ·  recommended {} ({}, not required)",
+                    rec.value,
+                    if rec.cautious {
+                        "read the note below first"
+                    } else {
+                        "suggested"
+                    }
+                ));
+            }
+            println!("    {:<width$}   {facts}", "");
+            if let Some(rec) = recommendation(setting.key).filter(|r| r.cautious) {
+                println!("    {:<width$}   {}", "", rec.why);
+            }
+        }
     }
     println!();
 
-    print!("Keep all of these? [Y/n] ");
-    io::stdout().flush()?;
-    let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
-    let keep = !matches!(answer.trim().to_lowercase().as_str(), "n" | "no");
+    print_recommendation_summary(&registry.settings);
+    println!();
 
-    if keep {
+    // The same gesture the full-screen configurator uses, and for the same reason: one
+    // Enter is what somebody presses to get past a screen they have stopped reading.
+    if confirmed_twice("Press Enter twice to keep all of these, or type anything to change them: ")?
+    {
         mark_reviewed();
         output::print_success("Keeping the defaults. `devp config set <key> <value>` changes any.");
         return Ok(());
@@ -1155,7 +1639,7 @@ fn run_wizard_prompts() -> Result<()> {
     output::print_info("Enter a new value, or press Enter to keep the one shown.");
     println!();
 
-    let mut changed = 0usize;
+    let mut edits: Vec<(&'static str, String, String)> = Vec::new();
     for setting in SETTINGS {
         let current = (setting.get)(&registry.settings);
         loop {
@@ -1174,7 +1658,13 @@ fn run_wizard_prompts() -> Result<()> {
             }
             match (setting.set)(&mut registry.settings, typed) {
                 Ok(()) => {
-                    changed += 1;
+                    // Read back rather than recording what was typed: a setter is
+                    // allowed to normalise, and a summary that quotes the keystrokes
+                    // would then describe something other than what gets written.
+                    let now = (setting.get)(&registry.settings);
+                    if now != current {
+                        edits.push((setting.key, current.clone(), now));
+                    }
                     break;
                 }
                 // Re-asked rather than aborted: losing the eight answers already given
@@ -1184,18 +1674,64 @@ fn run_wizard_prompts() -> Result<()> {
         }
     }
 
+    println!();
+    if edits.is_empty() {
+        mark_reviewed();
+        output::print_success("Nothing changed — the defaults are in place.");
+        return Ok(());
+    }
+
+    // The last screen of the full-screen configurator, on one line per change: what is
+    // about to be written, before it is written.
+    output::print_section("About to be saved");
+    for (key, from, to) in &edits {
+        println!("    {:<width$}   {from} → {to}", key);
+    }
+    println!();
+    if !confirmed_twice("Press Enter twice to save, or type anything to abandon: ")? {
+        output::print_info("Nothing was written.");
+        return Ok(());
+    }
+
     registry.save()?;
     mark_reviewed();
+    let changed = edits.len();
     println!();
-    if changed == 0 {
-        output::print_success("Nothing changed — the defaults are in place.");
-    } else {
-        output::print_success(&format!(
-            "Saved {changed} {}. `devp config show` lists them all.",
-            output::plural(changed, "change", "changes")
-        ));
-    }
+    output::print_success(&format!(
+        "Saved {changed} {}. `devp config show` lists them all.",
+        output::plural(changed, "change", "changes")
+    ));
     Ok(())
+}
+
+/// Two empty lines, the way the full-screen configurator wants two presses of Enter.
+///
+/// Anything typed is a no, and so is EOF: a closed pipe must not be able to answer a
+/// confirmation, and the only way to be sure of that is to treat the absence of an
+/// answer as one.
+fn confirmed_twice(prompt: &str) -> Result<bool> {
+    use std::io::{self, Write};
+
+    for pass in 0..2 {
+        print!(
+            "{}",
+            if pass == 0 {
+                prompt
+            } else {
+                "Press Enter once more to confirm: "
+            }
+        );
+        io::stdout().flush()?;
+        let mut line = String::new();
+        if io::stdin().read_line(&mut line)? == 0 {
+            println!();
+            return Ok(false);
+        }
+        if !line.trim().is_empty() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Marker recording that the settings have been put in front of the user once.
@@ -1287,7 +1823,7 @@ pub fn run_global_update() -> Result<()> {
         }
         total_audited += 1;
 
-        match PerRepoConfig::load_with_diagnostics(repo_path) {
+        match PerRepoConfig::load_personal_for_write(repo_path) {
             Ok(Some(cfg)) => {
                 if let Err(e) = cfg.save_to_repo(repo_path) {
                     output::print_error(&format!("Failed to write config for {clean}: {e}"));
@@ -1333,8 +1869,11 @@ pub fn run_global_update() -> Result<()> {
     Ok(())
 }
 
-/// Inspect or create per-repository configuration (.devprune.json).
-pub fn run_path_config(path_str: &str, force_update: bool) -> Result<()> {
+/// Inspect or create per-repository configuration.
+///
+/// `shared` addresses `project.devprune.json`, the half meant to be committed, rather than
+/// the personal `.devprune.json` that gets excluded from git the moment it is written.
+pub fn run_path_config(path_str: &str, force_update: bool, team: bool) -> Result<()> {
     let raw_path = Path::new(path_str);
 
     let path = if raw_path.exists() {
@@ -1368,15 +1907,25 @@ pub fn run_path_config(path_str: &str, force_update: bool) -> Result<()> {
         registry.save()?;
     }
 
-    let cfg_file = path.join(crate::constants::PER_REPO_CONFIG_FILE);
+    let name = if team {
+        crate::constants::PROJECT_REPO_CONFIG_FILE
+    } else {
+        crate::constants::PER_REPO_CONFIG_FILE
+    };
+    let cfg_file = path.join(name);
 
     if cfg_file.exists() && !force_update {
         output::print_header(&format!("dev-prune Per-Repo Config for {clean}"));
-        match PerRepoConfig::load_with_diagnostics(&path) {
-            Ok(cfg) => {
-                let json_str = serde_json::to_string_pretty(&cfg)?;
-                println!("{json_str}");
-                output::print_info("File location: .devprune.json");
+        match crate::config::RepoConfigLayers::load(&path) {
+            Ok(layers) => {
+                let addressed = if team {
+                    layers.project_config()
+                } else {
+                    layers.personal_config()
+                };
+                println!("{}", serde_json::to_string_pretty(&addressed)?);
+                output::print_info(&format!("File location: {name}"));
+                print_layer_provenance(&layers);
             }
             Err(err_msg) => {
                 output::print_error(&format!("Invalid configuration in {clean}:"));
@@ -1392,13 +1941,52 @@ pub fn run_path_config(path_str: &str, force_update: bool) -> Result<()> {
             }
         }
     } else {
-        output::print_info(&format!("Initializing .devprune.json for {clean}..."));
-        let cfg = PerRepoConfig::default();
-        cfg.save_to_repo(&path)?;
-        output::print_success(&format!("Created .devprune.json in {clean}"));
+        output::print_info(&format!("Initializing {name} for {clean}..."));
+        if team {
+            crate::config::write_project_starter(&path)?;
+        } else {
+            PerRepoConfig::default().save_to_repo(&path)?;
+        }
+        output::print_success(&format!("Created {name} in {clean}"));
+        if team {
+            output::print_info(
+                "It starts empty on purpose: every key it names overrules \
+                 `.devprune.json`, so it should only name the ones your team decides.",
+            );
+            output::print_info(
+                "`prunable.directories` is the exception — the two files' lists add \
+                 up, so naming one here never discards somebody's own.",
+            );
+            output::print_info(
+                "Commit it. Unlike `.devprune.json`, this file is not added to \
+                 `.git/info/exclude` — being shared is the whole reason it exists.",
+            );
+        }
     }
 
     Ok(())
+}
+
+/// Say which of the two files each effective setting came from.
+///
+/// Only worth printing when both exist. With one file the answer is the file you are
+/// already looking at, and a table restating that is noise; with two, "which one won" is
+/// the only question the two files cannot answer between them. Printed rather than
+/// mirrored into `.devprune.json`, because a copied value is a second copy free to drift
+/// from the first and then be believed.
+fn print_layer_provenance(layers: &crate::config::RepoConfigLayers) {
+    if layers.project_config().is_none() || layers.personal_config().is_none() {
+        return;
+    }
+    output::print_section("Effective values");
+    for (key, value, source) in layers.rows() {
+        println!(
+            "  {}  {}  {}",
+            output::pad_display(key, 20),
+            output::pad_display(&value, 14),
+            source.label()
+        );
+    }
 }
 
 /// Load a workspace's `.devprune.json` for a toggle that is about to write it back.
@@ -1407,7 +1995,7 @@ pub fn run_path_config(path_str: &str, force_update: bool) -> Result<()> {
 /// from the defaults meant `devp config <repo> daemon off` wrote a fresh file straight
 /// over the broken one, so a single typo cost the user every other override in it.
 fn load_workspace_config_for_write(repo_path: &Path) -> Result<PerRepoConfig> {
-    match PerRepoConfig::load_with_diagnostics(repo_path) {
+    match PerRepoConfig::load_personal_for_write(repo_path) {
         Ok(Some(cfg)) => Ok(cfg),
         Ok(None) => Ok(PerRepoConfig::default()),
         Err(e) => bail!(
@@ -1665,6 +2253,9 @@ mod tests {
                 // A name that is a cache manager, which `cargo` also happens to be —
                 // spelled out separately because the two lists are validated apart.
                 Kind::CacheCaps => "cargo=10".to_string(),
+                // A language every catalogue ships and the default is not, so the probe
+                // is a real change rather than a write that happens to match.
+                Kind::Choice => "hi".to_string(),
             };
             (setting.set)(&mut settings, &probe)
                 .unwrap_or_else(|e| panic!("{} rejected `{probe}`: {e}", setting.key));

@@ -43,6 +43,36 @@
       "minimum": 1,
       "maximum": 32,
       "description": "How many directory levels below this repository root discovery descends. Overrides the global `scan_depth` (6 by default). Raise it when a nested project is not listed by `devp status`; every extra level makes the walk more expensive. Accepts 1-32; a hand-edited value outside that range is clamped to it."
+    },
+    "prunable": {
+      "type": "object",
+      "description": "What this project declares prunable beyond what an adapter can recognise. A section rather than a top-level key, so the things a repository may want to say about deletion can grow a heading at a time.",
+      "properties": {
+        "directories": {
+          "type": "array",
+          "description": "Directories no lockfile describes, each with the command that puts it back. Every entry is checked before anything is deleted: it must stay inside the repository, hold no Git-tracked files, and name a rebuild command whose tool is installed on this machine.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Repository-relative, forward-slash separated. Never absolute, never containing '..', never '.git'."
+              },
+              "rebuild": {
+                "type": "string",
+                "description": "The command that rebuilds the directory. Shown to the user, never run by dev-prune. Required. Use \"echo not needed\" when nothing has to rebuild it."
+              },
+              "why": {
+                "type": "string",
+                "description": "Why this is safe to lose, in the project's own words. Printed beside the path."
+              }
+            },
+            "required": ["path", "rebuild"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false

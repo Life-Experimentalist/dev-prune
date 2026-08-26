@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 - 2026-08-22
+## [0.4.0] - 2026-08-22
 
 - **The status bar item now wears the dev-prune mark.** Every state is prefixed with
   the product glyph rather than a borrowed codicon, so the item is findable at a
@@ -10,7 +10,7 @@
   dark alike. The missing-CLI state keeps its warning background — that was always
   the signal there, and the triangle beside it was saying the same thing twice.
 
-## 0.3.0 - 2026-08-21
+## [0.3.0] - 2026-08-21
 
 - **The status bar now walks your workspace through dev-prune's whole lifecycle**,
   instead of only showing a machine-wide total. One glance tells you where this
@@ -35,7 +35,7 @@
   new user actually sees. Everything that runs the CLI still waits for workspace
   trust, and anything that deletes still runs as a visible terminal command.
 
-## 0.2.1 - 2026-08-21
+## [0.2.1] - 2026-08-21
 
 - **Terminal commands run the CLI the extension actually found.** The dry run and
   the dashboard used to send a bare `devp` to the terminal, which failed whenever
@@ -52,7 +52,7 @@
   which cannot work on a virtual file system — the manifest now says `limited`
   (schema validation still works everywhere) instead of claiming full support.
 
-## 0.2.0 - 2026-08-20
+## [0.2.0] - 2026-08-20
 
 - **The schema is now bundled inside the extension.** Validation, autocomplete and
   hover docs for hand-written `.devprune.json` files work offline and immediately —
@@ -89,7 +89,7 @@
   everywhere; everything that invokes the CLI runs solely in trusted workspaces,
   so there is nothing for Restricted Mode to restrict.
 
-## 0.1.0 - 2026-08-19
+## [0.1.0] - 2026-08-19
 
 - Initial release: maps `.devprune.json` to the hosted JSON Schema at
   <https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json> for validation,

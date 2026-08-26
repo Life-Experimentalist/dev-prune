@@ -42,9 +42,11 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use colored::Colorize as _;
 
 use crate::adapters;
 use crate::constants;
+use crate::i18n;
 use crate::json;
 use crate::output;
 
@@ -965,11 +967,11 @@ fn cargo_home() -> PathBuf {
 }
 
 fn print_report(reports: &[CacheReport], deps: Option<&Dependents>) {
-    output::print_header("Package manager caches");
+    output::print_header(i18n::t("caches.header"));
 
     if reports.is_empty() {
         println!();
-        output::print_info("No package manager caches found on this machine.");
+        output::print_info(i18n::t("caches.nothing"));
         return;
     }
 
@@ -1015,6 +1017,20 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>) {
         output::plural(reports.len(), "cache", "caches")
     );
 
+    // A ranking, not a recommendation. Which of these is worth emptying depends on what
+    // the reader is about to do with this machine, and inventing a threshold to call one
+    // of them "too big" would be inventing a fact. Naming the order is enough.
+    let ranked = costliest_per_repository(reports);
+    if ranked.len() > 1 {
+        let named = ranked
+            .iter()
+            .take(3)
+            .map(|(m, b)| format!("{m} {}", output::format_bytes_weighted(*b)))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        println!("  {:<30} {:>10}  {named}", "Costliest per repository", "");
+    }
+
     if reports.iter().any(|r| r.over_cap) {
         println!();
         output::print_info(
@@ -1049,6 +1065,13 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>) {
 /// repositories behind it, which is the figure that actually decides anything: two
 /// repositories holding a 12 GiB cache between them is 6 GiB each and worth a look; forty
 /// repositories holding the same 12 GiB is 300 MiB each and is the cache doing its job.
+///
+/// Returned bold, because it is the conclusion of its block and everything above it is
+/// plumbing — the path you already know and the command you only need once you have
+/// decided. Set in the same weight as the rest, "cargo is used by 1 of 46 registered
+/// repositories" was something you had to read the whole report to find. Weight and not
+/// colour: whether a cache with one dependent is a problem depends on what the reader is
+/// about to do, and a colour would answer that question for them.
 fn used_by(
     r: &CacheReport,
     dependents: usize,
@@ -1056,7 +1079,9 @@ fn used_by(
     totals: &BTreeMap<&'static str, u64>,
 ) -> String {
     if dependents == 0 {
-        return format!("no registered repository uses {}", r.manager);
+        return format!("no registered repository uses {}", r.manager)
+            .bold()
+            .to_string();
     }
     let registered = deps.map_or(dependents, |d| d.repositories);
     let total = totals.get(r.manager).copied().unwrap_or(r.bytes);
@@ -1070,6 +1095,31 @@ fn used_by(
         output::plural(registered, "repository", "repositories"),
         output::format_bytes(total / dependents as u64)
     )
+    .bold()
+    .to_string()
+}
+
+/// Every manager something still needs, by what it costs one of them, worst first.
+///
+/// The report is ordered by total size, and the cache that costs a single repository the
+/// most is routinely not the biggest one on the machine — a 2 GiB store serving one
+/// project is a worse deal than a 10 GiB store serving eighteen, and the report as it
+/// stands makes you read thirteen blocks and do that arithmetic yourself.
+fn costliest_per_repository(reports: &[CacheReport]) -> Vec<(&'static str, u64)> {
+    let totals = manager_totals(reports);
+    // Per manager, not per row, for the same reason `used_by` prints once per manager:
+    // cargo's registry cache and its sources are one cache with one set of dependents.
+    let mut per: BTreeMap<&'static str, u64> = BTreeMap::new();
+    for r in reports {
+        if let Some(n) = r.dependents.filter(|n| *n > 0) {
+            let total = totals.get(r.manager).copied().unwrap_or(r.bytes);
+            per.insert(r.manager, total / n as u64);
+        }
+    }
+    let mut ranked: Vec<(&'static str, u64)> = per.into_iter().collect();
+    // Size, then name: two managers costing the same must not swap places between runs.
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+    ranked
 }
 
 /// What happened to one cache.
@@ -1380,9 +1430,9 @@ fn print_kept(kept: &[CacheReport]) {
 /// Name everything that is about to go, and what it costs, before any of it goes.
 fn print_clear_plan(reports: &[CacheReport], dry_run: bool) {
     output::print_header(if dry_run {
-        "Would clear"
+        i18n::t("caches.header.would_clear")
     } else {
-        "About to clear"
+        i18n::t("caches.header.about_to_clear")
     });
 
     println!();
@@ -1652,6 +1702,41 @@ mod tests {
         ];
         reports.sort_by_key(|r| std::cmp::Reverse(r.bytes));
         assert_eq!(reports[0].manager, "go");
+    }
+
+    /// A report row, with only the fields this ranking reads set to anything.
+    fn sized(manager: &'static str, bytes: u64, dependents: Option<usize>) -> CacheReport {
+        CacheReport {
+            manager,
+            kind: "cache",
+            path: PathBuf::from("/x"),
+            bytes,
+            clear_command: "x".to_string(),
+            clear: Clear::Directory,
+            note: None,
+            cap_gb: None,
+            over_cap: false,
+            dependents,
+            extra_args: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_costliest_cache_per_repository_is_not_the_biggest_one() {
+        // The shape that made this worth printing at all: npm is five times the size of
+        // the pnpm store and a fifth of the cost, because eighteen repositories share it.
+        let reports = [
+            sized("npm", 10_240, Some(18)),
+            sized("pnpm", 2_048, Some(1)),
+            sized("cargo", 300, Some(2)),
+            sized("cargo", 100, Some(2)),
+            sized("bun", 512, Some(0)),
+            sized("nuget", 900, None),
+        ];
+        assert_eq!(
+            costliest_per_repository(&reports),
+            vec![("pnpm", 2_048), ("npm", 568), ("cargo", 200)],
+        );
     }
 
     #[test]

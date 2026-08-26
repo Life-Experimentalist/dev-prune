@@ -182,8 +182,15 @@ instead of quietly skipping it.
 | npm | *no secret* — Trusted Publishing | `NPM_PUBLISH` = `true` | Job reports `skipped` |
 | PyPI | *no secret* — Trusted Publishing | `PYPI_PUBLISH` = `true` | Job reports `skipped` |
 | crates.io | `CARGO_REGISTRY_TOKEN` secret | `CRATES_PUBLISH` = `true` | Job reports `skipped` |
-| VS Code Marketplace + Open VSX | `VSCE_PAT` and `OVSX_PAT` secrets | `VSIX_PUBLISH` = `true` | Job reports `skipped`; the `.vsix` is still attached to the release |
+| VS Code Marketplace + Open VSX | `VSCE_PAT` and `OVSX_PAT` secrets | `VSIX_PUBLISH` = `true` | Job reports `skipped` |
 | GitHub Pages (site) | Automatic | — Settings → Pages → "GitHub Actions" | Site does not deploy |
+
+Every row but one belongs to `release.yml` and fires on a `v*` tag. The marketplaces are
+the exception: the VS Code extension has its own version, its own changelog and its own
+workflow, and it ships on a `vscode-v*` tag — see
+[releasing the VS Code extension](#releasing-the-vs-code-extension). The credential setup
+is here because there is one place to put credentials, not because a binary release
+touches that channel.
 
 Secrets and variables live in the same place, on two different tabs: **Settings → Secrets
 and variables → Actions**. Putting a variable's value in the Secrets tab is the easiest
@@ -355,12 +362,14 @@ a Node patch is not one anyone would think to look at.
 
 ### VS Code Marketplace and Open VSX
 
-The extension is built and attached to every release whether or not this channel is on.
-What the channel adds is `ext install VKrishna04.dev-prune` resolving — in two galleries,
-because the editors dev-prune writes rules files for are split between them. VS Code and
-the forks that use Microsoft's gallery read one; VSCodium, Cursor, Windsurf and the rest
-read Open VSX. Publishing to only one is how an extension ends up "available" for half
-its audience.
+This channel is what makes `ext install VKrishna04.dev-prune` resolve — in two
+galleries, because the editors dev-prune writes rules files for are split between them.
+VS Code and the forks that use Microsoft's gallery read one; VSCodium, Cursor, Windsurf
+and the rest read Open VSX. Publishing to only one is how an extension ends up
+"available" for half its audience.
+
+It belongs to `release-extension.yml`, not to the binary release, so nothing here fires
+on a `v*` tag.
 
 1. **Visual Studio Marketplace.** Create the publisher `VKrishna04` at
    [marketplace.visualstudio.com/manage](https://marketplace.visualstudio.com/manage) —
@@ -378,11 +387,12 @@ its audience.
    secret **`OVSX_PAT`**.
 3. Set the repository **variable** **`VSIX_PUBLISH`** to `true`.
 
-The extension carries its own version in `editors/vscode/package.json` and takes nothing
-from the tag, so bump it whenever the extension itself changes. A release that does not
-publishes nothing here and says so: the job stays green — a version that is already up is
-not a failure, and re-running a release after another channel broke must not turn into
-one — but it writes a warning naming the file to bump.
+Both marketplaces read the version from `editors/vscode/package.json` and ignore the tag
+entirely, so the workflow refuses a `vscode-v*` tag that disagrees with the manifest
+rather than producing a release page named one thing and two listings named another.
+Re-publishing a version that is already up stays green — re-running a release after the
+other gallery broke must not turn into a failure — but it writes a warning naming the
+file to bump.
 
 ### Name availability
 
@@ -446,11 +456,44 @@ Then:
    git push origin v1.2.0
    ```
 
-That is the release. A tag matching `v*` triggers everything below.
+That is the release. A tag matching `v[0-9]*` triggers everything below. The pattern
+requires the digit because the extension tags as `vscode-v<version>`, which a bare `v*`
+would also match — and this workflow would then try to build a CLI release out of it.
 
 To re-run a release after fixing a failed job, use **Actions → Release → Run workflow**
 and enter the tag. The npm job skips packages already on the registry, so a re-run
 finishes what the first attempt started rather than dying on a conflict.
+
+### Releasing the VS Code extension
+
+The extension is a separate product on a separate cadence, so it is a separate release.
+The CLI ships often and the extension rarely; riding along with every `v*` tag meant
+republishing an identical `.vsix` over itself most of the time, and shipping an extension
+fix meant cutting a CLI release with nothing in it.
+
+1. **Bump `version` in `editors/vscode/package.json`.** Nothing derives it from
+   `Cargo.toml` and nothing should — the two version numbers are unrelated.
+2. **Write the entry in `editors/vscode/CHANGELOG.md`**, under a
+   `## [<version>] - <YYYY-MM-DD>` heading. The same
+   [changelog contract](#-the-changelog-contract) applies, and the same
+   `scripts/changelog-section.sh` extracts it — the section *becomes* the release body.
+3. **Commit and push to `main`,** then tag:
+
+   ```bash
+   git tag -a vscode-v0.4.0 -m "vscode-v0.4.0"
+   git push origin vscode-v0.4.0
+   ```
+
+`release-extension.yml` packages the `.vsix` (running `vscode:prepublish`, so the
+bundled schema comes from that commit), attests it, publishes a release, and pushes to
+both marketplaces when `VSIX_PUBLISH` is on.
+
+That release is deliberately **not** marked *latest*, and that is load-bearing rather
+than cosmetic. Every installed copy of dev-prune reads `releases/latest` to decide
+whether it is out of date, and takes the version out of the tag name; a `vscode-v0.4.0`
+sitting there would leave every `devp update` in the world unable to compare, for as long
+as that release stayed newest. So `releases/latest` is always the CLI, and the extension
+fallback in `devp setup` walks the release listing for the newest `vscode-v*` instead.
 
 ---
 
@@ -516,8 +559,8 @@ check it with no secret and no key:
 gh attestation verify dev-prune-v<ver>-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
 ```
 
-Only the archives and the `.vsix` are attested. A sidecar is a checksum of an attested
-file, so signing it adds nothing.
+Only the archives are attested here. A sidecar is a checksum of an attested file, so
+signing it adds nothing. The `.vsix` is attested the same way, by its own workflow.
 
 [attest]: https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds
 

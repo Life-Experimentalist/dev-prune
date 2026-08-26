@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "zh",
+    "english_name": "Chinese (Simplified)",
+    "native_name": "简体中文",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (试运行)",
+  "run.header.targeted": "dev-prune 定向运行 ({path})",
+  "run.header.binaries": "所需生态系统可执行文件预检",
+  "run.header.candidates": "清理候选与可回收空间估算",
+  "run.header.blocked": "无法检查的仓库 ({count})",
+  "run.header.deleting": "正在逐步删除 ({repos} 个仓库，{size})",
+  "run.header.reasons": "每个仓库为何会被清理或被跳过",
+  "run.summary": "摘要",
+  "run.summary.dry": "摘要（试运行）",
+  "run.nothing": "未找到闲置仓库或可清理的冗余目录。",
+  "run.nothing.bloat": "未找到可清理的冗余目录。",
+  "run.nothing.bloat.targeted": "在 {path} 中未找到可清理的冗余目录。",
+  "run.freed": "已释放：{count} 个目录中的 {size}",
+  "run.freed.targeted": "已释放：{path} 中的 {size}",
+  "run.would_free": "将释放 {count} 个冗余目录中的 {size}。",
+  "run.reclaimable": "可回收空间总计：{size}",
+  "run.not_pruned": "有 {count} 个仓库未被清理。",
+
+  "status.header.pruning": "正在清理所选仓库",
+  "status.header.drift": "锁文件漂移",
+
+  "caches.header": "包管理器缓存",
+  "caches.nothing": "本机未找到任何包管理器缓存。",
+  "caches.header.would_clear": "将清除",
+  "caches.header.about_to_clear": "即将清除",
+
+  "config.category.presentation": "界面显示的语言",
+  "config.category.scope": "清理哪些内容",
+  "config.category.safety": "删除任何内容之前",
+  "config.category.build_trees": "构建目录 — 默认关闭",
+  "config.category.caches": "共享下载缓存",
+  "config.category.unattended": "无人值守运行",
+  "config.category.updates": "保持 dev-prune 为最新版本"
+}

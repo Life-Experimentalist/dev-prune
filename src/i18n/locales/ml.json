@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "ml",
+    "english_name": "Malayalam",
+    "native_name": "മലയാളം",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (പരീക്ഷണം മാത്രം)",
+  "run.header.targeted": "dev-prune ലക്ഷ്യ റൺ ({path})",
+  "run.header.binaries": "ആവശ്യമായ എക്കോസിസ്റ്റം ബൈനറികളുടെ പരിശോധന",
+  "run.header.candidates": "നീക്കാവുന്ന ഡയറക്ടറികളും ലാഭിക്കുന്ന സ്ഥലവും",
+  "run.header.blocked": "പരിശോധിക്കാൻ കഴിയാത്ത റിപ്പോസിറ്ററികൾ ({count})",
+  "run.header.deleting": "ഘട്ടം ഘട്ടമായി നീക്കുന്നു ({repos} റിപ്പോസിറ്ററികൾ, {size})",
+  "run.header.reasons": "ഓരോ റിപ്പോസിറ്ററിയും എന്തുകൊണ്ട് നീക്കപ്പെടും അല്ലെങ്കിൽ നീക്കപ്പെടില്ല",
+  "run.summary": "സംഗ്രഹം",
+  "run.summary.dry": "സംഗ്രഹം (പരീക്ഷണം മാത്രം)",
+  "run.nothing": "നിഷ്ക്രിയ റിപ്പോസിറ്ററികളോ നീക്കാവുന്ന ഡയറക്ടറികളോ കണ്ടെത്തിയില്ല.",
+  "run.nothing.bloat": "നീക്കാവുന്ന ഡയറക്ടറികളൊന്നും കണ്ടെത്തിയില്ല.",
+  "run.nothing.bloat.targeted": "{path}-ൽ നീക്കം ചെയ്യാവുന്ന ഡയറക്ടറികളൊന്നും കണ്ടെത്തിയില്ല.",
+  "run.freed": "സ്വതന്ത്രമാക്കിയത്: {count} ഡയറക്ടറികളിൽ നിന്ന് {size}",
+  "run.freed.targeted": "സ്വതന്ത്രമാക്കി: {path}-ൽ {size}",
+  "run.would_free": "{count} ഡയറക്ടറികളിൽ നിന്ന് {size} സ്വതന്ത്രമാകുമായിരുന്നു.",
+  "run.reclaimable": "വീണ്ടെടുക്കാവുന്ന ആകെ സ്ഥലം: {size}",
+  "run.not_pruned": "{count} റിപ്പോസിറ്ററികൾ നീക്കിയില്ല.",
+
+  "status.header.pruning": "തിരഞ്ഞെടുത്ത റിപ്പോസിറ്ററികൾ നീക്കുന്നു",
+  "status.header.drift": "ലോക്ക്ഫയൽ വ്യത്യാസം",
+
+  "caches.header": "പാക്കേജ് മാനേജർ കാഷുകൾ",
+  "caches.nothing": "ഈ മെഷീനിൽ പാക്കേജ് മാനേജർ കാഷുകളൊന്നും കണ്ടെത്തിയില്ല.",
+  "caches.header.would_clear": "എന്ത് മായ്ക്കപ്പെടുമായിരുന്നു",
+  "caches.header.about_to_clear": "ഇവ മായ്ക്കപ്പെടും",
+
+  "config.category.presentation": "ഇതെല്ലാം ഏത് ഭാഷയിൽ",
+  "config.category.scope": "എന്താണ് നീക്കപ്പെടുന്നത്",
+  "config.category.safety": "എന്തെങ്കിലും നീക്കുന്നതിന് മുമ്പ്",
+  "config.category.build_trees": "ബിൽഡ് ഡയറക്ടറികൾ — സ്ഥിരസ്ഥിതിയായി ഓഫ്",
+  "config.category.caches": "പങ്കിട്ട ഡൗൺലോഡ് കാഷുകൾ",
+  "config.category.unattended": "ചോദിക്കാതെ പ്രവർത്തിക്കൽ",
+  "config.category.updates": "dev-prune പുതുക്കി നിലനിർത്തൽ"
+}

@@ -48,7 +48,36 @@ REPOSITORY = "https://github.com/Life-Experimentalist/dev-prune"
 DOCUMENTATION = f"{REPOSITORY}/blob/main/docs/README.md"
 # PyPI indexes these for search, and this is the only place they get set — there is no
 # pyproject.toml to read them from.
-KEYWORDS = "cli,cleanup,disk-space,node_modules,venv,monorepo,workspace,prune"
+KEYWORDS = ",".join(
+    [
+        "cleanup",
+        "prune",
+        "disk-space",
+        "node_modules",
+        "monorepo",
+        "lockfile",
+        # One per language group. A Go or Elixir developer searching PyPI for a
+        # cleaner is not going to type "node_modules".
+        "npm",
+        "pnpm",
+        "yarn",
+        "bun",
+        "venv",
+        "uv",
+        "poetry",
+        "cargo",
+        "go",
+        "gradle",
+        "maven",
+        "composer",
+        "bundler",
+        "cocoapods",
+        "swift",
+        "elixir",
+        "terraform",
+        "flutter",
+    ]
+)
 
 # asset name -> platform tags for the wheel.
 #
@@ -79,17 +108,24 @@ TARGETS = {
     ("windows", "x86"): ["win32"],
 }
 
+# Classifiers are PyPI's browse facets, and the two added below are the two true
+# things about this tool that none of the others say: it finds its work by walking Git
+# repositories, and emptying a shared cache on a build machine is administration
+# rather than development.
 CLASSIFIERS = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Version Control :: Git",
     "Topic :: System :: Filesystems",
+    "Topic :: System :: Systems Administration",
     "Topic :: Utilities",
 ]
 

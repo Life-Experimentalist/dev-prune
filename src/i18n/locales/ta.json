@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "ta",
+    "english_name": "Tamil",
+    "native_name": "தமிழ்",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (சோதனை மட்டும்)",
+  "run.header.targeted": "dev-prune இலக்கு இயக்கம் ({path})",
+  "run.header.binaries": "தேவையான சூழல் நிரல்களின் சரிபார்ப்பு",
+  "run.header.candidates": "நீக்கத்தக்க கோப்பகங்களும் மிச்சமாகும் இடமும்",
+  "run.header.blocked": "ஆய்வு செய்ய முடியாத களஞ்சியங்கள் ({count})",
+  "run.header.deleting": "படிப்படியாக நீக்கப்படுகிறது ({repos} களஞ்சியங்கள், {size})",
+  "run.header.reasons": "ஒவ்வொரு களஞ்சியமும் ஏன் நீக்கப்படும் அல்லது நீக்கப்படாது",
+  "run.summary": "சுருக்கம்",
+  "run.summary.dry": "சுருக்கம் (சோதனை மட்டும்)",
+  "run.nothing": "செயலற்ற களஞ்சியங்களோ நீக்கத்தக்க கோப்பகங்களோ இல்லை.",
+  "run.nothing.bloat": "நீக்கத்தக்க கோப்பகங்கள் எதுவும் இல்லை.",
+  "run.nothing.bloat.targeted": "{path} இல் நீக்கக்கூடிய கோப்பகங்கள் எதுவும் இல்லை.",
+  "run.freed": "விடுவிக்கப்பட்டது: {count} கோப்பகங்களிலிருந்து {size}",
+  "run.freed.targeted": "விடுவிக்கப்பட்டது: {path} இல் {size}",
+  "run.would_free": "{count} கோப்பகங்களிலிருந்து {size} விடுவிக்கப்பட்டிருக்கும்.",
+  "run.reclaimable": "மீட்கக்கூடிய மொத்த இடம்: {size}",
+  "run.not_pruned": "{count} களஞ்சியங்கள் நீக்கப்படவில்லை.",
+
+  "status.header.pruning": "தேர்ந்தெடுக்கப்பட்ட களஞ்சியங்கள் நீக்கப்படுகின்றன",
+  "status.header.drift": "லாக்ஃபைல் வேறுபாடு",
+
+  "caches.header": "தொகுப்பு மேலாளர் தேக்ககங்கள்",
+  "caches.nothing": "இந்தக் கணினியில் தொகுப்பு மேலாளர் தேக்ககங்கள் எதுவும் இல்லை.",
+  "caches.header.would_clear": "எவை அழிக்கப்பட்டிருக்கும்",
+  "caches.header.about_to_clear": "இவை அழிக்கப்படும்",
+
+  "config.category.presentation": "இவை அனைத்தும் எந்த மெலிம்",
+  "config.category.scope": "எவை நீக்கப்படும்",
+  "config.category.safety": "எதையும் நீக்கும் முன்",
+  "config.category.build_trees": "பில்ட் கோப்பகங்கள் — இயல்பாக அணைக்கப்பட்டவை",
+  "config.category.caches": "பகிரப்பட்ட பதிவிறக்கத் தேக்ககங்கள்",
+  "config.category.unattended": "கேட்காமல் இயங்குதல்",
+  "config.category.updates": "dev-prune ஐ நவீனமாக வைத்திருத்தல்"
+}

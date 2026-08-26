@@ -45,11 +45,13 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 - **[Releasing dev-prune](RELEASING.md)**
   The maintainer's guide: one-time registry setup and every credential the automation needs, what a tag push triggers, the changelog contract the release notes are built from, which registries review submissions (npm, PyPI and crates.io do not), why a Rust binary belongs on npm and PyPI, the gated channels (Homebrew, WinGet, Scoop, Chocolatey), and recovery when a release goes wrong.
 - **[IDE & Editor Integration](IDE_INTEGRATION.md)**
-  How `.devprune.json` gets IntelliSense and an icon in editors: the hosted JSON Schema and its drift guard, what works today with nothing installed, the extension scaffolds in `editors/`, and the maintainer checklists for SchemaStore, the VS Code / OpenVSX marketplaces, the JetBrains Marketplace, and the icon-theme PRs.
+  How `.devprune.json` gets IntelliSense and an icon in editors: the hosted JSON Schema and its drift guard, what works today with nothing installed, the extension scaffolds in `editors/`, and the Claude Code plugin marketplace this repository doubles as, and the maintainer checklists for SchemaStore, the VS Code / OpenVSX marketplaces, the JetBrains Marketplace, and the icon-theme PRs.
 
 ### 🎓 Tutorials & Contribution Guides
 - **[Adding New Ecosystem Adapters](ADDING_ADAPTERS.md)**
   Step-by-step tutorial for implementing the `PackageManager` Rust trait to add support for new package managers (e.g. Maven, Gradle, Composer, Mix, Swift SPM) along with `tempfile` unit testing protocols.
+- **[Translating dev-prune](TRANSLATIONS.md)**
+  How the twelve language catalogues work, exactly which strings are translated and which are contract and never will be, how to add a thirteenth language with one JSON file and one line of Rust, and what the `reviewed` flag has to mean before it is set.
 - **[Contributing Guide](../CONTRIBUTING.md)**
   Development environment setup, code style formatting (`cargo fmt`), linting standards (`cargo clippy`), unit testing (`cargo test`), local site development, and pull request submission checklist.
 

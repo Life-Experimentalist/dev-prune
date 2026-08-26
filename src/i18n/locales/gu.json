@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "gu",
+    "english_name": "Gujarati",
+    "native_name": "ગુજરાતી",
+    "reviewed": false
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (માત્ર પરીક્ષણ)",
+  "run.header.targeted": "dev-prune લક્ષિત રન ({path})",
+  "run.header.binaries": "જરૂરી ઇકોસિસ્ટમ બાઇનરીની ચકાસણી",
+  "run.header.candidates": "કાઢી શકાય તેવી ડિરેક્ટરીઓ અને બચતી જગ્યા",
+  "run.header.blocked": "તપાસી ન શકાયેલી રિપોઝિટરીઓ ({count})",
+  "run.header.deleting": "ક્રમશઃ કાઢી રહ્યું છે ({repos} રિપોઝિટરીઓ, {size})",
+  "run.header.reasons": "દરેક રિપોઝિટરી શા માટે કઢાશે અથવા નહીં કઢાય",
+  "run.summary": "સારાંશ",
+  "run.summary.dry": "સારાંશ (માત્ર પરીક્ષણ)",
+  "run.nothing": "કોઈ નિષ્ક્રિય રિપોઝિટરી કે કાઢી શકાય તેવી ડિરેક્ટરી મળી નથી.",
+  "run.nothing.bloat": "કાઢી શકાય તેવી કોઈ ડિરેક્ટરી મળી નથી.",
+  "run.nothing.bloat.targeted": "{path} માં કાઢી શકાય તેવી કોઈ ડિરેક્ટરી મળી નથી.",
+  "run.freed": "ખાલી કરાયું: {count} ડિરેક્ટરીઓમાંથી {size}",
+  "run.freed.targeted": "ખાલી કરાયું: {path} માં {size}",
+  "run.would_free": "{count} ડિરેક્ટરીઓમાંથી {size} ખાલી થાત.",
+  "run.reclaimable": "કુલ પાછી મેળવી શકાય તેવી જગ્યા: {size}",
+  "run.not_pruned": "{count} રિપોઝિટરીઓ કઢાઈ નથી.",
+
+  "status.header.pruning": "પસંદ કરેલી રિપોઝિટરીઓ કાઢી રહ્યું છે",
+  "status.header.drift": "લોકફાઇલ તફાવત",
+
+  "caches.header": "પેકેજ મેનેજર કેશ",
+  "caches.nothing": "આ મશીન પર કોઈ પેકેજ મેનેજર કેશ મળી નથી.",
+  "caches.header.would_clear": "શું સાફ થાત",
+  "caches.header.about_to_clear": "આ સાફ કરાશે",
+
+  "config.category.presentation": "આ બધું કઈ ભાષામાં",
+  "config.category.scope": "શું કઢાશે",
+  "config.category.safety": "કંઈ પણ કાઢતાં પહેલાં",
+  "config.category.build_trees": "બિલ્ડ ડિરેક્ટરીઓ — ડિફોલ્ટમાં બંધ",
+  "config.category.caches": "વહેંચાયેલી ડાઉનલોડ કેશ",
+  "config.category.unattended": "પૂછ્યા વગર ચાલવું",
+  "config.category.updates": "dev-prune ને અદ્યતન રાખવું"
+}

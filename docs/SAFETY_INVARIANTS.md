@@ -22,9 +22,9 @@ flowchart TD
     Inv1 -->|No| Abort1["return empty<br/>not a repository"]
     Inv5a -->|Yes| Abort5["SkippedIgnored<br/>0 ms, no JSON parsed"]
     Inv1 -->|Yes| Inv5a{"Inv 5a<br/>ignore.devprune.json exists?"}
-    Inv5a -->|No| Parse{".devprune.json parses?"}
+    Inv5a -->|No| Parse{"both config layers parse?<br/>project.devprune.json, .devprune.json"}
     Parse -->|No| AbortCfg["ConfigError<br/>refuse to guess at defaults"]
-    Parse -->|Yes| Inv5b{"Inv 5b<br/>ignore: true?"}
+    Parse -->|Yes| Inv5b{"Inv 5b<br/>effective ignore: true?<br/>shared wins where it names the key"}
     Inv5b -->|Yes| Abort5
     Inv5b -->|No| Force{"--ignore-idle given?"}
     Force -->|Yes| Walk
@@ -234,16 +234,23 @@ it back, and it is safe to delete.
 ### 5. Fast 0ms `ignore.devprune.json` & Per-Repo Settings
 - **`ignore.devprune.json`**: File presence check running in **0ms O(1) latency** bypassing directory iteration without reading or parsing JSON file contents.
 - **`.devprune.json`**: Per-repository configuration supporting `project_name`, `ignore`, `disable_daemon` (excluded from the scheduled pass only), `disable_hooks` (the global Git hook will not auto-register this repo), and the three tuning overrides `override_idle_days`, `min_size_mb` and `scan_depth`. Automatically recorded in the repository's `.git/info/exclude` when created, so it never shows up in `git status` and the shared `.gitignore` is never touched.
+- **`project.devprune.json`**: the same keys and the same schema, meant to be committed. Written only by `devp config project <PATH> --team`, never by a `--fix`, a hook or a toggle. Every key it names wins over `.devprune.json`; every key it leaves out, `.devprune.json` still answers.
+- **`prunable.directories`** in either file names directories no adapter can recognise, each with the `rebuild` command that puts it back. Because the committed file arrives in a clone, a declaration is checked rather than obeyed: the path must be relative with no `..`, must resolve inside the repository even through a symlinked parent, must hold no Git-tracked file, and the first word of `rebuild` must be a program this machine has. A declaration that fails any of those is reported and nothing is deleted. This is the only mechanism by which dev-prune deletes a directory no adapter claimed, and it has no bypass either.
 
-A `.devprune.json` that cannot be parsed is treated as a refusal to guess, not as a
-missing file: the repository is skipped and the syntax error is printed. Falling back to
-defaults would silently discard whatever the file said — including the `"ignore": true`
-that was the whole reason it existed — and prune a repository that had opted out.
+Either file failing to parse is treated as a refusal to guess, not as a missing file: the
+repository is skipped and the syntax error is printed, naming which of the two it was.
+Falling back to defaults would silently discard whatever the file said — including the
+`"ignore": true` that was the whole reason it existed — and prune a repository that had
+opted out. Only the personal file is ever repaired by `devp doctor --fix`, and only by
+renaming the broken one aside; a file the user has committed is theirs to fix.
 
-`.devprune.json` is a repository-tracked file, so it deliberately holds **inert data
-only** — flags, a number, a display name. Nothing in it can name a command, a path to
-delete, or a directory to add. Cloning an untrusted repository and running `devp` on it
-must not be a way to execute anything.
+Both hold **inert data only** — flags, a number, a display name. Nothing in either can
+name a command, a path to delete, or a directory to add. The shared one is why the rule
+has teeth: it arrives with a `git clone`, from whoever wrote the repository. Cloning an
+untrusted repository and running `devp` on it must not be a way to execute anything, so
+the settings that widen what a pass may do — `allow_manifest_rewrite`,
+`require_confirmation`, every `enable_*` build-tree switch — have no per-repository form
+at all, in either file.
 
 ---
 

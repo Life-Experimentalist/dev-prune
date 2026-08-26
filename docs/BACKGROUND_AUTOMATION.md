@@ -41,13 +41,13 @@ It installs five things:
 
    The chain is a snapshot. If the other tool later adds a hook there is no shim for, that hook stops firing — `devp hook status` names the drifted hooks, and `devp hook install --chain` rebuilds.
 
-   Repositories that set `"disable_hooks": true` in `.devprune.json` are not auto-registered by the hook.
+   Repositories that set `"disable_hooks": true` are not auto-registered by the hook — in `.devprune.json` for just you, or in the committed `project.devprune.json` to decide it for everyone who clones. Both files are read, and the personal one wins.
 
    Neither is anything under the OS temporary directory. A repository there is scratch by definition — a test fixture, a `git clone` into `mktemp -d`, a build step — and it is gone minutes after its first commit, leaving a registry entry that can never be pruned and never be found again. An explicit `devp link` in one still works; the hook simply declines to do it unasked. If a registry has already collected entries like that, `devp unlink --missing` clears all of them at once.
 
 5. **The OS scheduler** — a Windows scheduled task, a macOS LaunchAgent, or a systemd user timer that runs `dev-prune run --yes --daemon` every `check_interval_days` days (default 2).
 
-   Repositories that set `"disable_daemon": true` in `.devprune.json` are excluded from this pass but stay pruneable by a manual `devp run`.
+   Repositories that set `"disable_daemon": true` — in either `.devprune.json` or the committed `project.devprune.json` — are excluded from this pass but stay pruneable by a manual `devp run`.
 
 One thing is deliberately **not** in the pass: repository registration. Which directories to track is your decision, and no install should guess at it.
 
@@ -125,7 +125,7 @@ flowchart TD
     CheckReg -->|No| Skip[Skip Workspace]
     CheckReg -->|Yes| CheckIgnoreFile{ignore.devprune.json exists?}
     CheckIgnoreFile -->|Yes| Skip
-    CheckIgnoreFile -->|No| CheckDisableDaemon{disable_daemon: true in .devprune.json?}
+    CheckIgnoreFile -->|No| CheckDisableDaemon{disable_daemon: true in either config file?}
     CheckDisableDaemon -->|Yes| Skip
     CheckDisableDaemon -->|No| CheckIdle{Idle >= Threshold?}
     CheckIdle -->|Yes| EnforceLockfile[Verify & Enforce Lockfile]
@@ -142,7 +142,7 @@ flowchart TD
 - **DaemonPass**: Silent background pruning pass across registered workspaces.
 - **CheckReg**: Validates if directory path is registered.
 - **CheckIgnoreFile**: Fast 0ms presence check for `ignore.devprune.json`.
-- **CheckDisableDaemon**: Reads per-repo `.devprune.json` setting for `disable_daemon`.
+- **CheckDisableDaemon**: Reads `disable_daemon` from the per-repo config — `project.devprune.json` and `.devprune.json` both, the personal file winning where they disagree.
 - **CheckIdle**: Evaluates git commit log and file `mtime` modification timestamps.
 - **EnforceLockfile**: Safety gate executing lockfile verification pass with timeout.
 - **Prune**: Removes bloat directories (`node_modules`, `.venv`, `target`, `vendor`).

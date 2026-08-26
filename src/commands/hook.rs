@@ -4,7 +4,11 @@
 // Handler for `dev-prune hook` subcommands.
 //
 // Manages non-blocking global Git hooks (`post-commit`, `post-checkout`, `post-merge`)
-// to automatically track newly cloned or created Git repositories as you work.
+// to automatically track Git repositories as you clone them and work in them.
+//
+// `git init` is the one arrival these cannot see: Git runs no hook for it, and none of
+// the three fires until the new repository's first commit. That gap is closed from the
+// other side, in `commands::link::adopt_enclosing_repo`.
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -16,6 +20,14 @@ use crate::output;
 /// The hooks dev-prune installs. All three fire *after* the operation completes, so
 /// none of them can fail a commit, and each is a moment a repository can first appear
 /// on disk or first be worked in: `post-checkout` also runs after `git clone`.
+///
+/// What they cannot cover is `git init`. Git has no `post-init` hook to install, and a
+/// repository created here fires none of these until its first commit — so between
+/// `git init` and that commit it is genuinely invisible here. Widening the set does not
+/// help: the only name that fires in that window is `post-index-change`, which also
+/// fires on every routine index refresh (see [`NO_SHADOW_SHIM`]). The window is closed
+/// in `commands::link::adopt_enclosing_repo` instead, where reading the registry costs
+/// nothing extra.
 const HOOKS: [&str; 3] = ["post-commit", "post-checkout", "post-merge"];
 
 /// Every hook name Git will look for inside `core.hooksPath`.

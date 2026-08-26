@@ -47,7 +47,7 @@ use crate::workspace;
 enum Repair {
     /// The `dev-prune`/`devp` pair is missing a member, or the alias is stale.
     Twin,
-    /// The `SKILL.md` export is missing or out of date.
+    /// A managed `SKILL.md` copy is missing, or is from a different release.
     SkillFile,
     /// Installed hooks point at a deleted binary, or a chain has drifted.
     Hooks,
@@ -322,7 +322,7 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
         }
         let outcome = match repair {
             Repair::Twin => setup::ensure_alias(),
-            Repair::SkillFile => setup::ensure_skill_file(),
+            Repair::SkillFile => setup::ensure_skill_copies(),
             Repair::Hooks => setup::ensure_hooks(chain),
             Repair::Scheduler => setup::ensure_daemon(interval),
             Repair::UnlinkMissing | Repair::RepoConfigs => unreachable!("handled above"),
@@ -432,14 +432,25 @@ fn check_binary(f: &mut Findings) {
         twin_stem.to_string()
     });
     if !twin.exists() {
-        // npm is the one channel that delivers the second name without a second file:
-        // it declares both commands in its own `bin` map and writes a launcher for
-        // each. The directory being searched here is the platform package, which is
-        // not on `PATH` at all, and anything written into it would be discarded by the
-        // next `npm install -g dev-prune` — so a missing file here costs nothing and
-        // there is nothing to repair.
-        if crate::channel::Channel::detect() == crate::channel::Channel::Npm {
-            f.ok(twin_stem, "provided by npm as a command of its own");
+        // The npm package is the one delivery that provides the second name without a
+        // second file: it declares both commands in its own `bin` map and each client
+        // writes a launcher for each. The directory being searched here is the platform
+        // package, which is not on `PATH` at all, and anything written into it would be
+        // discarded by the next global install — so a missing file here costs nothing
+        // and there is nothing to repair. True of every client that installs that
+        // package, not of npm alone.
+        let channel = crate::channel::Channel::detect();
+        if matches!(
+            channel,
+            crate::channel::Channel::Npm
+                | crate::channel::Channel::Bun
+                | crate::channel::Channel::Pnpm
+                | crate::channel::Channel::Yarn
+        ) {
+            f.ok(
+                twin_stem,
+                &format!("provided by {} as a command of its own", channel.label()),
+            );
         } else {
             f.warn(
                 twin_stem,
@@ -787,7 +798,26 @@ fn check_integrations(f: &mut Findings, registry: Option<&Registry>) {
     f.section("Integrations");
 
     match setup::skill_path() {
-        Ok(p) if p.exists() => f.ok("SKILL.md", &output::clean_path(&p)),
+        Ok(p) if p.exists() => {
+            // Present is not the same as current. A copy left behind by an earlier
+            // release reads as a working install and answers questions about flags
+            // that were removed two versions ago.
+            let stale = setup::stale_skill_copies();
+            if stale.is_empty() {
+                f.ok("SKILL.md", &output::clean_path(&p));
+            } else {
+                let paths: Vec<String> = stale.iter().map(output::clean_path).collect();
+                f.warn(
+                    "SKILL.md",
+                    &format!(
+                        "not from v{} — run `devp skill`: {}",
+                        constants::VERSION,
+                        paths.join(", ")
+                    ),
+                );
+                f.fixable(Repair::SkillFile);
+            }
+        }
         _ => {
             f.warn("SKILL.md", "not exported — run `devp skill`");
             f.fixable(Repair::SkillFile);
@@ -1279,23 +1309,37 @@ fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> Repo
     }
 
     // Read exactly the way the prune pass reads it, refusal to guess included.
-    let (per_repo, config_broken) = match PerRepoConfig::load_with_diagnostics(path) {
-        Ok(Some(cfg)) => {
-            f.ok(constants::PER_REPO_CONFIG_FILE, &describe_overrides(&cfg));
-            (Some(cfg), false)
+    let layers = crate::config::RepoConfigLayers::load(path).ok();
+    let (per_repo, config_broken) = match &layers {
+        Some(layers) => {
+            // Each file reported under its own name, holding its own contents. The
+            // merged view is what the verdict below is computed from, but "what does
+            // this file say" is the question somebody has while editing one of them.
+            if let Some(shared) = layers.project_config() {
+                f.ok(
+                    constants::PROJECT_REPO_CONFIG_FILE,
+                    &describe_overrides(shared),
+                );
+            }
+            match layers.personal_config() {
+                Some(personal) => f.ok(
+                    constants::PER_REPO_CONFIG_FILE,
+                    &describe_overrides(personal),
+                ),
+                None => f.note(
+                    constants::PER_REPO_CONFIG_FILE,
+                    "absent — global settings apply",
+                ),
+            }
+            (layers.effective(), false)
         }
-        Ok(None) => {
-            f.note(
-                constants::PER_REPO_CONFIG_FILE,
-                "absent — global settings apply",
-            );
-            (None, false)
-        }
-        Err(e) => {
-            f.problem(
-                constants::PER_REPO_CONFIG_FILE,
-                &format!("{e} — the repository is skipped entirely until this parses"),
-            );
+        None => {
+            for (name, e) in PerRepoConfig::broken_files(path) {
+                f.problem(
+                    name,
+                    &format!("{e} — the repository is skipped entirely until this parses"),
+                );
+            }
             (None, true)
         }
     };
@@ -1304,10 +1348,15 @@ fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> Repo
     if path.join(constants::DEVPRUNE_IGNORE_FILE).exists() {
         opted_out = Some(format!("{} is present", constants::DEVPRUNE_IGNORE_FILE));
     } else if per_repo.as_ref().is_some_and(|c| c.ignore) {
-        opted_out = Some(format!(
-            "\"ignore\": true in {}",
-            constants::PER_REPO_CONFIG_FILE
-        ));
+        // Naming the wrong file here sends somebody to edit a file that does not decide
+        // it, and `.devprune.json` losing to the committed one is precisely the case
+        // where they would then swear the setting does nothing.
+        let source = layers
+            .as_ref()
+            .map_or(constants::PER_REPO_CONFIG_FILE, |l| {
+                l.source_of("ignore").label()
+            });
+        opted_out = Some(format!("\"ignore\": true in {source}"));
     } else if entry.is_some_and(|e| !e.enabled) {
         opted_out = Some("disabled in the registry".to_string());
     }
@@ -1595,7 +1644,15 @@ fn heal_repo_configs() -> Result<usize> {
     let registry = Registry::load()?;
     let mut healed = 0usize;
     for repo in registry.repositories.keys() {
-        if !repo.exists() || PerRepoConfig::load_with_diagnostics(repo).is_ok() {
+        // Only ever the personal file. `project.devprune.json` is committed, and renaming
+        // a tracked file aside to write a default over it would turn a syntax error into
+        // an unexplained working-tree change on somebody else's branch; `devp doctor`
+        // reports that one and leaves `git checkout` to fix it.
+        if !repo.exists()
+            || !PerRepoConfig::broken_files(repo)
+                .iter()
+                .any(|(name, _)| *name == constants::PER_REPO_CONFIG_FILE)
+        {
             continue;
         }
         let file = repo.join(constants::PER_REPO_CONFIG_FILE);

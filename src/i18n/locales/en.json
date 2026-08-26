@@ -1,0 +1,43 @@
+{
+  "_meta": {
+    "code": "en",
+    "english_name": "English",
+    "native_name": "English",
+    "reviewed": true
+  },
+
+  "run.header": "dev-prune run",
+  "run.header.dry": "dev-prune run (DRY RUN)",
+  "run.header.targeted": "dev-prune Targeted Run ({path})",
+  "run.header.binaries": "Required Ecosystem Binaries Pre-Check",
+  "run.header.candidates": "Prune Candidates & Space Savings Calculation",
+  "run.header.blocked": "Repositories That Could Not Be Examined ({count})",
+  "run.header.deleting": "Executing Progressive Deletion ({repos} repos, {size})",
+  "run.header.reasons": "Why each repository would or would not be pruned",
+  "run.summary": "Summary",
+  "run.summary.dry": "Summary (Dry Run)",
+  "run.nothing": "No idle repositories or pruneable bloat directories found.",
+  "run.nothing.bloat": "No pruneable bloat directories found.",
+  "run.nothing.bloat.targeted": "No pruneable bloat directories found in {path}.",
+  "run.freed": "Freed: {size} across {count} directories",
+  "run.freed.targeted": "Freed: {size} in {path}",
+  "run.would_free": "Would free {size} across {count} bloat directories.",
+  "run.reclaimable": "Total Reclaimable Space: {size}",
+  "run.not_pruned": "{count} repos were not pruned.",
+
+  "status.header.pruning": "Pruning Selected Repositories",
+  "status.header.drift": "Lockfile drift",
+
+  "caches.header": "Package manager caches",
+  "caches.nothing": "No package manager caches found on this machine.",
+  "caches.header.would_clear": "Would clear",
+  "caches.header.about_to_clear": "About to clear",
+
+  "config.category.presentation": "The language this is all in",
+  "config.category.scope": "What gets pruned",
+  "config.category.safety": "Before anything is deleted",
+  "config.category.build_trees": "Build trees — off by default",
+  "config.category.caches": "Shared download caches",
+  "config.category.unattended": "Running without being asked",
+  "config.category.updates": "Keeping dev-prune current"
+}

@@ -45,7 +45,10 @@ const EXCLUDED_DIRS: &[&str] = &[
 /// effect was that linking a workspace reset every repository's activity clock to *now*
 /// and no repository could go idle again until the user next edited it. Eighty tracked
 /// repositories, zero candidates, and nothing anywhere reporting a fault.
-const EXCLUDED_FILES: &[&str] = &[crate::constants::PER_REPO_CONFIG_FILE];
+const EXCLUDED_FILES: &[&str] = &[
+    crate::constants::PER_REPO_CONFIG_FILE,
+    crate::constants::PROJECT_REPO_CONFIG_FILE,
+];
 
 /// Depth ceiling for the mtime fallback walk, matching the repo-discovery scan.
 ///
