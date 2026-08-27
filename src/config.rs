@@ -600,6 +600,14 @@ pub struct Prunable {
     /// Directories dev-prune would never find on its own, each with its way back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub directories: Vec<DeclaredDir>,
+    /// Declared paths to leave alone on this machine, whoever declared them.
+    ///
+    /// `project.devprune.json` is committed, so one person's `scratch` is everybody's
+    /// `scratch`, and the teammate whose copy is holding something had no way to say so
+    /// short of editing a file the whole team shares. Same spelling as a `path` in
+    /// `directories`; the entry it names is skipped entirely.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
 }
 
 /// One directory a project declares prunable, and the command that puts it back.
@@ -809,7 +817,8 @@ impl ConfigSource {
 /// one file to win: "the team says this cache is rebuildable" and "so is this one on my
 /// machine" are both true at once, and a rule that let the committed file silence the
 /// personal list would delete somebody's own declaration the day their team wrote their
-/// first one.
+/// first one. `prunable.exclude` unions for the opposite reason: a veto only ever
+/// deletes less, so it is safe to honour from whichever file wrote it.
 ///
 /// Nothing here widens what a repository can ask for. Both files deserialize into the
 /// same [`PerRepoConfig`], so the two settings the type deliberately does not carry —
@@ -967,18 +976,32 @@ fn pick<T: Clone>(project_said_so: bool, project: &T, personal: T) -> T {
 /// with two different `rebuild` commands is one directory, and the committed one is the
 /// answer — a teammate whose personal file still names last year's build script should
 /// get the project's current one, not a second delete of the same path.
+///
+/// `exclude` unions the same way and from either file. It can only ever take a directory
+/// out of play, so there is nothing for the committed file to protect by winning it —
+/// and the person who needs one is by definition the person that file is wrong for.
 fn merge_declarations(project: Option<&Prunable>, personal: Option<Prunable>) -> Option<Prunable> {
     let mut directories: Vec<DeclaredDir> =
         project.map(|p| p.directories.clone()).unwrap_or_default();
-    for dir in personal.map(|p| p.directories).unwrap_or_default() {
+    let mut exclude: Vec<String> = project.map(|p| p.exclude.clone()).unwrap_or_default();
+    let personal = personal.unwrap_or_default();
+    for dir in personal.directories {
         if !directories.iter().any(|d| d.path == dir.path) {
             directories.push(dir);
         }
     }
-    if directories.is_empty() {
+    for path in personal.exclude {
+        if !exclude.contains(&path) {
+            exclude.push(path);
+        }
+    }
+    if directories.is_empty() && exclude.is_empty() {
         None
     } else {
-        Some(Prunable { directories })
+        Some(Prunable {
+            directories,
+            exclude,
+        })
     }
 }
 
@@ -2105,6 +2128,39 @@ mod tests {
             .unwrap();
         assert!(!personal.ignore, "the project answer must not travel");
         assert_eq!(personal.scan_depth, Some(4));
+    }
+
+    #[test]
+    fn a_personal_exclusion_vetoes_a_declaration_the_project_committed() {
+        // The conflict the key exists for: the committed file says `scratch` is
+        // rebuildable, and on this one machine `scratch` is holding something. The way
+        // out must not be editing a file the whole team shares.
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        fs::write(
+            repo.join(constants::PROJECT_REPO_CONFIG_FILE),
+            r#"{ "prunable": { "directories": [
+                 { "path": "scratch", "rebuild": "make scratch" }
+               ] } }"#,
+        )
+        .unwrap();
+        fs::write(
+            repo.join(constants::PER_REPO_CONFIG_FILE),
+            r#"{ "prunable": { "exclude": ["scratch"] } }"#,
+        )
+        .unwrap();
+
+        let prunable = PerRepoConfig::load_with_diagnostics(repo)
+            .unwrap()
+            .unwrap()
+            .prunable
+            .unwrap();
+
+        // The declaration survives the merge and is vetoed when it is resolved, so
+        // deleting the exclusion later puts the directory back in play without anyone
+        // having to re-declare it.
+        assert_eq!(prunable.directories.len(), 1);
+        assert_eq!(prunable.exclude, ["scratch"]);
     }
 
     #[test]

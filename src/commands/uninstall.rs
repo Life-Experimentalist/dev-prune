@@ -18,12 +18,21 @@
 // — and offers to delete every one it finds, so "uninstall" means the command stops
 // resolving everywhere, not just in the managed directory.
 //
+// A copy a package manager installed is removed by *that manager's* uninstall, never
+// by deleting the file: with the file gone, `cargo uninstall dev-prune` exits 101 with
+// `corrupt metadata, ... does not exist when it should` and leaves its ledger entry
+// standing, so the command printed as the remedy can no longer succeed.
+//
 // On Windows a running executable cannot delete itself, so whatever is still in use is
 // handed to a detached PowerShell (or `cmd.exe`) helper that waits for this process to
-// exit and then deletes it. That is scheduled work, not failure — the command
-// reports it and exits `0`.
+// exit and then deletes it. The manager commands go the same way for the same reason,
+// one step further along: while its binary is executing, `cargo uninstall` fails with
+// `Access is denied` and *also* keeps the entry, and renaming the file aside first only
+// trades that failure for the `corrupt metadata` one. Exit first, then uninstall, is
+// the only order that clears the record. That is scheduled work, not failure — the
+// command reports it and exits `0`.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -164,15 +173,18 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
     // install channel has more than one binary, and the ones not currently first on
     // PATH would quietly *become* the installation the moment the managed pair above
     // is gone.
+    //
+    // The channel this binary came from needs no separate handling: the sweep looks in
+    // the running executable's own directory, so a manager-owned copy is found there
+    // like any other and removed the same way.
     let mut manager_hints: Vec<Channel> = Vec::new();
-    if channel.owns_its_files() {
-        manager_hints.push(channel);
-    }
+    let mut pending_commands: Vec<Channel> = Vec::new();
     sweep_stray_copies(
         yes,
         &mut manager_hints,
         &mut left_behind,
         &mut pending_files,
+        &mut pending_commands,
     );
 
     if deep {
@@ -228,17 +240,28 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
     // carrying `%` survives, where `cmd.exe` would expand it and a `/C` command line
     // has no way to escape one. `cmd.exe` remains the fallback for a machine without
     // PowerShell, and whatever neither could take is listed for manual removal.
-    let leftover = spawn_deletion_helper(&pending_files, &pending_dirs);
-    if !pending_files.is_empty() || !pending_dirs.is_empty() {
-        if leftover.len() < pending_files.len() + pending_dirs.len() {
+    let scheduled = pending_files.len() + pending_dirs.len() + pending_commands.len();
+    let (leftover, commands_scheduled) =
+        spawn_deletion_helper(&pending_files, &pending_dirs, &pending_commands);
+    if scheduled > 0 {
+        if leftover.len() + pending_commands.len() < scheduled || commands_scheduled {
             output::print_info(
-                "The running binary cannot delete itself — the rest is removed \
+                "The running binary cannot remove itself — the rest is finished \
                  automatically a few seconds after this command exits.",
             );
         }
         if !leftover.is_empty() {
             report_manual_removal(&leftover);
             left_behind.push("the binaries".to_string());
+        }
+        if !commands_scheduled {
+            // Nothing will run those uninstalls after this process exits, so the user
+            // has to. Put their managers back on the list printed below.
+            for channel in &pending_commands {
+                if !manager_hints.contains(channel) {
+                    manager_hints.push(*channel);
+                }
+            }
         }
     }
 
@@ -305,7 +328,8 @@ fn remove_binaries(
                 "This is a development build — leaving the `target/` binaries alone.",
             );
         } else if manager_owned {
-            // The caller prints the manager's own uninstall command.
+            // The sweep below removes it, by running the manager's own uninstall.
+            // Deleting it here would destroy that command's precondition.
         } else if let Some(parent) = current.parent() {
             for stem in ["dev-prune", "devp"] {
                 let twin = parent.join(exe_name(stem));
@@ -379,11 +403,19 @@ pub(crate) struct StrayCopy {
 /// Deletion is opt-in: the list is printed and confirmed first (`--yes` counts as
 /// confirmation; a non-terminal without it leaves everything in place). A declined
 /// prompt is a decision, not a failure — it does not change the exit code.
+///
+/// What removal *means* depends on who owns the file, and there are three answers, not
+/// two. A copy in a location nothing claims is deleted outright, because the file is the
+/// whole install. A copy a manager installed is removed by that manager's own uninstall
+/// — see [`Channel::uninstall_argv`] for why deleting it directly is worse than leaving
+/// it. And a copy inside a manager dev-prune knows by name but cannot drive is named and
+/// left, which is the same reasoning with no command at the end of it.
 fn sweep_stray_copies(
     yes: bool,
     manager_hints: &mut Vec<Channel>,
     left_behind: &mut Vec<String>,
     pending_files: &mut Vec<PathBuf>,
+    pending_commands: &mut Vec<Channel>,
 ) {
     // Anything already queued for the deletion helper still exists on disk right now;
     // finding it again here would list it as a stray and queue it twice.
@@ -414,6 +446,15 @@ fn sweep_stray_copies(
         }
     }
 
+    // Every manager whose copy turned up. Entries come off this list as each
+    // manager's own uninstall runs or is scheduled; whatever is left over is printed
+    // at the end for the user to finish by hand.
+    for stray in &strays {
+        if stray.channel.owns_its_files() && !manager_hints.contains(&stray.channel) {
+            manager_hints.push(stray.channel);
+        }
+    }
+
     if !confirm_sweep(yes) {
         output::print_info(
             "Left in place. Remove them yourself, or re-run `devp uninstall` any time.",
@@ -421,34 +462,81 @@ fn sweep_stray_copies(
         return;
     }
 
+    let running = std::env::current_exe().ok().map(|p| canon_key(&p));
     let mut removed = 0usize;
-    for stray in strays {
-        if stray.channel.owns_its_files() && !manager_hints.contains(&stray.channel) {
-            manager_hints.push(stray.channel);
-        }
-        // WinGet, Scoop and Homebrew each keep their package in a versioned directory
-        // they own end to end. Deleting the binary out of one leaves the manager certain
-        // the package is still installed and its own uninstall with nothing to remove —
-        // a state the user cannot get out of without editing the manager's database. So
-        // that copy is named, not deleted, and the command that really removes it is
-        // printed with the rest of the hints.
-        if stray.channel.replaces_its_directory() {
+    for (channel, paths) in group_by_channel(strays) {
+        let Some(argv) = channel.uninstall_argv() else {
+            // Two channels have no command, and only one of them may be deleted. A
+            // `Foreign` copy is inside somebody's package tree; removing the file would
+            // leave that manager listing a binary that is gone, with no `uninstall_argv`
+            // to repair it afterwards.
+            if !channel.may_delete_directly() {
+                let who = channel.label();
+                output::print_warning(&format!(
+                    "{who} installed {} of the copies above, and dev-prune does not know \
+                     {who}'s uninstall command. Left in place: deleting the file would \
+                     leave {who} listing a binary that is gone.",
+                    paths.len()
+                ));
+                continue;
+            }
+            // Nobody holds a record of these, so the file is the whole install.
+            for path in paths {
+                match fs::remove_file(&path) {
+                    Ok(()) => removed += 1,
+                    Err(e) => {
+                        // The running executable itself is often in this list. Windows
+                        // keeps it locked; the detached helper finishes the job.
+                        if cfg!(windows) && is_in_use_error(&e) {
+                            pending_files.push(path);
+                        } else {
+                            output::print_error(&format!(
+                                "Could not remove {}: {e}",
+                                output::clean_path(&path)
+                            ));
+                            left_behind.push("a stray copy".to_string());
+                        }
+                    }
+                }
+            }
+            continue;
+        };
+
+        // Without the manager on PATH there is no way to clear its record, and deleting
+        // the file would make the record unclearable. Leaving it is the only move that
+        // keeps the machine recoverable.
+        if !crate::adapters::binary_available(&argv[0]) {
+            output::print_warning(&format!(
+                "{} is not on PATH, so its copy was left in place.",
+                channel.label()
+            ));
             continue;
         }
-        match fs::remove_file(&stray.path) {
-            Ok(()) => removed += 1,
-            Err(e) => {
-                // The running executable itself is often in this list. Windows keeps
-                // it locked; the detached helper finishes the job.
-                if cfg!(windows) && is_in_use_error(&e) {
-                    pending_files.push(stray.path);
-                } else {
-                    output::print_error(&format!(
-                        "Could not remove {}: {e}",
-                        output::clean_path(&stray.path)
-                    ));
-                    left_behind.push("a stray copy".to_string());
+
+        // Windows will not let a manager delete a binary that is executing, and there
+        // is no way to get around it from inside that binary — see the note at the top
+        // of this file. Scheduled, not skipped.
+        if cfg!(windows) && paths.iter().any(|p| Some(canon_key(p)) == running) {
+            pending_commands.push(channel);
+            manager_hints.retain(|c| *c != channel);
+            continue;
+        }
+
+        match run_manager_uninstall(&argv) {
+            Ok(()) => {
+                manager_hints.retain(|c| *c != channel);
+                removed += paths.len();
+                // Whatever the manager did not take is safe to delete now: its record
+                // is clear, so the file is no longer part of an install.
+                for path in paths {
+                    if fs::symlink_metadata(&path).is_ok() {
+                        let _ = fs::remove_file(&path);
+                    }
                 }
+            }
+            Err(e) => {
+                output::print_error(&format!("`{}` failed: {e:#}", argv.join(" ")));
+                left_behind.push(format!("the {} copy", channel.label()));
             }
         }
     }
@@ -458,6 +546,37 @@ fn sweep_stray_copies(
             if removed == 1 { "y" } else { "ies" }
         ));
     }
+}
+
+/// Group the strays by the manager that owns them, keeping discovery order.
+///
+/// One manager is told once, however many of its files turned up. `~/.cargo/bin` holds
+/// both `dev-prune` and `devp`, and a second `cargo uninstall dev-prune` exits 101 with
+/// "package ID specification did not match any packages" — a failure to report, from a
+/// command that had in fact already worked.
+pub(crate) fn group_by_channel(strays: Vec<StrayCopy>) -> Vec<(Channel, Vec<PathBuf>)> {
+    let mut groups: Vec<(Channel, Vec<PathBuf>)> = Vec::new();
+    for stray in strays {
+        match groups.iter_mut().find(|(c, _)| *c == stray.channel) {
+            Some((_, paths)) => paths.push(stray.path),
+            None => groups.push((stray.channel, vec![stray.path])),
+        }
+    }
+    groups
+}
+
+/// Run a package manager's own uninstall, wired to this terminal so its progress and
+/// its errors are the user's to read.
+fn run_manager_uninstall(argv: &[String]) -> Result<()> {
+    output::print_info(&format!("Running: {}", argv.join(" ")));
+    let status = crate::spawn::command(crate::adapters::resolve_program(&argv[0]))
+        .args(&argv[1..])
+        .status()
+        .with_context(|| format!("could not start `{}`", argv[0]))?;
+    if !status.success() {
+        anyhow::bail!("exited with {status}");
+    }
+    Ok(())
 }
 
 /// Ask before the sweep deletes anything. `--yes` answers for the user; a pipe or a
@@ -688,9 +807,12 @@ fn ps_quote(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "''"))
 }
 
-/// Schedule the in-use files for deletion after this process exits.
+/// Schedule the work that cannot happen until this process exits: deleting the files
+/// Windows has locked, and running the uninstalls of the managers that own them.
 ///
-/// Returns the paths that could not be handed over, which is empty in the normal case.
+/// Returns the paths that could not be handed over — empty in the normal case — and
+/// whether the manager commands were handed over at all. A caller that gets `false`
+/// must tell the user to run them, because nothing else now will.
 ///
 /// PowerShell rather than `cmd.exe`, because `cmd` expands `%VAR%` even inside double
 /// quotes and a `/C` command line has no escape for a literal `%`. A path carrying one
@@ -698,12 +820,16 @@ fn ps_quote(path: &Path) -> String {
 /// `cmd` route survives only as the fallback for a machine where PowerShell cannot be
 /// launched, and there the old restriction still applies.
 #[cfg(windows)]
-fn spawn_deletion_helper(files: &[PathBuf], dirs: &[PathBuf]) -> Vec<PathBuf> {
-    if files.is_empty() && dirs.is_empty() {
-        return Vec::new();
+fn spawn_deletion_helper(
+    files: &[PathBuf],
+    dirs: &[PathBuf],
+    channels: &[Channel],
+) -> (Vec<PathBuf>, bool) {
+    if files.is_empty() && dirs.is_empty() && channels.is_empty() {
+        return (Vec::new(), true);
     }
-    if spawn_powershell_helper(files, dirs) {
-        return Vec::new();
+    if spawn_powershell_helper(files, dirs, channels) {
+        return (Vec::new(), true);
     }
 
     // Fallback. `cmd` cannot be given a literal `%`, so those paths stay behind and are
@@ -718,17 +844,42 @@ fn spawn_deletion_helper(files: &[PathBuf], dirs: &[PathBuf]) -> Vec<PathBuf> {
     let safe_files: Vec<PathBuf> = files.iter().filter(|p| !has_percent(p)).cloned().collect();
     let safe_dirs: Vec<PathBuf> = dirs.iter().filter(|p| !has_percent(p)).cloned().collect();
 
-    if (safe_files.is_empty() && safe_dirs.is_empty()) || spawn_cmd_helper(&safe_files, &safe_dirs)
+    // The manager commands are fixed argv of ASCII words, so `%` is not a question for
+    // them; they ride along whenever `cmd` starts at all.
+    if (safe_files.is_empty() && safe_dirs.is_empty() && channels.is_empty())
+        || spawn_cmd_helper(&safe_files, &safe_dirs, channels)
     {
-        left_behind
+        (left_behind, true)
     } else {
-        files.iter().chain(dirs.iter()).cloned().collect()
+        (files.iter().chain(dirs.iter()).cloned().collect(), false)
     }
+}
+
+/// The manager uninstalls, as one PowerShell statement each.
+///
+/// `&` because these are native commands, not cmdlets, and the call operator is what
+/// makes PowerShell run a quoted string as one. Output goes nowhere: the helper has no
+/// console to write to, and a failure here is already covered by the retries.
+#[cfg(windows)]
+fn ps_manager_commands(channels: &[Channel]) -> String {
+    let mut out = String::new();
+    for channel in channels {
+        let Some(argv) = channel.uninstall_argv() else {
+            continue;
+        };
+        out.push_str("& ");
+        for token in &argv {
+            out.push_str(&ps_quote(Path::new(token)));
+            out.push(' ');
+        }
+        out.push_str("*> $null; ");
+    }
+    out
 }
 
 /// The PowerShell form of the retry loop. `true` if the helper was launched.
 #[cfg(windows)]
-fn spawn_powershell_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
+fn spawn_powershell_helper(files: &[PathBuf], dirs: &[PathBuf], channels: &[Channel]) -> bool {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
@@ -745,6 +896,10 @@ fn spawn_powershell_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
             ps_quote(dir)
         ));
     }
+    // Last in the round: a manager whose binary is still locked would fail with `Access
+    // is denied` and keep its record, which is the whole reason this is deferred, so it
+    // gets every attempt the deletions get rather than one shot at the end.
+    attempt.push_str(&ps_manager_commands(channels));
 
     // Three attempts, two seconds apart — the same reasoning as the `cmd` loop below.
     let mut script = String::new();
@@ -784,7 +939,7 @@ fn spawn_powershell_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
 /// The original `cmd.exe` form, kept as the fallback. Callers must have filtered out
 /// any path containing `%` before calling this.
 #[cfg(windows)]
-fn spawn_cmd_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
+fn spawn_cmd_helper(files: &[PathBuf], dirs: &[PathBuf], channels: &[Channel]) -> bool {
     use std::os::windows::process::CommandExt;
     // Not in windows-sys's prelude of imported constants anywhere else in this crate;
     // documented value of CREATE_NO_WINDOW.
@@ -801,6 +956,11 @@ fn spawn_cmd_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
     }
     for dir in dirs {
         attempt.push_str(&format!(" & rmdir /S /Q \"{}\"", dir.display()));
+    }
+    for channel in channels {
+        if let Some(argv) = channel.uninstall_argv() {
+            attempt.push_str(&format!(" & {} >nul 2>&1", argv.join(" ")));
+        }
     }
     let mut script = String::new();
     for _ in 0..3 {
@@ -822,9 +982,24 @@ fn spawn_cmd_helper(files: &[PathBuf], dirs: &[PathBuf]) -> bool {
         .is_ok()
 }
 
-/// On Unix an open file can be unlinked, so nothing ever needs scheduling; this exists
-/// so the call site compiles unconditionally and is unreachable in practice.
+/// Hand one manager's uninstall to the helper that runs after this process exits.
+///
+/// `false` if nothing could be scheduled, in which case the caller has to tell the user
+/// to run the command themselves. Windows only: everywhere else a manager can uninstall
+/// a binary that is running, so there is nothing to defer.
+#[cfg(windows)]
+pub(crate) fn schedule_manager_uninstall(channel: Channel) -> bool {
+    spawn_deletion_helper(&[], &[], &[channel]).1
+}
+
+/// On Unix an open file can be unlinked and a package manager can uninstall a binary
+/// that is running, so nothing ever needs scheduling; this exists so the call site
+/// compiles unconditionally and is unreachable in practice.
 #[cfg(not(windows))]
-fn spawn_deletion_helper(_files: &[PathBuf], _dirs: &[PathBuf]) -> Vec<PathBuf> {
-    Vec::new()
+fn spawn_deletion_helper(
+    _files: &[PathBuf],
+    _dirs: &[PathBuf],
+    _channels: &[Channel],
+) -> (Vec<PathBuf>, bool) {
+    (Vec::new(), true)
 }

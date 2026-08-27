@@ -55,9 +55,17 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 - **[Contributing Guide](../CONTRIBUTING.md)**
   Development environment setup, code style formatting (`cargo fmt`), linting standards (`cargo clippy`), unit testing (`cargo test`), local site development, and pull request submission checklist.
 
+### 💡 Explanation
+- **[Why `dev-prune` Refuses](WHY.md)**
+  The argument the tool was built from: why the hard problem is knowing which directory
+  you *cannot* delete, what an 18% refusal rate on a real 80-repository machine looked
+  like, why a confirmation prompt cannot stand in for it on a schedule, and which parts
+  of the design follow from that — the missing `--force`, build outputs staying out of
+  scope, and reading activity from `git log` rather than `mtime`.
+
 ### 📊 Market Analysis & Positioning
 - **[Market Analysis & Competitive Matrix](MARKET_ANALYSIS.md)**
-  Detailed comparison of `dev-prune` against existing developer tools (`npkill`, `cargo-clean-all`, `pyclean`, `git clean`, `dust`/`ncdu`, `BleachBit`) and breakdown of Unique Selling Propositions (USPs).
+  Detailed comparison of `dev-prune` against existing developer tools (`kondo`, `npkill`, `cargo-clean-all`, `pyclean`, `git clean`, `dust`/`ncdu`, `BleachBit`), a full divergence table against `kondo` — the closest neighbour, and the better tool for a supervised sweep — and a breakdown of Unique Selling Propositions (USPs).
 - **[Roadmap](ROADMAP.md)**
   Everything that is not built yet, grouped by *why* it is not — *in flight*, *next*, *standing orders*, *on request*, *waiting on a shape*, and *not planned* split by the reason it was declined. So "we haven't done that", "ask and we will" and "we decided against that" never read the same. Distribution channels, adapter candidates, editor follow-ups, and the declined ideas with the reason attached.
 

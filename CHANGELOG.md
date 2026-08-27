@@ -5,6 +5,93 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-08-27
+
+### Added
+
+- **`prunable.exclude` keeps one machine's copy of a directory the committed file calls
+  rebuildable.** `project.devprune.json` is checked in, so one person's `scratch` is
+  everybody's `scratch` — and the teammate whose copy is holding something had no way
+  to say so short of editing a file the whole team shares. Now they name it in their
+  own `.devprune.json`, which git never sees:
+
+  ```json
+  { "prunable": { "exclude": ["scratch"] } }
+  ```
+
+  The declaration is vetoed, not deleted, so removing the exclusion later puts the
+  directory back in play without anyone re-declaring it. `dist`, `dist/`, `./dist` and
+  `dist\` are one path to it, because an exclusion that missed on a trailing slash
+  would delete the exact directory it was written to keep. It silences the refusal as
+  well as the delete: a directory that is nobody's business here stops being a standing
+  complaint on every pass. Honoured from whichever file names it, since a veto can only
+  ever delete less.
+  [CLI reference](docs/CLI_REFERENCE.md#8-devp-config-action)
+
+- **`devp doctor` names a config file that is not at the repository root.** Every path
+  inside `.devprune.json`, `project.devprune.json` and `ignore.devprune.json` is
+  relative to the repository root, so all three are read from the root and nowhere else.
+  A copy one directory down parses cleanly, looks applied, and is read by nothing — and
+  for the two that are git-excluded, the entry that hides the root copy hides a copy at
+  any depth, so `git status` will not mention it either. `doctor` now lists any it finds under `Stray
+  config`. It names them rather than moving them: moving one up a level would silently
+  change what every path inside it means, and that is a decision for whoever wrote the
+  paths.
+
+- **`devp doctor` names a path that is declared and excluded in the same file.** Across
+  the two files that combination is the entire point of `exclude`. Inside one file it is
+  a typo, and its only symptom is a declaration that quietly never runs — the report is
+  the one place it can ever surface. A warning, not a problem: `doctor` still exits `0`,
+  because nothing here is broken.
+
+### Changed
+
+- **`devp uninstall` now tells each package manager to remove its own copy, instead of
+  deleting the file and leaving the manager to find out.** Deleting cargo's binary
+  behind its back leaves `.crates.toml` naming something that is gone, and the
+  `cargo uninstall dev-prune` the old sweep printed as the follow-up then exits 101 with
+  `corrupt metadata, ... does not exist when it should` — without clearing the entry.
+  The manager has to be told first or it can never be told at all. Each one is told once
+  however many of its files turned up, because `~/.cargo/bin` holds both `dev-prune` and
+  `devp` and a second `cargo uninstall` exits 101 too. A manager that is not on `PATH`
+  is named and its copy left alone rather than deleted out from under it.
+
+- **On Windows the manager's uninstall of the running binary is scheduled instead of
+  attempted.** Windows will not let `cargo uninstall` delete an image that is executing:
+  it fails with `Access is denied` and keeps its ledger entry, and renaming the file
+  aside first only trades that for `corrupt metadata` — which keeps the entry as well.
+  Exiting first is the only order that clears the record, so the command goes to the
+  same detached helper that finishes the rest of the uninstall a few seconds after
+  `devp` returns. `devp install --channel <name>`, which removes the old copy before
+  installing the new one, takes the same route.
+
+### Fixed
+
+- **`devp uninstall --yes` deleted binaries belonging to Deno, Volta, mise, asdf, Nix
+  and the system package manager.** Each of those installs global executables into a
+  directory that matched none of the markers the sweep knew, so a copy in one was
+  indistinguishable from a loose file somebody had dropped in — and got removed, with
+  no hint printed, leaving the manager listing a binary that no longer exists. They are
+  now recognised by name, reported, and left exactly where they are. There is
+  deliberately no install or upgrade command for any of them: none was on the machine
+  this list was written on, and a wrong upgrade command is worse than none.
+
+### For contributors
+
+- **Every per-channel command lives in `src/channel.rs`.** Installing, upgrading and
+  uninstalling dev-prune through one of the twelve channels used to be three separate
+  `match channel` blocks in three command modules, and the uninstall arm in one of them
+  had already drifted from the sweep in another. They are now `install_argv`,
+  `upgrade_argv` and `uninstall_argv` on `Channel`, next to the markers that detect it —
+  one file to read to answer what dev-prune does with, say, pnpm, and one file to edit to
+  add a channel.
+
+- **[Why `dev-prune` refuses](docs/WHY.md)** is the argument the design came from: what
+  an 18% refusal rate on a real 80-repository machine looked like, why a confirmation
+  prompt cannot stand in for it on a schedule, and which parts of the tool follow from
+  that — the missing `--force`, build outputs staying out of scope, and reading activity
+  from `git log` rather than `mtime`.
+
 ## [1.10.0] - 2026-08-26
 
 ### Added

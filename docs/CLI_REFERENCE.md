@@ -376,7 +376,7 @@ reads unambiguously:
 - **Description**: Finds every package-manager cache and store on the machine, sizes each one, and prints the command that clears it. Largest first, with a total. On its own **it deletes nothing**, and nothing that runs on a schedule ever will; the `clear` subcommand below empties one deliberately, when you type it.
 - **Why the report itself never deletes**: a cache lives outside every repository and is shared by all of them, so no single lockfile can prove its contents are recoverable — which is the bar every deletion in dev-prune has to clear. It is also what makes [`devp restore`](#9-devp-restore-path---last-run) fast: clearing a cache turns the next reinstall into a download. So a cache is only ever emptied by a command you type, when you want the space more than the speed.
 - **Telling it what nothing needs any more**: beside each manager the report now says how many of your registered repositories actually use it, and what its cache works out to per repository — two repositories sharing a 12 GiB cache is 6 GiB each and worth a look, forty sharing the same 12 GiB is 300 MiB each and is the cache doing its job. A manager no registered repository uses at all is the one case where a count is enough to act on, and [`devp caches clear --unused all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly those. The count ignores whether an adapter is enabled or opted in, because the question is which managers your projects *use*, not which ones a prune pass would touch. It is shown only for the twelve managers that are also adapter names; `pip`, `conda`, `nuget`, `conan` and `hex` have no adapter of the same name, so dev-prune says nothing about them rather than guessing that `venv` feeds `pip`. Nothing is counted at all until at least one registered repository is on disk — an empty registry would make every cache look unused, so `--unused` refuses to run instead.
-- **Telling it how big is too big**: a download cache is a bet that re-downloading costs more than the disk it occupies, and the bet stops paying somewhere. `devp config set cache_max_gb uv=10,npm=10` writes that ceiling down, per manager, in gibibytes. A manager over its cap is marked in the report — the cap is measured against the manager's whole footprint, so cargo's registry cache and its unpacked sources are weighed together. **Setting one still deletes nothing.** It marks, and [`devp caches clear --over-cap all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly what is marked, when you type it. Empty by default: no cache is too big until you say what too big is. `devp config wizard` sets caps as a column beside the adapter checklist.
+- **Telling it how big is too big**: a download cache is a bet that re-downloading costs more than the disk it occupies, and the bet stops paying somewhere. `devp config set cache_max_gb uv=10,npm=10` writes that ceiling down, per manager, in gibibytes — GiB, the unit the report prints. A manager over its cap is marked in the report — the cap is measured against the manager's whole footprint, so cargo's registry cache and its unpacked sources are weighed together. **Setting one still deletes nothing.** It marks, and [`devp caches clear --over-cap all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly what is marked, when you type it. Empty by default: no cache is too big until you say what too big is. `devp config wizard` sets caps as a column beside the adapter checklist.
 - **The pnpm store that `pnpm store path` never mentions**: pnpm hardlinks its store into every `node_modules` it fills, and a hardlink cannot cross a filesystem — so projects on a drive that is not your home directory's get a store of their own at the root of *that* filesystem: `V:\.pnpm-store` on a second Windows drive, `/mnt/data/.pnpm-store` on Linux, `/Volumes/Work/.pnpm-store` on an external macOS volume. It is not a Windows idea — it is wherever a developer keeps projects off the system disk. `pnpm store path` only ever answers for the filesystem it is run on, so a machine-wide report asked from your home directory sees the small store beside it and misses the multi-gigabyte one holding your actual projects. dev-prune therefore looks for a store at the root of every filesystem that holds a registered repository, plus the one you are standing in, and gives each its own row. `pnpm store prune` acts on the filesystem it is run on too, so that row names the store in the command it prints — `pnpm store prune --store-dir <path>` — and runs exactly what it printed. `devp caches clear pnpm` empties every pnpm store found, and a `cache_max_gb` cap for `pnpm` is measured against all of them together.
 - **The engine that is usually bigger than all of them put together**: under the table the report adds one line per container engine installed — Docker, Podman, nerdctl — with what it is holding and how much of that it says it could give back. It is there because the mistake this report exists to prevent is clearing 6 GiB of npm cache while a Docker install nobody has looked at in a year sits on 40 GiB. Container disk is **not** in the total above and never will be: dev-prune deletes only what a lockfile proves it can rebuild, an image has no lockfile, and a named volume is the one thing on the machine that cannot be rebuilt at all. [`devp caches docker`](#devp-caches-docker--devp-caches-podman--devp-caches-containers-engine) is the detailed version, and `devp caches clear docker` is a **usage error** (exit `2`) that says so and points at the report.
 - **What it looks at**:
@@ -663,6 +663,45 @@ reads unambiguously:
     discards one you wrote yourself; naming the same path in both leaves one directory,
     with the committed `rebuild`.
 
+    A declaration in the committed file is the whole team's, and a directory that is
+    rebuildable on one machine can be holding something on another. `prunable.exclude`
+    is the way to say so without editing a file everybody shares:
+
+    ```json
+    { "prunable": { "exclude": ["tools/vendor"] } }
+    ```
+
+    It is spelled the way a `path` is — `tools/vendor`, `tools/vendor/`,
+    `./tools/vendor` and `tools\vendor` are one path — and it is honoured from whichever
+    file names it, because a veto only ever deletes less. The entry it names leaves the
+    pass entirely: not deleted, and not reported as a refusal either. Remove the
+    exclusion and the declaration is back in force, with nobody having to write it again.
+
+    Naming one path in both lists is fine across the two files — that is the whole
+    point of a veto. Inside a *single* file it is a typo, because the exclusion still
+    wins and the declaration silently never runs, so `devp doctor` reports it:
+
+    ```
+    ! project.devprune.json: declares `tools/vendor` and excludes it in the same
+      file. The exclusion wins, so the declaration never runs.
+    ```
+
+    **Where the file goes.** `.devprune.json`, `project.devprune.json` and
+    `ignore.devprune.json` are read from the repository root and nowhere else, because
+    every path inside them is relative to that root. A copy in a subdirectory parses
+    cleanly, looks applied and does nothing — the worst kind of failure, since
+    `git status` stays clean and nothing else will ever mention it. `devp doctor` walks
+    the repository's own scan depth and warns about any it finds:
+
+    ```
+    ! Stray config: services/api/.devprune.json — these files are read from the
+      repository root only, so this one does nothing.
+    ```
+
+    It is a warning and never an error, and `doctor` does not move the file: the paths
+    inside are relative to wherever it currently sits, so moving it up a level silently
+    changes what every one of them means.
+
     Because `project.devprune.json` is committed, a declaration is treated as a claim to
     be checked rather than an instruction to be followed. Before deleting one, dev-prune
     requires that the path is relative with no `..`, that it resolves to somewhere inside
@@ -751,7 +790,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.10.0",
+  "version": "1.11.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -799,7 +838,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.10.0",
+  "version": "1.11.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -844,7 +883,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.10.0",
+  "version": "1.11.0",
   "command": "status --drift",
   "drift": [
     {
@@ -872,7 +911,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.10.0",
+  "version": "1.11.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -913,7 +952,7 @@ to separate them again.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.10.0",
+  "version": "1.11.0",
   "command": "caches",
   "caches": [
     {
@@ -974,7 +1013,7 @@ narrowed by which engines it was asked about.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.10.0",
+  "version": "1.11.0",
   "command": "caches containers",
   "engines": [
     {
@@ -1038,7 +1077,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.10.0",
+  "version": "1.11.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -1086,7 +1125,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.10.0",
+  "version": "1.11.0",
   "command": "trust",
   "guarantees": [
     {
@@ -1339,7 +1378,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```json
   {
     "schema": 1,
-    "version": "1.10.0",
+    "version": "1.11.0",
     "channel": "installer",
     "installed_by": "install.sh",
     "installed_at": "2026-08-25T09:14:02Z",
@@ -1374,9 +1413,9 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.10.0
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.11.0
 
-dev-prune (devp) v1.10.0
+dev-prune (devp) v1.11.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune

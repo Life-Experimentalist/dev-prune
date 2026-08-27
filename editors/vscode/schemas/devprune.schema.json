@@ -70,6 +70,11 @@
             "required": ["path", "rebuild"],
             "additionalProperties": false
           }
+        },
+        "exclude": {
+          "type": "array",
+          "description": "Declared paths to leave alone on this machine, whoever declared them. `project.devprune.json` is committed, so a declaration is the whole team's; this is how one person keeps a directory the team calls rebuildable, without editing the shared file. Spelled the same way as a `path` in `directories`: a trailing slash, a leading './' and backslashes all match.",
+          "items": { "type": "string" }
         }
       },
       "additionalProperties": false

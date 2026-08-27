@@ -45,6 +45,29 @@ mod marker {
     pub const NPM: &[&str] = &["/node_modules/", "/_npx/"];
     pub const UV_TOOL: &[&str] = &["/uv/tools/", "/uv-tool/"];
     pub const PIPX: &[&str] = &["/pipx/"];
+
+    /// Trees that belong to a manager whose commands dev-prune does not know, paired
+    /// with the name to print. Each of these installs global executables and none of
+    /// them leaves a fragment any marker above matches, so before this list a copy in
+    /// one of them was indistinguishable from a loose file -- and got deleted.
+    ///
+    /// Detection only. There is deliberately no install or upgrade command for any of
+    /// them: none is installed on the machine this list was written on, so any command
+    /// here would be a guess, and a wrong upgrade command is worse than none.
+    pub const FOREIGN: &[(&str, &str)] = &[
+        ("/.deno/bin/", "Deno"),
+        ("/.volta/bin/", "Volta"),
+        ("/volta/tools/", "Volta"),
+        ("/mise/shims/", "mise"),
+        ("/mise/installs/", "mise"),
+        ("/.asdf/shims/", "asdf"),
+        ("/nix/store/", "Nix"),
+        // Not `/usr/local/bin`, which is where a person putting a binary somewhere by
+        // hand puts it. `/usr/bin` is the distribution's, and on every distribution
+        // that packages anything, deleting out of it desynchronises the package
+        // database exactly the way deleting cargo's copy desynchronises `.crates.toml`.
+        ("/usr/bin/", "the system package manager"),
+    ];
 }
 
 /// The package manager that owns the running binary.
@@ -82,6 +105,15 @@ pub enum Channel {
     Homebrew,
     /// Anywhere else: a dev build, a hand-copied binary, a distro package.
     Unknown,
+    /// A copy inside a tree that is recognisably some manager's, where dev-prune knows
+    /// the manager's name and not its commands.
+    ///
+    /// The distinction that matters is against [`Channel::Unknown`], not against the
+    /// named channels: `Unknown` means *nothing on this machine claims this file*, and
+    /// `devp uninstall` deletes those because the file is the whole install. This means
+    /// *something claims it and dev-prune cannot speak to it*, which is the one case
+    /// where the only safe move is to name the manager and stop.
+    Foreign(&'static str),
 }
 
 impl Channel {
@@ -139,6 +171,8 @@ impl Channel {
             Channel::Pipx
         } else if pip_script_beside(exe) {
             Channel::Pip
+        } else if let Some((_, name)) = marker::FOREIGN.iter().find(|(m, _)| path.contains(m)) {
+            Channel::Foreign(name)
         } else {
             Channel::Unknown
         }
@@ -160,6 +194,7 @@ impl Channel {
             Channel::Scoop => "Scoop",
             Channel::Homebrew => "Homebrew",
             Channel::Unknown => "an unrecognised location",
+            Channel::Foreign(name) => name,
         }
     }
 
@@ -168,72 +203,192 @@ impl Channel {
     /// `None` for [`Channel::Unknown`] only: there is no command to name for a binary
     /// somebody copied into place by hand.
     pub fn upgrade_command(self) -> Option<String> {
-        Some(
-            match self {
-                // The one channel whose command is not a fixed string: it is the install
-                // one-liner, and its URL has a single source of truth in `constants`.
-                Channel::Installer => {
-                    return Some(if cfg!(windows) {
-                        format!("iwr -useb {} | iex", crate::constants::INSTALL_PS1_URL)
-                    } else {
-                        format!("curl -fsSL {} | sh", crate::constants::INSTALL_SH_URL)
-                    });
-                }
-                Channel::Cargo => "cargo install dev-prune --force",
-                Channel::Npm => "npm install -g dev-prune@latest",
-                // `@latest` is not decoration for these two: both resolve a bare name
-                // against a cached manifest and report the version already installed as
-                // up to date.
-                Channel::Bun => "bun add -g dev-prune@latest",
-                Channel::Pnpm => "pnpm add -g dev-prune@latest",
-                // Yarn 1.x, which is the only Yarn that has `yarn global` at all. Berry
-                // removed it, and prints its own explanation of what to use instead —
-                // a better message than any guess this could make on its behalf.
-                Channel::Yarn => "yarn global upgrade dev-prune",
-                Channel::UvTool => "uv tool upgrade dev-prune",
-                Channel::Pipx => "pipx upgrade dev-prune",
-                Channel::Pip => "pip install --upgrade dev-prune",
-                Channel::WinGet => {
-                    return Some(format!(
-                        "winget upgrade {}",
-                        crate::constants::WINGET_PACKAGE_ID
-                    ));
-                }
-                Channel::Scoop => "scoop update dev-prune",
-                Channel::Homebrew => "brew upgrade dev-prune",
-                Channel::Unknown => return None,
-            }
-            .to_string(),
-        )
+        self.upgrade_argv().map(|argv| self.typed_form(&argv))
     }
 
     /// The command that uninstalls through this channel.
     ///
-    /// `None` where there is no manager to tell: the installer's own copy is deleted by
+    /// `None` where there is no manager to tell: the installer’s own copy is deleted by
     /// `devp uninstall` itself, and an unrecognised copy is just a file.
     pub fn uninstall_command(self) -> Option<String> {
-        Some(
-            match self {
-                Channel::Cargo => "cargo uninstall dev-prune",
-                Channel::Npm => "npm uninstall -g dev-prune",
-                Channel::Bun => "bun remove -g dev-prune",
-                Channel::Pnpm => "pnpm remove -g dev-prune",
-                Channel::Yarn => "yarn global remove dev-prune",
-                Channel::UvTool => "uv tool uninstall dev-prune",
-                Channel::Pipx => "pipx uninstall dev-prune",
-                Channel::Pip => "pip uninstall dev-prune",
-                Channel::WinGet => {
-                    return Some(format!(
-                        "winget uninstall {}",
-                        crate::constants::WINGET_PACKAGE_ID
-                    ));
+        self.uninstall_argv().map(|argv| self.typed_form(&argv))
+    }
+
+    /// The command that installs dev-prune fresh through this channel, as the user
+    /// would type it. Does not include [`Self::install_sources`].
+    pub fn install_command(self) -> Option<String> {
+        self.install_argv().map(|argv| self.typed_form(&argv))
+    }
+
+    /// Sources that must exist before [`Self::install_argv`] can resolve dev-prune.
+    ///
+    /// Homebrew and Scoop are the only reason this exists. The formula and the manifest
+    /// live in this project’s own tap and bucket rather than the default index, and
+    /// `brew install dev-prune` without the tap resolves against homebrew-core, where
+    /// dev-prune is not published. Adding a source that is already added reports
+    /// failure, so these steps are best-effort; the install itself is not.
+    pub fn install_sources(self) -> Vec<Vec<String>> {
+        match self {
+            Channel::Scoop => vec![owned(&[
+                "scoop",
+                "bucket",
+                "add",
+                crate::constants::SCOOP_BUCKET_NAME,
+                crate::constants::SCOOP_BUCKET_URL,
+            ])],
+            Channel::Homebrew => vec![owned(&["brew", "tap", crate::constants::HOMEBREW_TAP])],
+            _ => Vec::new(),
+        }
+    }
+
+    /// The command that installs dev-prune fresh through this channel, once
+    /// [`Self::install_sources`] has run.
+    ///
+    /// `None` for `Pip` and `Unknown`: a bare `pip install` of a CLI puts the console
+    /// script wherever the active interpreter happens to be, which is the ambiguity `uv
+    /// tool` and `pipx` exist to remove, and nothing installs *into* an unrecognised
+    /// location on purpose.
+    pub fn install_argv(self) -> Option<Vec<String>> {
+        Some(match self {
+            // Same preference as the upgrade: binstall fetches the prebuilt release,
+            // a plain `cargo install` compiles for minutes.
+            Channel::Cargo => {
+                if crate::adapters::binary_available("cargo-binstall") {
+                    owned(&["cargo", "binstall", "dev-prune", "-y"])
+                } else {
+                    owned(&["cargo", "install", "dev-prune"])
                 }
-                Channel::Scoop => "scoop uninstall dev-prune",
-                Channel::Homebrew => "brew uninstall dev-prune",
-                Channel::Installer | Channel::Unknown => return None,
             }
-            .to_string(),
-        )
+            Channel::Npm => owned(&["npm", "install", "-g", "dev-prune"]),
+            Channel::Bun => owned(&["bun", "add", "-g", "dev-prune"]),
+            Channel::Pnpm => owned(&["pnpm", "add", "-g", "dev-prune"]),
+            Channel::Yarn => owned(&["yarn", "global", "add", "dev-prune"]),
+            // `@latest` because `uv tool install dev-prune` against an environment uv
+            // already has prints "already installed" and exits successfully without
+            // changing anything — which reads, from here, as a move that worked.
+            Channel::UvTool => owned(&["uv", "tool", "install", "dev-prune@latest"]),
+            Channel::Pipx => owned(&["pipx", "install", "dev-prune"]),
+            Channel::WinGet => vec![
+                "winget".to_string(),
+                "install".to_string(),
+                "--id".to_string(),
+                crate::constants::WINGET_PACKAGE_ID.to_string(),
+                "--accept-package-agreements".to_string(),
+                "--accept-source-agreements".to_string(),
+            ],
+            Channel::Scoop => owned(&["scoop", "install", "dev-prune"]),
+            Channel::Homebrew => owned(&["brew", "install", "dev-prune"]),
+            Channel::Installer => self.installer_argv(),
+            Channel::Pip | Channel::Unknown | Channel::Foreign(_) => return None,
+        })
+    }
+
+    /// The command that upgrades the copy this channel installed.
+    pub fn upgrade_argv(self) -> Option<Vec<String>> {
+        Some(match self {
+            Channel::Cargo => {
+                if crate::adapters::binary_available("cargo-binstall") {
+                    owned(&["cargo", "binstall", "dev-prune", "--force", "-y"])
+                } else {
+                    owned(&["cargo", "install", "dev-prune", "--force"])
+                }
+            }
+            // The four npm-compatible clients, each run through itself. `@latest` is
+            // load-bearing for the first three: given a bare name they resolve against a
+            // manifest they already have and report the installed version as current.
+            Channel::Npm => owned(&["npm", "install", "-g", "dev-prune@latest"]),
+            Channel::Bun => owned(&["bun", "add", "-g", "dev-prune@latest"]),
+            Channel::Pnpm => owned(&["pnpm", "add", "-g", "dev-prune@latest"]),
+            // Yarn 1.x, which is the only Yarn that has `yarn global` at all. Berry
+            // removed it and prints its own explanation of what to use instead — a
+            // better message than any guess this could make on its behalf.
+            Channel::Yarn => owned(&["yarn", "global", "upgrade", "dev-prune"]),
+            Channel::UvTool => owned(&["uv", "tool", "upgrade", "dev-prune"]),
+            Channel::Pipx => owned(&["pipx", "upgrade", "dev-prune"]),
+            Channel::Pip => owned(&["pip", "install", "--upgrade", "dev-prune"]),
+            // The three that own their whole package directory. Each is given its own
+            // command rather than the direct download, because replacing a file inside a
+            // versioned package directory desynchronises the manager from what is on
+            // disk — and the next `winget upgrade` or `brew upgrade` would put the old
+            // binary back.
+            Channel::WinGet => vec![
+                "winget".to_string(),
+                "upgrade".to_string(),
+                "--id".to_string(),
+                crate::constants::WINGET_PACKAGE_ID.to_string(),
+                "--accept-package-agreements".to_string(),
+                "--accept-source-agreements".to_string(),
+            ],
+            Channel::Scoop => owned(&["scoop", "update", "dev-prune"]),
+            Channel::Homebrew => owned(&["brew", "upgrade", "dev-prune"]),
+            Channel::Installer => self.installer_argv(),
+            Channel::Unknown | Channel::Foreign(_) => return None,
+        })
+    }
+
+    /// The command that removes the copy this channel installed *and* clears the record
+    /// the manager keeps of it.
+    ///
+    /// Running this is the only correct way to remove a manager-owned copy, and the
+    /// reason is not tidiness. Deleting the file behind cargo’s back leaves
+    /// `.crates.toml` naming a binary that is gone, and `cargo uninstall dev-prune` then
+    /// exits 101 with `corrupt metadata, ... does not exist when it should` — without
+    /// clearing the entry. The manager has to be told first, or it can never be told at
+    /// all.
+    ///
+    /// `None` where no manager holds a record: the installer’s own copy is deleted by
+    /// `devp uninstall` itself, and an unrecognised copy is just a file.
+    pub fn uninstall_argv(self) -> Option<Vec<String>> {
+        Some(match self {
+            Channel::Cargo => owned(&["cargo", "uninstall", "dev-prune"]),
+            Channel::Npm => owned(&["npm", "uninstall", "-g", "dev-prune"]),
+            Channel::Bun => owned(&["bun", "remove", "-g", "dev-prune"]),
+            Channel::Pnpm => owned(&["pnpm", "remove", "-g", "dev-prune"]),
+            Channel::Yarn => owned(&["yarn", "global", "remove", "dev-prune"]),
+            Channel::UvTool => owned(&["uv", "tool", "uninstall", "dev-prune"]),
+            Channel::Pipx => owned(&["pipx", "uninstall", "dev-prune"]),
+            // `-y`: pip asks on stdin, and whatever ran this has already asked.
+            Channel::Pip => owned(&["pip", "uninstall", "-y", "dev-prune"]),
+            Channel::WinGet => vec![
+                "winget".to_string(),
+                "uninstall".to_string(),
+                "--id".to_string(),
+                crate::constants::WINGET_PACKAGE_ID.to_string(),
+            ],
+            Channel::Scoop => owned(&["scoop", "uninstall", "dev-prune"]),
+            Channel::Homebrew => owned(&["brew", "uninstall", "dev-prune"]),
+            Channel::Installer | Channel::Unknown | Channel::Foreign(_) => return None,
+        })
+    }
+
+    /// The install one-liner, wrapped in the shell that runs it.
+    fn installer_argv(self) -> Vec<String> {
+        if cfg!(windows) {
+            vec![
+                "powershell".to_string(),
+                "-NoProfile".to_string(),
+                "-Command".to_string(),
+                format!("iwr -useb {} | iex", crate::constants::INSTALL_PS1_URL),
+            ]
+        } else {
+            vec![
+                "sh".to_string(),
+                "-c".to_string(),
+                format!("curl -fsSL {} | sh", crate::constants::INSTALL_SH_URL),
+            ]
+        }
+    }
+
+    /// An argv as a user would type it.
+    ///
+    /// Joining the arguments is right for every channel but one: the installer’s argv
+    /// wraps a shell one-liner in `powershell -Command` or `sh -c`, and printing the
+    /// wrapper would hand the reader something they cannot paste.
+    fn typed_form(self, argv: &[String]) -> String {
+        if self == Channel::Installer {
+            return argv.last().cloned().unwrap_or_default();
+        }
+        argv.join(" ")
     }
 
     /// Whether a package manager keeps a record of this install that deleting the file
@@ -245,6 +400,19 @@ impl Channel {
     /// leftover binary the user was told about.
     pub fn owns_its_files(self) -> bool {
         !matches!(self, Channel::Installer | Channel::Unknown)
+    }
+
+    /// Whether `devp uninstall` may delete this copy with `fs::remove_file`.
+    ///
+    /// True in exactly two cases, and the two look identical from a path, which is why
+    /// this is asked as its own question. The installer keeps no record beyond the file
+    /// it wrote, and a copy in a location nothing claims is a file somebody moved there.
+    /// Everything else -- a manager with a command, and a manager without one -- is
+    /// removed by its manager or not at all: [`Self::uninstall_argv`] explains what
+    /// deleting the file first costs, and a [`Channel::Foreign`] copy costs the same
+    /// with no way to repair it afterwards.
+    pub fn may_delete_directly(self) -> bool {
+        matches!(self, Channel::Installer | Channel::Unknown)
     }
 
     /// Whether this channel replaces its install *directory* wholesale on upgrade.
@@ -263,6 +431,11 @@ impl Channel {
     pub fn replaces_its_directory(self) -> bool {
         matches!(self, Channel::WinGet | Channel::Scoop | Channel::Homebrew)
     }
+}
+
+/// A borrowed argv as an owned one.
+fn owned(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
 }
 
 /// npm's global shims sit *beside* its `node_modules`, not inside it, so the path alone
@@ -475,6 +648,53 @@ mod tests {
                 "{path}"
             );
         }
+    }
+
+    /// Before `Channel::Foreign` these were `Unknown`, and `devp uninstall --yes`
+    /// deleted them. A Deno or Volta or mise install leaves no fragment any other
+    /// marker matches, so nothing distinguished one from a binary somebody copied.
+    #[test]
+    fn a_managed_tree_with_no_known_commands_is_foreign_rather_than_unknown() {
+        for (path, name) in [
+            ("/home/k/.deno/bin/dev-prune", "Deno"),
+            ("/home/k/.volta/bin/dev-prune", "Volta"),
+            ("/home/k/.local/share/mise/shims/dev-prune", "mise"),
+            ("/usr/bin/dev-prune", "the system package manager"),
+        ] {
+            assert_eq!(
+                Channel::detect_at(Path::new(path), None),
+                Channel::Foreign(name),
+                "{path} was not read as {name}'s"
+            );
+        }
+    }
+
+    /// `/usr/local/bin` is where a person putting a binary somewhere by hand puts it,
+    /// and reading it as the distribution's would make the sweep refuse to clean up
+    /// after itself.
+    #[test]
+    fn usr_local_bin_stays_unclaimed() {
+        assert_eq!(
+            Channel::detect_at(Path::new("/usr/local/bin/dev-prune"), None),
+            Channel::Unknown
+        );
+    }
+
+    /// Three channels have no `uninstall_argv`, and only two of them may be deleted.
+    /// Conflating those was the bug: `Foreign` is a manager's file with no command to
+    /// repair it afterwards, which makes deleting it the one move with no way back.
+    #[test]
+    fn only_the_installer_and_an_unclaimed_copy_may_be_deleted_outright() {
+        for channel in [Channel::Installer, Channel::Unknown] {
+            assert!(channel.uninstall_argv().is_none());
+            assert!(channel.may_delete_directly(), "{channel:?}");
+        }
+        let foreign = Channel::Foreign("Deno");
+        assert!(foreign.uninstall_argv().is_none());
+        assert!(!foreign.may_delete_directly());
+        // Nor is a command guessed for it anywhere else.
+        assert!(foreign.install_argv().is_none());
+        assert!(foreign.upgrade_argv().is_none());
     }
 
     #[test]

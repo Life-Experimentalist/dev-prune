@@ -200,8 +200,8 @@ hand-rolled script never has:</p>
 
 <p>And it is not only Node: the same pass handles <code>.venv</code> for uv, Poetry, PDM,
 Pipenv and plain venv, <code>vendor/</code> for Go, Composer and Bundler,
-<code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods — eighteen package managers in
-total, fourteen of them on by default.</p>
+<code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods — twenty-three package
+managers in total, fifteen of them on by default.</p>
 
 <h2>Which to use</h2>
 
@@ -219,7 +219,7 @@ comparison, including <code>cargo-sweep</code>, <code>rimraf</code> and the rest
       },
       {
         q: 'What is the difference between npkill and dev-prune?',
-        a: 'npkill scans for node_modules directories and lets you delete them interactively, sorted by size and last-modified date. dev-prune runs the package manager dry-run that matches each lockfile and deletes only when it exits zero, across eighteen package managers rather than Node alone, and skips repositories that are not idle.',
+        a: 'npkill scans for node_modules directories and lets you delete them interactively, sorted by size and last-modified date. dev-prune runs the package manager dry-run that matches each lockfile and deletes only when it exits zero, across twenty-three package managers rather than Node alone, and skips repositories that are not idle.',
       },
       {
         q: 'Is there a way to delete node_modules automatically?',
@@ -612,11 +612,11 @@ with respect to <code>Cargo.toml</code>. If it fails, <code>target/</code> stays
 
   {
     slug: 'vs',
-    title: 'dev-prune vs npkill, cargo-sweep, rimraf and a cron job',
+    title: 'dev-prune vs kondo, npkill, cargo-sweep, rimraf and a cron job',
     description:
-      'An honest comparison. Three of these are better than dev-prune at the thing they do; here is when each one is the right answer.',
+      'An honest comparison. Four of these are better than dev-prune at the thing they do; here is when each one is the right answer.',
     keywords:
-      'npkill alternative, cargo-sweep, rimraf node_modules, clean node_modules tool comparison',
+      'kondo alternative, npkill alternative, cargo-sweep, rimraf node_modules, clean node_modules tool comparison',
     body: `
 <p>Most comparison pages are written to win. This one is not, because the tools below mostly
 do not overlap, and pretending they do would make it useless to the person reading it.</p>
@@ -630,6 +630,38 @@ portable to Windows and Node scripts need it to be; that is its whole job and it
 
 <p>Nothing below is an improvement on <code>rm -rf node_modules</code> for the single-project
 case.</p>
+
+<h2>kondo</h2>
+
+<p><strong>Use it when you want to look at every heavy directory on the machine and decide
+each one yourself, and you want that in one binary rather than one per language.</strong>
+kondo is the closest thing to dev-prune that exists, it is older, it has more users, and on
+the axis it was built for it is genuinely good: it walks a tree, recognises twenty-odd
+project types, shows you what each one costs, and deletes what you confirm. There is a GUI
+(<code>kondo-ui</code>), it is in winget, Homebrew, MacPorts and the Arch repositories, and
+<code>kondo --older 30d</code> covers the common case in one line.</p>
+
+<p>The difference is not coverage, it is what happens in the moment before a deletion.
+kondo's own README says it plainly, twice:</p>
+
+<blockquote><p>Kondo is <em>essentially</em> <code>rm -rf</code> with a prompt. Use at your
+own discretion. Always have a backup of your projects.</p></blockquote>
+
+<p>That is an accurate description and a reasonable design: you are the check, so the tool
+does not need to be. dev-prune is built for the case where nobody is watching, which forces
+a different set of choices — it runs <code>npm ci --dry-run</code> or
+<code>uv lock --locked</code> or <code>cargo metadata --locked</code> first and keeps the
+directory when that exits non-zero; it reads <code>git log</code> rather than file
+timestamps, so a <code>node_modules</code> nobody has touched inside a repository you
+committed to this morning is not a candidate; it records what it removed so
+<code>devp restore</code> can put it back; and it schedules itself, which is the whole
+point of the verification, because a background pass that guesses is a background pass that
+eventually eats something.</p>
+
+<p>Neither of those is better in the abstract. If you are going to sit there and approve
+each row, kondo's warning is honest and its coverage is broad and you should use it. If you
+want the machine cleaned on a timer and would rather be told “no” than be
+surprised, a prompt is not the safety mechanism you need.</p>
 
 <h2>npkill</h2>
 
@@ -675,10 +707,11 @@ you would rather be told "no" than be surprised.</strong> The differences that m
     package installed into <code>.venv</code> that <code>uv.lock</code> did not mention.
     Both would have been silently lost by any tool that deletes on a last-modified
     heuristic.</li>
-  <li><strong>Eighteen package managers, not one.</strong> npm, pnpm, yarn, bun; uv, Poetry,
-    PDM, Pipenv, venv; Go, Composer, Bundler, Mix, CocoaPods — on by default. Cargo, Gradle,
-    Maven and SwiftPM ship disabled, because their output is a compile rather than a
-    download and that is a different price.</li>
+  <li><strong>Twenty-three package managers, not one.</strong> npm, pnpm, yarn, bun; uv,
+    Poetry, PDM, Pipenv, venv; Go, Composer, Bundler, Mix, CocoaPods, Terraform — on by
+    default. Cargo, Gradle, Maven, SwiftPM, Dart, <code>_build</code> for Mix, vcpkg and
+    CMake ship disabled, because their output is a compile rather than a download and
+    that is a different price.</li>
   <li><strong>Idle-gated.</strong> Nothing is a candidate until its repository has gone
     without a commit or a working-tree change for a threshold you set.</li>
   <li><strong>Hard safety rules with no override flag.</strong> It never crosses a
@@ -703,6 +736,10 @@ devp run --dry-run</code></pre>
       {
         q: 'What is the best alternative to npkill?',
         a: 'It depends what you are doing. For a supervised one-off sweep of node_modules, npkill is very good and hard to beat. For an unsupervised, recurring cleanup across many package managers with a lockfile check before each deletion, dev-prune is built for that case. For a single directory in front of you, rm -rf is faster than both.',
+      },
+      {
+        q: 'How does dev-prune compare to kondo?',
+        a: 'kondo is the closest comparable tool and it is older and more widely packaged. It scans for heavy project directories across about twenty project types and deletes what you confirm; its own README describes it as essentially rm -rf with a prompt. dev-prune is built to run unattended instead, so it does the things a prompt would otherwise be doing: it runs the package manager dry-run that matches each lockfile and keeps the directory if that fails, gates on git activity rather than file mtime, records what it deleted so devp restore can reinstall it, and schedules itself. Supervised one-off: kondo. Unattended and recurring: dev-prune.',
       },
       {
         q: 'Does dev-prune replace cargo-sweep?',

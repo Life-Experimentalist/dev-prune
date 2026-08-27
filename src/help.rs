@@ -455,7 +455,19 @@ Both files can also carry `prunable.directories`: directories no lockfile descri
 each with the `rebuild` command that puts it back. Unlike every other key, the two \
 files' lists add up rather than one winning — a team declaration never discards your \
 own. Before deleting one, dev-prune checks that it is inside the repository, that Git \
-is tracking nothing in it, and that the rebuild command's tool is on this machine.";
+is tracking nothing in it, and that the rebuild command's tool is on this machine.
+
+`prunable.exclude` lists declared paths to leave alone on this machine, whoever \
+declared them — how you keep a directory the committed file calls rebuildable without \
+editing a file the whole team shares. Spelled the same way as a `path`, and honoured \
+from whichever file names it, because a veto only ever deletes less. Naming one path in \
+both lists of the *same* file is a typo rather than a decision — the exclusion still \
+wins, so the declaration never runs — and `devp doctor` says so.
+
+Both files are read from the repository root and nowhere else, because the paths inside \
+them are relative to that root. A copy one directory down parses and does nothing at \
+all; `devp doctor` names it rather than moving it, since moving it would change what \
+every path inside it means.";
 
 pub const CONFIG_PROJECT_EXAMPLES: &str = "\
 EXAMPLES:

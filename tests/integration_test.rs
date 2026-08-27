@@ -485,6 +485,73 @@ fn test_mistyped_toggle_action_is_rejected() {
     assert!(stderr.contains("enabel"), "{stderr}");
 }
 
+/// The conflict a committed declaration creates, and the way out of it.
+///
+/// `project.devprune.json` is shared, so one person's `gen/kept` is everybody's. This is
+/// the whole path — both files loaded, merged, resolved, pruned — because every unit of
+/// it can be right while the run still deletes the directory.
+#[test]
+fn test_a_personal_exclusion_keeps_a_committed_declaration_from_running() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let repo = tmp.path().join("shared-repo");
+    for name in ["kept", "pruned"] {
+        fs::create_dir_all(repo.join("gen").join(name)).unwrap();
+        fs::write(
+            repo.join("gen").join(name).join("blob.bin"),
+            vec![0u8; 4096],
+        )
+        .unwrap();
+    }
+    Command::new("git")
+        .args(["init"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    // `echo` is the documented rebuild for a directory that needs nothing to come back,
+    // and it is the one command that resolves on every platform.
+    fs::write(
+        repo.join("project.devprune.json"),
+        r#"{"prunable":{"directories":[
+             {"path":"gen/kept","rebuild":"echo not needed"},
+             {"path":"gen/pruned","rebuild":"echo not needed"}
+           ]}}"#,
+    )
+    .unwrap();
+    // This machine is keeping one of them.
+    fs::write(
+        repo.join(".devprune.json"),
+        r#"{"prunable":{"exclude":["gen/kept"]}}"#,
+    )
+    .unwrap();
+
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["--force", "-y", "run"])
+        .output()
+        .expect("Failed to run");
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert!(
+        repo.join("gen").join("kept").exists(),
+        "the excluded declaration was pruned anyway:\n{printed}"
+    );
+    assert!(
+        !repo.join("gen").join("pruned").exists(),
+        "nothing was pruned at all, so this proves nothing:\n{printed}"
+    );
+}
+
 /// A refused declaration has to reach the person running the pass.
 ///
 /// It was computed correctly and emitted correctly in `--json`, and then dropped by

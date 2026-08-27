@@ -295,6 +295,101 @@ fn the_sweep_with_yes_deletes_strays_and_their_shims() {
 }
 
 #[test]
+fn a_manager_owned_stray_is_never_deleted_behind_its_managers_back() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    fake_managed_install(&config);
+
+    // `Channel::detect_at` classifies by path alone, so a `.cargo/bin` anywhere is
+    // cargo's. Both names go in the one directory: that is the case that used to run
+    // `cargo uninstall dev-prune` twice, the second exiting 101 on a package it had
+    // already removed.
+    let cargobin = tmp.path().join(".cargo").join("bin");
+    fs::create_dir_all(&cargobin).unwrap();
+    let planted: Vec<PathBuf> = ["dev-prune", "devp"]
+        .iter()
+        .map(|stem| {
+            let path = cargobin.join(exe_name(stem));
+            fs::write(&path, b"a cargo-installed copy").unwrap();
+            path
+        })
+        .collect();
+
+    // The sandbox PATH carries no `cargo`, which is both what keeps this test off the
+    // machine it runs on and the exact condition the guard exists for.
+    let out = devp_uninstall(&config, &[&cargobin])
+        .arg("--yes")
+        .output()
+        .unwrap();
+    let text = combined(&out);
+    assert!(out.status.success(), "uninstall failed:\n{text}");
+
+    // Deleting the file would leave cargo listing a binary that is gone, and
+    // `cargo uninstall` then exits 101 without clearing the entry — so the remedy
+    // printed below could never work afterwards.
+    for path in &planted {
+        assert!(
+            path.exists(),
+            "a cargo-owned copy was deleted behind cargo's back: {}\n{text}",
+            path.display()
+        );
+    }
+    assert!(
+        text.contains("cargo is not on PATH"),
+        "the copy was skipped without saying why:\n{text}"
+    );
+    assert_eq!(
+        text.matches("cargo is not on PATH").count(),
+        1,
+        "the manager was reported once per file rather than once:\n{text}"
+    );
+    assert!(
+        text.contains("cargo uninstall dev-prune"),
+        "the command that finishes the job was not printed:\n{text}"
+    );
+}
+
+#[test]
+fn a_copy_inside_a_manager_dev_prune_cannot_drive_is_named_and_left() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    fake_managed_install(&config);
+
+    // Deno installs global executables into `~/.deno/bin` and leaves no fragment any
+    // other marker matches. Until `Channel::Foreign` existed this classified as
+    // `Unknown`, and a confirmed sweep deleted it out from under Deno.
+    let denobin = tmp.path().join(".deno").join("bin");
+    fs::create_dir_all(&denobin).unwrap();
+    let planted: Vec<PathBuf> = ["dev-prune", "devp"]
+        .iter()
+        .map(|stem| {
+            let path = denobin.join(exe_name(stem));
+            fs::write(&path, b"a deno-installed copy").unwrap();
+            path
+        })
+        .collect();
+
+    let out = devp_uninstall(&config, &[&denobin])
+        .arg("--yes")
+        .output()
+        .unwrap();
+    let text = combined(&out);
+    assert!(out.status.success(), "uninstall failed:\n{text}");
+
+    for path in &planted {
+        assert!(
+            path.exists(),
+            "a Deno-owned copy was deleted behind Deno's back: {}\n{text}",
+            path.display()
+        );
+    }
+    assert!(
+        text.contains("Deno"),
+        "the copy was left without naming who owns it:\n{text}"
+    );
+}
+
+#[test]
 fn the_sweep_never_touches_a_development_build() {
     let tmp = TempDir::new().unwrap();
     let config = tmp.path().join("config");

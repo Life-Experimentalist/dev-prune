@@ -667,7 +667,8 @@ window for every adapter under it.
 
 A download cache is a bet that re-downloading costs less than the disk it occupies,
 and somewhere the bet stops paying. `devp config set cache_max_gb uv=10,npm=10` is
-where you say where: a ceiling in gibibytes, per manager, measured against that
+where you say where: a ceiling in gibibytes — GiB, the unit the report prints —
+per manager, measured against that
 manager's whole footprint. A manager over its cap is **marked** in `devp caches` —
 setting one deletes nothing — and `devp caches clear --over-cap all` empties exactly
 what is marked, when you type it. It is keyed by the names `devp caches clear` takes
@@ -913,6 +914,24 @@ the two lists **add up**. A list is not a decision, so a team declaration never 
 one you wrote yourself, and naming the same path in both leaves one directory, rebuilt
 by the committed command.
 
+And because the committed file is the whole team's, one declaration can be right for
+everybody but you — the directory the project regenerates is the one your copy happens
+to be holding something in. `prunable.exclude` is how you say so without editing a file
+your colleagues share:
+
+```json
+{ "prunable": { "exclude": ["tools/vendor"] } }
+```
+
+Spelled the way a `path` is, so `tools/vendor`, `tools/vendor/`, `./tools/vendor` and
+`tools\vendor` are one path; an exclusion that missed on a trailing slash would delete
+the exact directory it was written to keep. It is honoured from whichever file names it,
+because a veto only ever deletes less, and the entry it names leaves the pass entirely —
+not deleted, and not reported as a refusal on every run either. Naming the same path in
+both lists of one file is a typo rather than a decision, since the exclusion wins and the
+declaration then never runs; `devp doctor` points that out. Delete the exclusion and
+the declaration is back in force.
+
 An out-of-range value is rejected with the range in the message rather than silently
 clamped. `scan_depth` included: `config set` accepts `1`–`32` and refuses anything else
 outright — the clamp to that range survives only as the backstop for a hand-edited
@@ -946,21 +965,21 @@ Full decision flow: [docs/BACKGROUND_AUTOMATION.md](docs/BACKGROUND_AUTOMATION.m
 
 ## How it compares
 
-|                                           |         `dev-prune`         | `npkill` | `cargo-clean-all` | `pyclean` |   `git clean`   | `dust` / `ncdu` | BleachBit |
-| :---------------------------------------- | :-------------------------: | :------: | :---------------: | :-------: | :-------------: | :-------------: | :-------: |
-| Ecosystems                                | **JS/TS, Python, Rust, Go** |   Node   |       Rust        |  Python   | untracked files |        —        | OS caches |
-| Many projects per repository              |            **✓**            |    ✗     |         ✗         |     ✗     |       n/a       |       n/a       |     ✗     |
-| `.git` boundary enforced                  |            **✓**            |    ✗     |         ✓         |     ✗     |        ✓        |        ✗        |     ✗     |
-| Lockfile verified before deleting         |            **✓**            |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
-| Commit log **and** `mtime` activity check |            **✓**            |    ✗     |   `mtime` only    |     ✗     |        ✗        |        ✗        |     ✗     |
-| One-command restore                       |            **✓**            |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
-| Undo the last pass                        |            **✓**            |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
-| Background scheduler                      |            **✓**            |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
-| Git hook auto-registration                |            **✓**            |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
-| Per-repository config + 0ms opt-out       |            **✓**            |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
-| Machine-readable `--json`                 |            **✓**            |    ✗     |         ✗         |     ✗     |        ✗        |     partial     |     ✗     |
-| AI agent skill                            |            **✓**            |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
-| Runtime required                          |  **none** (static binary)   | Node.js  |       none        |  Python   |      none       |      none       |  Python   |
+|                                           |       `dev-prune`        |      `kondo`      | `npkill` | `cargo-clean-all` | `pyclean` |   `git clean`   | `dust` / `ncdu` | BleachBit |
+| :---------------------------------------- | :----------------------: | :---------------: | :------: | :---------------: | :-------: | :-------------: | :-------------: | :-------: |
+| Package managers                          |          **23**          | ~20 project types |   Node   |       Rust        |  Python   | untracked files |        —        | OS caches |
+| Many projects per repository              |          **✓**           |         ✓         |    ✗     |         ✗         |     ✗     |       n/a       |       n/a       |     ✗     |
+| `.git` boundary enforced                  |          **✓**           |         ✗         |    ✗     |         ✓         |     ✗     |        ✓        |        ✗        |     ✗     |
+| Lockfile verified before deleting         |          **✓**           |         ✗         |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
+| Commit log **and** `mtime` activity check |          **✓**           |   `mtime` only    |    ✗     |   `mtime` only    |     ✗     |        ✗        |        ✗        |     ✗     |
+| One-command restore                       |          **✓**           |         ✗         |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
+| Undo the last pass                        |          **✓**           |         ✗         |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
+| Background scheduler                      |          **✓**           |         ✗         |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
+| Git hook auto-registration                |          **✓**           |         ✗         |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
+| Per-repository config + 0ms opt-out       |          **✓**           | `--ignored-dirs`  |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
+| Machine-readable `--json`                 |          **✓**           |         ✗         |    ✗     |         ✗         |     ✗     |        ✗        |     partial     |     ✗     |
+| AI agent skill                            |          **✓**           |         ✗         |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
+| Runtime required                          | **none** (static binary) |       none        | Node.js  |       none        |  Python   |      none       |      none       |  Python   |
 
 Longer analysis: [docs/MARKET_ANALYSIS.md](docs/MARKET_ANALYSIS.md).
 
@@ -1019,6 +1038,7 @@ Deeper: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) ·
 | [Documentation hub](docs/README.md)                                                                      | Index of everything below                                        |
 | [CLI reference](docs/CLI_REFERENCE.md)                                                                   | Every command, flag, setting, exit code and `--json` document    |
 | [Safety invariants](docs/SAFETY_INVARIANTS.md)                                                           | The seven guarantees, and why each exists                        |
+| [Why it refuses](docs/WHY.md)                                                                            | The argument the whole design came from                          |
 | [Architecture](docs/ARCHITECTURE.md) · [HLD](docs/architecture/HLD.md) · [LLD](docs/architecture/LLD.md) | How it is built                                                  |
 | [Background automation](docs/BACKGROUND_AUTOMATION.md)                                                   | Schedulers, hooks, chaining, and turning it all off              |
 | [IDE & editor integration](docs/IDE_INTEGRATION.md)                                                      | The extension, schema IntelliSense, and every editor it works in |

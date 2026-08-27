@@ -178,6 +178,42 @@ fn is_scannable(entry: &DirEntry) -> bool {
     true
 }
 
+/// Every config file below `repo_root` — which is to say, every one with no effect.
+///
+/// All three are read from the repository root and nowhere else, because the paths
+/// inside them are relative to that root. A copy one directory down is not a narrower
+/// scope, it is a file nothing ever opens, and the failure is silent in the worst way:
+/// the settings look written, `git status` stays clean, and the pass behaves as though
+/// they were never typed.
+///
+/// Bounded by the repository's own scan depth rather than walking the whole tree. That
+/// is the region dev-prune already treats as this repository, and a doctor run that
+/// walks a monorepo end to end looking for three filenames is a diagnostic nobody waits
+/// for twice.
+pub fn stray_config_files(repo_root: &Path, depth: usize) -> Vec<String> {
+    WalkDir::new(repo_root)
+        .follow_links(false)
+        // One deeper than the project scan, because a file sits one level below the
+        // directory holding it: the deepest directory that scan reaches is exactly the
+        // deepest one a config file could be hiding in.
+        .max_depth(clamp_depth(depth).saturating_add(1))
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|entry| entry.depth() == 0 || is_scannable(entry))
+        .flatten()
+        // Depth 0 is the root directory; its own files are depth 1, and that is where
+        // these three belong.
+        .filter(|entry| entry.depth() > 1 && entry.file_type().is_file())
+        .filter(|entry| {
+            let name = entry.file_name().to_string_lossy();
+            name == crate::constants::PER_REPO_CONFIG_FILE
+                || name == crate::constants::PROJECT_REPO_CONFIG_FILE
+                || name == crate::constants::DEVPRUNE_IGNORE_FILE
+        })
+        .map(|entry| relative_label(repo_root, entry.path()))
+        .collect()
+}
+
 /// Render `path` relative to `root` with forward slashes; `"."` when they are equal.
 ///
 /// Used for every user-facing directory label so that `frontend/node_modules` reads the
@@ -343,6 +379,62 @@ mod tests {
         let deep = "a/b/c/d/e/f/g/h";
         project(tmp.path(), deep, &["Cargo.toml"]);
         assert!(discover(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn only_a_config_below_the_root_counts_as_stray() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // The root copies are the ones that work. Reporting them would send somebody to
+        // move the only file that was ever being read.
+        for name in [
+            crate::constants::PER_REPO_CONFIG_FILE,
+            crate::constants::PROJECT_REPO_CONFIG_FILE,
+            crate::constants::DEVPRUNE_IGNORE_FILE,
+        ] {
+            fs::write(root.join(name), "{}").unwrap();
+        }
+        assert!(stray_config_files(root, 4).is_empty());
+
+        project(
+            root,
+            "services/api",
+            &[crate::constants::PER_REPO_CONFIG_FILE],
+        );
+        project(
+            root,
+            "frontend",
+            &[crate::constants::PROJECT_REPO_CONFIG_FILE],
+        );
+        assert_eq!(
+            stray_config_files(root, 4),
+            vec![
+                "frontend/project.devprune.json".to_string(),
+                "services/api/.devprune.json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stray_config_inside_a_nested_repository_belongs_to_that_repository() {
+        // `is_scannable` stops at a nested `.git`, and this walk inherits that: the file
+        // is at the root of a repository dev-prune registers in its own right, so it is
+        // read, and calling it stray would be wrong twice over.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let nested = root.join("vendor/lib");
+        fs::create_dir_all(nested.join(".git")).unwrap();
+        fs::write(nested.join(crate::constants::PER_REPO_CONFIG_FILE), "{}").unwrap();
+
+        // Hidden directories are skipped for the same reason they are skipped by the
+        // project scan: nothing in them is a repository of ours.
+        let hidden = root.join(".backup");
+        fs::create_dir_all(&hidden).unwrap();
+        fs::write(hidden.join(crate::constants::PER_REPO_CONFIG_FILE), "{}").unwrap();
+
+        assert!(stray_config_files(root, 4).is_empty());
     }
 
     #[test]

@@ -936,6 +936,58 @@ fn doctor_on_a_path_names_the_reason_it_would_not_be_pruned() {
 }
 
 #[test]
+fn doctor_names_a_config_that_declares_and_excludes_the_same_path() {
+    // Across the two files an exclusion is the designed veto. Inside one file it is a
+    // typo whose only symptom is a declaration that never runs, so the report is the
+    // only place it can ever surface.
+    let tmp = TempDir::new().unwrap();
+    let (config, repo) = fixture(&tmp);
+
+    fs::write(
+        repo.join("project.devprune.json"),
+        r#"{"prunable":{"directories":[{"path":"tools/vendor","rebuild":"echo rebuilt"}],"exclude":["tools/vendor"]}}"#,
+    )
+    .unwrap();
+
+    let out = devp(&config)
+        .args(["doctor", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let text = combined(&out);
+    assert!(
+        text.contains("excludes it in the same file"),
+        "no contradiction warning:\n{text}"
+    );
+    // A warning, never a problem: nothing here is broken, and `doctor` exits 1 only for
+    // breakage.
+    assert!(out.status.success(), "{text}");
+}
+
+#[test]
+fn doctor_names_a_config_file_that_is_not_at_the_repository_root() {
+    // The paths inside are relative to the root, so a copy one directory down parses
+    // cleanly and is read by nothing. `git status` stays clean and no other command
+    // will ever mention it.
+    let tmp = TempDir::new().unwrap();
+    let (config, repo) = fixture(&tmp);
+
+    fs::write(repo.join("api/.devprune.json"), r#"{"ignore":true}"#).unwrap();
+
+    let out = devp(&config)
+        .args(["doctor", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let text = combined(&out);
+    assert!(text.contains("Stray config"), "no stray warning:\n{text}");
+    assert!(text.contains("api/.devprune.json"), "{text}");
+    assert!(out.status.success(), "{text}");
+
+    // And it is named rather than moved: moving it up a level would change what every
+    // path inside it means.
+    assert!(repo.join("api/.devprune.json").exists());
+}
+
+#[test]
 fn doctor_on_a_non_repository_says_so_rather_than_scanning_it() {
     let tmp = TempDir::new().unwrap();
     let config = tmp.path().join("config");

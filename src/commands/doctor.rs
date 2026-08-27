@@ -1331,6 +1331,30 @@ fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> Repo
                     "absent — global settings apply",
                 ),
             }
+            for (name, cfg) in [
+                (constants::PROJECT_REPO_CONFIG_FILE, layers.project_config()),
+                (constants::PER_REPO_CONFIG_FILE, layers.personal_config()),
+            ] {
+                let Some(prunable) = cfg.and_then(|c| c.prunable.as_ref()) else {
+                    continue;
+                };
+                let excluded: Vec<String> = prunable
+                    .exclude
+                    .iter()
+                    .map(|raw| crate::declared::key(raw))
+                    .collect();
+                for dir in &prunable.directories {
+                    if excluded.contains(&crate::declared::key(&dir.path)) {
+                        f.warn(
+                            name,
+                            &format!(
+                                "declares `{}` and excludes it in the same file. The exclusion wins, so the declaration never runs.",
+                                dir.path
+                            ),
+                        );
+                    }
+                }
+            }
             (layers.effective(), false)
         }
         None => {
@@ -1411,6 +1435,20 @@ fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> Repo
 
     let depth = workspace::resolve_depth(path, registry.settings.scan_depth);
     f.note("Scan depth", &format!("{depth} levels below the root"));
+
+    // Never a `problem`: a stray file breaks nothing, and `doctor` exits 1 only for
+    // breakage. It is a warning because the person who wrote it believes it is in
+    // force, and nothing else on this machine will ever tell them otherwise. Not moved
+    // either — the paths inside are relative to wherever the file sits, so moving it up
+    // silently changes what every one of them means.
+    for stray in workspace::stray_config_files(path, depth) {
+        f.warn(
+            "Stray config",
+            &format!(
+                "{stray} — these files are read from the repository root only, so this one does nothing. Paths inside are relative to the root: check them before moving it up."
+            ),
+        );
+    }
 
     RepoContext {
         path: path.to_path_buf(),
@@ -1616,6 +1654,14 @@ fn describe_overrides(cfg: &PerRepoConfig) -> String {
     }
     if cfg.disable_daemon {
         parts.push("disable_daemon=true".to_string());
+    }
+    if let Some(prunable) = &cfg.prunable {
+        if !prunable.directories.is_empty() {
+            parts.push(format!("declares {}", prunable.directories.len()));
+        }
+        if !prunable.exclude.is_empty() {
+            parts.push(format!("excludes {}", prunable.exclude.len()));
+        }
     }
     if parts.is_empty() {
         "parses; overrides nothing".to_string()

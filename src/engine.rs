@@ -806,7 +806,7 @@ fn prune_declarations(
     };
 
     let mut results = Vec::new();
-    for outcome in crate::declared::resolve(repo_path, &declared.directories) {
+    for outcome in crate::declared::resolve(repo_path, declared) {
         let target = match outcome {
             crate::declared::Declaration::Prunable(target) => target,
             // Printed even under `--only`, and even when the directory is below the
@@ -981,7 +981,6 @@ fn collect_bloat(
         .ok()
         .flatten()
         .and_then(|c| c.prunable)
-        .map(|p| p.directories)
         .unwrap_or_default();
     for outcome in crate::declared::resolve(repo_path, &declared) {
         let crate::declared::Declaration::Prunable(target) = outcome else {

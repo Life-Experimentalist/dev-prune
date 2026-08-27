@@ -34,7 +34,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.10.0";
+const VERSION = "1.11.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -857,66 +857,77 @@ export default function App() {
     bash: {
       group: "script",
       label: "Linux / macOS",
+      registry: "Downloads the release archive from GitHub, checks its .sha256, and installs it. No package registry involved.",
       note: "Needs a Unix shell — also fine on Windows under Git Bash, MSYS2, Cygwin or WSL. In PowerShell or Command Prompt it fails with 'sh is not recognized'; use the Windows tabs there.",
       cmd: "curl -fsSL https://devprune.vkrishna04.me/install.sh | sh",
     },
     powershell: {
       group: "script",
       label: "Windows",
+      registry: "Downloads the release archive from GitHub, checks its .sha256, and installs it. No package registry involved.",
       note: "Installs to %APPDATA%\\dev-prune\\bin and registers devp for PowerShell and cmd alike.",
       cmd: "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex",
     },
     cmdexe: {
       group: "script",
       label: "Windows (cmd)",
+      registry: "Downloads the release archive from GitHub, checks its .sha256, and installs it. No package registry involved.",
       note: "Command Prompt has no iwr, so it borrows PowerShell for the download. Same install; devp resolves in the next Command Prompt you open.",
       cmd: 'powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"',
     },
     brew: {
       group: "manager",
       label: "Homebrew",
+      registry: "Homebrew tap — Life-Experimentalist/homebrew-tap.",
       note: "macOS and Linux, Intel and ARM. The fully-qualified name taps as it installs, so there is no separate brew tap step — and because the formula belongs to a tap, brew upgrade keeps finding new versions. Installs both names and generates your shell completions from the binary.",
       cmd: "brew install Life-Experimentalist/tap/dev-prune",
     },
     scoop: {
       group: "manager",
       label: "Scoop",
+      registry: "Scoop bucket — Life-Experimentalist/scoop-bucket.",
       note: "64-bit, ARM and 32-bit Windows. The manifest carries the download hash, so there is nothing left to trust, and the bucket is what makes scoop update dev-prune work later. Registers both dev-prune and devp.",
       cmd: "scoop bucket add life-experimentalist https://github.com/Life-Experimentalist/scoop-bucket; scoop install dev-prune",
     },
     winget: {
       group: "manager",
       label: "WinGet",
+      registry: "The winget-pkgs community repository.",
       note: "Submitted and awaiting a Microsoft reviewer — every winget-pkgs version is a pull request a person signs off, so this command starts resolving when that merges, and not before. WinGet installs the dev-prune name; the devp twin appears the first time you run it.",
       cmd: "winget install VKrishna04.dev-prune",
     },
     npm: {
       group: "manager",
       label: "npm",
+      registry: "npm registry — which is also what bun, pnpm and yarn read, so all four install the same published package. dev-prune notices which one you used and upgrades and removes with that one.",
       note: "One small package that pulls in the single platform binary matching your machine — no postinstall download, so it works under npm ci --ignore-scripts and behind a registry mirror. Swap in npx dev-prune status to run it once without installing. Windows needs 1.8.0 or later. bun add -g dev-prune, pnpm add -g dev-prune and yarn global add dev-prune install the same package, and dev-prune treats each as its own channel: a copy bun installed is upgraded and removed with bun.",
       cmd: "npm install -g dev-prune",
     },
     python: {
       group: "manager",
       label: "uv / pipx",
+      registry: "PyPI — which uv, pipx and pip all read, so one upload serves the three of them.",
       note: "Platform wheels carrying the binary. Nothing Python runs. Swap in uvx dev-prune status to run it once and leave nothing behind, or pipx install dev-prune.",
       cmd: "uv tool install dev-prune",
     },
     pip: {
       group: "manager",
       label: "pip",
+      registry: "PyPI — the same wheels uv tool and pipx install.",
       note: "The same wheels, into whichever environment is active — a venv's Scripts/bin rather than a shared tool directory. Use pip install --user dev-prune for a machine-wide install.",
       cmd: "pip install dev-prune",
     },
     cargo: {
       group: "manager",
       label: "Cargo",
+      registry: "crates.io. binstall skips it for the GitHub release archive.",
       note: "crates.io stores source, not binaries, so cargo install always compiles (Rust 1.88+). cargo binstall downloads the same prebuilt archive the installers use.",
       cmd: "cargo binstall dev-prune",
     },
     release: {
       group: "manual",
       label: "Release binary",
+      registry: "GitHub Releases — the source every other channel here ultimately points at.",
       note: "Every archive ships a .sha256 sidecar; the installers refuse to run without one. Each release is also attested — gh attestation verify proves it came from this repository's workflow.",
       cmd: "https://github.com/Life-Experimentalist/dev-prune/releases/latest",
     },
@@ -1133,6 +1144,10 @@ Notes you should rely on, not work around:
                 </div>
                 <p className="install-note">
                   {installCommands[installTab].note}
+                </p>
+                <p className="install-registry">
+                  <strong>Where it comes from:</strong>{" "}
+                  {installCommands[installTab].registry}
                 </p>
               </div>
             </div>
@@ -2266,7 +2281,13 @@ Notes you should rely on, not work around:
                   keys to <code>project.devprune.json</code>, which is meant to be
                   committed — every key it names wins, and your file answers
                   the rest. Or drop an empty <code>ignore.devprune.json</code> in
-                  the root to opt out entirely.
+                  the root to opt out entirely. All three are read from the
+                  repository root and nowhere else, because every path inside
+                  them is relative to that root — a copy one directory down
+                  parses, looks applied and is read by nothing.{" "}
+                  <code>devp doctor</code> names any it finds, and leaves them
+                  where they are: moving one up a level would silently change
+                  what every path inside it means.
                 </p>
               </div>
             </div>
@@ -2597,7 +2618,15 @@ Notes you should rely on, not work around:
                 and there will not be one. A repository can still declare it —{" "}
                 <code>prunable.directories</code> names the path and the{" "}
                 <code>rebuild</code> command that puts it back, which dev-prune
-                checks is installed before it deletes. The
+                checks is installed before it deletes. That file is committed,
+                so <code>prunable.exclude</code> is the other half: it takes a
+                declared path back out on the one machine that is keeping it,
+                without editing a file the whole team shares. Across the two
+                files that is the whole point; naming one path in both lists of
+                the <em>same</em> file is a typo rather than a decision, because
+                the exclusion still wins and the declaration then never runs
+                — <code>devp doctor</code> says so rather than letting it pass
+                quietly. The
                 eight exceptions are opt-in and say so —{" "}
                 <code>devp config set enable_cargo true</code> (
                 <code>target/</code>), <code>enable_gradle</code> (
@@ -2707,7 +2736,8 @@ Notes you should rely on, not work around:
               </Faq>
               <Faq q="My uv cache is over 10 GB. Can it tell me?">
                 <code>devp config set cache_max_gb uv=10,npm=10</code> writes
-                down how big is too big, per manager, in gibibytes. A cache is a
+                down how big is too big, per manager, in gibibytes &mdash;
+                GiB, the unit the report prints. A cache is a
                 bet that re-downloading costs more than the disk it occupies,
                 and somewhere the bet stops paying — this is where you say
                 where. A manager past its ceiling is marked in{" "}

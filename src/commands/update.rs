@@ -578,64 +578,17 @@ fn replace_binary(staged: &Path, target: &Path) -> Result<()> {
 /// Run one channel's own upgrade command, wired to the terminal so its progress and
 /// prompts reach the user directly.
 fn spawn_channel_upgrade(channel: Channel) -> Result<()> {
-    let install_ps1 = format!("iwr -useb {} | iex", constants::INSTALL_PS1_URL);
-    let install_sh = format!("curl -fsSL {} | sh", constants::INSTALL_SH_URL);
-    let winget_id = constants::WINGET_PACKAGE_ID;
-    let argv: Vec<&str> = match channel {
-        Channel::Cargo => {
-            // binstall pulls the prebuilt release; plain `cargo install` compiles for
-            // minutes. Prefer the fast one when it exists.
-            if crate::adapters::binary_available("cargo-binstall") {
-                vec!["cargo", "binstall", "dev-prune", "--force", "-y"]
-            } else {
-                vec!["cargo", "install", "dev-prune", "--force"]
-            }
-        }
-        // The four npm-compatible clients, each run through itself. `@latest` is
-        // load-bearing for the first three: given a bare name they resolve against a
-        // manifest they already have and report the installed version as current.
-        Channel::Npm => vec!["npm", "install", "-g", "dev-prune@latest"],
-        Channel::Bun => vec!["bun", "add", "-g", "dev-prune@latest"],
-        Channel::Pnpm => vec!["pnpm", "add", "-g", "dev-prune@latest"],
-        // Yarn 1.x. Berry removed `yarn global` and says so itself when this runs, which
-        // is a better answer than anything this could substitute for it.
-        Channel::Yarn => vec!["yarn", "global", "upgrade", "dev-prune"],
-        Channel::UvTool => vec!["uv", "tool", "upgrade", "dev-prune"],
-        Channel::Pipx => vec!["pipx", "upgrade", "dev-prune"],
-        Channel::Pip => vec!["pip", "install", "--upgrade", "dev-prune"],
-        // The three that own their whole package directory. Each is given its own
-        // command rather than the direct download, because replacing a file inside a
-        // versioned package directory desynchronises the manager from what is on disk —
-        // and the next `winget upgrade` or `brew upgrade` would put the old binary back.
-        Channel::WinGet => vec![
-            "winget",
-            "upgrade",
-            "--id",
-            winget_id,
-            "--accept-package-agreements",
-            "--accept-source-agreements",
-        ],
-        Channel::Scoop => vec!["scoop", "update", "dev-prune"],
-        Channel::Homebrew => vec!["brew", "upgrade", "dev-prune"],
-        Channel::Installer => {
-            if cfg!(windows) {
-                vec!["powershell", "-NoProfile", "-Command", &install_ps1]
-            } else {
-                vec!["sh", "-c", &install_sh]
-            }
-        }
-        Channel::Unknown => {
-            output::print_warning(
-                "Could not tell which channel installed this binary, so nothing was \
-                 changed. Upgrade it yourself with one of:",
-            );
-            print_upgrade_commands();
-            anyhow::bail!("unrecognised install channel");
-        }
+    let Some(argv) = channel.upgrade_argv() else {
+        output::print_warning(
+            "Could not tell which channel installed this binary, so nothing was \
+             changed. Upgrade it yourself with one of:",
+        );
+        print_upgrade_commands();
+        anyhow::bail!("unrecognised install channel");
     };
 
     output::print_info(&format!("Running: {}", argv.join(" ")));
-    let status = crate::spawn::command(crate::adapters::resolve_program(argv[0]))
+    let status = crate::spawn::command(crate::adapters::resolve_program(&argv[0]))
         .args(&argv[1..])
         .status()
         .with_context(|| format!("could not start `{}`", argv[0]))?;

@@ -113,8 +113,9 @@ pub fn run(channel: Option<TargetChannel>, dry_run: bool, yes: bool) -> Result<(
         );
     }
 
-    let (sources, install) = install_plan(target);
-    let uninstall = uninstall_argv(current);
+    let sources = target.install_sources();
+    let install = target.install_argv();
+    let uninstall = current.uninstall_argv();
 
     println!();
     println!("  From:  {} ({})", current.label(), exe.display());
@@ -164,37 +165,37 @@ pub fn run(channel: Option<TargetChannel>, dry_run: bool, yes: bool) -> Result<(
 
     // The install goes first on purpose: if it fails, the copy on PATH is still the one
     // that was there before, and the machine is exactly as it was.
-    for argv in &install {
+    if let Some(argv) = &install {
         spawn(argv)?;
     }
     output::print_success(&format!("Installed through {}.", target.label()));
 
     if let Some(argv) = uninstall {
-        // Removing the binary that is executing right now. Windows locks a running
-        // image against deletion but not against rename, so it steps aside first and
-        // the manager's own uninstall is not blocked by it; the `.old` is swept by the
-        // next `devp update --install`, when nothing holds it open.
+        // Removing the binary that is executing right now. Windows will not let a
+        // package manager delete a running image: `cargo uninstall` fails with `Access
+        // is denied` and keeps its ledger entry, and renaming the file aside first only
+        // trades that for `corrupt metadata, ... does not exist when it should`, which
+        // keeps the entry too. Exiting first is the only order that clears the record,
+        // so the command goes to the same after-exit helper `devp uninstall` uses.
+        //
+        // `Ok(true)` means scheduled rather than done.
         #[cfg(windows)]
-        let aside = {
-            let aside = exe.with_extension("exe.old");
-            let _ = std::fs::remove_file(&aside);
-            std::fs::rename(&exe, &aside).ok().map(|_| aside)
+        let removed = if crate::commands::uninstall::schedule_manager_uninstall(current) {
+            Ok(true)
+        } else {
+            Err(anyhow::anyhow!(
+                "it could not be scheduled to run after this command exits"
+            ))
         };
-
-        let removed = spawn(&argv);
-
-        #[cfg(windows)]
-        if let Some(aside) = aside
-            && removed.is_err()
-            && !exe.exists()
-        {
-            // The uninstall failed and the old copy is now nameless. Put it back rather
-            // than leaving a PATH entry pointing at nothing.
-            let _ = std::fs::rename(&aside, &exe);
-        }
+        #[cfg(not(windows))]
+        let removed = spawn(&argv).map(|()| false);
 
         match removed {
-            Ok(()) => output::print_success(&format!("Removed the {} copy.", current.label())),
+            Ok(true) => output::print_success(&format!(
+                "The {} copy is removed a few seconds after this command exits.",
+                current.label()
+            )),
+            Ok(false) => output::print_success(&format!("Removed the {} copy.", current.label())),
             Err(e) => output::print_warning(&format!(
                 "The new copy is installed, but removing the old one failed ({e:#}).\n\
                  Run it yourself when convenient: {}",
@@ -225,7 +226,7 @@ pub fn run(channel: Option<TargetChannel>, dry_run: bool, yes: bool) -> Result<(
 /// Only copies outside this binary's own directory count. The alias sitting beside it is
 /// the same install under a second name, and removing it would break `devp`.
 fn converge(exe: &std::path::Path, dry_run: bool, yes: bool) -> Result<()> {
-    use crate::commands::uninstall::{canon_key, find_stray_copies};
+    use crate::commands::uninstall::{canon_key, find_stray_copies, group_by_channel};
 
     let here = exe.parent().map(canon_key);
     let others: Vec<_> = find_stray_copies()
@@ -248,7 +249,7 @@ fn converge(exe: &std::path::Path, dry_run: bool, yes: bool) -> Result<()> {
     println!();
     for stray in &others {
         println!("  {}", output::clean_path(&stray.path));
-        match uninstall_argv(stray.channel) {
+        match stray.channel.uninstall_argv() {
             Some(argv) => println!("      {}: {}", stray.channel.label(), argv.join(" ")),
             // No manager holds a record of it, so there is no command to run and the
             // file itself is the whole install.
@@ -279,14 +280,27 @@ fn converge(exe: &std::path::Path, dry_run: bool, yes: bool) -> Result<()> {
 
     let mut removed = 0usize;
     let mut failed: Vec<(std::path::PathBuf, String)> = Vec::new();
-    for stray in &others {
-        let outcome = match uninstall_argv(stray.channel) {
-            Some(argv) => spawn(&argv).map_err(|e| format!("{e:#}")),
-            None => std::fs::remove_file(&stray.path).map_err(|e| e.to_string()),
+    // Grouped, because one manager is told once however many of its files turned up.
+    // `~/.cargo/bin` holds both names, and a second `cargo uninstall dev-prune` exits
+    // 101 — reporting that would say the removal failed when it had just worked.
+    for (channel, paths) in group_by_channel(others) {
+        let Some(argv) = channel.uninstall_argv() else {
+            // No manager holds a record, so the file is the whole install.
+            for path in paths {
+                match std::fs::remove_file(&path) {
+                    Ok(()) => removed += 1,
+                    Err(e) => failed.push((path, e.to_string())),
+                }
+            }
+            continue;
         };
-        match outcome {
-            Ok(()) => removed += 1,
-            Err(e) => failed.push((stray.path.clone(), e)),
+        match spawn(&argv) {
+            Ok(()) => removed += paths.len(),
+            Err(e) => {
+                for path in paths {
+                    failed.push((path, format!("{e:#}")));
+                }
+            }
         }
     }
 
@@ -341,108 +355,6 @@ fn report(current: Channel, exe: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// How to install dev-prune fresh through `channel`: the sources to add first, then the
-/// install itself.
-///
-/// Homebrew and Scoop are the reason for the first half. The formula and the manifest
-/// live in this project's own tap and bucket rather than the default index, and `brew
-/// install dev-prune` without the tap resolves against homebrew-core, where dev-prune is
-/// not published. Adding a source that is already added is not an error worth stopping
-/// for, so those steps are best-effort; the install itself is not.
-fn install_plan(channel: Channel) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
-    let owned = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let sources = match channel {
-        Channel::Scoop => vec![owned(&[
-            "scoop",
-            "bucket",
-            "add",
-            crate::constants::SCOOP_BUCKET_NAME,
-            crate::constants::SCOOP_BUCKET_URL,
-        ])],
-        Channel::Homebrew => vec![owned(&["brew", "tap", crate::constants::HOMEBREW_TAP])],
-        _ => Vec::new(),
-    };
-    (sources, install_argv(channel))
-}
-
-/// The command that installs dev-prune through `channel`, once its source exists.
-fn install_argv(channel: Channel) -> Vec<Vec<String>> {
-    let owned = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    match channel {
-        // Same preference as `devp update --install`: binstall fetches the prebuilt
-        // release, a plain `cargo install` compiles for minutes.
-        Channel::Cargo => {
-            if crate::adapters::binary_available("cargo-binstall") {
-                vec![owned(&["cargo", "binstall", "dev-prune", "-y"])]
-            } else {
-                vec![owned(&["cargo", "install", "dev-prune"])]
-            }
-        }
-        Channel::Npm => vec![owned(&["npm", "install", "-g", "dev-prune"])],
-        Channel::Bun => vec![owned(&["bun", "add", "-g", "dev-prune"])],
-        Channel::Pnpm => vec![owned(&["pnpm", "add", "-g", "dev-prune"])],
-        Channel::Yarn => vec![owned(&["yarn", "global", "add", "dev-prune"])],
-        // `@latest` because `uv tool install dev-prune` against an environment uv
-        // already has prints "already installed" and exits successfully without
-        // changing anything — which reads, from here, as a move that worked.
-        Channel::UvTool => vec![owned(&["uv", "tool", "install", "dev-prune@latest"])],
-        Channel::Pipx => vec![owned(&["pipx", "install", "dev-prune"])],
-        Channel::WinGet => vec![vec![
-            "winget".to_string(),
-            "install".to_string(),
-            "--id".to_string(),
-            crate::constants::WINGET_PACKAGE_ID.to_string(),
-            "--accept-package-agreements".to_string(),
-            "--accept-source-agreements".to_string(),
-        ]],
-        Channel::Scoop => vec![owned(&["scoop", "install", "dev-prune"])],
-        Channel::Homebrew => vec![owned(&["brew", "install", "dev-prune"])],
-        Channel::Installer => {
-            if cfg!(windows) {
-                vec![vec![
-                    "powershell".to_string(),
-                    "-NoProfile".to_string(),
-                    "-Command".to_string(),
-                    format!("iwr -useb {} | iex", crate::constants::INSTALL_PS1_URL),
-                ]]
-            } else {
-                vec![vec![
-                    "sh".to_string(),
-                    "-c".to_string(),
-                    format!("curl -fsSL {} | sh", crate::constants::INSTALL_SH_URL),
-                ]]
-            }
-        }
-        // Not offered as a destination; see `TargetChannel`.
-        Channel::Pip | Channel::Unknown => Vec::new(),
-    }
-}
-
-/// The command that removes the copy `channel` installed, or `None` when there is no
-/// manager holding a record of it.
-fn uninstall_argv(channel: Channel) -> Option<Vec<String>> {
-    let owned = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    Some(match channel {
-        Channel::Cargo => owned(&["cargo", "uninstall", "dev-prune"]),
-        Channel::Npm => owned(&["npm", "uninstall", "-g", "dev-prune"]),
-        Channel::Bun => owned(&["bun", "remove", "-g", "dev-prune"]),
-        Channel::Pnpm => owned(&["pnpm", "remove", "-g", "dev-prune"]),
-        Channel::Yarn => owned(&["yarn", "global", "remove", "dev-prune"]),
-        Channel::UvTool => owned(&["uv", "tool", "uninstall", "dev-prune"]),
-        Channel::Pipx => owned(&["pipx", "uninstall", "dev-prune"]),
-        Channel::Pip => owned(&["pip", "uninstall", "-y", "dev-prune"]),
-        Channel::WinGet => vec![
-            "winget".to_string(),
-            "uninstall".to_string(),
-            "--id".to_string(),
-            crate::constants::WINGET_PACKAGE_ID.to_string(),
-        ],
-        Channel::Scoop => owned(&["scoop", "uninstall", "dev-prune"]),
-        Channel::Homebrew => owned(&["brew", "uninstall", "dev-prune"]),
-        Channel::Installer | Channel::Unknown => return None,
-    })
-}
-
 /// Run one of the two commands, wired to the terminal so the manager's own progress and
 /// prompts reach the user directly.
 fn spawn(argv: &[String]) -> Result<()> {
@@ -492,12 +404,11 @@ mod tests {
 
     #[test]
     fn every_offered_destination_has_an_install_command() {
-        // A `--channel` value that maps to an empty argv would panic in `spawn`. The
-        // value list and the command table have to stay in step.
+        // A `--channel` value with no install command would silently do nothing.
+        // The value list and the command table have to stay in step.
         for target in TargetChannel::value_variants() {
-            let argv = install_argv(target.channel());
             assert!(
-                !argv.is_empty(),
+                target.channel().install_argv().is_some(),
                 "`--channel {target:?}` has no install command"
             );
         }
@@ -523,11 +434,11 @@ mod tests {
         ] {
             assert!(channel.owns_its_files());
             assert!(
-                uninstall_argv(channel).is_some(),
+                channel.uninstall_argv().is_some(),
                 "{channel:?} keeps a record but has no uninstall command"
             );
         }
-        assert!(uninstall_argv(Channel::Installer).is_none());
-        assert!(uninstall_argv(Channel::Unknown).is_none());
+        assert!(Channel::Installer.uninstall_argv().is_none());
+        assert!(Channel::Unknown.uninstall_argv().is_none());
     }
 }

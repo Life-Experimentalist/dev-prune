@@ -14,7 +14,7 @@ name, and either works everywhere.
 run it, and explain the result. Everything you need is below; the docs map at the end is
 for anything that isn't.
 
-**Skill version: 1.10.0.** This file describes that release of `devp` and no other, and
+**Skill version: 1.11.0.** This file describes that release of `devp` and no other, and
 it is rewritten from the binary rather than maintained by hand. Before you rely on
 anything below, run `devp --version`. If it prints a different number, you are reading
 another release's instructions — its flags, JSON statuses and exit codes may not be
@@ -432,6 +432,35 @@ every platform. dev-prune prints the command and never runs it. These are pruned
 ordinary pass under the adapter name `declared`, so they obey `--dry-run`, `--min-size`,
 `--only` and the schedule. This is the one section where the two files' lists **add up**
 rather than one winning.
+
+**Vetoing one.** `project.devprune.json` is committed, so a declaration is the whole
+team's, and a tree the project regenerates can be the one holding something on this
+machine. `prunable.exclude` is the answer:
+
+```json
+{ "prunable": { "exclude": ["tools/vendor"] } }
+```
+
+Spelled the same way as a `path` — `tools/vendor`, `tools/vendor/`, `./tools/vendor`
+and `tools\vendor` all match — and honoured from whichever file names it, because a veto
+only ever deletes less. The entry it names is skipped entirely: not pruned, and not
+reported. Write it into `.devprune.json`, never the shared file; the whole point is that
+one person's answer does not become everybody's.
+
+Declaring and excluding one path in the **same** file is a typo, not a decision: the
+exclusion wins, so the declaration never runs. `devp doctor` reports it. Across the two
+files it is the intended use and stays silent.
+
+**Where these files go.** The repository root, always. Every path inside them is relative
+to that root, so a copy in a subdirectory parses, looks applied, and is read by nothing.
+`devp doctor` warns about strays it finds; it does not move them, because moving one
+changes what every path inside it means. When writing one for a user, write it at the
+root of the repository — not beside the project it is about.
+
+`project.devprune.json` is created by `devp config project . --team`, holding nothing but
+its `$schema` line. Run that first if the file does not exist, then write the `prunable`
+section into it — the `$schema` line is what gives the user completion and validation in
+their editor, so do not write the file by hand without it.
 
 When you fill this in for a user, name only directories you have confirmed are
 regenerated — and give a `rebuild` you have actually seen work in that repository, not

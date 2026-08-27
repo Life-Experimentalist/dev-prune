@@ -75,6 +75,22 @@ section[id],
   color: var(--text-muted);
 }
 
+/* Subordinate to the note above it: the same answer, one question further down. A
+   hairline rather than a second paragraph, so the widget does not grow a third block
+   of prose competing with the command. */
+.install-registry {
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.76rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.install-registry strong {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
 .hero-alias {
   margin: -0.75rem 0 1.75rem;
   padding-left: 0.85rem;
