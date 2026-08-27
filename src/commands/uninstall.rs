@@ -699,7 +699,12 @@ fn sweep_names() -> Vec<String> {
     if cfg!(windows) {
         let mut names: Vec<String> = Vec::new();
         for stem in stems {
-            for ext in ["exe", "cmd", "ps1", "bat"] {
+            // `exe.old` is dev-prune's own debris: an update renames the running binary
+            // aside so the channel can write a fresh one at the real name, and the
+            // delete that follows is best-effort because the file is still the running
+            // image. The next update sweeps it -- but somebody who updates once and then
+            // uninstalls never has a next update, and the orphan outlives the install.
+            for ext in ["exe", "cmd", "ps1", "bat", "exe.old"] {
                 names.push(format!("{stem}.{ext}"));
             }
             names.push(stem.to_string());
@@ -1002,4 +1007,29 @@ fn spawn_deletion_helper(
     _channels: &[Channel],
 ) -> (Vec<PathBuf>, bool) {
     (Vec::new(), true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The sweep has to know the name the update leaves behind, or dev-prune's own
+    /// debris outlives the uninstall that reported it gone.
+    #[test]
+    #[cfg(windows)]
+    fn the_sweep_looks_for_the_file_an_update_renames_aside() {
+        let names = sweep_names();
+        assert!(names.contains(&"devp.exe.old".to_string()), "{names:?}");
+        assert!(
+            names.contains(&"dev-prune.exe.old".to_string()),
+            "{names:?}"
+        );
+    }
+
+    /// Only Windows needs the rename-aside, so only Windows grows the extra name.
+    #[test]
+    #[cfg(not(windows))]
+    fn elsewhere_the_sweep_is_just_the_two_stems() {
+        assert_eq!(sweep_names(), ["dev-prune", "devp"]);
+    }
 }

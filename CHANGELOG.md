@@ -81,6 +81,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deliberately no install or upgrade command for any of them: none was on the machine
   this list was written on, and a wrong upgrade command is worse than none.
 
+- **`devp uninstall` now removes the `.old` file an update leaves behind.** Windows
+  will not let a running binary be replaced, so `devp update` renames it to
+  `devp.exe.old` and lets the channel write a fresh one at the real name. Deleting the
+  leftover afterwards is best-effort — it is still the running image — and the sweep
+  that finishes the job runs at the *next* update. Someone who updates once and then
+  uninstalls never has a next update: on the machine this was found on,
+  `~/.cargo/bin/devp.exe.old` was 5.8 MB of dev-prune still sitting there after the
+  command that reported dev-prune removed. The sweep looks for that name now too.
+
 ### For contributors
 
 - **Every per-channel command lives in `src/channel.rs`.** Installing, upgrading and
