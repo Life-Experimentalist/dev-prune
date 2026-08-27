@@ -163,16 +163,24 @@ impl Channel {
             Channel::Pnpm
         } else if any(marker::YARN) {
             Channel::Yarn
-        } else if any(marker::NPM) || npm_shim_beside(exe) {
+        } else if any(marker::NPM) {
             Channel::Npm
         } else if any(marker::UV_TOOL) {
             Channel::UvTool
         } else if any(marker::PIPX) {
             Channel::Pipx
+        } else if let Some((_, name)) = marker::FOREIGN.iter().find(|(m, _)| path.contains(m)) {
+            // Ahead of the two checks below, which infer ownership from a file that
+            // happens to sit next to the binary rather than from the tree it is in.
+            // `/usr/bin` holds a `python3` on every Linux, and mise and asdf keep a
+            // `python` shim beside every other shim, so all three read as pip installs
+            // from down there — and `/usr/bin/dev-prune` would be handed `pip install
+            // --upgrade`, which is the distribution's copy and none of pip's business.
+            Channel::Foreign(name)
+        } else if npm_shim_beside(exe) {
+            Channel::Npm
         } else if pip_script_beside(exe) {
             Channel::Pip
-        } else if let Some((_, name)) = marker::FOREIGN.iter().find(|(m, _)| path.contains(m)) {
-            Channel::Foreign(name)
         } else {
             Channel::Unknown
         }
@@ -578,6 +586,7 @@ pub fn install_dirs(home: Option<&Path>) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn each_channel_is_recognised_by_its_marker_directory() {
@@ -667,6 +676,38 @@ mod tests {
                 "{path} was not read as {name}'s"
             );
         }
+    }
+
+    /// The tree the binary is in outranks whatever else happens to be in it.
+    ///
+    /// `/usr/bin` holds a `python3` on every Linux, and mise and asdf keep a `python`
+    /// shim beside every other shim, so all three answered `pip_script_beside` and were
+    /// read as pip installs — `/usr/bin/dev-prune`, the distribution's own copy, would
+    /// have been handed `pip install --upgrade`.
+    #[test]
+    fn a_python_next_door_does_not_make_a_foreign_tree_pips() {
+        let tmp = TempDir::new().unwrap();
+        let shims = tmp.path().join(".asdf/shims");
+        std::fs::create_dir_all(&shims).unwrap();
+        std::fs::write(shims.join("python3"), "").unwrap();
+        std::fs::write(shims.join("python.exe"), "").unwrap();
+
+        let exe = shims.join("dev-prune");
+        std::fs::write(&exe, "").unwrap();
+        assert_eq!(Channel::detect_at(&exe, None), Channel::Foreign("asdf"));
+
+        // Same for the other inference: a `node_modules/dev-prune` beside it does not
+        // make the tree npm's either.
+        std::fs::create_dir_all(shims.join("node_modules/dev-prune")).unwrap();
+        assert_eq!(Channel::detect_at(&exe, None), Channel::Foreign("asdf"));
+
+        // And neither check is broken, only outranked: the same neighbours in a tree
+        // nothing claims still identify it.
+        let loose = tmp.path().join("bin");
+        std::fs::create_dir_all(loose.join("node_modules/dev-prune")).unwrap();
+        let exe = loose.join("dev-prune");
+        std::fs::write(&exe, "").unwrap();
+        assert_eq!(Channel::detect_at(&exe, None), Channel::Npm);
     }
 
     /// `/usr/local/bin` is where a person putting a binary somewhere by hand puts it,

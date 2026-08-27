@@ -67,12 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`devp uninstall --yes` deleted binaries belonging to Deno, Volta, mise, asdf, Nix
-  and the system package manager.** Each of those installs global executables into a
-  directory that matched none of the markers the sweep knew, so a copy in one was
-  indistinguishable from a loose file somebody had dropped in — and got removed, with
-  no hint printed, leaving the manager listing a binary that no longer exists. They are
-  now recognised by name, reported, and left exactly where they are. There is
+- **A copy installed by Deno, Volta, mise, asdf, Nix or your distribution was deleted
+  or handed to the wrong manager.** None of those six directories matched a marker,
+  and what happened next depended on whether a `python3` happened to sit beside the
+  binary. In `~/.deno/bin`, `~/.volta/bin` and `/nix/store` nothing did, so the copy
+  looked like a loose file somebody had dropped in and `devp uninstall --yes` removed
+  it — no hint printed, and the manager left listing a binary that is gone. In
+  `/usr/bin` and in mise's and asdf's shim directories one always does, so the copy
+  was read as a pip install instead: `devp update` on the binary your distribution
+  packaged would have run `pip install --upgrade dev-prune`. All six are now
+  recognised by name, reported, and left exactly where they are, and a tree that says
+  whose it is outranks anything that merely sits next to the file. There is
   deliberately no install or upgrade command for any of them: none was on the machine
   this list was written on, and a wrong upgrade command is worse than none.
 
