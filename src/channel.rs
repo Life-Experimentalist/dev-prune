@@ -713,10 +713,18 @@ mod tests {
     /// `/usr/local/bin` is where a person putting a binary somewhere by hand puts it,
     /// and reading it as the distribution's would make the sweep refuse to clean up
     /// after itself.
+    ///
+    /// Under a temp root rather than at the real path: `detect_at` reads the filesystem
+    /// for its last two checks, and on the macOS runner Homebrew keeps a `python3` in
+    /// the real `/usr/local/bin` — which makes that directory pip's on that machine, and
+    /// makes the literal path a question about the runner instead of about the marker.
     #[test]
     fn usr_local_bin_stays_unclaimed() {
+        let tmp = TempDir::new().unwrap();
+        let bin = tmp.path().join("usr/local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
         assert_eq!(
-            Channel::detect_at(Path::new("/usr/local/bin/dev-prune"), None),
+            Channel::detect_at(&bin.join("dev-prune"), None),
             Channel::Unknown
         );
     }
