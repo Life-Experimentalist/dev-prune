@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A git repository found inside a bloat directory is now a skip, not a failure.** A
+  vendored checkout — a pip `-e git+…` install under `.venv/src/`, a `file:` dependency
+  cloned into `node_modules` — is a permanent fact of the repository it lives in, but
+  the prune pass reported it as a delete error, so every scheduled pass over such a repo
+  exited non-zero forever while `--dry-run` over the same repo exited 0. The refusal
+  still happens and is still printed; it now reports as "left alone" with the reason,
+  the pass exits 0, and `--json` carries it as the new `skipped_nested_repo` status.
+
+- **A confirmed `devp run <repo>` deletes exactly the list you said yes to.** The pass
+  after the prompt re-derived its candidates from scratch, so a directory that crossed
+  the size floor while the prompt sat open was deleted without ever appearing on the
+  list you confirmed. The confirmed list is now passed to the pass verbatim.
+
+- `devp run` in registry mode no longer lists the same refused declaration twice in
+  `--json` output — once from the analysis pass and once from the execution pass.
+
+- **`devp run --json` emits its document even when saving the registry fails.** The
+  save error used to abort the command before the JSON was written, so a full-disk
+  machine got a truncated contract instead of a report ending in the error.
+
+- **`devp update` leaves a Volta, mise, Nix or distribution-packaged copy alone.** The
+  direct-download route knew WinGet, Scoop and Homebrew own their package directories,
+  but wrote fresh bytes over a copy inside a foreign manager's tree — desyncing a store
+  it has no command to resync, or breaking a shim. The managed copy is still upgraded;
+  the foreign manager's copy is now left exactly as it wrote it, and the report names
+  the manager instead of staying silent. The unattended auto-update skips entirely when
+  the foreign copy is the only one on the machine.
+
+- **A failed update download no longer leaves a `.new` staging file beside the
+  binary.** The stage is removed on a half-written download, and `devp uninstall`'s
+  sweep now knows the `.new` and `.old` names an interrupted update can leave behind.
+
+- **`devp config` (the interactive configurator) no longer reports a change when the
+  adapter picker was left exactly as found.** Toggling into the picker and out again
+  compared the deny-list against a re-ordered copy of itself and counted that as an
+  edit.
+
+- **Ctrl-D in the plain-terminal `devp config` walkthrough no longer counts as a
+  review.** Closing the input at the first prompt marked every setting as reviewed;
+  it now says "Input ended — nothing was changed" and leaves the review marker alone.
+
+- The Settings screen footer now says `q/Esc cancel` — Esc always cancelled, but the
+  footer only admitted to `q`.
+
+- A terminal that fails half-way into raw mode is now restored before `devp config`
+  reports the error, instead of leaving the shell in raw mode with no cursor.
+
 - `devp update --install` no longer leaves the other-named twin beside the copy you
   typed on the previous release. It replaces the managed pair and the running file, but
   the list of companions to rewrite only ever named `devp` — so running the update from

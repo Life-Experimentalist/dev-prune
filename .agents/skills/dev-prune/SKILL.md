@@ -59,8 +59,9 @@ replaces it.
    dev-prune@latest`, `yarn global upgrade dev-prune`,
    `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade
    dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`,
-   re-running the `brew install <formula URL>` line (a formula installed by URL has no
-   tap for `brew upgrade` to consult), `cargo binstall dev-prune --force` (prebuilt), or
+   `brew upgrade dev-prune` (via the `Life-Experimentalist/tap` tap — a copy installed
+   by formula URL instead has no tap to consult, so re-run that URL line),
+   `cargo binstall dev-prune --force` (prebuilt), or
    `cargo install dev-prune --force` (compiles). `devp update --channels` prints that
    whole table offline, for when the stale copy is on a machine you are not sitting at.
 
@@ -228,8 +229,8 @@ The fields worth reading first:
 | Path | Use it for |
 | :--- | :--- |
 | `summary.errors` (run) | "did anything go wrong" — the whole answer, in one integer (counts `lockfile_error`, `activity_check_error`, `delete_error` and `config_error`) |
-| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_symlink`, `skipped_declaration`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
-| `results[].message` | the failure detail — present on the four error statuses, on `skipped_symlink`, where it names the link, and on `skipped_declaration`, where it says why the declaration was refused |
+| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_symlink`, `skipped_declaration`, `skipped_nested_repo`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
+| `results[].message` | the failure detail — present on the four error statuses, on `skipped_symlink`, where it names the link, on `skipped_declaration`, where it says why the declaration was refused, and on `skipped_nested_repo`, where it names the git repository found inside the directory |
 | `results[].fix_command` | present only on `lockfile_error`, and only when the fix is one mechanical command you may run unattended |
 | `repositories[].state` (status) | `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, `config_error` |
 | `repositories[].error` | the parse failure — present only on `config_error` |

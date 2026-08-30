@@ -820,7 +820,7 @@ silently when none is available.
       "shared_bytes": 0   // bytes hardlinked into a pnpm/bun store — excluded from `bytes`
       // "message"     — present on the statuses that carry detail: `lockfile_error`,
       //                 `activity_check_error`, `delete_error`, `config_error`,
-      //                 `skipped_symlink`, `skipped_declaration`
+      //                 `skipped_symlink`, `skipped_declaration`, `skipped_nested_repo`
       // "fix_command" — present only on `lockfile_error`, and only when the fix is a
       //                 single mechanical command an agent can run unattended
     }
@@ -841,6 +841,7 @@ silently when none is available.
 | `skipped_active` | The repository has been touched inside its idle window. |
 | `skipped_symlink` | The directory is (or contains) a symlink, so deleting it could reach outside the project. Left in place; `message` names the link. |
 | `skipped_declaration` | A directory named in `prunable.directories` did not pass its checks — it leaves the repository, holds Git-tracked files, or its `rebuild` command names a tool this machine does not have. Left in place; `message` says which. Not counted in `summary.errors`: nothing was attempted. |
+| `skipped_nested_repo` | The directory holds a git repository of its own — a vendored checkout, a pip `-e git+…` install under `.venv/src/` — so deleting it could destroy work no lockfile rebuilds. Left in place; `message` names the nested repository. Not counted in `summary.errors`: it is a permanent fact of the repository, not a failure of the pass. |
 | `ignored` | The repository sets `"ignore": true`, or has an `ignore.devprune.json`. |
 | `no_bloat` | Nothing to delete. |
 | `disabled` | The registry entry is disabled. |
@@ -979,10 +980,14 @@ to separate them again.
       "bytes": 17448304640,
       "clear_command": "uv cache prune",
       "cap_gb": 10,
-      "over_cap": true
+      "over_cap": true,
+      "dependents": 3
       // "note" — present only when clearing this cache costs more than time
       // "cap_gb"/"over_cap" — present only when `cache_max_gb` sets a cap for this
       //   manager, so a report with no caps set is byte-identical to one from 1.7.0
+      // "dependents" — how many registered repositories use this cache's adapter.
+      //   Absent where dev-prune cannot attribute the cache to any adapter: a
+      //   `"dependents": 0` on such a row would read as "safe to clear"
     }
   ],
   "containers": [
@@ -1242,7 +1247,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ### 12. `devp doctor [PATH] [--fix]`
 - **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. Plain `doctor` changes nothing — no config is created, no integration installed, no package manager run — and when some of what it found is repairable, its verdict says how many findings `--fix` would mend.
 - **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **which package manager installed this copy, and the exact commands that upgrade and remove it through that manager** — the installers, cargo, npm, bun, pnpm, yarn, uv, pipx, pip, WinGet, Scoop or Homebrew, never a warning, because an unrecognised location is a valid way to run a binary; **the install receipt**, for a copy one of the install scripts wrote — its version, which of `install.sh` and `install.ps1` wrote it, and the date, read from `<bindir>/install.json` rather than worked out again, and simply absent for every other channel because a date belonging to a different file is worse than no date; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus every fixed directory those managers install into, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
-- **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses and what it overrides, the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.
+- **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses, what it overrides, and any key in it that dev-prune does not read (a warning, not an error — unknown keys are tolerated so a newer file never bricks an older dev-prune, which makes this the one place a typo'd key is ever pointed out), the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.
 - **`--fix`** — diagnosis first, then treatment: run the same checks, then repair what they found. It mends *installed-but-broken* only — a stale or missing `devp` twin, a missing `SKILL.md` export, Git hooks or a scheduler entry whose recorded binary no longer exists, a chained hook set that has drifted from the tool it forwards to, and registry entries whose repository is gone (the same cleanup as `devp unlink --missing`). Each repair is the corresponding `devp setup` pass re-run, so a repair can never do more than setup itself would; each re-checks state first, so a finding that healed in the meantime reports "already in place". It never performs a first-time install (that is `devp setup`'s job, gated by your `auto_*` settings), never touches an unreadable `registry.json` (a parse failure is for you to look at, not for a tool to guess at), and with `DEV_PRUNE_NO_AUTO_SETUP=1` set it skips every repair that writes outside the config directory, naming the command to run yourself. Problems `--fix` cannot mend are re-listed as such. Cannot be combined with a `PATH` — repository findings (not a Git repo, opted out, idle) are facts about your project, not breakage to mend.
 - **Exit codes**: `0` when everything works, warnings included — a missing scheduler should not fail a script. `1` only for something actually broken: an unreadable `registry.json`, an out-of-range setting, a registered path that no longer exists, a directory that is not a Git repository. `--fix` exits `0` when everything it found was repaired, `1` when any repair failed, was skipped, or was out of its reach.
 - **Examples**:

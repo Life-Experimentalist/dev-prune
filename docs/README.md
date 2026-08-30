@@ -16,7 +16,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 
 ### 📑 Technical Reference & Specifications
 - **[CLI Command Reference](CLI_REFERENCE.md)**
-  Complete reference for all 17 subcommands (`init`, `link`, `unlink`, `undo`, `run`, `status`, `stats`, `caches`, `config`, `restore`, `update`, `skill`, `completions`, `setup`, `doctor`, `uninstall`, `man`), global flags (`--dry-run`, `--ignore-idle`, `-y`, `-v`, `-V`), status shortcuts, and aliases.
+  Complete reference for all 19 subcommands (`init`, `link`, `unlink`, `undo`, `run`, `status`, `stats`, `caches`, `config`, `trust`, `restore`, `update`, `install`, `skill`, `completions`, `setup`, `doctor`, `uninstall`, `man`), global flags (`--dry-run`, `--ignore-idle`, `-y`, `-v`, `-V`), status shortcuts, and aliases.
 - **[System Architecture Entry Point](ARCHITECTURE.md)**
   High-level system architecture overview linking directly to HLD and LLD specifications.
 - **[High-Level Design Specification (HLD)](architecture/HLD.md)**
@@ -41,7 +41,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
   - 🧹 [Uninstall, Reinstall & State Recovery](troubleshooting/UNINSTALL_AND_REINSTALL.md)
   - ⚠️ [Registry Corruption & Edge Cases](troubleshooting/CORRUPTION_AND_EDGE_CASES.md)
 - **[Multi-Ecosystem Distribution & Packaging Manual](DISTRIBUTION.md)**
-  Every install channel and what each one actually ships: the shell and PowerShell one-liners, the six checksummed GitHub release archives, `uv tool install`/`uvx`/`pipx`/`pip` via platform wheels, `cargo binstall` via the release archives, and `cargo install` from source.
+  Every install channel and what each one actually ships: the shell and PowerShell one-liners, the seven checksummed GitHub release archives, `uv tool install`/`uvx`/`pipx`/`pip` via platform wheels, `cargo binstall` via the release archives, and `cargo install` from source.
 - **[Releasing dev-prune](RELEASING.md)**
   The maintainer's guide: one-time registry setup and every credential the automation needs, what a tag push triggers, the changelog contract the release notes are built from, which registries review submissions (npm, PyPI and crates.io do not), why a Rust binary belongs on npm and PyPI, the gated channels (Homebrew, WinGet, Scoop, Chocolatey), and recovery when a release goes wrong.
 - **[IDE & Editor Integration](IDE_INTEGRATION.md)**

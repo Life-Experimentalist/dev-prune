@@ -434,11 +434,12 @@ const ECOSYSTEMS = [
         <code>vendor/</code> outright when a <code>vendor/bundle</code> is
         sitting inside it: deleting it would take gems with it under a proof
         that says nothing about them. Mix takes <code>deps/</code> and never{" "}
-        <code>_build/</code>, which is compiled output. CocoaPods and Mix are
-        also the two adapters whose proof is offline — neither ecosystem has a
-        read-only in-sync check, and the write-side commands fix drift by
-        re-downloading, so what is verified instead is that the lockfile is
-        structurally complete and no older than the manifest it came from.
+        <code>_build/</code>, which is compiled output. CocoaPods and Mix also
+        share the offline proof with the Dart adapter — none of the three
+        ecosystems has a read-only in-sync check, and the write-side commands
+        fix drift by re-downloading, so what is verified instead is that the
+        lockfile is structurally complete and no older than the manifest it
+        came from.
       </>
     ),
   },
