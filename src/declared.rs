@@ -126,7 +126,7 @@ fn check(repo_path: &Path, entry: &DeclaredDir) -> Result<Option<Target>, String
         return Err(format!(
             "`{label}` is declared prunable but resolves to `{}`, outside the \
              repository. Left alone.",
-            real.display()
+            crate::output::clean_path(&real)
         ));
     }
 

@@ -230,9 +230,16 @@ fn refresh_managed_copy_if_stale(current: &std::path::Path, managed: &std::path:
     // torn binary. A managed copy that is itself running cannot be renamed over on
     // Windows; the refresh simply waits for a pass when it is not.
     let staging = managed.with_extension("new");
-    if fs::copy(current, &staging).is_ok() && fs::rename(&staging, managed).is_err() {
-        let _ = fs::remove_file(&staging);
+    if fs::copy(current, &staging).is_ok() && fs::rename(&staging, managed).is_ok() {
+        return;
     }
+    // Unconditionally, because `fs::copy` creates and truncates its destination before it
+    // writes a byte: a copy that fails partway — disk full, the volume going away, a
+    // permission revoked mid-write — leaves a half-written `dev-prune.new` behind. Nothing
+    // else ever removes it. `uninstall`'s sweep knows `*.exe.old`, the debris an update
+    // leaves, and has never known `*.new`, so the file would sit there until someone
+    // noticed it by hand.
+    let _ = fs::remove_file(&staging);
 }
 
 /// The `major.minor.patch` a binary reports for itself, if it can.
@@ -298,6 +305,26 @@ pub fn ensure_alias() -> Outcome {
     ensure_twin_of(&current_exe, parent_dir)
 }
 
+/// Whether a twin whose content differs from the running binary is the older of the two,
+/// and so safe to replace.
+///
+/// Content inequality says the pair differ, never which one is the upgrade. `dev-prune` is
+/// *usually* the newer — installers write it first and upgrades replace it first — but
+/// "usually" is not "always", and the direction gate in [`ensure_twin_of`] trusted it
+/// absolutely. An older `dev-prune` restored from a backup, or run out of a
+/// package-manager cache, would delete a newer `devp` and hard-link its own older content
+/// over it: a silent downgrade of the name the documentation tells people to type, reached
+/// through `devp doctor --fix` of all things. So ask the twin its version, exactly as
+/// [`refresh_managed_copy_if_stale`] does, and leave it alone unless it is genuinely
+/// behind. A copy that cannot state a version at all is not a working build of this CLI,
+/// so it is still replaced.
+///
+/// Takes the two versions rather than the two paths so the rule can be tested without a
+/// pair of real binaries that report different versions.
+fn twin_is_stale(theirs: Option<(u64, u64, u64)>, ours: Option<(u64, u64, u64)>) -> bool {
+    !matches!((theirs, ours), (Some(theirs), Some(ours)) if theirs >= ours)
+}
+
 /// The half of [`ensure_alias`] that takes its paths as arguments, so tests can drive both
 /// directions without being the binary they are testing.
 fn ensure_twin_of(current_exe: &std::path::Path, parent_dir: &std::path::Path) -> Outcome {
@@ -308,13 +335,15 @@ fn ensure_twin_of(current_exe: &std::path::Path, parent_dir: &std::path::Path) -
 
     // `dev-prune` is the canonical name, and only it may overwrite its twin.
     //
-    // Installers write `dev-prune` first and upgrades replace it first, so it is never the
-    // older of the two — a stale `devp` is worth replacing, because otherwise it silently
-    // runs the previous version. The reverse is not safe: an upgrade that replaced
-    // `dev-prune` and then failed on a running `devp` leaves exactly the state where the
-    // alias is the *older* binary, and refreshing from there would quietly reinstall the
-    // version the user just upgraded away from. So `devp` may only create a `dev-prune`
-    // that is missing outright.
+    // Installers write `dev-prune` first and upgrades replace it first, so a stale `devp`
+    // is worth replacing — otherwise it silently runs the previous version. The reverse is
+    // not safe as a rule: an upgrade that replaced `dev-prune` and then failed on a running
+    // `devp` leaves exactly the state where the alias is the *older* binary, and refreshing
+    // from there would quietly reinstall the version the user just upgraded away from. So
+    // `devp` may only create a `dev-prune` that is missing outright.
+    //
+    // Direction is necessary but not sufficient: see [`twin_is_stale`] for the case where
+    // `dev-prune` itself is the older of the pair.
     let (twin_name, may_refresh) = if running_as_alias {
         (
             if cfg!(windows) {
@@ -331,6 +360,9 @@ fn ensure_twin_of(current_exe: &std::path::Path, parent_dir: &std::path::Path) -
 
     if twin_exe.exists() {
         if !may_refresh || same_contents(&twin_exe, current_exe) {
+            return Outcome::AlreadyPresent;
+        }
+        if !twin_is_stale(binary_version(&twin_exe), parse_version(constants::VERSION)) {
             return Outcome::AlreadyPresent;
         }
         // Replacing a running executable fails on Windows; that is fine, the alias is
@@ -1578,6 +1610,36 @@ mod tests {
             "the version just upgraded to",
             "`devp` downgraded the binary it was supposed to leave alone"
         );
+    }
+
+    /// The same downgrade, coming the other way — the direction the gate above lets
+    /// through.
+    ///
+    /// `devp` is blocked from refreshing `dev-prune` outright, but `dev-prune` refreshing
+    /// `devp` was gated on nothing but the two files differing, on the assumption that the
+    /// canonical name is always the newer one. Restore a `dev-prune` from a backup, or run
+    /// one out of a package-manager cache, and it is not — and `devp doctor --fix` runs
+    /// `ensure_alias` from whichever binary is executing, so an older `dev-prune` would
+    /// delete a newer `devp` and link its own content over it while reporting a repair.
+    #[test]
+    fn a_twin_that_is_not_behind_is_left_alone() {
+        assert!(
+            !twin_is_stale(Some((1, 12, 0)), Some((1, 11, 0))),
+            "a newer twin must not be overwritten"
+        );
+        assert!(
+            !twin_is_stale(Some((1, 11, 0)), Some((1, 11, 0))),
+            "an equal twin has nothing to refresh"
+        );
+        assert!(
+            twin_is_stale(Some((1, 10, 0)), Some((1, 11, 0))),
+            "a genuinely older twin is what this refresh is for"
+        );
+        // Neither side able to state a version leaves the old content-only rule, which is
+        // the only answer available: whatever the file is, it is not a working build of
+        // this CLI, and leaving it would keep a broken `devp` on PATH forever.
+        assert!(twin_is_stale(None, Some((1, 11, 0))));
+        assert!(twin_is_stale(Some((1, 11, 0)), None));
     }
 
     #[test]

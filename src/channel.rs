@@ -35,7 +35,14 @@ mod marker {
     // from each other. All four end up with the executable inside a `node_modules` tree,
     // so `NPM` matches every one of them and these have to be tried first.
     pub const BUN: &[&str] = &["/.bun/"];
-    pub const PNPM: &[&str] = &["/pnpm/global/", "/.pnpm-global/"];
+    // `/pnpm/` and not `/pnpm/global/`, because the package lives under `global/` but the
+    // executable on PATH does not: pnpm puts its shim straight in `PNPM_HOME`
+    // (`~/.local/share/pnpm`, `%LOCALAPPDATA%\pnpm`), one level above. `uninstall`'s stray
+    // sweep looks in exactly that directory, so the narrower fragment made the one copy the
+    // sweep can actually find read as `Unknown` — and `Unknown` may be deleted directly,
+    // which removed pnpm's shim without ever running `pnpm remove -g`. Broad is safe here:
+    // `node_modules/.pnpm` is spelled with the dot and does not match.
+    pub const PNPM: &[&str] = &["/pnpm/", "/.pnpm-global/"];
     pub const YARN: &[&str] = &[
         "/yarn/global/",
         "/yarn/data/global/",
@@ -141,8 +148,17 @@ impl Channel {
     /// each of them matches npm's marker as well as its own and has to be tried
     /// before it.
     pub fn detect_at(exe: &Path, managed: Option<&Path>) -> Self {
+        // The *directory*, not the file. `managed_exe_path` names `dev-prune`, and the
+        // install scripts put `devp` beside it — so comparing whole paths recognised the
+        // long name and classified the short one, which is the one the documentation
+        // tells people to type, as `Unknown`. The symptom was `devp update` answering "no
+        // package manager owns this copy" to someone who had installed with the install
+        // script two minutes earlier. `<config>/bin` holds dev-prune's own binaries and
+        // nothing else, so anything running from it is the installer's copy under one of
+        // its two names.
         if let Some(managed) = managed
-            && exe == managed
+            && let Some(managed_dir) = managed.parent()
+            && exe.parent() == Some(managed_dir)
         {
             return Channel::Installer;
         }
@@ -203,6 +219,23 @@ impl Channel {
             Channel::Homebrew => "Homebrew",
             Channel::Unknown => "an unrecognised location",
             Channel::Foreign(name) => name,
+        }
+    }
+
+    /// How to name this channel beside the version number, where there is room for a
+    /// word and not a clause.
+    ///
+    /// Deliberately not [`Self::label`]. That one is written to drop into a sentence —
+    /// "installed with the install script", "this copy came from an unrecognised
+    /// location" — and both of those read as noise next to a version. The `Unknown` case
+    /// is the one worth spelling differently rather than shortening: `standalone` says
+    /// the file *is* the whole install, which is the fact behind every other thing
+    /// dev-prune says about that copy.
+    pub fn badge(self) -> &'static str {
+        match self {
+            Channel::Installer => "install script",
+            Channel::Unknown => "standalone",
+            named => named.label(),
         }
     }
 
@@ -659,6 +692,37 @@ mod tests {
         }
     }
 
+    /// The paths above are where the pnpm *package* lands. The executable on PATH is the
+    /// shim one level up, straight in `PNPM_HOME` — and that is the only one of the two
+    /// `sweep_dirs` looks in, so it is the copy `devp uninstall` actually finds. While the
+    /// marker required `global/`, that shim read as `Unknown`, which
+    /// [`Channel::may_delete_directly`] permits deleting outright: the sweep removed the
+    /// file pnpm's own manifest still points at, without ever running `pnpm remove -g`.
+    #[test]
+    fn the_pnpm_shim_is_pnpm_and_not_an_unowned_file() {
+        for path in [
+            "/home/k/.local/share/pnpm/devp",
+            "/home/k/.local/share/pnpm/dev-prune",
+            r"C:\Users\k\AppData\Local\pnpm\devp.exe",
+        ] {
+            let channel = Channel::detect_at(Path::new(path), None);
+            assert_eq!(channel, Channel::Pnpm, "{path}");
+            assert!(!channel.may_delete_directly(), "{path}");
+            assert!(channel.uninstall_argv().is_some(), "{path}");
+        }
+        // The fragment is broad enough to catch the shim without catching pnpm's virtual
+        // store, which spells the directory with a leading dot.
+        assert_eq!(
+            Channel::detect_at(
+                Path::new(
+                    "/w/app/node_modules/.pnpm/dev-prune@1.0.0/node_modules/dev-prune/bin/dev-prune"
+                ),
+                None
+            ),
+            Channel::Npm
+        );
+    }
+
     /// Before `Channel::Foreign` these were `Unknown`, and `devp uninstall --yes`
     /// deleted them. A Deno or Volta or mise install leaves no fragment any other
     /// marker matches, so nothing distinguished one from a binary somebody copied.
@@ -757,6 +821,35 @@ mod tests {
         );
     }
 
+    /// The install scripts write both names into `<config>/bin`, and `managed_exe_path`
+    /// can only name one of them. Matching on the file made `devp` — the name every page
+    /// of the documentation uses — come out as `Unknown`, so `devp update` told a user who
+    /// had just run `install.ps1` that no package manager owned their copy while
+    /// `dev-prune update`, the same binary under its other name, answered correctly.
+    #[test]
+    fn either_name_in_the_managed_directory_is_the_installer() {
+        let managed = Path::new(r"C:\Users\k\AppData\Roaming\dev-prune\bin\dev-prune.exe");
+        let twin = Path::new(r"C:\Users\k\AppData\Roaming\dev-prune\bin\devp.exe");
+        for exe in [managed, twin] {
+            assert_eq!(
+                Channel::detect_at(exe, Some(managed)),
+                Channel::Installer,
+                "{}",
+                exe.display()
+            );
+            // The whole point of getting this right: the installer channel can name its
+            // own upgrade command, and `Unknown` cannot name anything.
+            assert!(
+                Channel::detect_at(exe, Some(managed))
+                    .upgrade_command()
+                    .is_some()
+            );
+        }
+        // A sibling directory is not the managed one, however similar the name.
+        let outside = Path::new(r"C:\Users\k\AppData\Roaming\dev-prune\bin2\devp.exe");
+        assert_eq!(Channel::detect_at(outside, Some(managed)), Channel::Unknown);
+    }
+
     /// A Rust toolchain installed through Scoop puts `.cargo` under `~/scoop`. Reading
     /// that as `Cargo` would send an upgrade to `cargo install` against a directory
     /// Scoop replaces wholesale, so the directory-owning managers are tested first.
@@ -797,6 +890,58 @@ mod tests {
         );
         // Anything that replaces its directory is by definition manager-owned.
         assert!(replacing.iter().all(|c| c.owns_its_files()));
+    }
+
+    /// The badge is printed one space after the version, so anything that reads as a
+    /// sentence fragment there is a bug in the banner rather than in the prose. A leading
+    /// article is how `label()` phrases itself for a sentence, and it is the thing that
+    /// looks wrong beside a version number.
+    #[test]
+    fn no_badge_reads_as_a_sentence_fragment() {
+        let all = [
+            Channel::Installer,
+            Channel::Cargo,
+            Channel::Npm,
+            Channel::Bun,
+            Channel::Pnpm,
+            Channel::Yarn,
+            Channel::UvTool,
+            Channel::Pipx,
+            Channel::Pip,
+            Channel::WinGet,
+            Channel::Scoop,
+            Channel::Homebrew,
+            Channel::Unknown,
+            Channel::Foreign("Nix"),
+        ];
+        for channel in all {
+            let badge = channel.badge();
+            assert!(!badge.is_empty(), "{channel:?} has no badge");
+            assert!(
+                !badge.starts_with("the ") && !badge.starts_with("an "),
+                "{channel:?} badges as {badge:?}, which is a clause"
+            );
+            assert!(
+                !badge.contains('\n'),
+                "{channel:?} badges across two lines: {badge:?}"
+            );
+        }
+    }
+
+    /// A hand-placed copy is the case the banner exists to name. `Unknown` is what
+    /// [`Channel::detect_at`] returns for a binary somebody downloaded from the releases
+    /// page and dropped somewhere, and every other thing dev-prune says about that copy —
+    /// that `devp update` has no manager to call, that `devp uninstall` may delete the
+    /// file outright — follows from it.
+    #[test]
+    fn a_downloaded_copy_badges_as_standalone() {
+        let dir = TempDir::new().unwrap();
+        let exe = dir.path().join("dev-prune.exe");
+        let channel = Channel::detect_at(&exe, None);
+        assert_eq!(channel, Channel::Unknown);
+        assert_eq!(channel.badge(), "standalone");
+        assert!(channel.upgrade_command().is_none());
+        assert!(channel.may_delete_directly());
     }
 
     #[test]

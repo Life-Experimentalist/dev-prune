@@ -358,22 +358,34 @@ pub fn styled_adapter(name: &str) -> String {
     name.to_string()
 }
 
-/// Print the dev-prune ASCII art banner
+/// Print the dev-prune ASCII art banner, the version, and which channel this copy is on.
+///
+/// The channel is there because dev-prune ships through eleven of them and nothing stops
+/// two from landing a copy on the same machine. Every report that starts "devp still says
+/// 1.9.0 after I upgraded" is really the question "which copy are you running, and who
+/// owns it" — and that answer now appears in the screenshot before anyone has to ask for
+/// it. It costs one lexical look at a path that has already been resolved: no process is
+/// spawned, nothing is read from disk, and no package manager has to be installed for its
+/// name to be printed.
 pub fn print_banner() {
-    let art = format!(
-        r#"
+    let art = r#"
  ___    _____ __     __    ____  ____  _   _ _   _ _____
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v{}
-"#,
-        crate::constants::VERSION
-    );
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|"#;
     // Cyan, not a hard-coded RGB. `truecolor` degrades to nothing useful on a 16- or
     // 256-colour terminal, and it ignored the palette the user picked for their own
     // terminal — a named colour honours it and matches the cyan used everywhere else.
-    println!("{}", art.cyan().bold());
+    //
+    // The channel is dimmed and the version is not: one is the thing people came to read
+    // and the other is the footnote that explains it.
+    println!(
+        "{} {} {}\n",
+        art.cyan().bold(),
+        format!("v{}", crate::constants::VERSION).cyan().bold(),
+        format!("· {}", crate::channel::Channel::detect().badge()).dimmed()
+    );
 }
 
 /// Print the one-line credit, if anything is going to read it.
