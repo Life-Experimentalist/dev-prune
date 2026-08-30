@@ -1032,10 +1032,14 @@ mod tests {
         );
     }
 
-    /// Only Windows needs the rename-aside, so only Windows grows the extra name.
+    /// Only Windows needs the rename-aside; elsewhere the sweep is the two stems plus
+    /// the `.new` staging name an interrupted update can leave beside either of them.
     #[test]
     #[cfg(not(windows))]
-    fn elsewhere_the_sweep_is_just_the_two_stems() {
-        assert_eq!(sweep_names(), ["dev-prune", "devp"]);
+    fn elsewhere_the_sweep_is_the_stems_and_their_staging_names() {
+        assert_eq!(
+            sweep_names(),
+            ["dev-prune", "dev-prune.new", "devp", "devp.new"]
+        );
     }
 }
