@@ -21,7 +21,7 @@
 //   - No backticks or ${} inside the template literals below.
 
 export const SITE = 'https://devprune.vkrishna04.me';
-export const UPDATED = '2026-08-22';
+export const UPDATED = '2026-08-31';
 
 export const POSTS = [
   {
@@ -182,8 +182,16 @@ one it runs the dry-run that matches the lockfile it found —
 you are told which package was missing from the lockfile.</p>
 
 <pre><code>curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
-devp init ~/Code
+devp init --auto --dry-run
+devp init --auto
 devp run --dry-run</code></pre>
+
+<p><code>devp init --auto</code> works out where your repositories are rather than making
+you list them — it looks at the workspace you are in and the conventional code folders
+under your home directory — and <code>--dry-run</code> prints what it found without
+registering any of it. Name the directory yourself with <code>devp init ~/Code</code> if
+you would rather. A repository holding an <code>ignore.devprune.json</code> file is left
+out of the scan entirely.</p>
 
 <p>The other three checks it makes are worth knowing, because they are the ones a
 hand-rolled script never has:</p>
