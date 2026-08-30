@@ -704,14 +704,20 @@ fn sweep_names() -> Vec<String> {
             // delete that follows is best-effort because the file is still the running
             // image. The next update sweeps it -- but somebody who updates once and then
             // uninstalls never has a next update, and the orphan outlives the install.
-            for ext in ["exe", "cmd", "ps1", "bat", "exe.old"] {
+            // `.new` likewise: an update stages the downloaded bytes beside the target
+            // and renames them in, and a stage that failed to rename is debris nothing
+            // else ever looks at.
+            for ext in ["exe", "cmd", "ps1", "bat", "exe.old", "new"] {
                 names.push(format!("{stem}.{ext}"));
             }
             names.push(stem.to_string());
         }
         names
     } else {
-        stems.iter().map(|s| s.to_string()).collect()
+        stems
+            .iter()
+            .flat_map(|s| [s.to_string(), format!("{s}.new")])
+            .collect()
     }
 }
 

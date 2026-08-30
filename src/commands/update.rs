@@ -352,8 +352,11 @@ fn install_directly(
     // Scoop or Homebrew certain they still have the old version installed, and the next
     // `winget upgrade` puts the old binary back over the top. Their copy is left exactly
     // as the manager wrote it; `report_channel_bookkeeping` names the command that
-    // actually moves it forward.
-    let replace_exe_dir = primary != exe && exe.is_file() && !channel.replaces_its_directory();
+    // actually moves it forward. A foreign tree — Volta, mise, Nix, the system package
+    // manager — is the same ownership situation without a resync command to print:
+    // overwriting a shim breaks the shim manager, and writing into `/nix/store` or
+    // `/usr/bin` desyncs a store this tool cannot correct. Its copy is left alone too.
+    let replace_exe_dir = primary != exe && exe.is_file() && !manager_owns_exe_dir(channel);
     for path in companion_copies(primary, managed.is_some(), exe, replace_exe_dir) {
         if let Err(e) = install_bytes_at(&bytes, &path) {
             output::print_warning(&format!(
@@ -374,6 +377,14 @@ fn install_directly(
     // installers ran when none did.
     crate::receipt::refresh_after_upgrade(latest);
     Ok(())
+}
+
+/// True when a package manager owns the running copy's directory outright, so no file
+/// in it may be rewritten: the versioned-directory trio, which swaps the whole
+/// directory on upgrade, and a foreign manager's tree — a shim, a Nix store path, a
+/// system package — whose contents dev-prune has no command to resync afterwards.
+fn manager_owns_exe_dir(channel: Channel) -> bool {
+    channel.replaces_its_directory() || matches!(channel, Channel::Foreign(_))
 }
 
 /// Every other file that is a copy of the binary being replaced — both public names,
@@ -429,6 +440,20 @@ fn companion_copies(
 /// Name the channel's own upgrade command after a direct install, for the one thing the
 /// direct route deliberately leaves untouched: the manager's record of what it installed.
 fn report_channel_bookkeeping(channel: Channel) {
+    // A foreign manager's copy was left alone the same way the trio's is, but there is
+    // no resync command to name — dev-prune does not know how to drive Volta, mise or
+    // Nix. Saying nothing here read as "everything was replaced", which is exactly what
+    // did not happen to that copy.
+    if let Channel::Foreign(manager) = channel {
+        output::print_info(&format!(
+            "The managed copy is now v{}. The copy that {manager} installed was left \
+             exactly as it wrote it — replacing a file inside a manager-owned tree only \
+             makes {manager} and the disk disagree. Upgrade that copy through {manager} \
+             itself.",
+            constants::VERSION
+        ));
+        return;
+    }
     // The installer's copy *is* the managed one, and an unrecognised copy has no manager
     // keeping a version record that could disagree with the binary.
     let Some(resync) = channel
@@ -518,7 +543,12 @@ fn install_bytes_at(bytes: &[u8], target: &Path) -> Result<()> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).ok();
     }
-    fs::write(&staging, bytes).with_context(|| format!("could not write {}", staging.display()))?;
+    if let Err(e) = fs::write(&staging, bytes) {
+        // A write that dies part-way (disk full, permissions revoked mid-stream) leaves
+        // a truncated `.new` beside the binary forever — nothing else ever looks at it.
+        let _ = fs::remove_file(&staging);
+        return Err(e).with_context(|| format!("could not write {}", staging.display()));
+    }
 
     #[cfg(unix)]
     {
@@ -682,6 +712,15 @@ pub fn maybe_auto_update(registry: &Registry) {
     // the old version is installed. Those channels own the upgrade, and
     // `notify_if_outdated` has already printed the line naming the right command.
     if channel.replaces_its_directory() {
+        return;
+    }
+
+    // A foreign tree — Volta, mise, Nix, the system package manager — is owned the same
+    // way, but there is no resync command to have printed. With a managed copy present
+    // the pass below keeps that copy fresh and `install_directly` leaves the manager's
+    // file alone; without one, the only writable target *is* the manager's file, and an
+    // unattended pass must not desync a tree it has no way to correct.
+    if matches!(channel, Channel::Foreign(_)) && managed.is_none() {
         return;
     }
 
@@ -928,6 +967,37 @@ mod tests {
 
         let also = companion_copies(&primary, true, &exe, false);
         assert_eq!(also, vec![managed_dir.path().join(devp)]);
+    }
+
+    #[test]
+    fn exactly_the_manager_owned_channels_keep_their_directory_untouched() {
+        // The trio because the next `winget upgrade` would undo the write anyway, and
+        // Foreign because overwriting a shim or a store path desyncs a manager this
+        // tool has no resync command for. Everything else is a plain file the direct
+        // route may replace.
+        for owned in [
+            Channel::WinGet,
+            Channel::Scoop,
+            Channel::Homebrew,
+            Channel::Foreign("Volta"),
+            Channel::Foreign("the system package manager"),
+        ] {
+            assert!(manager_owns_exe_dir(owned), "{owned:?}");
+        }
+        for replaceable in [
+            Channel::Installer,
+            Channel::Cargo,
+            Channel::Npm,
+            Channel::Bun,
+            Channel::Pnpm,
+            Channel::Yarn,
+            Channel::UvTool,
+            Channel::Pipx,
+            Channel::Pip,
+            Channel::Unknown,
+        ] {
+            assert!(!manager_owns_exe_dir(replaceable), "{replaceable:?}");
+        }
     }
 
     #[test]
