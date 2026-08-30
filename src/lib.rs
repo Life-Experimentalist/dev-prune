@@ -529,10 +529,9 @@ pub enum ConfigAction {
     /// Display a global configuration value.
     #[command(long_about = help::CONFIG_GET_LONG, after_long_help = help::CONFIG_GET_EXAMPLES)]
     Get {
-        /// Any key `devp config show` lists — idle_days, min_size_mb, scan_depth,
-        /// require_confirmation, allow_manifest_rewrite, command_timeout_secs,
-        /// auto_setup, auto_daemon, check_interval_days, auto_hooks, auto_hooks_chain,
-        /// update_check, update_check_interval_days, update_check_timeout_secs.
+        /// Any key `devp config show` lists — idle_days, min_size_mb, auto_update,
+        /// disabled_adapters and the rest. `devp config show` prints every key with
+        /// its current value.
         key: String,
     },
     /// Set a global configuration value.

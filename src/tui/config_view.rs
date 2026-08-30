@@ -991,9 +991,26 @@ fn commit_picker(state: &mut State<'_>) {
         .filter(|(i, name)| !state.picker_active[*i] && !opt_in.contains(name))
         .map(|(_, name)| *name)
         .collect();
+    // Unlike `adapter_idle_days` and `cache_max_gb` below, `config get
+    // disabled_adapters` prints the user's own stored order, not a sorted one — so an
+    // unchanged selection must hand back the exact string the row started with.
+    // Rebuilding it in adapter-registry order reported a phantom change in the summary
+    // and rewrote the key on save.
+    let previous =
+        row_value(&state.session.rows, "disabled_adapters").unwrap_or_else(|| "(none)".into());
+    let mut previous_names: Vec<&str> = previous
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "(none)")
+        .collect();
+    let mut current_names = disabled.clone();
+    previous_names.sort_unstable();
+    current_names.sort_unstable();
     // `(none)` rather than an empty string, so what the row shows is exactly what
     // `devp config get disabled_adapters` prints.
-    let disabled = if disabled.is_empty() {
+    let disabled = if previous_names == current_names {
+        previous.clone()
+    } else if disabled.is_empty() {
         "(none)".to_string()
     } else {
         disabled.join(",")
@@ -1647,7 +1664,7 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
             ("Enter", "accept advice & next"),
             ("Space", "change"),
             ("r", "reset"),
-            ("q", "cancel"),
+            ("q/Esc", "cancel"),
         ]
     };
     frame.render_widget(footer(keys), chunks[3]);

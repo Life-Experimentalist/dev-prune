@@ -1643,7 +1643,11 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
     println!();
 
     let mut edits: Vec<(&'static str, String, String)> = Vec::new();
+    let mut input_ended = false;
     for setting in SETTINGS {
+        if input_ended {
+            break;
+        }
         let current = (setting.get)(&registry.settings);
         loop {
             print!("  {} [{current}]: ", setting.key);
@@ -1653,6 +1657,7 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
             // rather than looping forever on an empty read.
             if io::stdin().read_line(&mut line)? == 0 {
                 println!();
+                input_ended = true;
                 break;
             }
             let typed = line.trim();
@@ -1679,6 +1684,13 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
 
     println!();
     if edits.is_empty() {
+        // EOF is not a review. Ctrl-D at the "keep all" gate correctly refused to
+        // confirm, but then fell through to here — where the empty walkthrough set
+        // the marker, so closing the input counted as having read every setting.
+        if input_ended {
+            output::print_info("Input ended — nothing was changed.");
+            return Ok(());
+        }
         mark_reviewed();
         output::print_success("Nothing changed — the defaults are in place.");
         return Ok(());

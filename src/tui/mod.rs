@@ -58,8 +58,19 @@ impl Tui {
             hook_for_panic(info);
         }));
 
-        enable_raw_mode()?;
-        stdout().execute(EnterAlternateScreen)?;
+        if let Err(e) = enable_raw_mode() {
+            // The panic hook above is already armed; put the caller's back before
+            // handing the error up, exactly as the late-failure arm below does.
+            std::panic::set_hook(Box::new(move |info| prior_hook(info)));
+            return Err(e.into());
+        }
+        if let Err(e) = stdout().execute(EnterAlternateScreen) {
+            // Raw mode is on but `Self` will never exist, so `Drop` cannot turn it
+            // off — returning through `?` here left the shell in raw mode.
+            restore_terminal();
+            std::panic::set_hook(Box::new(move |info| prior_hook(info)));
+            return Err(e.into());
+        }
 
         match Terminal::new(CrosstermBackend::new(stdout())) {
             Ok(terminal) => Ok(Self {
