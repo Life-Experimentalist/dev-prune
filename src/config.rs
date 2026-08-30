@@ -736,6 +736,67 @@ impl PerRepoConfig {
         .collect()
     }
 
+    /// Keys a repository config file spells out that dev-prune does not read.
+    ///
+    /// Unknown keys are tolerated on purpose — a file written by a newer dev-prune must
+    /// not stop an older one from reading the keys it does know — so
+    /// `deny_unknown_fields` is the one fix this must never become. The cost of that
+    /// tolerance is that a typo (`idle_days` for `override_idle_days`) silently does
+    /// nothing, and nothing on this machine ever tells its author why. This is the
+    /// diagnostic half: `devp doctor` names each stray key, and behaviour changes
+    /// nowhere.
+    pub fn unknown_keys(repo_path: &Path) -> Vec<(&'static str, String)> {
+        const KNOWN: &[&str] = &[
+            "$schema",
+            "project_name",
+            "ignore",
+            "disable_hooks",
+            "disable_daemon",
+            "override_idle_days",
+            "min_size_mb",
+            "scan_depth",
+            "prunable",
+        ];
+        const KNOWN_PRUNABLE: &[&str] = &["directories", "exclude"];
+        const KNOWN_DIRECTORY: &[&str] = &["path", "rebuild", "why"];
+
+        let mut out = Vec::new();
+        for name in [
+            constants::PROJECT_REPO_CONFIG_FILE,
+            constants::PER_REPO_CONFIG_FILE,
+        ] {
+            let Ok(content) = fs::read_to_string(repo_path.join(name)) else {
+                continue;
+            };
+            let Ok(serde_json::Value::Object(map)) = serde_json::from_str(&content) else {
+                continue;
+            };
+            for key in map.keys().filter(|k| !KNOWN.contains(&k.as_str())) {
+                out.push((name, key.clone()));
+            }
+            let Some(serde_json::Value::Object(prunable)) = map.get("prunable") else {
+                continue;
+            };
+            for key in prunable
+                .keys()
+                .filter(|k| !KNOWN_PRUNABLE.contains(&k.as_str()))
+            {
+                out.push((name, format!("prunable.{key}")));
+            }
+            if let Some(serde_json::Value::Array(dirs)) = prunable.get("directories") {
+                for entry in dirs.iter().filter_map(|d| d.as_object()) {
+                    for key in entry
+                        .keys()
+                        .filter(|k| !KNOWN_DIRECTORY.contains(&k.as_str()))
+                    {
+                        out.push((name, format!("prunable.directories[].{key}")));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// The personal `.devprune.json` alone, for a caller about to write it back.
     ///
     /// [`load_with_diagnostics`](Self::load_with_diagnostics) answers "what is in force
@@ -1986,6 +2047,61 @@ mod tests {
                 .unwrap()
                 .ignore
         );
+    }
+
+    /// A typo'd key must be pointed out and must not refuse the file: the same
+    /// tolerance that lets a newer dev-prune's file load in an older one is what makes
+    /// the typo silent everywhere else.
+    #[test]
+    fn a_typo_key_is_reported_but_never_refused() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        fs::write(
+            repo.join(constants::PER_REPO_CONFIG_FILE),
+            r#"{ "ignore": true, "idle_days": 30, "prunable": { "directores": [] } }"#,
+        )
+        .unwrap();
+
+        let cfg = PerRepoConfig::load_with_diagnostics(repo).unwrap().unwrap();
+        assert!(cfg.ignore, "the keys the file spells right still apply");
+
+        let unknown: Vec<String> = PerRepoConfig::unknown_keys(repo)
+            .into_iter()
+            .map(|(_, k)| k)
+            .collect();
+        assert_eq!(unknown, vec!["idle_days", "prunable.directores"]);
+    }
+
+    /// Drift guard: a field added to [`PerRepoConfig`] without extending the known-key
+    /// list would make doctor warn about a key the tool itself wrote.
+    #[test]
+    fn every_key_the_type_serializes_is_a_known_key() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        let full = PerRepoConfig {
+            project_name: Some("x".into()),
+            ignore: true,
+            disable_hooks: true,
+            disable_daemon: true,
+            override_idle_days: Some(1),
+            min_size_mb: Some(1),
+            scan_depth: Some(1),
+            prunable: Some(Prunable {
+                directories: vec![DeclaredDir {
+                    path: "scratch".into(),
+                    rebuild: "echo not needed".into(),
+                    why: Some("scratch".into()),
+                }],
+                exclude: vec!["dist".into()],
+            }),
+            ..PerRepoConfig::default()
+        };
+        fs::write(
+            repo.join(constants::PER_REPO_CONFIG_FILE),
+            serde_json::to_string_pretty(&full).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(PerRepoConfig::unknown_keys(repo), Vec::new());
     }
 
     #[test]

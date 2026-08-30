@@ -32,7 +32,7 @@ use chrono::Utc;
 use crate::adapters;
 use crate::channel::Channel;
 use crate::commands::hook::{self, HookState};
-use crate::config::{PerRepoConfig, Registry};
+use crate::config::{PerRepoConfig, Prunable, Registry};
 use crate::constants;
 use crate::daemon;
 use crate::engine::{self, BYTES_PER_MIB, SkipReason};
@@ -489,6 +489,20 @@ fn check_binary(f: &mut Findings) {
         .any(|p| !p.is_empty() && same_dir(Path::new(p), dir));
     if on_path {
         f.ok("PATH", &output::clean_path(dir));
+    } else if crate::pathenv::is_reachable(dir) {
+        // The persisted side — the user PATH in the registry on Windows, the
+        // `~/.local/bin` link on Unix — already makes new shells find `devp`; only
+        // this shell, started before `setup` ran, is missing it. Warning here in the
+        // very next command after a successful setup taught people the setup had
+        // failed, and the "fix" it named was the command they had just run.
+        f.ok(
+            "PATH",
+            &format!(
+                "{} is not on this shell's PATH, but terminals opened from now on \
+                 will find `devp` — this shell predates the change",
+                output::clean_path(dir)
+            ),
+        );
     } else {
         // A warning, not a problem: the binary demonstrably runs — doctor is it
         // running. Off PATH is a convenience gap (portable installs, cargo target
@@ -1269,6 +1283,10 @@ struct RepoContext {
     idle_days: u64,
     min_size_bytes: u64,
     depth: usize,
+    /// The effective `prunable` section, kept so the project pass can report declared
+    /// directories. Without it, a repository that relies entirely on declarations is
+    /// told there is nothing here — the opposite of what `devp run` would do.
+    declared: Option<Prunable>,
 }
 
 fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> RepoContext {
@@ -1354,6 +1372,18 @@ fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> Repo
                         );
                     }
                 }
+            }
+            // A warning, not a problem: unknown keys are tolerated so a newer file
+            // never bricks an older dev-prune — which makes doctor the only place a
+            // typo'd key will ever be pointed out.
+            for (name, key) in PerRepoConfig::unknown_keys(path) {
+                f.warn(
+                    name,
+                    &format!(
+                        "`{key}` is not a key dev-prune reads, so it does nothing — \
+                         check the spelling against the file's `$schema`"
+                    ),
+                );
             }
             (layers.effective(), false)
         }
@@ -1460,6 +1490,7 @@ fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> Repo
         idle_days,
         min_size_bytes: min_size_mb.saturating_mul(BYTES_PER_MIB),
         depth,
+        declared: per_repo.as_ref().and_then(|c| c.prunable.clone()),
     }
 }
 
@@ -1483,7 +1514,14 @@ fn check_repo_projects(f: &mut Findings, path: &Path, ctx: &RepoContext) -> Vec<
     }
 
     let projects = workspace::discover_to_depth(path, ctx.depth);
-    if projects.is_empty() {
+    // Resolved with the same checks the prune pass runs, so what prints here is what
+    // `devp run` would honour or refuse — not a re-reading of the config file.
+    let declared: Vec<crate::declared::Declaration> = ctx
+        .declared
+        .as_ref()
+        .map(|p| crate::declared::resolve(path, p))
+        .unwrap_or_default();
+    if projects.is_empty() && declared.is_empty() {
         f.note(
             "",
             &format!(
@@ -1580,6 +1618,63 @@ fn check_repo_projects(f: &mut Findings, path: &Path, ctx: &RepoContext) -> Vec<
                 prunable,
                 has_bloat: true,
             });
+        }
+    }
+
+    for outcome in &declared {
+        println!();
+        match outcome {
+            crate::declared::Declaration::Prunable(t) => {
+                println!(
+                    "  {} ({})",
+                    t.label.bold(),
+                    constants::DECLARED_ADAPTER_NAME
+                );
+                f.ok("    Rebuild", &format!("`{}`", t.rebuild));
+                let size = output::format_bytes(t.size_bytes);
+                if std::fs::symlink_metadata(&t.path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false)
+                {
+                    f.warn(
+                        "    Bloat",
+                        &format!(
+                            "{} ({size}) is a symlink — refused, because the storage \
+                             it points at is not this repository's to delete",
+                            t.label
+                        ),
+                    );
+                    reports.push(ProjectReport {
+                        prunable: false,
+                        has_bloat: true,
+                    });
+                } else if t.size_bytes < ctx.min_size_bytes {
+                    f.warn(
+                        "    Bloat",
+                        &format!("{} ({size}) is below the size floor — left alone", t.label),
+                    );
+                    reports.push(ProjectReport {
+                        prunable: false,
+                        has_bloat: true,
+                    });
+                } else {
+                    f.ok("    Bloat", &format!("{} ({size})", t.label));
+                    reports.push(ProjectReport {
+                        prunable: true,
+                        has_bloat: true,
+                    });
+                }
+            }
+            // A warning, not a problem: the engine skips these and carries on, and
+            // `doctor` exits 1 only for things that stop dev-prune working at all.
+            crate::declared::Declaration::Refused { label, reason } => {
+                println!("  {} ({})", label.bold(), constants::DECLARED_ADAPTER_NAME);
+                f.warn("    Declared", reason);
+                reports.push(ProjectReport {
+                    prunable: false,
+                    has_bloat: false,
+                });
+            }
         }
     }
 
@@ -1834,6 +1929,52 @@ mod tests {
         assert_eq!(describe_overrides(&cfg), "parses; min_size_mb=0");
     }
 
+    /// A repository can have nothing an adapter recognises and still be prunable,
+    /// because `prunable.directories` reaches the engine without an adapter. Before
+    /// this, `doctor <repo>` told exactly those repositories "no package-manager
+    /// project was found" — the opposite of what `devp run` would do there.
+    #[test]
+    fn a_declared_directory_counts_as_a_project() {
+        let dir = TempDir::new().unwrap();
+        for args in [
+            ["init", "-q"].as_slice(),
+            &["config", "user.email", "t@example.com"],
+            &["config", "user.name", "t"],
+        ] {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .output()
+                .unwrap();
+        }
+        std::fs::create_dir(dir.path().join("scratch")).unwrap();
+        std::fs::write(dir.path().join("scratch/blob.bin"), vec![0u8; 64]).unwrap();
+
+        let ctx = RepoContext {
+            path: dir.path().to_path_buf(),
+            is_git: true,
+            registered: false,
+            opted_out: None,
+            config_broken: false,
+            idle: true,
+            idle_days: 15,
+            min_size_bytes: 0,
+            depth: 6,
+            declared: Some(Prunable {
+                directories: vec![crate::config::DeclaredDir {
+                    path: "scratch".to_string(),
+                    rebuild: "echo not needed".to_string(),
+                    why: None,
+                }],
+                exclude: Vec::new(),
+            }),
+        };
+        let mut f = Findings::default();
+        let reports = check_repo_projects(&mut f, dir.path(), &ctx);
+        assert_eq!(reports.len(), 1, "the declaration never became a report");
+        assert!(reports[0].has_bloat && reports[0].prunable);
+    }
+
     #[test]
     fn a_repository_that_is_not_a_git_repo_is_the_first_thing_reported() {
         let dir = TempDir::new().unwrap();
@@ -1847,6 +1988,7 @@ mod tests {
             idle_days: 15,
             min_size_bytes: 0,
             depth: 6,
+            declared: None,
         };
         // Three reasons are true at once; the verdict names the one the prune pass would
         // hit first, which is the one the user has to fix before any other matters.
