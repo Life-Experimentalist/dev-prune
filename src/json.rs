@@ -45,6 +45,7 @@ fn status_tag(status: &PruneStatus) -> &'static str {
         PruneStatus::ConfigError(_) => "config_error",
         PruneStatus::SkippedSymlink(_) => "skipped_symlink",
         PruneStatus::SkippedDeclaration(_) => "skipped_declaration",
+        PruneStatus::SkippedNestedRepo(_) => "skipped_nested_repo",
     }
 }
 
@@ -56,7 +57,8 @@ fn status_message(status: &PruneStatus) -> Option<&str> {
         | PruneStatus::DeleteError(e)
         | PruneStatus::ConfigError(e)
         | PruneStatus::SkippedSymlink(e)
-        | PruneStatus::SkippedDeclaration(e) => Some(e.trim()),
+        | PruneStatus::SkippedDeclaration(e)
+        | PruneStatus::SkippedNestedRepo(e) => Some(e.trim()),
         _ => None,
     }
 }
@@ -786,6 +788,7 @@ mod tests {
             PruneStatus::ConfigError("x".into()),
             PruneStatus::SkippedSymlink("x".into()),
             PruneStatus::SkippedDeclaration("x".into()),
+            PruneStatus::SkippedNestedRepo("x".into()),
         ];
         let mut tags: Vec<&str> = all.iter().map(status_tag).collect();
         let count = tags.len();

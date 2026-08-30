@@ -144,7 +144,7 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
         })
         .unwrap_or(constants::DEFAULT_IDLE_DAYS);
 
-    let opts = PruneOptions {
+    let mut opts = PruneOptions {
         idle_days,
         dry_run: args.dry_run,
         force: args.force,
@@ -227,6 +227,10 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
                 output::print_info("Prune pass aborted by user.");
                 return Ok(());
             }
+            // The real pass deletes exactly the list the user said yes to. Without
+            // this, it re-derived candidates from scratch — and a directory that
+            // became eligible while the prompt sat open was deleted unconfirmed.
+            opts.only_dirs = Some(candidates.iter().map(|c| c.bloat_dir.clone()).collect());
         }
     }
 
@@ -320,6 +324,9 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
                 output::print_warning(&format!("{clean} → {}", e.trim()));
             }
             PruneStatus::SkippedDeclaration(e) => {
+                output::print_warning(&format!("{clean} → {}", e.trim()));
+            }
+            PruneStatus::SkippedNestedRepo(e) => {
                 output::print_warning(&format!("{clean} → {}", e.trim()));
             }
             _ => {}
@@ -601,9 +608,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             // "failure" here made every scheduled pass over the repo exit 1 forever.
             // A refused declaration joins it for the same reason — it is a standing
             // state of the repository's own config, not something this pass did wrong.
-            PruneStatus::SkippedSymlink(_) | PruneStatus::SkippedDeclaration(_) => {
-                left_alone.push(result)
-            }
+            // So does a vendored checkout inside a bloat directory: the nested repo
+            // stays until somebody moves it, and it used to be a `DeleteError` that
+            // kept every scheduled pass red.
+            PruneStatus::SkippedSymlink(_)
+            | PruneStatus::SkippedDeclaration(_)
+            | PruneStatus::SkippedNestedRepo(_) => left_alone.push(result),
             // Same reasoning: a deleted clone stays deleted, and failing on it would
             // keep every scheduled pass red until the entry is unlinked.
             PruneStatus::PathMissing => missing.push(result),
@@ -917,6 +927,11 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                         output::clean_path(&result.repo_path)
                     ));
                 }
+                // Already in `all_results`: the analysis pass reports every refused
+                // declaration, and the execution pass re-emits them even under its
+                // `only` selection (deliberately, so a refusal is never silent).
+                // Keeping this copy too listed the same refusal twice in `--json`.
+                PruneStatus::SkippedDeclaration(_) => continue,
                 _ => {}
             }
             all_results.push(result);
@@ -934,10 +949,14 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     }
 
     registry.record_prune_progress(pass_at, pruned_dirs);
-    registry.save()?;
+    // The save result is checked *after* the JSON document is out. The deletions have
+    // already happened, and a registry that cannot be written must not swallow the
+    // only machine-readable record of what this pass deleted.
+    let saved = registry.save();
 
     if args.json {
         json::emit(&json::run_document(&all_results, false))?;
+        saved?;
         // The document already carries `summary.errors`; a non-zero exit keeps the
         // shell contract identical in both output modes.
         if error_count > 0 {
@@ -945,6 +964,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         }
         return Ok(());
     }
+    saved?;
 
     output::print_header(i18n::t("run.summary"));
     output::print_success(&i18n::tf(
@@ -1160,8 +1180,8 @@ fn list_paths(results: &[&PruneResult]) {
     }
 }
 
-/// Report directories that were deliberately left alone: symlinks, and declarations
-/// that did not pass their checks.
+/// Report directories that were deliberately left alone: symlinks, declarations that
+/// did not pass their checks, and directories holding a nested git repository.
 ///
 /// Informational only, never part of the exit code. The storage a link points at is not
 /// this repository's to delete; a declaration dev-prune refuses is a standing fact about
@@ -1169,7 +1189,9 @@ fn list_paths(results: &[&PruneResult]) {
 /// failing on either would turn every scheduled pass over such a repo red forever.
 fn report_left_alone(left_alone: &[PruneResult]) {
     for result in left_alone {
-        if let PruneStatus::SkippedSymlink(e) | PruneStatus::SkippedDeclaration(e) = &result.status
+        if let PruneStatus::SkippedSymlink(e)
+        | PruneStatus::SkippedDeclaration(e)
+        | PruneStatus::SkippedNestedRepo(e) = &result.status
         {
             output::print_warning(&format!(
                 "{} → {}",

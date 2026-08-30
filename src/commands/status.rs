@@ -287,7 +287,9 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                             // A warning, not an error: linked storage and a refused
                             // declaration are both deliberately left alone and must
                             // not fail the pass.
-                            PruneStatus::SkippedSymlink(e) | PruneStatus::SkippedDeclaration(e) => {
+                            PruneStatus::SkippedSymlink(e)
+                            | PruneStatus::SkippedDeclaration(e)
+                            | PruneStatus::SkippedNestedRepo(e) => {
                                 output::print_warning(&format!(
                                     "{} → {}",
                                     output::clean_path(&result.repo_path),

@@ -67,6 +67,14 @@ pub enum PruneStatus {
     /// carries a `fix_command` in `--json`, and there is no command that fixes "your
     /// repository declares its own source directory".
     SkippedDeclaration(String),
+    /// The directory holds a git repository of its own, so it was deliberately left
+    /// alone.
+    ///
+    /// A skip, not a `DeleteError`: a vendored checkout — a pip `-e git+…` install
+    /// under `.venv/src/`, a `file:` dependency — is a permanent fact of the
+    /// repository, and reporting it as a failure made every scheduled pass over such
+    /// a repo exit non-zero forever while `--dry-run` over the same repo exited 0.
+    SkippedNestedRepo(String),
 }
 
 impl std::fmt::Display for PruneStatus {
@@ -93,6 +101,7 @@ impl std::fmt::Display for PruneStatus {
             PruneStatus::SkippedSymlink(e) => write!(f, "Skipped (symlink): {e}"),
             PruneStatus::ConfigError(e) => write!(f, "Unreadable .devprune.json: {e}"),
             PruneStatus::SkippedDeclaration(e) => write!(f, "Skipped (declaration): {e}"),
+            PruneStatus::SkippedNestedRepo(e) => write!(f, "Skipped (nested repository): {e}"),
         }
     }
 }
@@ -717,7 +726,7 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
     // with its own unpushed history. No lockfile rebuilds somebody else's git history,
     // so refuse.
     if let Some(nested) = find_nested_git(path) {
-        return Some(PruneStatus::DeleteError(format!(
+        return Some(PruneStatus::SkippedNestedRepo(format!(
             "`{}` contains a git repository at `{}` — refusing to delete it. Move or \
              remove that checkout yourself if it holds nothing you need.",
             crate::output::clean_path(path),
@@ -2040,7 +2049,7 @@ mod tests {
         let results = prune_repo_selected(&repo, 0, false, true, Some(&[".venv".to_string()]));
 
         assert_eq!(results.len(), 1);
-        let PruneStatus::DeleteError(msg) = &results[0].status else {
+        let PruneStatus::SkippedNestedRepo(msg) = &results[0].status else {
             panic!("expected a refusal, got {:?}", results[0].status);
         };
         assert!(msg.contains("git repository"), "says why: {msg}");
