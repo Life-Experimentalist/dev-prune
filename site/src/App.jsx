@@ -34,7 +34,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.11.0";
+const VERSION = "1.12.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
