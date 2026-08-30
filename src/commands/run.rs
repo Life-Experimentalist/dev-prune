@@ -19,6 +19,7 @@ use crate::engine::{self, AdapterFilter, PruneOptions, PruneResult, PruneStatus}
 use crate::i18n;
 use crate::json;
 use crate::output;
+use crate::setup;
 use crate::tui;
 
 /// Everything `devp run` was asked to do.
@@ -513,11 +514,42 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         let _ = registry.save();
     }
 
+    // Only the scheduled pass, and only when asked for. A manual `devp run` walking the
+    // user's disk looking for repositories would be a surprise; the unattended pass is
+    // the one place where "you never registered it" is otherwise indistinguishable from
+    // "there is nothing to clean up", and the Git hook cannot close that gap — it fires
+    // on commit, so a repository you cloned and never committed to stays invisible
+    // forever, which is precisely the idle repository worth pruning.
+    //
+    // `DEV_PRUNE_NO_AUTO_SETUP` switches it off along with everything else unattended.
+    // The variable means "dev-prune manages nothing on this machine by itself", and a
+    // pass that walks the disk and writes rows into the registry is exactly that; it is
+    // also what keeps a test suite from ever scanning the machine running it.
+    if args.daemon && registry.settings.auto_discover && !setup::no_auto_setup_requested() {
+        let found = crate::discovery::discover(&registry)?;
+        let added = found
+            .found
+            .into_iter()
+            .filter(|repo| registry.add_repo(repo.clone()))
+            .count();
+        if added > 0 {
+            registry.save()?;
+            if !args.json {
+                output::print_info(&format!(
+                    "Discovered and registered {added} new {}.",
+                    output::plural(added, "repository", "repositories")
+                ));
+            }
+        }
+    }
+
     if registry.repo_count() == 0 {
         if args.json {
             return json::emit(&json::run_document(&[], args.dry_run));
         }
-        output::print_warning("No repositories registered. Run `dev-prune init` first.");
+        output::print_warning(
+            "No repositories registered. Run `devp init` here, or `devp init --auto` to find them.",
+        );
         return Ok(());
     }
 

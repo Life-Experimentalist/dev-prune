@@ -8,6 +8,7 @@ pub mod config;
 pub mod constants;
 pub mod daemon;
 pub mod declared;
+pub mod discovery;
 pub mod engine;
 pub mod help;
 pub mod i18n;
@@ -195,6 +196,11 @@ pub enum Commands {
         /// Paths to scan for Git repositories (defaults to current directory).
         #[arg(default_value = ".")]
         paths: Vec<String>,
+
+        /// Work out where the repositories are instead of being told, and register
+        /// everything found. Ignores PATHS.
+        #[arg(long)]
+        auto: bool,
     },
 
     /// Register a single Git repository for pruning (defaults to current directory `.`).
@@ -823,9 +829,9 @@ pub fn run_cli() {
     // and cmd hand us `~/Code` verbatim, so without this the documented one-liner
     // registers a directory literally named `~`.
     let result = match cli.command {
-        Commands::Init { paths } => {
+        Commands::Init { paths, auto } => {
             let paths: Vec<String> = paths.iter().map(|p| config::expand_tilde(p)).collect();
-            commands::init::run(&paths, cli.dry_run)
+            commands::init::run(&paths, cli.dry_run, auto)
         }
         Commands::Link { path, quiet } => {
             commands::link::run_link(&config::expand_tilde(&path), quiet)

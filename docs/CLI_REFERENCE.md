@@ -111,10 +111,16 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 ### 1. `devp init [PATHS...]`
 - **Aliases**: `scan`, `onboard`
 - **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#11-devp-setup---status), installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#10-devp-update---offline----install----channels) does.
+
+  A bulk scan skips any repository holding an `ignore.devprune.json`, so a repository can decline before it is ever registered rather than only at prune time. [`devp link`](#2-devp-link-path) still registers such a repository, because naming one repository is not a bulk scan.
+- **Flags**:
+  - `--auto` — work the paths out instead of being told them, and register everything found. `PATHS` is ignored. Three sources: the parent directory of every repository already registered (which is how registering one project finds the rest of the workspace around it), the workspace you are standing in, and the conventional code directories under your home directory (`~/Code`, `~/Projects`, `~/Documents/GitHub`, `~/source/repos`, `~/go/src` and similar). Roots contained in another root are dropped, so a tree is walked once; the home directory itself is never a root, because scanning it means walking every cache on the machine. This is the form to use when nobody has said where the code is — an AI assistant setting the tool up, or a machine whose repositories you would rather not list by hand. The scheduled background pass does the same thing on its own while `auto_discover` is on.
 - **Examples**:
   ```bash
   devp init ~/Code
   devp init /path/to/project1 /path/to/project2
+  devp init --auto --dry-run    # what would it find?
+  devp init --auto              # register all of it
   ```
 
 ---
@@ -529,6 +535,7 @@ reads unambiguously:
     | `auto_setup` | `true` | Whether the integration pass may run unattended at all |
     | `auto_config` | `false` | Whether `devp init` / `devp link` write a default `.devprune.json` into newly registered repositories |
     | `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
+    | `auto_discover` | `true` | Whether the scheduled background pass looks for unregistered repositories by itself, using the same sources as [`devp init --auto`](#1-devp-init-paths). Registering is not pruning — a discovered repository is still only touched once it is idle and a lockfile proves the directory rebuildable — and a repository holding an `ignore.devprune.json` is never registered |
     | `check_interval_days` | `2` | How often the OS scheduler runs a pass |
     | `auto_hooks` | `true` | Whether that pass may install the global Git hooks |
     | `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds, forwarding every hook on to it. Off by default because that setting is one slot, global to the machine, and already somebody else's: taking it rewires husky, pre-commit or lefthook for every repository you have |
@@ -807,7 +814,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -856,7 +863,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -901,7 +908,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "command": "status --drift",
   "drift": [
     {
@@ -929,7 +936,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -970,7 +977,7 @@ to separate them again.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "command": "caches",
   "caches": [
     {
@@ -1040,7 +1047,7 @@ narrowed by which engines it was asked about.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "command": "caches containers",
   "engines": [
     {
@@ -1104,7 +1111,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -1152,7 +1159,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.13.0",
+  "version": "1.14.0",
   "command": "trust",
   "guarantees": [
     {
@@ -1405,7 +1412,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```json
   {
     "schema": 1,
-    "version": "1.13.0",
+    "version": "1.14.0",
     "channel": "installer",
     "installed_by": "install.sh",
     "installed_at": "2026-08-25T09:14:02Z",
@@ -1440,9 +1447,9 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.13.0 · install script
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.14.0 · install script
 
-dev-prune (devp) v1.13.0
+dev-prune (devp) v1.14.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune

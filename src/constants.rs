@@ -448,6 +448,55 @@ pub const ENV_NATIVE_ARCH: &str = "PROCESSOR_ARCHITEW6432";
 /// Create this file with: `touch ignore.devprune.json`
 pub const DEVPRUNE_IGNORE_FILE: &str = "ignore.devprune.json";
 
+/// Home-relative directory names that conventionally hold a developer's repositories.
+///
+/// Probed by name — existence is one `stat` each — when discovery has no registered
+/// repository to work outwards from. Deliberately a list of conventions rather than a
+/// walk of the home directory: `~` also contains `Library`, `AppData` and whatever a
+/// cloud-sync client has decided to materialise, and none of that is anybody's code.
+///
+/// `Documents/GitHub` is GitHub Desktop's default, `source/repos` is Visual Studio's,
+/// and `go/src` is the layout every pre-modules Go install still has.
+pub const CODE_ROOT_NAMES: &[&str] = &[
+    "Code",
+    "code",
+    "Projects",
+    "projects",
+    "Developer",
+    "Development",
+    "dev",
+    "src",
+    "repos",
+    "git",
+    "work",
+    "workspace",
+    "Documents/GitHub",
+    "source/repos",
+    "go/src",
+];
+
+/// Fewest path components a directory must have before discovery will scan it.
+///
+/// A repository cloned directly into the home directory has `~` as its parent, and
+/// "scan the parent of every registered repository" would then mean walking the whole
+/// home directory — every cache, every application-support tree, every cloud mount. The
+/// depth floor is what stops one repository in the wrong place from turning a cheap
+/// neighbourhood scan into a full-disk crawl.
+pub const MIN_DISCOVERY_ROOT_DEPTH: usize = 2;
+
+/// Default for whether the scheduled pass looks for unregistered repositories by itself.
+///
+/// On. The Git hook registers a repository the first time you commit in it, which leaves
+/// out every repository you cloned and have not committed to — exactly the idle ones
+/// worth pruning. Discovery is also the only way an assistant driving the tool learns
+/// about repositories nobody has mentioned to it.
+///
+/// Safe to have on by default because discovery only *registers*. A newly registered
+/// repository is still pruned only once it is idle past `idle_days`, only where a
+/// lockfile proves every directory recoverable, and only after the safety invariants
+/// pass — so the worst outcome of a wrong guess is a row in `devp status`.
+pub const DEFAULT_AUTO_DISCOVER: bool = true;
+
 /// Default timeout in seconds for lockfile enforcement / CLI commands (10 minutes).
 pub const DEFAULT_COMMAND_TIMEOUT_SECS: u64 = 600;
 

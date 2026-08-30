@@ -34,7 +34,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.13.0";
+const VERSION = "1.14.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -962,8 +962,10 @@ export default function App() {
 
 3. Ask me which project directories to keep clean, then register each one:
        devp init <path>
-   Do not register directories I did not name. \`devp init\` only records a directory; it
-   never deletes anything on its own.
+   If I do not have a list, run \`devp init --auto --dry-run\`, read me what it found, and
+   register it with \`devp init --auto\` once I say yes. Do not register directories I did
+   not name or approve. \`devp init\` only records a directory; it never deletes anything
+   on its own.
 
 4. Show me the result and stop:
        devp status
@@ -1552,8 +1554,10 @@ Notes you should rely on, not work around:
                 <h3>Register</h3>
                 <p>
                   <code>devp init ~/Code</code> walks your workspace and records
-                  every Git repository it finds. Git hooks then keep the list
-                  current as you clone new ones.
+                  every Git repository it finds, or{" "}
+                  <code>devp init --auto</code> works out where to look on its
+                  own. Git hooks then keep the list current as you clone new
+                  ones.
                 </p>
               </div>
               <div className="step-card">
@@ -1937,7 +1941,8 @@ Notes you should rely on, not work around:
                     </td>
                     <td>
                       Crawl for Git repositories and register them, then run the
-                      setup pass
+                      setup pass. <code>--auto</code> works out the paths itself
+                      instead of being told them
                     </td>
                   </tr>
                   <tr>
@@ -2258,9 +2263,21 @@ Notes you should rely on, not work around:
                   <code>devp hook install --chain</code> takes it politely, by
                   forwarding every hook on to the tool that had it.
                 </p>
+                <p>
+                  The setup pass registers no repository itself. The scheduled
+                  prune pass is the one place that can, and only while{" "}
+                  <code>auto_discover</code> is on: it looks for repositories you
+                  never added, using the same roots as{" "}
+                  <code>devp init --auto</code>. A manual <code>devp run</code>{" "}
+                  never does it, a repository holding an{" "}
+                  <code>ignore.devprune.json</code> is never registered, and
+                  being registered still only means being considered — not
+                  pruned.
+                </p>
                 <p className="muted">
                   Off switches: <code>auto_daemon</code>,{" "}
-                  <code>auto_hooks</code>, <code>auto_setup</code>, or{" "}
+                  <code>auto_discover</code>, <code>auto_hooks</code>,{" "}
+                  <code>auto_setup</code>, or{" "}
                   <code>DEV_PRUNE_NO_AUTO_SETUP=1</code>.
                 </p>
               </div>
@@ -2592,9 +2609,9 @@ Notes you should rely on, not work around:
                 runner, a container, or any non-interactive session is detected
                 and the pass is skipped without being asked. Otherwise{" "}
                 <code>devp config set auto_setup false</code> turns off the
-                whole pass, <code>auto_hooks</code> and <code>auto_daemon</code>{" "}
-                turn off one part each, and{" "}
-                <code>DEV_PRUNE_NO_AUTO_SETUP=1</code> overrides all three
+                whole pass, <code>auto_hooks</code>, <code>auto_daemon</code> and{" "}
+                <code>auto_discover</code> turn off one part each, and{" "}
+                <code>DEV_PRUNE_NO_AUTO_SETUP=1</code> overrides all of them
                 without a config file — useful in a Dockerfile, where you can
                 set it before the binary is ever run.
               </Faq>

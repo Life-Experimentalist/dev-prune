@@ -45,8 +45,10 @@ on this machine. Follow these steps exactly and do not improvise beyond them.
 
 3. Ask me which project directories to keep clean, then register each one:
        devp init <path>
-   Do not register directories I did not name. `devp init` only records a directory; it
-   never deletes anything on its own.
+   If I do not have a list, run `devp init --auto --dry-run`, read me what it found, and
+   register it with `devp init --auto` once I say yes. Do not register directories I did
+   not name or approve. `devp init` only records a directory; it never deletes anything
+   on its own.
 
 4. Show me the result and stop:
        devp status

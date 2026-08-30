@@ -19,18 +19,34 @@ After registering, it runs the same integration pass as `devp setup` (installing
 whatever is missing, reporting whatever it skipped) and the same quiet release check \
 as `devp update`.
 
+`--auto` works the paths out instead of being told them: the directories your \
+registered repositories already sit in, the workspace you are standing in, and the \
+conventional locations under your home directory. It is the form to use when nobody \
+has said where the code is — an assistant setting the tool up, or a machine whose \
+repositories you would rather not list by hand.
+
+A bulk scan skips any repository holding an `ignore.devprune.json`, so a repository can \
+decline before it is ever registered. `devp link <path>` still registers it, because \
+naming one repository is not a bulk scan.
+
 Registration is what makes a repository visible to `devp run`, `devp status` and the \
-background pass. Repositories are never auto-discovered at prune time: what dev-prune \
-touches is exactly what you registered.";
+background pass. Registering is not pruning: a registered repository is still only \
+touched once it is idle, and only where a lockfile proves the directory can be rebuilt.";
 
 pub const INIT_EXAMPLES: &str = "\
 EXAMPLES:
   devp init                       Register repositories under the current directory
+  devp init --auto                Work out where the repositories are and register them
+  devp init --auto --dry-run      Show what that would register, write nothing
   devp init ~/Code                Register everything under ~/Code
   devp init ~/Code ~/Work/oss     Multiple trees in one pass
   devp scan ~/Code                Same command — `scan` and `onboard` are aliases
   DEV_PRUNE_NO_AUTO_SETUP=1 devp init ~/Code
                                   Register repositories, install nothing
+
+OPTING OUT:
+  ignore.devprune.json            A file by that name in a repository keeps it out,
+                                  both of a bulk scan and of every prune pass
 
 UNDO:
   devp undo                       Reverts the most recent init or link";

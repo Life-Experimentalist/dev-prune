@@ -39,6 +39,10 @@ pub struct Settings {
     /// they register. Off by default; see [`constants::DEFAULT_AUTO_CONFIG`].
     #[serde(default = "default_auto_config")]
     pub auto_config: bool,
+    /// Whether the scheduled pass looks for unregistered repositories by itself.
+    /// On by default; see [`constants::DEFAULT_AUTO_DISCOVER`].
+    #[serde(default = "default_auto_discover")]
+    pub auto_discover: bool,
     /// Whether interactive confirmation is required before pruning.
     #[serde(default = "default_require_confirmation")]
     pub require_confirmation: bool,
@@ -271,6 +275,10 @@ fn default_auto_config() -> bool {
     constants::DEFAULT_AUTO_CONFIG
 }
 
+fn default_auto_discover() -> bool {
+    constants::DEFAULT_AUTO_DISCOVER
+}
+
 fn default_update_check() -> bool {
     constants::DEFAULT_UPDATE_CHECK
 }
@@ -316,6 +324,7 @@ impl Default for Settings {
             auto_hooks: constants::DEFAULT_AUTO_HOOKS,
             auto_setup: constants::DEFAULT_AUTO_SETUP,
             auto_config: constants::DEFAULT_AUTO_CONFIG,
+            auto_discover: constants::DEFAULT_AUTO_DISCOVER,
             require_confirmation: constants::DEFAULT_REQUIRE_CONFIRMATION,
             command_timeout_secs: constants::DEFAULT_COMMAND_TIMEOUT_SECS,
             min_size_mb: constants::DEFAULT_MIN_SIZE_MB,

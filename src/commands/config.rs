@@ -472,6 +472,19 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "auto_discover",
+        category: Category::Unattended,
+        since: "1.14.0",
+        kind: Kind::Toggle,
+        help: "Let the scheduled pass find and register repositories you never added.",
+        plain: "Finds the rest of your projects on its own, so nothing is missed just because you never added it.",
+        get: |s| s.auto_discover.to_string(),
+        set: |s, v| {
+            s.auto_discover = parse_bool("auto_discover", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "auto_hooks",
         category: Category::Unattended,
         since: "1.0.0",

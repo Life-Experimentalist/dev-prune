@@ -1648,3 +1648,49 @@ fn trust_fix_ownership_is_clean_on_an_empty_registry() {
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(text.contains("Nothing to fix"), "unexpected output: {text}");
 }
+
+// ---------------------------------------------------------------------------
+// Discovery: `devp init --auto`, and the opt-out honoured at registration.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_bulk_scan_leaves_a_repository_that_opted_out_unregistered() {
+    // The opt-out is checked before deletion everywhere else. Checking it before
+    // *registration* too is what makes automatic discovery safe to leave on: a
+    // repository that has said no should not reappear in `devp status` after every pass.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let tree = tmp.path().join("tree");
+
+    let wanted = tree.join("wanted");
+    let declined = tree.join("declined");
+    git_repo(&wanted);
+    git_repo(&declined);
+    fs::write(declined.join("ignore.devprune.json"), "{}").unwrap();
+
+    let out = devp(&config)
+        .args(["init", tree.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+
+    let out = devp(&config).args(["status", "--json"]).output().unwrap();
+    let text = stdout_of(&out);
+    assert!(text.contains("wanted"), "{text}");
+    assert!(
+        !text.contains("declined"),
+        "the opt-out was not honoured at registration:\n{text}"
+    );
+}
+
+#[test]
+fn init_offers_to_work_out_the_paths_itself() {
+    // `--auto` is the entry point an assistant uses when nobody has told it where the
+    // repositories are, so its presence is part of the CLI contract.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).args(["init", "--help"]).output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(combined(&out).contains("--auto"), "{}", combined(&out));
+}

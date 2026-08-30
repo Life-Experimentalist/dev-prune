@@ -5,6 +5,42 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-08-31
+
+### Added
+
+- **`devp init --auto`** works out where your repositories are instead of being told, and
+  registers every one it finds. Until now a repository only became visible to dev-prune if
+  you named its directory or committed in it — so the repositories you cloned months ago
+  and never touched again, exactly the ones worth pruning, stayed invisible. `--auto`
+  scans three places: the directory each repository you already registered sits in (which
+  is how registering one project finds the rest of the workspace around it, wherever that
+  workspace lives — a second drive included), the workspace you are standing in, and the
+  conventional code folders under your home directory such as `~/Code`, `~/Projects`,
+  `~/Documents/GitHub`, `~/source/repos` and `~/go/src`. Try it with `--dry-run` first:
+
+  ```bash
+  devp init --auto --dry-run    # what would it register?
+  devp init --auto              # register all of it
+  ```
+
+- **`auto_discover`** lets the scheduled background pass do that discovery on its own, so
+  a repository you clone today is tracked without you running anything. On by default;
+  `devp config set auto_discover false` turns it off, and `DEV_PRUNE_NO_AUTO_SETUP=1`
+  turns it off along with everything else unattended. It is safe to leave on because
+  registering is not pruning — a newly registered repository is still only touched once it
+  has been idle past `idle_days`, and only where a lockfile proves every directory can be
+  rebuilt, so the worst a wrong guess can do is add a row to `devp status`.
+
+### Changed
+
+- **A bulk scan now honours `ignore.devprune.json` before registering, not just before
+  deleting.** Dropping that file into a repository already kept it out of every prune
+  pass; it now also keeps the repository out of the registry, so a project you have
+  declined stops reappearing in `devp status` after every scan. `devp link <path>` still
+  registers such a repository — naming one repository is not a bulk scan — and this is the
+  opt-out for the automatic discovery above.
+
 ## [1.13.0] - 2026-08-31
 
 ### Fixed

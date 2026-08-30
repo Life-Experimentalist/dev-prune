@@ -12,40 +12,78 @@ use anyhow::{Context, Result};
 
 use crate::config::{PerRepoConfig, Registry};
 use crate::output;
-use crate::scanner;
+use crate::{constants, discovery, scanner};
 
 /// Run the `init` command.
 ///
-/// Scans each provided path for Git repositories and adds them to the registry.
-pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
+/// Scans each provided path for Git repositories and adds them to the registry. With
+/// `auto`, the paths are worked out rather than given — see [`crate::discovery`].
+pub fn run(paths: &[String], dry_run: bool, auto: bool) -> Result<()> {
     output::print_banner();
     output::print_header("dev-prune init");
 
     let mut registry = Registry::load()?;
     let mut total_found = 0;
     let mut skipped_throwaway = 0;
+    let mut skipped_opted_out = 0;
     let mut newly_added_repos: Vec<PathBuf> = Vec::new();
 
-    for path_str in paths {
-        let path = Path::new(path_str)
-            .canonicalize()
-            .with_context(|| format!("Path not found: {path_str}"))?;
-
+    // In `--auto` the candidates are already filtered — discovery has dropped the
+    // registered, the disposable and the opted-out — so the scan loop below is fed a
+    // single synthetic "path" list and does no scanning of its own.
+    let auto_found = if auto {
+        let found = discovery::discover(&registry)?;
         output::print_info(&format!(
-            "Scanning {} for Git repositories...",
-            output::clean_path(&path)
+            "Looked for unregistered repositories in {} {}:",
+            found.roots.len(),
+            output::plural(found.roots.len(), "location", "locations")
         ));
+        for root in &found.roots {
+            output::print_info(&format!("  {}", output::clean_path(root)));
+        }
+        total_found = found.found.len();
+        skipped_throwaway = found.throwaway;
+        skipped_opted_out = found.opted_out;
+        Some(found.found)
+    } else {
+        None
+    };
 
-        let repos = scanner::scan_for_repos(&path)?;
-        total_found += repos.len();
+    let scans: Vec<(PathBuf, Vec<PathBuf>)> = match auto_found {
+        Some(repos) => vec![(PathBuf::new(), repos)],
+        None => paths
+            .iter()
+            .map(|path_str| {
+                let path = Path::new(path_str)
+                    .canonicalize()
+                    .with_context(|| format!("Path not found: {path_str}"))?;
+                output::print_info(&format!(
+                    "Scanning {} for Git repositories...",
+                    output::clean_path(&path)
+                ));
+                let repos = scanner::scan_for_repos(&path)?;
+                total_found += repos.len();
+                Ok((path, repos))
+            })
+            .collect::<Result<_>>()?,
+    };
 
+    for (path, repos) in scans {
         for repo in repos {
             // A plugin manager's throwaway clone is not a workspace. Skipped quietly and
             // counted, rather than listed: on the scan that motivated this there were
             // twenty-eight of them, and twenty-eight lines of explanation would have
             // buried the repositories the user actually wanted registered.
-            if super::link::is_throwaway_checkout(&path, &repo) {
+            if !auto && super::link::is_throwaway_checkout(&path, &repo) {
                 skipped_throwaway += 1;
+                continue;
+            }
+            // Honoured before registration, not just before deletion. `devp init` is a
+            // bulk scan of somebody else's directory tree, and a repository carrying the
+            // opt-out has already said no to being one of dev-prune's. `devp link <path>`
+            // still registers it, because naming a repository is not a bulk scan.
+            if !auto && repo.join(constants::DEVPRUNE_IGNORE_FILE).exists() {
+                skipped_opted_out += 1;
                 continue;
             }
             if registry.add_repo(repo.clone()) {
@@ -85,11 +123,19 @@ pub fn run(paths: &[String], dry_run: bool) -> Result<()> {
     // The registry was mutated in memory either way; only the save is skipped. Saying
     // "added" after a `--dry-run` would describe a file that was never written.
     output::print_info(&format!(
-        "Found {total_found} Git {}, {} {} new",
+        "Found {total_found} {}{}, {} {} new",
+        if auto { "unregistered " } else { "Git " },
         output::plural(total_found, "repo", "repos"),
         if dry_run { "would add" } else { "added" },
         newly_added_repos.len()
     ));
+    if skipped_opted_out > 0 {
+        output::print_info(&format!(
+            "Skipped {skipped_opted_out} {} carrying `{}`.",
+            output::plural(skipped_opted_out, "repository", "repositories"),
+            constants::DEVPRUNE_IGNORE_FILE,
+        ));
+    }
     if skipped_throwaway > 0 {
         // Named, not silent. A scan that quietly drops repositories is one the user
         // cannot debug when it drops one they wanted — and `devp link` is the way back.

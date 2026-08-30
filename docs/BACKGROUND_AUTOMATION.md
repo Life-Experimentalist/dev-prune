@@ -83,12 +83,34 @@ flowchart TD
 ```
 *Figure 1: What `devp setup` does, and every point at which it declines to.*
 
+### What the scheduled pass registers
+
+The setup pass registers no repository itself. The scheduled prune pass — `devp run
+--daemon`, the thing the OS scheduler invokes — is the one place that can, and only while
+`auto_discover` is on. Before pruning it looks for repositories you never added, using the
+same roots as [`devp init --auto`](CLI_REFERENCE.md#1-devp-init-paths), and registers what
+it finds.
+
+It closes a gap nothing else could. The Git hook registers a repository the first time you
+commit in it, which leaves out every repository you cloned and never touched again —
+exactly the idle ones worth pruning. Without discovery those stay invisible, and "you
+never registered it" looks identical to "there is nothing to clean up".
+
+A manual `devp run` never does this: walking your disk looking for repositories is a
+reasonable thing for an unattended pass to do and a surprising thing for a command you
+just typed. A repository holding an `ignore.devprune.json` is never registered. And being
+registered still only means being *considered* — a discovered repository is pruned only
+once it is idle past `idle_days`, only where a lockfile proves every directory can be
+rebuilt, and only after the [safety invariants](SAFETY_INVARIANTS.md) pass, so the worst a
+wrong guess can do is add a row to `devp status`.
+
 ### Turning it off
 
-Four switches, from narrowest to widest:
+Five switches, from narrowest to widest:
 
 ```bash
 devp config set auto_hooks_chain false   # never displace another tool's hooks (already the default)
+devp config set auto_discover false      # the scheduled pass never registers a repository you did not add
 devp config set auto_daemon false        # no OS scheduler
 devp config set auto_hooks false         # no global git hooks
 devp config set auto_setup false         # no automatic pass at all

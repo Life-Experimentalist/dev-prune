@@ -14,7 +14,7 @@ name, and either works everywhere.
 run it, and explain the result. Everything you need is below; the docs map at the end is
 for anything that isn't.
 
-**Skill version: 1.13.0.** This file describes that release of `devp` and no other, and
+**Skill version: 1.14.0.** This file describes that release of `devp` and no other, and
 it is rewritten from the binary rather than maintained by hand. Before you rely on
 anything below, run `devp --version`. If it prints a different number, you are reading
 another release's instructions — its flags, JSON statuses and exit codes may not be
@@ -136,12 +136,13 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "is anything wrong with my install?" | `devp doctor` |
 | "fix whatever's broken" | `devp doctor --fix` — repairs installed-but-broken integrations (stale twin, dead-target hooks/scheduler, drifted chain, missing SKILL.md, dead registry entries); never a first-time install |
 | "track my projects folder" | `devp init ~/Code` |
+| "find my repos for me" / "set it up, I don't have a list of where my code is" | `devp init --auto` — works the roots out instead of being told them, and `PATHS` is ignored. Three sources: the parent directory of every repository already registered (the one that reaches a second drive), the workspace you are standing in, and the conventional code directories under the home directory (`Code`, `Projects`, `Developer`, `dev`, `src`, `repos`, `git`, `work`, `workspace`, `Documents/GitHub`, `source/repos`, `go/src` and the like). A root inside another root is dropped so a tree is walked once, and the home directory itself is never a root — scanning it would walk every cache on the machine. Each root is walked to the same 8 levels an ordinary `devp init` uses, and `--dry-run` works. Registering is not pruning — a new row still waits for `idle_days` and still needs a lockfile to prove every candidate directory rebuildable — so the worst a wrong guess costs is an extra row in `devp status` |
 | "track this repo" | `devp link .` |
 | "stop tracking this" | `devp unlink .` |
 | "the registry is full of folders I deleted" | `devp unlink --missing` — clears every entry whose directory is gone |
 | "I moved a repo and it lost its history" | `devp link <new path>` — matching root commits let it adopt the old entry |
 | "undo that" | `devp undo` (reverts the last `init` or `link`) |
-| "never touch this repo" | create `ignore.devprune.json` in its root, or press `i` in `devp status` |
+| "never touch this repo" | create `ignore.devprune.json` in its root, or press `i` in `devp status`. A bulk scan will not even register it |
 | "what's my config?" | `devp config show` |
 | "change a setting" | `devp config set idle_days 30` |
 | "is the background stuff working?" | `devp setup --status` |
@@ -390,6 +391,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `auto_setup` | `true` | Whether the integration pass may run unattended |
 | `auto_config` | `false` | Whether `link`/`init` write a default `.devprune.json` into repositories they register |
 | `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
+| `auto_discover` | `true` | Whether the scheduled background pass (`devp run --daemon`) looks for unregistered repositories by itself, using the same roots as `devp init --auto`, and registers what it finds. A manual `devp run` never does. Registering is not pruning — a discovered repository still waits for `idle_days` and still needs a lockfile to prove every candidate directory rebuildable — and a repository holding an `ignore.devprune.json` is never registered. `devp config set auto_discover false` turns it off |
 | `check_interval_days` | `2` | How often the OS scheduler runs |
 | `auto_hooks` | `true` | Whether that pass may install global Git hooks |
 | `auto_hooks_chain` | `false` | Whether unattended setup may take a `core.hooksPath` another tool holds, forwarding every hook on to it. Off by default: that setting is one slot, global to the machine, and taking it rewires husky, pre-commit or lefthook for every repository the user has |
@@ -407,6 +409,10 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 
 **Per repository:**
 - `ignore.devprune.json` in the root — instant skip, checked before anything is parsed.
+  It is honoured at registration too: a bulk scan (`devp init`, with or without `--auto`,
+  and the daemon's own discovery) will not register a repository that holds it, so a
+  repository can decline before it ever appears in `devp status`. `devp link <path>`
+  still registers it, because naming one repository is not a bulk scan.
 - `.devprune.json` — `"project_name"`, `"ignore": true`, `"override_idle_days": 30`,
   `"min_size_mb": 100`, `"scan_depth": 10`, `"disable_daemon": true` (excluded from
   scheduled passes only), `"disable_hooks": true` (not auto-registered by the global
@@ -502,8 +508,17 @@ LaunchAgent on macOS, a systemd user timer on Linux) running `dev-prune run --ye
 It declines rather than forces. It skips the hooks when `git` is not on `PATH`. It does
 not touch editor settings — `devp config icon` registers the icon with the **OS file
 manager** (Explorer, Finder, Nautilus and friends) and, for editors, only *prints* a
-`settings.json` snippet for you to paste. And it does not register repositories: which
-directories to track stays the user's decision.
+`settings.json` snippet for you to paste. And the setup pass itself registers no
+repository: installing the integrations and deciding what to track are separate.
+
+Discovery happens in the *scheduled* pass instead. With `auto_discover` on — the default
+— `dev-prune run --daemon` looks for unregistered repositories using the same roots as
+`devp init --auto` and registers what it finds; a manual `devp run` never does, and
+`devp config set auto_discover false` stops it. Nothing about that widens what gets
+deleted: a newly registered repository is pruned only once it is idle past `idle_days`,
+only where a lockfile proves every candidate directory can be rebuilt, and only after the
+same safety invariants pass — so the worst a wrong guess costs is an extra row in
+`devp status`. A repository holding an `ignore.devprune.json` is not registered at all.
 
 > Git supports exactly one global `core.hooksPath`, and while it is set Git stops
 > looking in any repository's own `.git/hooks`. dev-prune restores that itself: it writes
@@ -522,9 +537,9 @@ directories to track stays the user's decision.
 > names the drifted ones and `devp hook install --chain` rebuilds. To decline the whole
 > thing instead: `devp config set auto_hooks false` and `devp config hook disable`.
 
-Off switches, narrowest first: `auto_hooks_chain`, `auto_daemon`, `auto_hooks`,
-`auto_setup`. For containers
-and CI, `DEV_PRUNE_NO_AUTO_SETUP=1` overrides all four with no config file — the same
+Off switches, narrowest first: `auto_hooks_chain`, `auto_discover`, `auto_daemon`,
+`auto_hooks`, `auto_setup`. For containers
+and CI, `DEV_PRUNE_NO_AUTO_SETUP=1` overrides all five with no config file — the same
 variable the install scripts read, so setting it once covers install time and every run
 after it.
 
@@ -596,7 +611,7 @@ specific symptom the report named.
 | Repository shows **Ignored** | `ignore.devprune.json` exists, or `"ignore": true` | Delete the file, or press `i` in `devp status` |
 | A project in the repository is never listed | It sits deeper than `scan_depth` (6 levels) | `devp config set scan_depth N`, or set `"scan_depth"` in that repository's `.devprune.json` |
 | A small bloat directory is never offered | It is under `min_size_mb` | `devp run --min-size 0` for one pass, or `devp config set min_size_mb 0` |
-| A repository is not in `devp status` at all | It was never registered | `devp link .` in it, or `devp init <parent dir>` |
+| A repository is not in `devp status` at all | It was never registered, or it holds an `ignore.devprune.json`, which a bulk scan declines to register | `devp link .` in it, `devp init <parent dir>`, or `devp init --auto` to work the roots out. `devp link` registers an opted-out repository too; deleting the file is the other way |
 | **Path Missing** | The directory was moved or deleted | If moved: `devp link <new path>` alone — the matching root commit adopts the old entry, history and all, and the dead row goes. If deleted: `devp unlink <old path>`, or `devp unlink --missing` for a registry full of them |
 | Lockfile verification fails | The lockfile has drifted from the manifest, and verification is read-only so it refuses rather than repairing | Run the exact command dev-prune printed (it is the writing form for that ecosystem), in that project. Or `devp config set allow_manifest_rewrite true` to let dev-prune run it during the pass. Never delete the lockfile |
 | "holds package(s) that the lockfile does not record" | Something was installed without recording it — `npm install --no-save`, a bare `pip install` into a pinned venv, an ad-hoc `uv pip install` | `devp status --drift` lists every such environment with the exact record command (`npm install <pkg>`, `uv add <package>`, `pip freeze > requirements.txt`). Run it, or uninstall the extras. Never delete the directory manually |
@@ -614,6 +629,12 @@ specific symptom the report named.
 ```bash
 devp init ~/Code        # register everything under a workspace root
 devp run --dry-run      # report only — deletes nothing, runs no manager
+```
+
+**When nobody has said where the code is:**
+```bash
+devp init --auto --dry-run   # the roots it worked out, and what it would register
+devp init --auto             # register all of it
 ```
 
 **Reclaim space, then get one project working again:**

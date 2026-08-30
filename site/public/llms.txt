@@ -6,7 +6,7 @@
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.13.0. Written by VKrishna04.
+Version 1.14.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
@@ -153,7 +153,20 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
 
 ## Commands
 
-- `devp init [PATHS]` — crawl for Git repositories and register them, then run the setup pass
+- `devp init [PATHS]` — crawl for Git repositories and register them, then run the setup
+  pass. `devp init --auto` works the paths out instead of being told them and `PATHS` is
+  ignored: the parent directory of every repository already registered (the source that
+  reaches repositories outside the home directory, on a second drive), the workspace you
+  are standing in, and the conventional code directory names under your home directory
+  (`Code`, `Projects`, `Developer`, `Development`, `dev`, `src`, `repos`, `git`, `work`,
+  `workspace`, `Documents/GitHub`, `source/repos`, `go/src`). A root that lies inside
+  another root is dropped so a tree is walked once, and the home directory itself is
+  never a root, because scanning it would walk every cache on the machine. The same 8
+  levels, and it works with `--dry-run`. Aliases: `scan`, `onboard`. A bulk scan — `devp
+  init` with or without `--auto` — will not register a repository holding an
+  `ignore.devprune.json`, so a repository can decline before it is ever registered rather
+  than only at prune time; `devp link` still registers one, because naming a single
+  repository is not a bulk scan
 - `devp link [PATH]` / `devp unlink [PATH]` — register or unregister one repository;
   `devp unlink --missing` drops every entry whose directory no longer exists
 - `devp undo` — revert the most recent `init` or `link`
@@ -370,8 +383,11 @@ https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/SAFETY_INVARIAN
 4. **Atomic state writes** — the registry is written to a temp file and renamed, never
    edited in place; a crash mid-write leaves the previous state intact.
 5. **Opt-outs** — `ignore.devprune.json` in a repository root is honoured by file
-   presence alone (0 ms, nothing parsed); `"ignore": true` in `.devprune.json` does the
-   same after a parse. A `.devprune.json` that does not parse skips the repository and
+   presence alone (0 ms, nothing parsed), at registration as well as at prune time: a
+   bulk scan (`devp init`, with or without `--auto`, and the scheduled pass's own
+   discovery) will not register a repository holding it, while `devp link <path>` still
+   does, because naming one repository is not a bulk scan. `"ignore": true` in
+   `.devprune.json` does the same after a parse. A `.devprune.json` that does not parse skips the repository and
    reports the error — defaults are never guessed for a file that said something.
 6. **Symlink refusal** — a bloat directory that is a symlink or Windows junction points
    at storage the repository does not own (typically a monorepo's real `node_modules`)
@@ -491,7 +507,7 @@ directory; hardlink awareness changes accounting, never what is deleted.
 
 Global settings live in `%APPDATA%\dev-prune` (Windows),
 `~/Library/Application Support/dev-prune` (macOS), `$XDG_CONFIG_HOME/dev-prune` (Linux).
-Thirty keys, all readable with `devp config get <key>` and writable with
+Thirty-one keys, all readable with `devp config get <key>` and writable with
 `devp config set <key> <value>`. They fall into seven groups, and `devp config wizard`
 walks them in this order:
 
@@ -516,8 +532,8 @@ recompiling rather than downloading: `enable_cargo` (false), `enable_gradle` (fa
 
 **Running without being asked** — what may be installed on the machine, and how
 often it may act alone: `auto_setup` (true), `auto_config` (false),
-`auto_daemon` (true), `check_interval_days` (2), `auto_hooks` (true),
-`auto_hooks_chain` (false).
+`auto_daemon` (true), `auto_discover` (true), `check_interval_days` (2),
+`auto_hooks` (true), `auto_hooks_chain` (false).
 
 **Keeping dev-prune current**: `update_check` (true),
 `update_check_interval_days` (7), `update_check_timeout_secs` (5),
@@ -528,6 +544,16 @@ lockfile check before a delete, and the reinstall `devp restore` performs. Nothi
 compiled under it: the opt-in build adapters run no command at all during a prune,
 because a build tree needs no lockfile proof. The single exception is a restore whose
 install builds a native module.
+
+`auto_discover` lets the scheduled background pass — `devp run --daemon`,
+the one the OS scheduler starts — look for unregistered repositories by itself, using the
+same roots as `devp init --auto`, and register what it finds. A manual `devp run` never
+does, and `devp config set auto_discover false` turns it off. It widens what is
+*registered*, never what is deleted: a newly registered repository is pruned only once it
+is idle past `idle_days`, only where a lockfile proves every candidate directory can be
+rebuilt, and only after the seven safety invariants pass, so the worst a wrong guess
+costs is an extra row in `devp status`. A repository holding an `ignore.devprune.json` is
+not registered at all.
 
 `auto_hooks_chain` is off because `core.hooksPath` is one slot, global to the machine,
 and often already held by husky, pre-commit or lefthook. On, dev-prune installs in
@@ -565,7 +591,7 @@ system's locale is deliberately never consulted, so the choice is made once by a
 person and stays made. English is the only catalogue a native speaker has reviewed;
 `devp config set language <code>` says so when the one you picked has not been.
 
-`devp config wizard` opens all thirty in a full-screen configurator, one
+`devp config wizard` opens all thirty-one in a full-screen configurator, one
 category per screen — the
 `devp trust` declaration first, then every setting, then a summary of exactly what
 will be written. Enter is the "keep going" key: it takes the safe recommendation on
@@ -666,9 +692,15 @@ pre-commit or lefthook, the pass skips the hooks and says so; `devp hook install
 takes the slot and writes shims that `exec` the displaced directory's same-named hook,
 so both run. An unchained install shims every hook name too, forwarding to the
 repository's own `.git/hooks`, so setting `core.hooksPath` does not disable a repo-local
-pre-commit gate. Chaining is opt-in — `auto_hooks_chain` defaults to false. Turn any of it
-off with `auto_setup`/`auto_hooks`/`auto_hooks_chain`/`auto_daemon`, or
-`DEV_PRUNE_NO_AUTO_SETUP=1` in the environment. Everything the setup pass writes lives
+pre-commit gate. Chaining is opt-in — `auto_hooks_chain` defaults to false. The setup
+pass registers no repository itself; the scheduled prune pass is where that can happen,
+and only while `auto_discover` is on (the default), where it looks for unregistered
+repositories using the same roots as `devp init --auto` and registers what it finds — a
+manual `devp run` never does, a repository holding an `ignore.devprune.json` is never
+registered, and being registered still only means being considered, not pruned.
+`devp config set auto_discover false` turns it off. Turn any of it
+off with `auto_setup`/`auto_hooks`/`auto_hooks_chain`/`auto_daemon`/`auto_discover`, or
+`DEV_PRUNE_NO_AUTO_SETUP=1` in the environment, which switches off all five at once. Everything the setup pass writes lives
 under your own config and data directories and is removed by `devp uninstall`.
 
 ## Docs

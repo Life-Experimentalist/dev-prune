@@ -244,8 +244,10 @@ on this machine. Follow these steps exactly and do not improvise beyond them.
 
 3. Ask me which project directories to keep clean, then register each one:
        devp init <path>
-   Do not register directories I did not name. `devp init` only records a directory; it
-   never deletes anything on its own.
+   If I do not have a list, run `devp init --auto --dry-run`, read me what it found, and
+   register it with `devp init --auto` once I say yes. Do not register directories I did
+   not name or approve. `devp init` only records a directory; it never deletes anything
+   on its own.
 
 4. Show me the result and stop:
        devp status
@@ -307,6 +309,7 @@ arrived intact, which a substituted pair also does.
 
 ```bash
 devp init ~/Projects        # register every Git repository under a tree
+devp init --auto            # …or let it work out where your code lives, and register that
 devp status                 # dashboard: what is tracked, what is reclaimable
 devp run --dry-run          # what a pass would delete — changes nothing
 devp run                    # do it, after confirming
@@ -569,7 +572,7 @@ process that leaves a dirty working tree is a surprise.
 | 📊 **Cache report**                            | `devp caches` sizes every package manager cache and store on the machine — npm to cargo to conda, Maven, Gradle, NuGet, vcpkg, Conan, Composer, CocoaPods and Hex — and prints the command that clears each. The report is read-only; `devp caches clear <manager>` runs that command for you, after asking. `devp config set cache_max_gb uv=10,npm=10` says how big is too big, per manager, and marks the ones past it — `devp caches clear --over-cap all` then empties exactly those, still only when you type it. Each manager also says how many of your registered repositories use it and what that works out to per repository, and `devp caches clear --unused all` empties the ones nothing uses at all. pnpm is reported once per filesystem, because a store it hardlinks into `node_modules` cannot cross one and projects kept off the system disk get a store of their own. Nothing on a schedule ever touches a cache, and Maven's `~/.m2/repository` is never cleared at all — it holds artifacts `mvn install:install-file` put there that no remote can hand back |
 | 🩺 **`devp doctor`**                           | One read-only pass that ends by naming the *single* reason a repository would or would not be pruned. Runs no package manager, repairs nothing, safe to run twice. `devp doctor --fix` then mends what it found — installed-but-broken only                                                                                                                 |
 | 🤖 **Self-installing automation**              | OS-native scheduler (Task Scheduler, LaunchAgent, systemd user timer) and non-blocking Git hooks, installed at install time and restored after an upgrade. `auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1` turn it off                                                                                                             |
-| ⚡ **0ms opt-out**                             | An `ignore.devprune.json` in a repository root is honoured by file presence alone — no read, no parse                                                                                                                                                                                                                                                       |
+| ⚡ **0ms opt-out**                             | An `ignore.devprune.json` in a repository root is honoured by file presence alone — no read, no parse. It applies at registration as well: a bulk scan (`devp init`, and the scheduled pass's own discovery) will not register a repository that holds it, so a repository can decline before it ever reaches `devp status`. `devp link <path>` still registers one, because naming a single repository is not a bulk scan                                                                                                                                                                                                                                                       |
 | 🔌 **`--json` on every reporting command**     | `run`, `status`, `stats`, `trust` and `caches` each emit one versioned document on stdout, diagnostics on stderr. Built for scripts and agents                                                                                                                                                                                                              |
 | 🧠 **AI agent skill**                          | A token-lean `SKILL.md` embedded in the binary; `devp skill` exports it and prints onboarding prompts for Claude Code, Gemini Antigravity, Cursor, Windsurf, Copilot and OpenClaw, and the repository doubles as a Claude Code plugin marketplace                                                                                                                                                                           |
 | 🧰 **Editor extension**                        | Validates `.devprune.json` as you type and shows the workspace's reclaimable size in the status bar. `devp setup` offers to install it — once, only at a terminal — into VS Code, VSCodium, Cursor, Windsurf, Positron or Kiro, each from its own registry, falling back to the `.vsix` from the extension's own release. [docs/IDE_INTEGRATION.md](docs/IDE_INTEGRATION.md)         |
@@ -583,7 +586,7 @@ process that leaves a dirty working tree is a surprise.
 
 | Command                | Also                                                                | What it does                                                                                                                                                                                                                                                  |
 | :--------------------- | :------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `devp init [PATHS]`    | `scan`, `onboard`                                                   | Crawls directory trees for Git repositories and registers them, then runs the `setup` integration pass                                                                                                                                                        |
+| `devp init [PATHS]`    | `scan`, `onboard`, `--auto`                                         | Crawls directory trees for Git repositories and registers them, then runs the `setup` integration pass. `--auto` works the roots out instead of being told them — the parent of every repository already registered, the workspace you are standing in, and the conventional code directories under your home — and ignores `PATHS`. A bulk scan never registers a repository holding an `ignore.devprune.json`                                                       |
 | `devp link [PATH]`     | :------------------------------------------------------------------ | Registers one repository                                                                                                                                                                                                                                      |
 | `devp unlink [PATH]`   | `--missing`                                                         | Unregisters one; `--missing` drops every entry whose directory is gone, in one pass                                                                                                                                                                           |
 | `devp undo`            | :------------------------------------------------------------------ | Reverts the most recent `init` or `link`                                                                                                                                                                                                                      |
@@ -767,7 +770,7 @@ not universally wanted, and leaves `allow_manifest_rewrite` — the one recommen
 that edits files Git tracks — named, explained and off unless you add
 `--with-cautious`. `devp config show` lists whatever you have not taken yet.
 
-Thirty settings, in the seven groups the configurator asks them in — the order the
+Thirty-one settings, in the seven groups the configurator asks them in — the order the
 decisions actually arrive in. Every key, with its full description and range, is in the
 [CLI reference](docs/CLI_REFERENCE.md#8-devp-config-action).
 
@@ -815,6 +818,7 @@ act on its own.
 | :--- | :---: | :--- |
 | `auto_setup` · `auto_daemon` · `auto_hooks` | `true` | Whether the integration pass may run unattended, and what it may install |
 | `auto_config` | `false` | Whether `devp init` / `devp link` write a `.devprune.json` into newly registered repositories |
+| `auto_discover` | `true` | Whether the scheduled background pass finds unregistered repositories itself, from the same roots as `devp init --auto`. A manual `devp run` never does. Registering is not pruning — an idle window and a lockfile still stand in the way — and a repository holding an `ignore.devprune.json` is never registered |
 | `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds — off, it is not yours |
 | `check_interval_days` | `2` | How often the OS scheduler runs a pass |
 
