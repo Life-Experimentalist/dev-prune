@@ -1,6 +1,8 @@
 # 🛡️ Safety Invariants & Risk Mitigation in `dev-prune`
 
-`dev-prune` (`devp`) is built on a strict **"Safety First"** philosophy. Deleting files is high-risk, so the engine enforces seven independent validation layers before any directory is removed. Every one of them is a refusal: when a check cannot be satisfied, nothing is deleted and the reason is printed.
+`dev-prune` (`devp`) is built on a strict **"Safety First"** philosophy. Deleting files is high-risk, so the engine enforces seven independent invariants around every directory it removes.
+
+Six of the seven are **refusals** that run *before* the delete: when invariant 1, 2, 3, 5, 6 or 7 cannot be satisfied, nothing is deleted and the reason is printed. Invariant 4 is the one exception and is deliberately placed after the delete in the flowchart below — it is a **durability guarantee for the record of what was deleted**, not a gate on the deletion itself. A failure there means the registry may not have recorded a pass that did happen; it never means a directory survived.
 
 ---
 

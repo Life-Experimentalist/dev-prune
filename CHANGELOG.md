@@ -5,6 +5,127 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The banner now names the channel this copy came from.** `devp -V`, `devp init`,
+  `devp run` and `devp status` print it right after the version — `· cargo`, `· npm`,
+  `· bun`, `· pnpm`, `· yarn`, `· uv`, `· pipx`, `· pip`, `· WinGet`, `· Scoop`,
+  `· Homebrew` or `· install script`. dev-prune ships through eleven channels and nothing
+  stops two of them from leaving a copy on the same machine, so "devp still says 1.9.0
+  after I upgraded" was always really the question "which copy am I running, and who owns
+  it". That answer is now in the screenshot before anyone has to ask for it. It is read
+  from the path of the running executable, so it spawns nothing, reads nothing from disk,
+  and does not need the manager it names to still be installed.
+  `devp update --channels` still prints the upgrade command for every channel.
+
+- **A binary you downloaded and placed yourself badges as `· standalone`.** Nothing on the
+  machine claims that file, so no package manager is going to upgrade it, and saying so is
+  more use than guessing at one. `devp update` already handled this case — it offers
+  `devp update --install`, which replaces the file in place — and now the banner says it
+  before you get that far. A copy inside a tree dev-prune can name but not drive (Nix,
+  Volta, mise, asdf, a distribution's own package) badges with that manager's name
+  instead, and dev-prune leaves it alone.
+
+- **A copy installed by a node package manager dev-prune has no name for is still
+  recognised as npm-family.** Every npm-registry client — npm, pnpm, yarn, bun, and
+  whichever one ships next — installs the package into a `node_modules` tree, so any
+  copy inside one now badges as npm-family even when the specific manager is unknown,
+  and the uninstall sweep prints removal guidance instead of deleting a file some
+  manager still tracks. New clients of the npm registry work on the day they appear,
+  not the day dev-prune learns their name.
+
+- **`devp doctor` now reports declared directories.** A repository whose only prunable
+  space is what `.devprune.json` declares was told "no prunable directories found" — the
+  opposite of what `devp run` would do there. Doctor now resolves the declarations with
+  the same checks the prune pass runs, so each one prints with its rebuild command and
+  whether it currently holds anything, and a declaration the pass would refuse (a
+  symlink, a path outside the repository, tracked files inside) says so and why.
+
+- **`devp doctor` points out config keys dev-prune does not read.** A typo'd key in
+  `.devprune.json` or `project.devprune.json` — `idle_days` for `override_idle_days`,
+  `directores` for `directories` — has always been silently ignored, on purpose: a file
+  written by a newer version must not brick an older binary. That tolerance meant nothing
+  ever told you the key was doing nothing. Doctor now names each unread key and says to
+  check the spelling against the file's `$schema`. A warning only — the file still loads.
+
+### Changed
+
+- **`devp run <path>` now shows what it will delete and asks.** A targeted run used to
+  go straight from analysis to deletion; now it lists every directory that would go,
+  each with its size and the total, notes that `devp restore` brings it all back, and
+  asks `[y/N]` — the same courtesy the registry-wide pass has always paid. `--yes`
+  answers for you, `--dry-run` stops at the report, and without a terminal the run
+  exits with an error naming `--yes` rather than waiting on a prompt, so scripts that
+  relied on the old behaviour need a `-y`. The scheduled pass already runs with
+  `--yes` and is unaffected.
+
+- **Finishing the configurator is now just Enter, held down.** In `devp config wizard`,
+  Enter takes the recommendation on the row it is on and moves to the next; on the
+  Finish line it opens the summary of exactly what will be written, and one more Enter
+  writes it. So a fresh install can review every setting, accept all the safe
+  recommendations, and finish, pressing nothing but one key — no more choosing between
+  reading thirty settings carefully and abandoning the screen. The walk never takes the
+  cautious tier: `allow_manifest_rewrite` still requires a deliberate `Space` on its
+  own row, and changing anything to a value *other* than the recommendation is still
+  `Space`. `q` still leaves without saving, from any screen.
+
+### Fixed
+
+- **`devp` now knows it was installed by the install script.** Both names live side by side
+  in the managed directory, but the check that recognised them compared the whole file
+  path against the one name the installer records — `dev-prune`. So `dev-prune update`
+  answered correctly while `devp update`, the same binary under the name every page of the
+  documentation tells you to type, replied "this copy is not in a location any install
+  channel owns" to someone who had run `install.ps1` two minutes earlier. Either name in
+  that directory is now the install script's copy.
+
+- **`devp uninstall` no longer deletes a pnpm-installed copy behind pnpm's back.** pnpm puts
+  the executable on your PATH in `PNPM_HOME` (`~/.local/share/pnpm`, `%LOCALAPPDATA%\pnpm`)
+  and the package itself one level deeper, and only the deeper path was recognised — so the
+  one copy the stray-copy sweep can actually find looked like a loose file nothing owned,
+  and got removed without `pnpm remove -g` ever running. pnpm was left listing a package
+  whose file was gone. The sweep now hands it to pnpm.
+
+- **`devp doctor --fix` no longer downgrades `devp`.** Restoring `dev-prune` and `devp` as a
+  pair only compared the two files for *difference*, then let `dev-prune` overwrite `devp`
+  on the assumption that the canonical name is always the newer of the two. Run an older
+  `dev-prune` — out of a backup, or a package-manager cache — and it is not: the repair
+  deleted a newer `devp` and put its own older content there, and reported it as a repair.
+  It now asks the twin its version and leaves anything that is not actually behind alone.
+
+- **Windows paths in warnings are readable again.** A skipped symlink, a mount point, a
+  nested git checkout or a partly-deleted directory printed its path in the verbatim
+  `\\?\C:\Users\...` form that `canonicalize` returns, in the middle of a sentence where
+  every other path dev-prune prints is clean.
+
+- **A failed self-update no longer leaves a `.new` file behind.** Refreshing the managed
+  copy stages the new binary beside the old one and renames it into place, but only cleaned
+  the staging file up when the *rename* failed — a copy that died partway through, on a full
+  disk or a revoked permission, left a half-written `dev-prune.new` that nothing ever swept.
+
+- **`devp restore --last-run` no longer trips over a declared directory.** A declared
+  directory records its rebuild command where a Python project records its interpreter
+  version, and the restore batch probed that field as a version — so one declared
+  directory in the last pass made restore ask whether "npm run build" was a Python this
+  machine had, conclude it was missing, and abort the whole batch. Declared directories
+  now skip the interpreter question they were never part of.
+
+- **`devp doctor` no longer says PATH is broken in the shell you ran `setup` from.**
+  Adding the install directory to PATH takes effect in terminals opened afterwards, but
+  the shell that ran `setup` predates its own change — and doctor, run as the very next
+  command, warned that `devp` was not on PATH and suggested the setup that had just
+  succeeded. It now checks the persisted PATH too, and says the honest thing: new
+  terminals will find it, this one predates the change.
+
+- **A `command_timeout_secs` of `0` no longer fails every verification instantly.**
+  `devp config set` refuses the value, but the registry is a JSON file anyone can edit,
+  and a zero that got in did not mean "no timeout" — it killed every package-manager
+  command the moment it started, which quietly turned every repository into "lockfile
+  could not be verified" and pruned nothing. The stored value is now floored at one
+  second everywhere a timeout is built from it.
+
 ## [1.11.0] - 2026-08-27
 
 ### Added

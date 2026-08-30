@@ -157,7 +157,10 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
 - `devp link [PATH]` / `devp unlink [PATH]` — register or unregister one repository;
   `devp unlink --missing` drops every entry whose directory no longer exists
 - `devp undo` — revert the most recent `init` or `link`
-- `devp run [PATH]` — prune every registered repository, or one target
+- `devp run [PATH]` — prune every registered repository, or one target. Both forms
+  list what would go, with sizes and the total, and ask before deleting; `-y` answers,
+  `--dry-run` stops at the report, and without a terminal the run exits with an error
+  naming `--yes` rather than waiting on a prompt
 - `devp status [--top N] [--drift] [--json]` — interactive dashboard; a plain table when
   there is no TTY. In the dashboard `s` cycles the sort (relevance, size, longest idle,
   name), `f` cycles the filter (all, candidates, has bloat, problems) and `/` searches
@@ -565,12 +568,15 @@ person and stays made. English is the only catalogue a native speaker has review
 `devp config wizard` opens all thirty in a full-screen configurator, one
 category per screen — the
 `devp trust` declaration first, then every setting, then a summary of exactly what
-will be written. The list ends in a Finish line; two presses of Enter there open that
-summary, and there is no exit that skips it. It runs itself once on a first install
-and again after an upgrade adds a setting the machine has never been shown, marking
-that one `NEW`; settings already confirmed are never re-asked. `--no-tui` or
-`DEV_PRUNE_NO_TUI=1` asks one question per line instead, with the same two-press
-gesture. Agents should use `devp config set`, which needs no terminal at all.
+will be written. Enter is the "keep going" key: it takes the safe recommendation on
+the row it is on and moves to the next, so holding it walks the whole list, and on
+the Finish line it opens that summary — one more Enter saves. The walk never takes
+the cautious tier (`allow_manifest_rewrite`); that stays a deliberate Space. It runs
+itself once on a first install and again after an upgrade adds a setting the machine
+has never been shown, marking that one `NEW`; settings already confirmed are never
+re-asked. `--no-tui` or `DEV_PRUNE_NO_TUI=1` asks one question per line instead,
+where saving takes two empty lines. Agents should use `devp config set`, which needs
+no terminal at all.
 
 `devp config recommended` is the non-interactive shortcut: it applies everything the
 first run recommends without a caveat — `enable_cargo`, `enable_gradle`,

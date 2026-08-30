@@ -159,7 +159,9 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats`, `trust` or `caches` — see below |
 
 Global flags, valid on any subcommand: `--dry-run`, `--ignore-idle` (`--force` is the
-deprecated alias), `--yes` / `-y`.
+deprecated alias), `--yes` / `-y`. A deleting `devp run` — registry-wide or targeted —
+lists what would go and asks first; without a terminal it exits with an error naming
+`--yes` instead of hanging, so a scripted run must pass `-y` (the rows above already do).
 
 A `.` wherever `[PATH]` appears means the current working directory, and it is the
 default for `init`, `link`, `unlink`, `restore` and `config project` — so `devp link` and

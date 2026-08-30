@@ -163,6 +163,16 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   5. Calculates reclaimable disk space and launches interactive selection TUI (unless `-y` is passed).
   6. Enforces two-tier lockfile safety with configurable command timeout (`command_timeout_secs`).
   7. Safely removes bloat directories (`node_modules`, `.venv`, `target`, `vendor`).
+
+  **A targeted run confirms first.** `devp run <path>` prunes that one repository
+  without registering it — and before deleting anything it lists every directory that
+  would go, each with its size and the total, and asks. Everything on that list is
+  rebuilt from a lockfile, and `devp restore <path>` brings it back. `--yes` answers
+  the question for you, `--dry-run` stops after the analysis, and without a terminal
+  on stdin nothing is deleted: dev-prune names `--yes` and exits with an error rather
+  than guessing. Setting `require_confirmation` to `false` turns the question off, and
+  the installed scheduler always passes `--yes`, so a pass that runs on its own never
+  waits on a prompt.
 - **Flags**:
 
   | Flag | Meaning |
@@ -575,17 +585,24 @@ reads unambiguously:
   - `config wizard [--no-tui]`: Open the configurator — a full-screen view of
     every setting, with the [`devp trust`](#18-devp-trust---json---fix-ownership) declaration in front of
     it so what the tool is allowed to do is on screen before any of it is configurable.
-    Arrow keys move, `Space` changes the highlighted setting (a toggle flips, a number
-    opens a field, `disabled_adapters` opens the adapter checklist), `r` puts one back.
-    The list ends in a **Finish** line: two presses of `Enter` there open the last
-    screen, which lists exactly what will be written before it is written. Two presses
-    rather than one, because a single `Enter` is what people press to dismiss a screen
-    they have stopped reading — and because there is now no other way out that skips
-    the summary. `q` leaves without saving anything, from any screen.
+    `Enter` is the "keep going" key. On a row with an untaken recommendation it takes
+    that advice and moves on; on any other row it just moves on; on the **Finish** line
+    it opens a summary listing exactly what will be written, and one more `Enter`
+    writes it. So pressing nothing but `Enter` reviews every setting, accepts the safe
+    recommendations along the way, and finishes — the whole first-run walkthrough is
+    one key, held down. The one thing the walk never takes is the cautious tier
+    (`allow_manifest_rewrite`): turning that on stays a deliberate `Space` on its row.
+    Arrow keys move without accepting anything, `Space` changes the highlighted setting
+    (a toggle flips, a number opens a field, `disabled_adapters` opens the adapter
+    checklist), `r` puts one back, and `q` leaves without saving, from any screen.
+    Nothing is written until the summary says so.
 
-    The line-by-line form (`--no-tui`) uses the same gesture: two empty lines to keep
-    the defaults, and, if you changed anything, a list of every change and a second
-    two-press confirmation before any of it is written.
+    The line-by-line form (`--no-tui`) has its own version of the gesture: two empty
+    lines keep the defaults, and, if you changed anything, a list of every change and a
+    second two-empty-line confirmation before any of it is written. Two rather than
+    one, because in line mode a single `Enter` is what people press to dismiss a prompt
+    they have stopped reading — the full-screen view does not need the doubling,
+    because its `Enter` walk always lands on the summary before anything is saved.
 
     It runs itself twice: once on a fresh install, so the defaults are something you
     agreed to rather than inherited, and again after an upgrade that added a setting you
@@ -1413,7 +1430,7 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.11.0
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.11.0 · install script
 
 dev-prune (devp) v1.11.0
   Binary Aliases:  dev-prune | devp
@@ -1433,3 +1450,18 @@ dev-prune (devp) v1.11.0
 The author and repository are printed so that a stray copy of the binary — downloaded
 once, moved to a server, forgotten — can still say where it came from. Both are plain
 constants in [`src/constants.rs`](../src/constants.rs); nothing in the code checks them.
+
+The word after the version is the install channel, and it is printed beside every banner —
+`devp -V`, `devp init`, `devp run` and `devp status`. It is read from the path of the
+running executable, so it costs nothing and works whether or not the manager it names is
+still installed:
+
+| Badge | What it means |
+|---|---|
+| `install script` | `install.sh` / `install.ps1` put it in `<config>/bin`. |
+| `cargo`, `npm`, `bun`, `pnpm`, `yarn`, `uv`, `pipx`, `pip`, `WinGet`, `Scoop`, `Homebrew` | That manager owns the file, and `devp update` will ask it to do the upgrade. |
+| `standalone` | Nothing on this machine claims the file — an executable downloaded from the releases page, a `target/debug` build, a copy moved by hand. `devp update` has no manager to call and offers `devp update --install` instead, which replaces the file in place. |
+| a manager's name that is none of the above | Something owns the file that dev-prune can name but cannot drive — Nix, Volta, mise, asdf, a distribution package. dev-prune will not touch it; ask that manager. |
+
+`devp update --channels` prints the upgrade command for every channel and marks the row
+this copy is on.
