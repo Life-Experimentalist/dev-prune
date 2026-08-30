@@ -236,6 +236,15 @@ pub struct Settings {
     /// back to English rather than failing.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Settings this build has never heard of, carried through a save verbatim.
+    ///
+    /// A registry written by a newer dev-prune can hold keys this build does not
+    /// know, and every save rewrites the whole `settings` object — so without this,
+    /// one run of an older binary (a pinned CI image, a machine `version_lock` holds
+    /// back) silently erased the newer binary's configuration. `BTreeMap` for the
+    /// same stable-diff reason as `adapter_idle_days`.
+    #[serde(flatten, default)]
+    pub unknown_keys: BTreeMap<String, serde_json::Value>,
 }
 
 fn default_build_idle_days() -> u64 {
@@ -331,6 +340,7 @@ impl Default for Settings {
             adapter_idle_days: BTreeMap::new(),
             cache_max_gb: BTreeMap::new(),
             language: constants::DEFAULT_LANGUAGE.to_string(),
+            unknown_keys: BTreeMap::new(),
         }
     }
 }
@@ -1675,6 +1685,32 @@ mod tests {
         let registry = Registry::load_from(&path).expect("an older registry still parses");
         assert_eq!(registry.total_cache_freed_bytes, 0);
         assert_eq!(registry.total_freed_bytes, 99);
+    }
+
+    #[test]
+    fn a_setting_from_a_newer_version_survives_this_version_saving() {
+        // The `#[serde(flatten)]` catch-all, exercised. A registry written by a newer
+        // dev-prune can hold settings keys this build has never heard of, and every
+        // save rewrites the whole `settings` object — so before the catch-all, one
+        // run of an older binary (a pinned CI image, a machine `version_lock` holds
+        // back) silently erased the newer binary's configuration.
+        let dir = TempDir::new().expect("temp dir");
+        let path = test_registry_path(&dir);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("config dir");
+
+        let mut document: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&Registry::default()).expect("serialized"))
+                .expect("re-parsed");
+        document["settings"]["from_the_future"] = serde_json::json!({ "answer": 42 });
+        std::fs::write(&path, document.to_string()).expect("wrote a newer registry");
+
+        let loaded = Registry::load_from(&path).expect("a newer registry still parses");
+        loaded.save_to(&path).expect("saved");
+
+        let saved: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read back"))
+                .expect("parsed");
+        assert_eq!(saved["settings"]["from_the_future"]["answer"], 42);
     }
 
     #[test]

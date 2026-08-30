@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Saving the `devp config` wizard no longer erases what happened while it was open.**
+  The wizard saved the whole registry it loaded when it opened, so a scheduled pass that
+  finished while you were choosing settings had its prune history overwritten by the
+  wizard's stale copy. The wizard now re-reads the registry at save time and applies only
+  the settings you actually changed.
+
+- **A settings key from a newer dev-prune survives an older dev-prune saving.** Every
+  save rewrites the whole `settings` object, so one run of an older binary — a pinned CI
+  image, a machine `version_lock` holds back — silently erased any configuration it did
+  not recognise. Unknown keys are now carried through a save verbatim.
+
 - **A git repository found inside a bloat directory is now a skip, not a failure.** A
   vendored checkout — a pip `-e git+…` install under `.venv/src/`, a `file:` dependency
   cloned into `node_modules` — is a permanent fact of the repository it lives in, but

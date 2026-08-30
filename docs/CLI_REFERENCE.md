@@ -1014,7 +1014,12 @@ to separate them again.
   ],
   "summary": {
     "total_bytes": 29268434944,
-    "count": 9
+    "count": 9,
+    "registered_repositories": 12
+    // "registered_repositories" — the denominator behind every "dependents"
+    //   field. Present only when there was a registry to count, so a consumer
+    //   that finds it absent knows the counts are missing because nothing could
+    //   be counted, not because nothing uses these caches.
   }
 }
 ```

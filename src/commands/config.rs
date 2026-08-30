@@ -918,6 +918,22 @@ pub fn setting_count() -> usize {
     SETTINGS.len()
 }
 
+/// Apply the wizard's settings edits to a registry freshly read from disk, and save
+/// that.
+///
+/// The wizard holds the registry it loaded when it opened, and it can sit open for
+/// minutes — long enough for a scheduled pass to finish and record its prune history
+/// through its own load–save. Saving the wizard's stale copy wrote that history back
+/// out of existence, so only the keys the user actually changed are carried over,
+/// onto whatever the file holds now.
+fn save_settings_edits<'a>(edits: impl Iterator<Item = (&'a str, &'a str)>) -> Result<()> {
+    let mut fresh = Registry::load()?;
+    for (key, value) in edits {
+        (find_setting(key)?.set)(&mut fresh.settings, value)?;
+    }
+    fresh.save()
+}
+
 fn find_setting(key: &str) -> Result<&'static Setting> {
     SETTINGS
         .iter()
@@ -1143,7 +1159,7 @@ fn full_screen_is_usable() -> bool {
 fn run_wizard_tui(opened: Opened) -> Result<()> {
     use crate::tui::config_view::{ConfigRow, ConfigSession, Control, Outcome};
 
-    let mut registry = Registry::load()?;
+    let registry = Registry::load()?;
     let new_keys = settings_added_since_review();
     // What a machine that had never run this would hold, read through the same getters
     // rather than restated. A second spelling of every default is a second spelling free
@@ -1233,10 +1249,7 @@ fn run_wizard_tui(opened: Opened) -> Result<()> {
             Ok(())
         }
         Outcome::Save(changed) => {
-            for row in &changed {
-                (find_setting(row.key)?.set)(&mut registry.settings, &row.value)?;
-            }
-            registry.save()?;
+            save_settings_edits(changed.iter().map(|row| (row.key, row.value.as_str())))?;
             mark_reviewed();
 
             // Reprinted into the scrollback on purpose: the summary screen left with the
@@ -1708,7 +1721,7 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
         return Ok(());
     }
 
-    registry.save()?;
+    save_settings_edits(edits.iter().map(|(key, _, to)| (*key, to.as_str())))?;
     mark_reviewed();
     let changed = edits.len();
     println!();
