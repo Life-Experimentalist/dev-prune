@@ -1694,3 +1694,34 @@ fn init_offers_to_work_out_the_paths_itself() {
     assert!(out.status.success(), "{}", combined(&out));
     assert!(combined(&out).contains("--auto"), "{}", combined(&out));
 }
+
+#[test]
+fn the_scheduled_pass_discovers_nothing_when_auto_setup_is_suppressed() {
+    // `devp run --daemon` is the one code path that walks the disk looking for
+    // repositories nobody registered, which is exactly what a test suite must never let
+    // happen on the machine running it. `DEV_PRUNE_NO_AUTO_SETUP` is what holds it back
+    // — every test in this file sets it, so this branch is load-bearing for all of them
+    // and had no test of its own.
+    //
+    // The working directory is a plain directory *containing* a repository rather than
+    // being one, so the only thing that could register it is discovery: `run` already
+    // registers the repository it is standing in, and that would pass this test for the
+    // wrong reason.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let workspace = tmp.path().join("workspace");
+    git_repo(&workspace.join("project"));
+
+    let out = devp(&config)
+        .current_dir(&workspace)
+        .args(["run", "--daemon", "--dry-run"])
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(
+        combined(&out).contains("No repositories registered"),
+        "the suppressed daemon pass registered something:\n{}",
+        combined(&out)
+    );
+}
