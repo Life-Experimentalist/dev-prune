@@ -64,6 +64,10 @@ mod marker {
     pub const FOREIGN: &[(&str, &str)] = &[
         ("/.deno/bin/", "Deno"),
         ("/.volta/bin/", "Volta"),
+        // Both spellings of the tools tree: `~/.volta/tools/` on Unix, where the dot
+        // keeps the slash-anchored fragment below from matching, and
+        // `%LOCALAPPDATA%\Volta\tools\` on Windows, which has no dot to hide behind.
+        ("/.volta/tools/", "Volta"),
         ("/volta/tools/", "Volta"),
         ("/mise/shims/", "mise"),
         ("/mise/installs/", "mise"),
@@ -173,6 +177,20 @@ impl Channel {
             Channel::Homebrew
         } else if any(marker::CARGO) {
             Channel::Cargo
+        } else if let Some((_, name)) = marker::FOREIGN.iter().find(|(m, _)| path.contains(m)) {
+            // Ahead of the npm and pip families, not just the two beside-file checks
+            // below. A Volta npm install runs from `~/.volta/tools/image/packages/…/
+            // lib/node_modules/…`, a mise npm backend from `…/mise/installs/…/lib/
+            // node_modules/…`, and a Nix-packaged npm tool from `/nix/store/…/lib/
+            // node_modules/…` — every one matches npm's `/node_modules/` fragment, and
+            // `Npm` here meant `devp update` writing release bytes into a tree Volta,
+            // mise or Nix owns. A tree that names its manager outranks a structure many
+            // managers share. The beside-file checks have the same problem one step
+            // later: `/usr/bin` holds a `python3` on every Linux, and mise and asdf
+            // keep a `python` shim beside every other shim, so all three read as pip
+            // installs — and `/usr/bin/dev-prune` would be handed `pip install
+            // --upgrade`, which is the distribution's copy and none of pip's business.
+            Channel::Foreign(name)
         } else if any(marker::BUN) {
             Channel::Bun
         } else if any(marker::PNPM) {
@@ -185,14 +203,6 @@ impl Channel {
             Channel::UvTool
         } else if any(marker::PIPX) {
             Channel::Pipx
-        } else if let Some((_, name)) = marker::FOREIGN.iter().find(|(m, _)| path.contains(m)) {
-            // Ahead of the two checks below, which infer ownership from a file that
-            // happens to sit next to the binary rather than from the tree it is in.
-            // `/usr/bin` holds a `python3` on every Linux, and mise and asdf keep a
-            // `python` shim beside every other shim, so all three read as pip installs
-            // from down there — and `/usr/bin/dev-prune` would be handed `pip install
-            // --upgrade`, which is the distribution's copy and none of pip's business.
-            Channel::Foreign(name)
         } else if npm_shim_beside(exe) {
             Channel::Npm
         } else if pip_script_beside(exe) {
@@ -828,9 +838,24 @@ mod tests {
     /// `dev-prune update`, the same binary under its other name, answered correctly.
     #[test]
     fn either_name_in_the_managed_directory_is_the_installer() {
-        let managed = Path::new(r"C:\Users\k\AppData\Roaming\dev-prune\bin\dev-prune.exe");
-        let twin = Path::new(r"C:\Users\k\AppData\Roaming\dev-prune\bin\devp.exe");
-        for exe in [managed, twin] {
+        // Spelled per-platform: a `C:\…` raw string is a single relative component on
+        // Unix, where `\` is an ordinary character — all three paths shared the same
+        // empty parent there, and the sibling-directory case below passed as Installer.
+        let (managed, twin, outside) = if cfg!(windows) {
+            (
+                r"C:\Users\k\AppData\Roaming\dev-prune\bin\dev-prune.exe",
+                r"C:\Users\k\AppData\Roaming\dev-prune\bin\devp.exe",
+                r"C:\Users\k\AppData\Roaming\dev-prune\bin2\devp.exe",
+            )
+        } else {
+            (
+                "/home/k/.config/dev-prune/bin/dev-prune",
+                "/home/k/.config/dev-prune/bin/devp",
+                "/home/k/.config/dev-prune/bin2/devp",
+            )
+        };
+        let managed = Path::new(managed);
+        for exe in [managed, Path::new(twin)] {
             assert_eq!(
                 Channel::detect_at(exe, Some(managed)),
                 Channel::Installer,
@@ -846,8 +871,10 @@ mod tests {
             );
         }
         // A sibling directory is not the managed one, however similar the name.
-        let outside = Path::new(r"C:\Users\k\AppData\Roaming\dev-prune\bin2\devp.exe");
-        assert_eq!(Channel::detect_at(outside, Some(managed)), Channel::Unknown);
+        assert_eq!(
+            Channel::detect_at(Path::new(outside), Some(managed)),
+            Channel::Unknown
+        );
     }
 
     /// A Rust toolchain installed through Scoop puts `.cargo` under `~/scoop`. Reading
@@ -857,6 +884,34 @@ mod tests {
     fn a_directory_owning_manager_wins_over_a_nested_marker() {
         let path = Path::new(r"C:\Users\k\scoop\apps\rust\current\.cargo\bin\dev-prune.exe");
         assert_eq!(Channel::detect_at(path, None), Channel::Scoop);
+    }
+
+    /// Volta, mise and Nix all install npm packages into a `node_modules` tree of their
+    /// own, so each of these paths matches npm's marker as well as its manager's. `Npm`
+    /// here meant `devp update` writing release bytes into a tree the real manager
+    /// versions — the foreign name has to win before the npm family is consulted.
+    #[test]
+    fn a_foreign_tree_wins_over_the_node_modules_inside_it() {
+        for (path, name) in [
+            (
+                "/home/k/.volta/tools/image/packages/dev-prune/lib/node_modules/dev-prune/bin/dev-prune",
+                "Volta",
+            ),
+            (
+                "/home/k/.local/share/mise/installs/npm-dev-prune/1.12.0/lib/node_modules/dev-prune/bin/dev-prune",
+                "mise",
+            ),
+            (
+                "/nix/store/abc123-dev-prune-1.12.0/lib/node_modules/dev-prune/bin/dev-prune",
+                "Nix",
+            ),
+        ] {
+            assert_eq!(
+                Channel::detect_at(Path::new(path), None),
+                Channel::Foreign(name),
+                "{path}"
+            );
+        }
     }
 
     /// The three managers that version their whole package directory are exactly the
