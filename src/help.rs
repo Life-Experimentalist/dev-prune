@@ -100,9 +100,12 @@ and a directory is deleted only when every check passes:
   6. Size floor (`min_size_mb` / `--min-size`), symlink refusal, nested-repository
      refusal.
 
-Interactively, a selection TUI shows what would be deleted before anything is; `-y` \
-skips the confirmation, and `--dry-run` reports what a pass would do without deleting \
-anything at all. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
+Interactively, a registry-wide pass opens a selection TUI showing what would be \
+deleted before anything is; a targeted `devp run <path>` lists every directory with \
+its size and the total, notes that `devp restore` brings it back, and asks. Either \
+way `-y` skips the confirmation, `--dry-run` reports what a pass would do without \
+deleting anything at all, and without a terminal the run exits with an error naming \
+`--yes` rather than waiting on a prompt. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
 poetry, pdm, pipenv, venv, cargo, go, composer, bundler, cocoapods, mix, mix_build, \
 gradle, maven, swift, terraform, dart, vcpkg, cmake_build — an unknown name is an \
 error listing the valid ones, not a silently empty pass. cargo, gradle, maven, \
@@ -127,7 +130,7 @@ EXAMPLES:
   devp run --dry-run              What would be pruned, and why the rest would not
   devp run                        Prune across all registered repositories (asks first)
   devp run -y                     Same, no confirmation prompt
-  devp run .                      Prune only the current repository
+  devp run .                      Prune only the current repository (asks first)
   devp run ~/Code/my-app --ignore-idle -y
                                   Prune it even though it was touched recently
   devp run --except api-service,~/Code/playground
@@ -561,12 +564,15 @@ Open every global setting in a full-screen configurator, with the `devp trust` \
 declaration in front of it: what this tool is allowed to do is on screen before any \
 of it is configurable.
 
-Arrows move; Space changes the highlighted setting — a toggle flips, a number opens \
-a field, `disabled_adapters` opens the adapter checklist; `r` puts one back. The \
-list ends in a Finish line: two presses of Enter there open the last screen, which \
-lists exactly what will be written, before it is written. Two presses rather than \
-one, because one Enter is what people press to dismiss a screen they have stopped \
-reading. `q` leaves without saving anything, from anywhere.
+Enter is the \"keep going\" key: on a row with an untaken recommendation it takes \
+that advice and moves on, on any other row it just moves on, and on the Finish line \
+it opens a summary of exactly what will be written — one more Enter writes it. So \
+holding nothing but Enter reviews every setting, accepts the safe recommendations, \
+and finishes. The walk never takes the cautious tier (`allow_manifest_rewrite`); \
+turning that on stays a deliberate Space on its row. Arrows move without accepting \
+anything; Space changes the highlighted setting — a toggle flips, a number opens a \
+field, `disabled_adapters` opens the adapter checklist; `r` puts one back. `q` \
+leaves without saving anything, from anywhere.
 
 `devp config recommended` is the one-command version of the suggestions screen, for \
 when you know what you want and do not want to walk the list.

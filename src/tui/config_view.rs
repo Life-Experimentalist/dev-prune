@@ -91,6 +91,10 @@ pub struct ConfigRow {
     /// declined. It is shown on every visit rather than only on the first run, because
     /// the screen that suggested it appears once and the settings list is forever.
     pub recommended: Option<&'static str>,
+    /// Whether the recommendation is the cautious tier — advice worth reading about
+    /// before taking. Enter's walk-and-accept never takes these; only a deliberate
+    /// Space on the row does. Meaningless when `recommended` is `None`.
+    pub cautious: bool,
     /// Introduced in a release newer than the one this machine last reviewed at.
     pub is_new: bool,
 }
@@ -272,6 +276,10 @@ fn first_row(entries: &[SettingEntry]) -> Option<usize> {
 }
 
 /// The last entry the cursor may rest on, which is the finish line rather than a row.
+///
+/// Only the wrap-around test still asks; the End key that used to jump here is gone —
+/// holding Enter reaches the finish line by walking, which is the point of the walk.
+#[cfg(test)]
 fn last_stop(entries: &[SettingEntry]) -> Option<usize> {
     entries
         .iter()
@@ -399,9 +407,6 @@ struct State<'a> {
     decl_list: ListState,
     /// Cursor on the first-run suggestions screen.
     sugg_list: ListState,
-    /// Whether the last key was the first Enter of the two-press finish. Any other key
-    /// clears it, so it can only ever describe the keypress immediately before this one.
-    enter_armed: bool,
 }
 
 /// Run the configurator. Returns what the user decided; writing is the caller's job.
@@ -439,7 +444,6 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
         picker_list,
         decl_list,
         sugg_list,
-        enter_armed: false,
     };
 
     preaccept_recommended(&mut state);
@@ -485,11 +489,6 @@ fn event_loop(
 
 /// Apply one keypress. `Some` ends the view.
 fn handle_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
-    // "Twice" means twice in a row. Anything in between disarms, so an Enter pressed
-    // minutes later cannot finish a gesture nobody remembers starting.
-    if code != KeyCode::Enter {
-        state.enter_armed = false;
-    }
     match state.screen {
         Screen::Declaration => declaration_key(state, code),
         Screen::Suggestions => suggestions_key(state, code),
@@ -617,17 +616,12 @@ fn suggestions_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
         KeyCode::Char('c') | KeyCode::Char('C') => {
             state.screen = Screen::Settings;
         }
-        // Straight to the summary: someone who took the suggestions and wants nothing
-        // else should not have to walk the full list to get out. Twice, because one
-        // Enter is what a person presses to dismiss a screen they have stopped reading,
-        // and this one leaves the rest of the settings unvisited.
+        // On to the settings, where Enter keeps meaning "keep going": held down it
+        // walks every remaining setting, takes the safe advice on the way, and ends at
+        // the summary. Nothing is written until the summary says so, which is why this
+        // screen does not need a second press to leave.
         KeyCode::Enter => {
-            if state.enter_armed {
-                state.enter_armed = false;
-                state.screen = Screen::Summary;
-            } else {
-                state.enter_armed = true;
-            }
+            state.screen = Screen::Settings;
         }
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q') => return Some(Outcome::Cancelled),
         _ => {}
@@ -659,17 +653,29 @@ fn settings_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
             state.list.select(Some(to));
         }
         KeyCode::Home | KeyCode::Char('g') => state.list.select(first_row(&state.setting_entries)),
-        KeyCode::End | KeyCode::Char('G') => state.list.select(last_stop(&state.setting_entries)),
         KeyCode::Enter if on_finish => {
             state.error = None;
-            if state.enter_armed {
-                state.enter_armed = false;
-                state.screen = Screen::Summary;
-            } else {
-                state.enter_armed = true;
-            }
+            state.screen = Screen::Summary;
         }
-        KeyCode::Char(' ') | KeyCode::Enter if !on_finish => activate(state, current),
+        // Enter is the "keep going" key: it takes the untaken recommendation on this
+        // row — never a cautious one, those stay a deliberate Space — and moves to the
+        // next stop. Held down from anywhere it walks the rest of the list, accepts the
+        // safe advice on the way, and arrives at the finish line, whose Enter opens the
+        // summary. Changing a value to anything *other* than the recommendation is
+        // Space's job.
+        KeyCode::Enter if !on_finish => {
+            state.error = None;
+            let row = &mut state.session.rows[current];
+            if let Some(rec) = row.recommended
+                && !row.cautious
+                && row.value != rec
+            {
+                row.value = rec.to_string();
+            }
+            let to = step(&state.setting_entries, at, true);
+            state.list.select(Some(to));
+        }
+        KeyCode::Char(' ') if !on_finish => activate(state, current),
         KeyCode::Char('r') | KeyCode::Char('R') if !on_finish => {
             state.error = None;
             let row = &mut state.session.rows[current];
@@ -681,7 +687,7 @@ fn settings_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
     None
 }
 
-/// Space or Enter on a row: flip it, open its editor, or open its checklist.
+/// Space on a row: flip it, open its editor, or open its checklist.
 fn activate(state: &mut State<'_>, index: usize) {
     state.error = None;
     match state.session.rows[index].control {
@@ -1389,8 +1395,7 @@ fn render_suggestions(frame: &mut Frame, state: &mut State<'_>) {
             ("Space", "accept one"),
             ("a", "accept all suggested"),
             ("r", "undo"),
-            ("c", "all settings"),
-            ("Enter Enter", "review and finish"),
+            ("Enter", "on to the settings"),
         ]),
         chunks[3],
     );
@@ -1443,16 +1448,7 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
                                 .fg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
                         ),
-                        if state.enter_armed {
-                            Span::styled(
-                                "Press Enter again for the summary",
-                                Style::default()
-                                    .fg(Color::Green)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::styled("Press Enter twice when you are done", dim())
-                        },
+                        Span::styled("Press Enter to see what will be saved", dim()),
                     ]));
                 }
             };
@@ -1553,9 +1549,9 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
             .get(state.list.selected().unwrap_or(0)),
         Some(SettingEntry::Finish)
     ) {
-        let mut detail = vec![
+        let detail = vec![
             Line::from(Span::styled(
-                "  Two presses of Enter open a summary of every change. \
+                "  Enter opens a summary of every change. \
                  Nothing has been written yet.",
                 Style::default(),
             )),
@@ -1571,12 +1567,6 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
                 ),
             ]),
         ];
-        if state.enter_armed {
-            detail.push(Line::from(Span::styled(
-                "  Press Enter again for the summary.",
-                Style::default().fg(Color::Green),
-            )));
-        }
         frame.render_widget(
             Paragraph::new(detail)
                 .wrap(Wrap { trim: true })
@@ -1586,7 +1576,7 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
         frame.render_widget(
             footer(&[
                 ("↑↓", "move"),
-                ("Enter Enter", "review and finish"),
+                ("Enter", "review and finish"),
                 ("q", "cancel"),
             ]),
             chunks[3],
@@ -1654,9 +1644,9 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
     } else {
         &[
             ("↑↓", "move"),
+            ("Enter", "accept advice & next"),
             ("Space", "change"),
             ("r", "reset"),
-            ("End", "finish"),
             ("q", "cancel"),
         ]
     };
@@ -1969,6 +1959,7 @@ mod tests {
             original: value.to_string(),
             default: value.to_string(),
             recommended: None,
+            cautious: false,
             is_new: false,
         }
     }
@@ -2025,7 +2016,6 @@ mod tests {
             picker_list,
             decl_list: ListState::default(),
             sugg_list: ListState::default(),
-            enter_armed: false,
         }
     }
 
@@ -2096,32 +2086,139 @@ mod tests {
     }
 
     #[test]
-    fn finishing_takes_two_presses_of_enter() {
-        // One Enter is what people press to dismiss a screen they have stopped reading.
-        // Two is a decision, and the second one opens the summary rather than saving.
-        let mut st = state(session(
-            vec![row("auto_update", Control::Toggle, "false")],
-            &[],
-        ));
-        handle_key(&mut st, KeyCode::End);
-        assert!(handle_key(&mut st, KeyCode::Enter).is_none());
-        assert_eq!(st.screen, Screen::Settings, "one press must not leave");
-        assert!(st.enter_armed);
-        assert!(handle_key(&mut st, KeyCode::Enter).is_none());
-        assert_eq!(st.screen, Screen::Summary);
+    fn enter_takes_the_recommendation_and_moves_to_the_next_row() {
+        // The whole gesture: Enter means "yes to the advice, next question". A row with
+        // no advice just gets "next question".
+        let mut rows = vec![
+            row("enable_cargo", Control::Toggle, "false"),
+            row("auto_update", Control::Toggle, "false"),
+        ];
+        rows[0].recommended = Some("true");
+        let mut st = state(session(rows, &[]));
 
-        // And the two have to be consecutive.
-        st.screen = Screen::Settings;
-        handle_key(&mut st, KeyCode::End);
-        handle_key(&mut st, KeyCode::Enter);
-        handle_key(&mut st, KeyCode::Up);
-        handle_key(&mut st, KeyCode::End);
+        let before = st.list.selected();
+        assert!(handle_key(&mut st, KeyCode::Enter).is_none());
+        assert_eq!(st.session.rows[0].value, "true", "the advice was taken");
+        assert_eq!(st.screen, Screen::Settings, "one press must not leave");
+        assert_ne!(st.list.selected(), before, "the cursor moved on");
+
         handle_key(&mut st, KeyCode::Enter);
         assert_eq!(
-            st.screen,
-            Screen::Settings,
-            "a keypress in between must disarm the first Enter"
+            st.session.rows[1].value, "false",
+            "a row with no recommendation is only stepped past, never flipped"
         );
+    }
+
+    #[test]
+    fn enter_walks_past_a_cautious_recommendation() {
+        // The tier boundary survives the walk. `allow_manifest_rewrite` edits a tracked
+        // file, and the key you can hold down must not be the key that turns it on.
+        let mut rows = vec![row("allow_manifest_rewrite", Control::Toggle, "false")];
+        rows[0].recommended = Some("true");
+        rows[0].cautious = true;
+        let mut st = state(session(rows, &[]));
+
+        handle_key(&mut st, KeyCode::Enter);
+        assert_eq!(
+            st.session.rows[0].value, "false",
+            "the cautious tier is never accepted by the walk"
+        );
+        // Still reachable — by the deliberate key.
+        handle_key(&mut st, KeyCode::Up); // off the finish line, back onto the row
+        handle_key(&mut st, KeyCode::Char(' '));
+        assert_eq!(st.session.rows[0].value, "true");
+    }
+
+    #[test]
+    fn holding_enter_walks_the_list_and_ends_at_the_summary() {
+        // The promise made to a fresh install: pressing nothing but Enter reviews every
+        // setting, takes the safe advice, and lands on the summary — one more Enter
+        // there saves. No key sequence, no End, no arming.
+        let mut rows = vec![
+            row("enable_cargo", Control::Toggle, "false"),
+            row("auto_update", Control::Toggle, "false"),
+        ];
+        rows[0].recommended = Some("true");
+        let mut st = state(session(rows, &[]));
+
+        // Two rows and a finish line: three Enters reach the summary.
+        for _ in 0..3 {
+            assert!(handle_key(&mut st, KeyCode::Enter).is_none());
+        }
+        assert_eq!(st.screen, Screen::Summary);
+        let Some(Outcome::Save(changed)) = handle_key(&mut st, KeyCode::Enter) else {
+            panic!("Enter on the summary saves");
+        };
+        assert_eq!(changed.len(), 1);
+        assert_eq!(changed[0].key, "enable_cargo");
+        assert_eq!(changed[0].value, "true");
+    }
+
+    #[test]
+    fn the_whole_first_run_is_one_held_key() {
+        // Declaration → suggestions → every setting → summary → saved, on nothing but
+        // Enter — the exact journey a first run holding the key down takes. Every
+        // control type sits in the walk's path, because any one of them trapping the
+        // key (a number editor opening, the checklist swallowing it) breaks the
+        // promise this test exists to keep.
+        let adapters: &[&str] = &["npm", "cargo"];
+        let mut rows = vec![
+            row("idle_days", Control::Number, "14"),
+            row("enable_cargo", Control::Toggle, "false"),
+            row("disabled_adapters", Control::Adapters, "(none)"),
+            row("allow_manifest_rewrite", Control::Toggle, "false"),
+        ];
+        rows[1].recommended = Some("true");
+        rows[3].recommended = Some("true");
+        rows[3].cautious = true;
+        let mut s = session(rows, adapters);
+        s.suggestions = vec![
+            suggestion("enable_cargo", false),
+            suggestion("allow_manifest_rewrite", true),
+        ];
+        let mut st = state(s);
+        st.screen = Screen::Declaration;
+        preaccept_recommended(&mut st);
+
+        // Four rows plus the two screens, the finish line and the summary: eight
+        // presses. The bound is generous because a regression that loops matters
+        // more than the exact count.
+        let mut outcome = None;
+        for _ in 0..32 {
+            if let Some(o) = handle_key(&mut st, KeyCode::Enter) {
+                outcome = Some(o);
+                break;
+            }
+        }
+        let Some(Outcome::Save(changed)) = outcome else {
+            panic!("held Enter never reached a save");
+        };
+        assert_eq!(changed.len(), 1, "{changed:?}");
+        assert_eq!(changed[0].key, "enable_cargo");
+        assert_eq!(changed[0].value, "true");
+        assert_eq!(
+            row_value(&st.session.rows, "allow_manifest_rewrite").as_deref(),
+            Some("false"),
+            "the cautious tier survived the whole ride untouched"
+        );
+    }
+
+    #[test]
+    fn enter_leaves_the_suggestions_for_the_settings() {
+        // One press, and it goes forward through the list rather than around it: the
+        // old Enter-Enter shortcut skipped straight to the summary, past settings the
+        // user had never seen.
+        let adapters: &[&str] = &["npm"];
+        let mut s = session(
+            vec![row("enable_cargo", Control::Toggle, "false")],
+            adapters,
+        );
+        s.suggestions = vec![suggestion("enable_cargo", false)];
+        let mut st = state(s);
+        st.screen = Screen::Suggestions;
+        st.sugg_list.select(Some(0));
+        assert!(suggestions_key(&mut st, KeyCode::Enter).is_none());
+        assert_eq!(st.screen, Screen::Settings);
     }
 
     #[test]
@@ -2133,7 +2230,7 @@ mod tests {
             vec![row("auto_update", Control::Toggle, "false")],
             &[],
         ));
-        handle_key(&mut st, KeyCode::End);
+        handle_key(&mut st, KeyCode::Up); // wraps from the first row onto the finish line
         handle_key(&mut st, KeyCode::Char(' '));
         handle_key(&mut st, KeyCode::Char('r'));
         assert_eq!(st.session.rows[0].value, "false");
@@ -2143,7 +2240,7 @@ mod tests {
     #[test]
     fn a_refused_value_is_not_stored() {
         let mut st = state(session(vec![row("idle_days", Control::Number, "14")], &[]));
-        handle_key(&mut st, KeyCode::Enter); // open the editor
+        handle_key(&mut st, KeyCode::Char(' ')); // open the editor
         handle_key(&mut st, KeyCode::Backspace);
         handle_key(&mut st, KeyCode::Backspace); // buffer now empty, which will not parse
         handle_key(&mut st, KeyCode::Enter);
@@ -2155,7 +2252,7 @@ mod tests {
     #[test]
     fn an_accepted_value_replaces_the_old_one() {
         let mut st = state(session(vec![row("idle_days", Control::Number, "14")], &[]));
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' '));
         handle_key(&mut st, KeyCode::Backspace);
         handle_key(&mut st, KeyCode::Backspace);
         handle_key(&mut st, KeyCode::Char('3'));
@@ -2172,7 +2269,7 @@ mod tests {
             vec![row("disabled_adapters", Control::Adapters, "(none)")],
             adapters,
         ));
-        handle_key(&mut st, KeyCode::Enter); // open the checklist
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         assert_eq!(st.screen, Screen::Adapters);
         handle_key(&mut st, KeyCode::Down); // past the heading, onto npm
         handle_key(&mut st, KeyCode::Down); // cargo
@@ -2222,7 +2319,7 @@ mod tests {
             adapters,
         ));
         st.session.groups = &[("JavaScript", &["npm", "pnpm"]), ("Rust", &["cargo"])];
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         handle_key(&mut st, KeyCode::Char(' ')); // on the JavaScript heading
         assert_eq!(st.picker_active, vec![false, false, true]);
         // And back on again: a heading that only ever turned things off would leave the
@@ -2242,7 +2339,7 @@ mod tests {
             adapters,
         ));
         st.session.groups = &[("JavaScript", &["npm", "pnpm"]), ("Rust", &["cargo"])];
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         handle_key(&mut st, KeyCode::Char('d')); // on the JavaScript heading
         handle_key(&mut st, KeyCode::Char('3'));
         handle_key(&mut st, KeyCode::Char('0'));
@@ -2253,8 +2350,9 @@ mod tests {
         assert_eq!(st.session.rows[1].value, "npm=30,pnpm=30");
 
         // Clearing is how a window goes back to following the global one, and there is
-        // no other way to spell it.
-        handle_key(&mut st, KeyCode::Enter);
+        // no other way to spell it. Accepting the checklist put the cursor back on the
+        // same row, so Space reopens it.
+        handle_key(&mut st, KeyCode::Char(' '));
         handle_key(&mut st, KeyCode::Char('d'));
         handle_key(&mut st, KeyCode::Backspace);
         handle_key(&mut st, KeyCode::Backspace);
@@ -2277,7 +2375,7 @@ mod tests {
             adapters,
         ));
         st.session.groups = &[("JavaScript", &["npm", "pnpm"]), ("Python", &["venv"])];
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         handle_key(&mut st, KeyCode::Char('c')); // on the JavaScript heading
         handle_key(&mut st, KeyCode::Char('1'));
         handle_key(&mut st, KeyCode::Char('0'));
@@ -2299,7 +2397,7 @@ mod tests {
             adapters,
         ));
         st.session.groups = &[("JavaScript", &["npm"])];
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         // Opening shows the cap that is already set, or accepting the screen for any
         // other reason would quietly drop it.
         assert_eq!(st.picker_caps, vec![Some(10)]);
@@ -2327,8 +2425,8 @@ mod tests {
             adapters,
         ));
         st.session.groups = &[("JavaScript", &["npm"])];
-        handle_key(&mut st, KeyCode::Enter);
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
+        handle_key(&mut st, KeyCode::Enter); // and accept it untouched
         assert_eq!(st.session.rows[1].value, "npm=10,pip=20");
     }
 
@@ -2343,7 +2441,7 @@ mod tests {
             adapters,
         ));
         st.session.groups = &[("Python", &["venv"])];
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         handle_key(&mut st, KeyCode::Down); // heading -> venv
         handle_key(&mut st, KeyCode::Char('c'));
         assert!(st.picker_editing.is_none(), "no editor opened");
@@ -2365,7 +2463,7 @@ mod tests {
             adapters,
         ));
         st.session.groups = &[("JavaScript", &["npm"]), ("Python", &["venv"])];
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         let picker = screenshot(&mut st, Screen::Adapters);
         assert!(picker.contains("30d"), "the idle window is drawn");
         assert!(picker.contains("10G"), "the cap is drawn");
@@ -2391,7 +2489,7 @@ mod tests {
         st.session.opt_in_adapters = opt_in;
         st.session.groups = &[("JavaScript", &["npm"]), ("Rust", &["cargo"])];
 
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         // Off by default and absent from the deny-list: showing it ticked would promise
         // a prune that never happens.
         assert_eq!(st.picker_active, vec![true, false]);
@@ -2413,7 +2511,7 @@ mod tests {
             vec![row("disabled_adapters", Control::Adapters, "go")],
             adapters,
         ));
-        handle_key(&mut st, KeyCode::Enter);
+        handle_key(&mut st, KeyCode::Char(' ')); // open the checklist
         assert_eq!(st.picker_active, vec![true, true, false]);
         handle_key(&mut st, KeyCode::Enter);
         assert_eq!(st.session.rows[0].value, "go");
@@ -2443,8 +2541,7 @@ mod tests {
             &[],
         ));
         handle_key(&mut st, KeyCode::Char(' ')); // flip the first
-        handle_key(&mut st, KeyCode::End); // onto the finish line
-        handle_key(&mut st, KeyCode::Enter); // arm
+        handle_key(&mut st, KeyCode::Up); // wraps onto the finish line
         handle_key(&mut st, KeyCode::Enter); // to the summary
         let Some(Outcome::Save(changed)) = handle_key(&mut st, KeyCode::Enter) else {
             panic!("expected a save");

@@ -1175,6 +1175,7 @@ fn run_wizard_tui(opened: Opened) -> Result<()> {
                 original: value.clone(),
                 default: (setting.get)(&fresh),
                 recommended: recommended_value(setting.key),
+                cautious: recommendation(setting.key).is_some_and(|r| r.cautious),
                 value,
                 is_new: new_keys.contains(&setting.key),
             }
@@ -1626,8 +1627,10 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
     print_recommendation_summary(&registry.settings);
     println!();
 
-    // The same gesture the full-screen configurator uses, and for the same reason: one
-    // Enter is what somebody presses to get past a screen they have stopped reading.
+    // Two presses here even though the full-screen configurator now finishes on one:
+    // that one walks a list and ends at a summary, while this line is the only thing
+    // standing between a held-down Enter and "reviewed". One press is what somebody
+    // presses to get past a screen they have stopped reading.
     if confirmed_twice("Press Enter twice to keep all of these, or type anything to change them: ")?
     {
         mark_reviewed();
@@ -1704,7 +1707,10 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
     Ok(())
 }
 
-/// Two empty lines, the way the full-screen configurator wants two presses of Enter.
+/// Two empty lines to say yes: in line mode a single Enter is what people press to
+/// dismiss a prompt they have stopped reading, so keeping-or-saving costs two. (The
+/// full-screen configurator does not need this — its Enter walk always lands on the
+/// summary before anything is written.)
 ///
 /// Anything typed is a no, and so is EOF: a closed pipe must not be able to answer a
 /// confirmation, and the only way to be sure of that is to treat the absence of an
