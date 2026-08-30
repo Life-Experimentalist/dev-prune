@@ -807,7 +807,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -856,7 +856,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -901,7 +901,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "command": "status --drift",
   "drift": [
     {
@@ -929,7 +929,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -970,7 +970,7 @@ to separate them again.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "command": "caches",
   "caches": [
     {
@@ -1040,7 +1040,7 @@ narrowed by which engines it was asked about.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "command": "caches containers",
   "engines": [
     {
@@ -1104,7 +1104,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -1152,7 +1152,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.12.0",
+  "version": "1.13.0",
   "command": "trust",
   "guarantees": [
     {
@@ -1405,7 +1405,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```json
   {
     "schema": 1,
-    "version": "1.12.0",
+    "version": "1.13.0",
     "channel": "installer",
     "installed_by": "install.sh",
     "installed_at": "2026-08-25T09:14:02Z",
@@ -1440,9 +1440,9 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.12.0 · install script
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.13.0 · install script
 
-dev-prune (devp) v1.12.0
+dev-prune (devp) v1.13.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune
