@@ -503,6 +503,33 @@ fn a_targeted_run_records_what_it_deleted() {
 }
 
 #[test]
+fn a_targeted_run_without_yes_and_without_a_terminal_deletes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let (config, repo) = fixture(&tmp);
+
+    // A test process has no terminal on stdin, so the confirmation the targeted run
+    // now asks for has nobody to answer it. The only safe outcome is a refusal that
+    // names the flag — never a delete.
+    let out = devp(&config)
+        .args([
+            "--ignore-idle",
+            "run",
+            repo.to_str().unwrap(),
+            "--only",
+            "venv",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "deleted without being told it could");
+    assert!(
+        repo.join("api/.venv").exists(),
+        "the directory is gone despite the refusal"
+    );
+    let text = combined(&out);
+    assert!(text.contains("--yes"), "{text}");
+}
+
+#[test]
 fn a_dry_run_records_nothing_to_restore() {
     let tmp = TempDir::new().unwrap();
     let (config, repo) = fixture(&tmp);

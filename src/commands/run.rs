@@ -158,6 +158,78 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
         adapter_idle_days: resolve_adapter_idle_days(registry.as_ref()),
     };
 
+    if !args.json {
+        output::print_header(&i18n::tf(
+            "run.header.targeted",
+            &[("path", clean.as_str())],
+        ));
+        if let Some(desc) = filter.describe() {
+            output::print_info(&format!("Adapter filter: {desc}"));
+        }
+    }
+
+    // `devp run <path>` shows what it found and asks before touching any of it — the
+    // same contract the registry pass has always had. `--yes` answers in advance,
+    // `--dry-run` never deletes, `--json` was already required at the top of `run()` to
+    // carry one of those two, and `require_confirmation false` is the standing form of
+    // the answer.
+    if !args.dry_run
+        && !args.json
+        && !args.yes
+        && registry
+            .as_ref()
+            .is_none_or(|r| r.settings.require_confirmation)
+    {
+        let preview = engine::prune_repo_with(
+            &path,
+            &PruneOptions {
+                dry_run: true,
+                ..opts.clone()
+            },
+        );
+        let candidates: Vec<PruneResult> = preview
+            .into_iter()
+            .filter(|r| matches!(r.status, PruneStatus::SkippedDryRun))
+            .collect();
+        // Nothing deletable means nothing to confirm: fall through and let the real
+        // pass report the skips and errors exactly as it always has.
+        if !candidates.is_empty() {
+            let total: u64 = candidates.iter().map(|c| c.size_freed).sum();
+            report_candidates(&candidates);
+            output::print_info(&i18n::tf(
+                "run.reclaimable",
+                &[("size", &output::format_bytes_styled(total))],
+            ));
+            output::print_info(
+                "Everything above is rebuilt from a lockfile — `devp restore` brings it back.",
+            );
+            if !io::stdin().is_terminal() {
+                anyhow::bail!(
+                    "Deleting {} directories ({}) needs confirmation, and there is no \
+                     terminal to ask on. Re-run with `--yes` to confirm, or `--dry-run` \
+                     to only analyse.",
+                    candidates.len(),
+                    output::format_bytes(total)
+                );
+            }
+            // The question goes to stderr: stdout may be a pipe, and a prompt written
+            // into one is invisible on the terminal — the command just appears to hang.
+            eprint!(
+                "Proceed with deletion of {} directories ({})? [y/N]: ",
+                candidates.len(),
+                output::format_bytes(total)
+            );
+            io::stderr().flush()?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let trimmed = input.trim().to_lowercase();
+            if trimmed != "y" && trimmed != "yes" {
+                output::print_info("Prune pass aborted by user.");
+                return Ok(());
+            }
+        }
+    }
+
     let results = engine::prune_repo_with(&path, &opts);
 
     // A directory that could not be verified or deleted is a failure of the command,
@@ -188,14 +260,6 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
             anyhow::bail!("{error_count} directories in {clean} could not be pruned.");
         }
         return Ok(());
-    }
-
-    output::print_header(&i18n::tf(
-        "run.header.targeted",
-        &[("path", clean.as_str())],
-    ));
-    if let Some(desc) = filter.describe() {
-        output::print_info(&format!("Adapter filter: {desc}"));
     }
 
     if results.is_empty() {
