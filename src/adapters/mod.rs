@@ -1071,9 +1071,20 @@ impl EnforcePolicy {
     pub fn from_settings(settings: &crate::config::Settings) -> Self {
         Self {
             allow_rewrite: settings.allow_manifest_rewrite,
-            timeout: std::time::Duration::from_secs(settings.command_timeout_secs),
+            timeout: command_timeout(settings.command_timeout_secs),
         }
     }
+}
+
+/// The `Duration` form of a stored `command_timeout_secs`, floored at one second.
+///
+/// `devp config set` refuses 0, but the registry is a JSON file anyone can edit, and a
+/// zero that gets in does not mean "no timeout" — it kills every package-manager
+/// command the instant it starts, which quietly turns every repository into "lockfile
+/// could not be verified" and prunes nothing. Every place that turns the setting into
+/// a `Duration` goes through here.
+pub fn command_timeout(secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(secs.max(1))
 }
 
 /// The one rule every adapter enforces, given the manager's two spellings of the check.

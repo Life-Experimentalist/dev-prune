@@ -36,7 +36,7 @@ pub fn run(path_str: &str) -> Result<()> {
             crate::constants::DEFAULT_SCAN_DEPTH,
             crate::constants::DEFAULT_COMMAND_TIMEOUT_SECS,
         ));
-    let timeout = std::time::Duration::from_secs(timeout_secs);
+    let timeout = crate::adapters::command_timeout(timeout_secs);
     let results = engine::restore_project_to_depth(&path, global_depth, timeout)?;
 
     let mut failed = 0usize;
@@ -124,7 +124,7 @@ pub fn run_last_run() -> Result<()> {
     }
 
     let global_depth = registry.settings.scan_depth;
-    let timeout = std::time::Duration::from_secs(registry.settings.command_timeout_secs);
+    let timeout = crate::adapters::command_timeout(registry.settings.command_timeout_secs);
     let mut attempted = 0usize;
     let mut failed = 0usize;
     // (adapter, bytes, milliseconds). Held until the pass is over rather than written as
@@ -235,7 +235,14 @@ impl RuntimePlan {
     fn build(dirs: &[PrunedDir], available: impl Fn(&str) -> bool) -> Self {
         let mut honoured = Vec::new();
         let mut missing = Vec::new();
-        for tag in dirs.iter().filter_map(|d| d.runtime.as_deref()) {
+        // A declared directory's `runtime` is its rebuild command, not an interpreter
+        // version. Probing "npm run build" as a Python version reports it missing and
+        // aborts the whole batch over a question that was never applicable.
+        for tag in dirs
+            .iter()
+            .filter(|d| d.adapter != crate::constants::DECLARED_ADAPTER_NAME)
+            .filter_map(|d| d.runtime.as_deref())
+        {
             if honoured.iter().any(|t| t == tag) || missing.iter().any(|t| t == tag) {
                 continue;
             }
@@ -356,6 +363,19 @@ mod tests {
         let plan = RuntimePlan::build(&dirs, |tag| tag == "3.12");
         assert_eq!(plan.honoured, vec!["3.12".to_string()]);
         assert_eq!(plan.missing, vec!["3.9".to_string()]);
+    }
+
+    #[test]
+    fn a_declared_directory_never_reaches_the_interpreter_question() {
+        // Its `runtime` field is a rebuild command, and "npm run build" is not a Python
+        // version this machine could ever have installed. Before the filter, one
+        // declared directory in the pass aborted the whole `--last-run` batch.
+        let mut declared = dir_with(Some("npm run build"));
+        declared.adapter = crate::constants::DECLARED_ADAPTER_NAME.to_string();
+        let dirs = [declared, dir_with(Some("3.12"))];
+        let plan = RuntimePlan::build(&dirs, |tag| tag == "3.12");
+        assert_eq!(plan.honoured, vec!["3.12".to_string()]);
+        assert!(plan.missing.is_empty(), "{:?}", plan.missing);
     }
 
     #[test]

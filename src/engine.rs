@@ -419,7 +419,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             status: PruneStatus::ActivityCheckError(format!(
                 "`{}` is no longer a git repository — nothing was touched. \
                  `devp unlink` removes it from the registry.",
-                repo_path.display()
+                crate::output::clean_path(repo_path)
             )),
         });
         return results;
@@ -611,7 +611,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             if !dry_run {
                 let policy = crate::adapters::EnforcePolicy {
                     allow_rewrite: opts.allow_manifest_rewrite,
-                    timeout: std::time::Duration::from_secs(opts.command_timeout_secs),
+                    timeout: crate::adapters::command_timeout(opts.command_timeout_secs),
                 };
                 if let Err(e) = adapter.enforce_lockfile(&project.path, policy) {
                     for (label, _) in &deletable {
@@ -696,7 +696,7 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
         return Some(PruneStatus::SkippedSymlink(format!(
             "`{}` is a symlink to storage dev-prune does not own — left alone. Remove \
              the link yourself if you really want it gone.",
-            path.display()
+            crate::output::clean_path(path)
         )));
     }
 
@@ -708,7 +708,7 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
         return Some(PruneStatus::SkippedSymlink(format!(
             "`{}` is a mount point — it is on a different filesystem than the repository \
              around it, so its contents are shared with whatever mounted it. Left alone.",
-            path.display()
+            crate::output::clean_path(path)
         )));
     }
 
@@ -720,8 +720,8 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
         return Some(PruneStatus::DeleteError(format!(
             "`{}` contains a git repository at `{}` — refusing to delete it. Move or \
              remove that checkout yourself if it holds nothing you need.",
-            path.display(),
-            nested.display()
+            crate::output::clean_path(path),
+            crate::output::clean_path(&nested)
         )));
     }
 
@@ -763,7 +763,7 @@ fn delete_bloat(
                     "{e} — `{}` was partially deleted ({} of {} remains) and is no \
                      longer usable. Close whatever holds it open, then run `devp \
                      restore` to rebuild it.",
-                    bd.path.display(),
+                    crate::output::clean_path(&bd.path),
                     crate::output::format_bytes(remaining),
                     crate::output::format_bytes(size)
                 )
