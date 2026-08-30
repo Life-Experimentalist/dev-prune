@@ -5,6 +5,19 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `devp update --install` no longer leaves the other-named twin beside the copy you
+  typed on the previous release. It replaces the managed pair and the running file, but
+  the list of companions to rewrite only ever named `devp` — so running the update from
+  a cargo-installed `devp` upgraded everything except the `dev-prune` sitting right next
+  to it, which then reported the old version whenever it was the name invoked. Both
+  public names are now rewritten in both directories; a twin that does not exist outside
+  the managed directory is still never invented, and a manager-owned directory is still
+  left exactly as the manager wrote it.
+
 ## [1.12.0] - 2026-08-30
 
 ### Added

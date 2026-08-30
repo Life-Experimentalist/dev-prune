@@ -347,26 +347,14 @@ fn install_directly(
     let primary = managed.unwrap_or(exe);
     install_bytes_at(&bytes, primary)?;
 
-    // Every other file that is a copy of the binary just replaced. Left alone they would
-    // keep running the previous release — silently, because the scheduler and the hooks
-    // both discard their own output by design.
-    let mut also: Vec<PathBuf> = Vec::new();
-    if let Some(dir) = primary.parent() {
-        also.push(dir.join(if cfg!(windows) { "devp.exe" } else { "devp" }));
-    }
     // …except when a package manager owns the directory the running copy sits in and
     // replaces that directory wholesale on upgrade. Writing new bytes there leaves WinGet,
     // Scoop or Homebrew certain they still have the old version installed, and the next
     // `winget upgrade` puts the old binary back over the top. Their copy is left exactly
     // as the manager wrote it; `report_channel_bookkeeping` names the command that
     // actually moves it forward.
-    if primary != exe && exe.is_file() && !channel.replaces_its_directory() {
-        also.push(exe.to_path_buf());
-    }
-    for path in also {
-        if path == primary {
-            continue;
-        }
+    let replace_exe_dir = primary != exe && exe.is_file() && !channel.replaces_its_directory();
+    for path in companion_copies(primary, managed.is_some(), exe, replace_exe_dir) {
         if let Err(e) = install_bytes_at(&bytes, &path) {
             output::print_warning(&format!(
                 "The managed copy is now v{latest}, but {} could not be replaced ({e:#}). Until it \
@@ -386,6 +374,56 @@ fn install_directly(
     // installers ran when none did.
     crate::receipt::refresh_after_upgrade(latest);
     Ok(())
+}
+
+/// Every other file that is a copy of the binary being replaced — both public names,
+/// in both directories that hold one.
+///
+/// Left alone, a copy keeps running the previous release silently, because the
+/// scheduler and the hooks both discard their own output by design. `devp` is a full
+/// second executable rather than a link, so a directory that holds one name usually
+/// holds the other. The managed directory owns both names outright and gets both
+/// written whether they exist yet or not; the running copy's directory belongs to
+/// whatever put the binary there, so only files already present are touched.
+///
+/// Both names, deliberately: through 1.12.0 this list held only the primary's `devp`
+/// twin plus the running file itself, so `devp update --install` typed at a
+/// cargo-installed `devp` upgraded everything except the `dev-prune` sitting beside
+/// it — the exact silent staleness the list exists to prevent.
+fn companion_copies(
+    primary: &Path,
+    primary_is_managed: bool,
+    exe: &Path,
+    replace_exe_dir: bool,
+) -> Vec<PathBuf> {
+    let names: [&str; 2] = if cfg!(windows) {
+        ["dev-prune.exe", "devp.exe"]
+    } else {
+        ["dev-prune", "devp"]
+    };
+    let mut also: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = primary.parent() {
+        for name in names {
+            let twin = dir.join(name);
+            if twin != primary && (primary_is_managed || twin.is_file()) {
+                also.push(twin);
+            }
+        }
+    }
+    if replace_exe_dir {
+        if !also.contains(&exe.to_path_buf()) {
+            also.push(exe.to_path_buf());
+        }
+        if let Some(dir) = exe.parent() {
+            for name in names {
+                let twin = dir.join(name);
+                if twin != *exe && twin != primary && twin.is_file() && !also.contains(&twin) {
+                    also.push(twin);
+                }
+            }
+        }
+    }
+    also
 }
 
 /// Name the channel's own upgrade command after a direct install, for the one thing the
@@ -829,6 +867,85 @@ mod tests {
         assert_eq!(compare_versions("1.0", "1.0.0"), None);
         assert_eq!(compare_versions("1.0.0.1", "1.0.0"), None);
         assert_eq!(compare_versions("nightly", "1.0.0"), None);
+    }
+
+    fn bin_names() -> [&'static str; 2] {
+        if cfg!(windows) {
+            ["dev-prune.exe", "devp.exe"]
+        } else {
+            ["dev-prune", "devp"]
+        }
+    }
+
+    #[test]
+    fn an_update_reaches_the_twin_beside_the_copy_the_user_typed() {
+        // The 1.12.0 bug: `devp update --install` typed at a cargo-installed `devp`
+        // upgraded the managed pair and the running file, and left the `dev-prune`
+        // beside it on the previous release.
+        let [prune, devp] = bin_names();
+        let managed_dir = tempfile::tempdir().unwrap();
+        let cargo_dir = tempfile::tempdir().unwrap();
+        let primary = managed_dir.path().join(prune);
+        let exe = cargo_dir.path().join(devp);
+        std::fs::write(&exe, b"old").unwrap();
+        std::fs::write(cargo_dir.path().join(prune), b"old").unwrap();
+
+        let also = companion_copies(&primary, true, &exe, true);
+        assert!(also.contains(&managed_dir.path().join(devp)));
+        assert!(also.contains(&exe));
+        assert!(also.contains(&cargo_dir.path().join(prune)));
+        assert!(!also.contains(&primary));
+    }
+
+    #[test]
+    fn a_name_that_does_not_exist_outside_the_managed_directory_is_not_invented() {
+        // The managed directory owns both names; the running copy's directory belongs
+        // to whatever installed it, so a missing twin there stays missing.
+        let [prune, devp] = bin_names();
+        let managed_dir = tempfile::tempdir().unwrap();
+        let solo_dir = tempfile::tempdir().unwrap();
+        let primary = managed_dir.path().join(prune);
+        let exe = solo_dir.path().join(devp);
+        std::fs::write(&exe, b"old").unwrap();
+
+        let also = companion_copies(&primary, true, &exe, true);
+        assert!(also.contains(&managed_dir.path().join(devp)));
+        assert!(also.contains(&exe));
+        assert!(!also.contains(&solo_dir.path().join(prune)));
+    }
+
+    #[test]
+    fn a_manager_owned_directory_is_left_exactly_as_the_manager_wrote_it() {
+        // replace_exe_dir is false for WinGet/Scoop/Homebrew copies; nothing in the
+        // running copy's directory may be rewritten, twins included.
+        let [prune, devp] = bin_names();
+        let managed_dir = tempfile::tempdir().unwrap();
+        let store_dir = tempfile::tempdir().unwrap();
+        let primary = managed_dir.path().join(prune);
+        let exe = store_dir.path().join(devp);
+        std::fs::write(&exe, b"old").unwrap();
+        std::fs::write(store_dir.path().join(prune), b"old").unwrap();
+
+        let also = companion_copies(&primary, true, &exe, false);
+        assert_eq!(also, vec![managed_dir.path().join(devp)]);
+    }
+
+    #[test]
+    fn without_a_managed_copy_only_existing_files_beside_the_binary_are_replaced() {
+        let [prune, devp] = bin_names();
+        let dir = tempfile::tempdir().unwrap();
+        let primary = dir.path().join(devp);
+        std::fs::write(&primary, b"old").unwrap();
+
+        // Alone, its absent `dev-prune` twin is not created…
+        assert!(companion_copies(&primary, false, &primary, false).is_empty());
+
+        // …but a twin that exists is stale the moment the primary is replaced.
+        std::fs::write(dir.path().join(prune), b"old").unwrap();
+        assert_eq!(
+            companion_copies(&primary, false, &primary, false),
+            vec![dir.path().join(prune)]
+        );
     }
 
     #[test]
