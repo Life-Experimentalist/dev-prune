@@ -1,6 +1,6 @@
 {
   "name": "dev-prune",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "description": "Teaches Claude the dev-prune (devp) CLI: how to reclaim disk space by deleting dependency and build directories a lockfile can rebuild, how to put them back, the safety rules it will not cross, its exit codes, its --json contract, and its troubleshooting tree. Use when asked to clean or prune dependency directories in any ecosystem — node_modules, .venv, target, vendor, Pods, _build, .terraform and the rest of its twenty-four package managers — restore project dependencies, size package manager caches, find where the disk went, or diagnose devp itself.",
   "author": {
     "name": "VKrishna04"

@@ -897,7 +897,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -946,7 +946,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -991,7 +991,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "status --drift",
   "drift": [
     {
@@ -1019,7 +1019,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "detail_starts_at": "1.17.0",  // the version that began recording by_manager and by_trigger
@@ -1083,7 +1083,7 @@ them again.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "history",
   "detail_starts_at": "1.17.0",  // the version that began recording `removed` below
   "passes": [                    // newest first; `pass` is stable under --pass N
@@ -1140,7 +1140,7 @@ to a file.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "caches",
   "caches": [
     {
@@ -1220,7 +1220,7 @@ narrowed by which engines it was asked about.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "caches containers",
   "engines": [
     {
@@ -1285,7 +1285,7 @@ see [below](#devp-caches-clear-engine---json).
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -1333,7 +1333,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "caches clear",
   "dry_run": false,
   "engine": "docker",
@@ -1369,7 +1369,7 @@ it is from a version that could not make the promise.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.16.0",
+  "version": "1.17.0",
   "command": "trust",
   "guarantees": [
     {
@@ -1394,7 +1394,7 @@ it is from a version that could not make the promise.
       "path": "%APPDATA%/dev-prune/bin/dev-prune.exe",
       "channel": "install script",
       "sha256": "78feef18a95fa15c7a8c3288f220055fcfa0f75d1635f5370697c8878ffdbc1a",
-      "version": "1.16.0",
+      "version": "1.17.0",
       "marker": "latest release",
       "running": true,
       "scan_report": "https://www.virustotal.com/gui/file/78feef18a95fa15c7a8c3288f220055fcfa0f75d1635f5370697c8878ffdbc1a",
@@ -1671,7 +1671,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```json
   {
     "schema": 1,
-    "version": "1.16.0",
+    "version": "1.17.0",
     "channel": "installer",
     "installed_by": "install.sh",
     "installed_at": "2026-08-25T09:14:02Z",
@@ -1734,11 +1734,11 @@ Executing `devp -V` prints detailed diagnostic information:
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
 |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|
-                                                  v1.16.0 · install script
+                                                  v1.17.0 · install script
 Every dependency directory on this machine, in one command.
 Only what a lockfile can rebuild — and `devp restore --last-run` puts it back.
 
-dev-prune (devp) v1.16.0
+dev-prune (devp) v1.17.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune
