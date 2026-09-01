@@ -69,13 +69,13 @@ Seven single-binary archives are built automatically for every tagged release an
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.16.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.16.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.16.0-windows-x86.zip` | `i686-pc-windows-msvc` |
-| `dev-prune-v1.16.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.16.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.16.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.16.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.17.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.17.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.17.0-windows-x86.zip` | `i686-pc-windows-msvc` |
+| `dev-prune-v1.17.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.17.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.17.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.17.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
@@ -89,7 +89,7 @@ The install scripts construct these filenames by hand and refuse to install with
 Windows, and is what reads this format:
 
 ```bash
-sha256sum -c dev-prune-v1.16.0-windows-x64.zip.contents.sha256
+sha256sum -c dev-prune-v1.17.0-windows-x64.zip.contents.sha256
 ```
 
 `dev-prune.exe` and `devp.exe` are one file under two names and share a digest on purpose, so a scanner builds one reputation record instead of two — the matching digests are themselves the evidence the packaging did what it claims. `devpw.exe`, the console-free build the scheduled task runs, is a separate `[[bin]]` target and legitimately has a different one. [`devp trust`](CLI_REFERENCE.md#18-devp-trust---json---fix-ownership) prints the same digests off your own disk, which is the side of the comparison that matters.
@@ -97,7 +97,7 @@ sha256sum -c dev-prune-v1.16.0-windows-x64.zip.contents.sha256
 Each archive is additionally signed with GitHub build provenance, which ties it to this repository, the release workflow and the commit it was built from — something a checksum cannot do, because whoever produces an archive also produces its checksum. Verify with no key and no account:
 
 ```bash
-gh attestation verify dev-prune-v1.16.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+gh attestation verify dev-prune-v1.17.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
 ```
 
 ### 4. npm (`npm install -g` / `npx` / bun / pnpm / Yarn)
