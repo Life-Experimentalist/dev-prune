@@ -125,6 +125,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   than replacing the map with its own.
   [Reference](docs/CLI_REFERENCE.md#8-devp-config-action)
 
+- **`devp stats` now says which package manager the space came from.** The tool has
+  twenty-four adapters and, until now, never told you which of them was earning its keep
+  — the lifetime total was one number with nothing behind it. **By package manager**
+  ranks them by what each has given back, with the directory count beside it, so "npm is
+  the one costing me" stops being a hunch. It covers pruning only, and says so under
+  itself: emptying a cache is not a prune pass, so these figures are not meant to add up
+  to the lifetime total above them.
+
+- **`devp stats` also shows how many passes you typed and how many ran unattended.**
+  **How passes start** splits the same reclaims across `manual`, `scheduled` and
+  `dashboard`, each with its share. All three print even at zero, because a `scheduled`
+  line reading zero passes is how you find out the daemon has never actually run — and
+  when it does read zero, the report points you at `devp status daemon`. Both sections
+  are summed from the prune log, so both are bounded by 1.17.0 and both say how many
+  earlier passes they could not account for rather than quietly under-reporting.
+  `devp stats --json` carries them as `by_manager` and `by_trigger`.
+  [Reference](docs/CLI_REFERENCE.md#15-devp-stats---json)
+
 ### Changed
 
 - **Every binary in `devp trust` now shows the version it was built as**, so the list

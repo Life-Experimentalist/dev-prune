@@ -1017,6 +1017,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
   "version": "1.16.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
+  "detail_starts_at": "1.17.0",  // the version that began recording by_manager and by_trigger
   "lifetime": {
     "bytes_freed": 6772391936,
     "cache_bytes_freed": 3221225472,  // `devp caches clear <manager>`; never added to bytes_freed
@@ -1034,9 +1035,28 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
   ],
   "repositories": [              // biggest first; bytes_freed is only recorded from 1.1.0
     { "path": "~/Code/api", "bytes_freed": 481296384, "last_pruned_at": "2026-08-11T14:02:55+00:00" }
-  ]
+  ],
+  "by_manager": {                // pruning only — caches and containers are not in here
+    "passes_not_counted": 4,     // passes with no directory list, so with no manager either
+    "managers": [                // biggest first; every manager, not the ten the report ranks
+      { "manager": "npm", "bytes_freed": 43146117120, "directories": 22 }
+    ]
+  },
+  "by_trigger": {
+    "passes_not_counted": 5,     // passes with no trigger; not the same number as above
+    "triggers": [                // always all three, including the ones at zero
+      { "trigger": "manual", "bytes_freed": 14495514624, "passes": 5 },
+      { "trigger": "scheduled", "bytes_freed": 28650602496, "passes": 12 },
+      { "trigger": "dashboard", "bytes_freed": 0, "passes": 0 }
+    ]
+  }
 }
 ```
+
+`by_manager` and `by_trigger` are summed from the prune log, so they are bounded by
+`detail_starts_at`, not by `history_starts_at`. The two `passes_not_counted` figures are
+different numbers on purpose: the newest pre-log pass still has its directory list, so it
+can be attributed to a manager but never to a trigger.
 
 `lifetime.bytes_freed` and `lifetime.prune_passes` have been accumulating since 1.0.0.
 `recent_passes` and the per-repository `bytes_freed` were not recorded before 1.1.0, so on
@@ -1535,11 +1555,13 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ---
 
 ### 15. `devp stats [--json]`
-- **Description**: What dev-prune has actually done for you, as opposed to what it could do next. Lifetime space reclaimed, how much has been emptied out of package-manager caches, how many prune passes there have been, the most recent pass and how to undo it, the last ten passes, and the ten repositories that have given back the most. Read-only — it touches the registry and nothing else.
+- **Description**: What dev-prune has actually done for you, as opposed to what it could do next. Lifetime space reclaimed, how much has been emptied out of package-manager caches, how many prune passes there have been, the most recent pass and how to undo it, the last ten passes, the ten repositories that have given back the most, which package managers those reclaims came from, and how many of the passes you typed yourself. Read-only — it touches the registry and the prune log, and nothing else.
 - **Three space figures, not one**: `Space reclaimed` is what pruning gave back, `Caches emptied` is what [`devp caches clear <manager>`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) gave back, and `Containers cleared` is what [`devp caches clear <engine>`](#devp-caches-clear-engine---dry-run---yes---json) gave back. They are never added together, because they do not cost the same to undo: one reinstall in one repository, a download in every project on the machine, and a pull of the whole layer stack. `Caches emptied` counts from **1.9.0** and `Containers cleared` from **1.17.0**; a machine that did either before upgrading starts that figure at zero.
+- **`By package manager`**: which of the two dozen adapters is actually earning its keep, ranked by lifetime bytes with the directory count beside it. Pruning only — emptying a cache is not a prune pass and never enters the log this is summed from, so the figures here do not add up to `Caches emptied` or to the lifetime total above, and the section says so under itself rather than letting the arithmetic look broken.
+- **`How passes start`**: the same bytes split by what started the pass — `manual`, `scheduled` or `dashboard` — with each one's share. All three print even at zero, because a `scheduled` line reading zero passes is the answer to "is the daemon doing anything", and a section that hid its empty rows would delete exactly that answer. When it does read zero, the report points at `devp status daemon`.
 - **Why it is separate from `status`**: [`devp status`](#6-devp-status---top-n---drift---json) answers "what can I reclaim right now". Folding a history report into it would put a screen of the past above the list people open it for.
 - **When a number here raises a question**, [`devp history`](#20-devp-history---pass-n---limit-n---all---json---export-path) answers it: this report says ten passes freed 27 GiB, that one says which pass, started by what, and every directory it took.
-- **A note on upgraded machines**: the lifetime total has been accumulating since 1.0.0, but the per-repository figures and the pass history are only recorded from **1.1.0** onward. A machine that pruned for months before upgrading will show a large lifetime total next to an empty "Biggest reclaims" section, and the report says so rather than implying nothing ever happened.
+- **A note on upgraded machines**: the lifetime total has been accumulating since 1.0.0, but the per-repository figures and the pass history are only recorded from **1.1.0** onward, and the two breakdowns from **1.17.0** — they read the prune log, which did not exist before it. A machine that pruned for months before upgrading will show a large lifetime total next to an empty "Biggest reclaims" section, and each section says how much it could not account for rather than implying nothing ever happened.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the report.
 - **Examples**:
@@ -1547,6 +1569,12 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   devp stats
   devp stats --json | jq '.lifetime.bytes_freed'
   devp stats --json | jq '.lifetime.cache_bytes_freed'
+
+  # The manager that has given back the most
+  devp stats --json | jq -r '.by_manager.managers[0].manager'
+
+  # How many passes ran unattended
+  devp stats --json | jq '.by_trigger.triggers[] | select(.trigger == "scheduled") | .passes'
   ```
 
 ---
