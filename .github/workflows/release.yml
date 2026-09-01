@@ -821,10 +821,10 @@ jobs:
   # never seen comes back `not found`, and `devp trust` has to print that answer beside
   # a file the user just installed.
   #
-  # So this looks each digest up and submits only the ones nothing has seen. It never
-  # gates the release: a fresh cross-compiled binary picks up heuristic hits from some
-  # of the seventy engines for weeks, that number falls on its own as downloads
-  # accumulate, and a workflow that failed on it would block every release forever.
+  # So this submits every staged file for analysis. It never gates the release: a
+  # fresh cross-compiled binary picks up heuristic hits from some of the seventy
+  # engines for weeks, that number falls on its own as downloads accumulate, and a
+  # workflow that failed on it would block every release forever.
   scan:
     name: VirusTotal
     needs: [publish]
@@ -855,7 +855,7 @@ jobs:
           rm -rf scan-tmp
           ls -lh scan
 
-      - name: Look up each digest, submit what is unknown
+      - name: Submit every digest for analysis
         env:
           VT_API_KEY: ${{ secrets.VT_API_KEY }}
           VERSION: ${{ needs.publish.outputs.version }}
@@ -863,7 +863,7 @@ jobs:
           set -eu
 
           if [ -z "${VT_API_KEY:-}" ]; then
-            echo "::warning::No VT_API_KEY secret — nothing was looked up or submitted."
+            echo "::warning::No VT_API_KEY secret — nothing was submitted."
             {
               echo "## VirusTotal"
               echo
@@ -876,10 +876,30 @@ jobs:
 
           api="https://www.virustotal.com/api/v3"
           gui="https://www.virustotal.com/gui/file"
-          # The free tier allows four requests a minute. Every file costs one lookup and
-          # an unknown one costs a second for the upload, so the pause goes before each
-          # request rather than after each file.
-          pause() { sleep 16; }
+          # The free tier allows four requests a minute (the 500/day line is nowhere
+          # near: a release stages ~15 unique files). Two things keep this job off the
+          # sleep it used to spend eight minutes in. First, no lookups: every digest
+          # here is new by construction — the version string is baked into every
+          # binary — so a lookup-first pass answered `not found` once per file and
+          # doubled the request count. Second, requests go out four to a window and the
+          # sleep covers only whatever is left of that window, most of which the upload
+          # transfers themselves have already spent.
+          window_start=$(date +%s)
+          used=0
+          throttle() {
+            if [ "$used" -ge 4 ]; then
+              now=$(date +%s)
+              rest=$(( window_start + 62 - now ))
+              if [ "$rest" -gt 0 ]; then sleep "$rest"; fi
+              window_start=$(date +%s)
+              used=0
+            fi
+            used=$((used + 1))
+          }
+          submit() {
+            curl -sS -o upload.json -w '%{http_code}' -X POST \
+              -H "x-apikey: $VT_API_KEY" --form "file=@$1" "$api/files"
+          }
 
           {
             echo "## VirusTotal — v${VERSION}"
@@ -900,30 +920,26 @@ jobs:
             case " $seen " in *" $sha "*) continue ;; esac
             seen="$seen $sha"
 
-            pause
-            code=$(curl -sS -o resp.json -w '%{http_code}' \
-              -H "x-apikey: $VT_API_KEY" "$api/files/$sha")
+            throttle
+            up=$(submit "$f")
+            if [ "$up" = "429" ]; then
+              # The window arithmetic and VirusTotal's clock can disagree at the edge,
+              # so a 429 buys one full window and one retry rather than a failure row.
+              sleep 62
+              window_start=$(date +%s)
+              used=1
+              up=$(submit "$f")
+            fi
 
-            if [ "$code" = "200" ]; then
-              # Deliberately not "N of 70 clean": the stats object carries timeouts and
-              # unsupported types as well, and a total assembled here would be a number
-              # this repository invented. The link goes to the real one.
-              stats=$(jq -r '.data.attributes.last_analysis_stats | "\(.malicious) malicious, \(.suspicious) suspicious"' resp.json)
-              status="already known — $stats"
-            elif [ "$code" = "404" ]; then
-              pause
-              up=$(curl -sS -o upload.json -w '%{http_code}' -X POST \
-                -H "x-apikey: $VT_API_KEY" --form "file=@$f" "$api/files")
-              if [ "$up" = "200" ]; then
-                status="submitted — analysis queued"
-                submitted=$((submitted + 1))
-              else
-                status="upload failed (HTTP $up)"
-                echo "::warning::VirusTotal upload of $name failed with HTTP $up"
-              fi
+            # Deliberately no detection counts in this table: a number read minutes
+            # after submission is the noise the footer below disclaims. The digest link
+            # goes to the live report, which is the only number worth quoting.
+            if [ "$up" = "200" ]; then
+              status="submitted — analysis queued"
+              submitted=$((submitted + 1))
             else
-              status="lookup failed (HTTP $code)"
-              echo "::warning::VirusTotal lookup of $name failed with HTTP $code"
+              status="upload failed (HTTP $up)"
+              echo "::warning::VirusTotal upload of $name failed with HTTP $up"
             fi
 
             echo "| \`$name\` | [\`${sha}\`]($gui/$sha) | $status |" >> "$GITHUB_STEP_SUMMARY"
@@ -1002,7 +1018,7 @@ jobs:
             # now on file somewhere a user can look it up, which is what `devp trust`
             # sends them to do.
             case "$SCAN" in
-              success) echo "| VirusTotal | ✅ every published digest looked up, unknown ones submitted |" ;;
+              success) echo "| VirusTotal | ✅ every published digest submitted for analysis |" ;;
               skipped) echo "| VirusTotal | ⚠️ skipped |" ;;
               *)       echo "| VirusTotal | ❌ **failed** — see the job log |" ;;
             esac
