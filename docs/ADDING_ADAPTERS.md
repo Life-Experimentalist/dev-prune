@@ -2,6 +2,18 @@
 
 `dev-prune` (`devp`) is designed to be highly modular and contribution-friendly. Adding support for a new package manager or ecosystem (e.g. Composer, Bundler, CocoaPods, Mix, Swift SPM, etc.) takes only a few minutes.
 
+There are three things you can add, and all three are one table entry:
+
+| What | Where | What it gives you |
+|---|---|---|
+| **An adapter** — a per-repository ecosystem | `src/adapters/` | `devp run` deletes that ecosystem's directories and can prove the lockfile rebuilds them. [Steps 1–7 below.](#step-1-create-a-new-module-file) |
+| **A cache probe** — a machine-wide store | `src/commands/caches.rs` | A row in `devp caches` and a working `devp caches clear <name>`. [How to add one.](#-adding-a-cache-probe) |
+| **A container engine** | `src/commands/containers.rs` | A report in `devp caches containers` and a working `devp caches clear <engine>`. [How to add one.](#-adding-a-container-engine) |
+
+They are independent. An ecosystem can have an adapter and no probe (its cache is
+per-project, or it has none), a probe and no adapter (`pip`, `playwright`,
+`huggingface` — nothing on disk to prune per-repository), or both.
+
 ---
 
 <p align="center">
@@ -320,3 +332,172 @@ cargo test --all
 cargo clippy -- -D warnings
 cargo fmt -- --check
 ```
+
+---
+
+## 💾 Adding a Cache Probe
+
+A cache probe is the machine-wide half: the shared store a package manager downloads
+into once and reinstalls from forever. It is what `devp caches` sizes and what
+`devp caches clear <name>` empties.
+
+Adding one is **one `PROBES` entry and one `fallbacks()` arm**. Everything else in the
+subsystem derives from that table — `known_managers()`, `is_cache_manager()`, the
+`<MANAGER>` list in the usage error, the `--over-cap` accounting and the `used_by`
+column all read `PROBES` rather than a list of their own. There is no second place to
+register a name, and no way to add one to half of them.
+
+### Step 1: The `PROBES` entry
+
+In `src/commands/caches.rs`:
+
+```rust
+Probe {
+    manager: "poetry",
+    kind: "artifact cache",
+    // The manager's own answer to "where is it?". It must print a path and exit,
+    // and it must not create the directory — a probe that installs something is
+    // a probe that lies about the disk it was measuring.
+    query: Some(("poetry", &["config", "cache-dir"])),
+    // Appended to that answer, for the managers that will only name a directory
+    // one level above their cache. Poetry's cache-dir holds `virtualenvs/` beside
+    // `artifacts/`; only the second is a cache.
+    query_suffix: Some("artifacts"),
+    clear_command: POETRY_ARTIFACTS_CLEAR,
+    clear: Clear::Directory,
+    note: Some(
+        "only `artifacts/`, the wheels and sdists Poetry downloaded. `virtualenvs/` \
+         sits in the same cache directory and holds the environments themselves — \
+         deleting that would not be clearing a cache.",
+    ),
+}
+```
+
+Three fields carry the judgement:
+
+- **`query`** is the manager asked rather than assumed. `None` is correct when the
+  ecosystem has no such command, and the conventional locations are all there is.
+- **`query_suffix`** is where most of the care goes. `gem env gemdir` prints the gem
+  home, which holds installed gems and binstubs as well as the `.gem` archives;
+  `poetry config cache-dir` prints a parent of `virtualenvs/`. Sizing or clearing
+  either answer whole would take working environments with it. Name the one
+  subdirectory that is genuinely a download cache.
+- **`clear`** is what dev-prune is willing to run. `Clear::Command(program, args)` when
+  the manager has a real, non-interactive clean subcommand; `Clear::Directory` to
+  delete the probed path; `Clear::Manual { why }` when neither is honest — Maven is the
+  only one, because its local repository is not a cache and nothing should treat it as
+  one.
+
+`clear_command` is the string the report prints on its `runs:` line. On the
+`Clear::Directory` rows it is a `const` with a `#[cfg]` per platform, because the
+command a user would type is PowerShell on Windows and `rm -rf` elsewhere.
+
+### Step 2: The `fallbacks()` arm
+
+Also in `src/commands/caches.rs`, in `fallbacks()`:
+
+```rust
+("poetry", _) => vec![
+    std::env::var_os("POETRY_CACHE_DIR").map(|p| PathBuf::from(p).join("artifacts")),
+    under(&cache, "pypoetry/Cache/artifacts"),
+    under(&cache, "pypoetry/artifacts"),
+],
+```
+
+The environment variable goes first where the ecosystem has one, because a machine
+that sets it has moved the cache and the conventional path is then wrong rather than
+merely absent. This list is what runs when the manager is not installed — which is the
+interesting case, because a cache outliving its manager is exactly the disk nobody can
+account for. Use
+the `under()` helper rather than joining paths yourself: it splits on `/` so a Windows
+path never comes back spelled `C:\Users\dev/pypoetry`.
+
+### Step 3: If the name is also an adapter name
+
+Nothing to do — `dependents()` seeds the `used_by` count from
+`adapters::is_adapter_name(m)`, so a probe whose name matches an adapter gets the
+"used by 3 of 9 registered repositories" line automatically, and one that does not
+stays silent rather than guessing. `pip` does not claim every venv on the disk;
+`playwright` does not claim every `node_modules`.
+
+### Step 4: If re-downloading is not a promise
+
+Give it a `note`. Every other row in the report is safe on the strength of one
+sentence — delete it, the manager fetches it again — and `huggingface` is the row where
+that is not true: a gated or now-private repository will not hand the weights back, and
+the re-download is measured in tens of gigabytes. If your cache has a case like that,
+say so in the `note` rather than leaving the row looking like the ones that do not.
+
+---
+
+## 📦 Adding a Container Engine
+
+Docker, Podman, nerdctl, finch and Apple's `container` are five entries in one
+`ENGINES` table in `src/commands/containers.rs`. A sixth is one more:
+
+```rust
+Engine {
+    name: "finch",
+    binary: "finch",
+    prompts: true,
+    df_args: &["system", "df", "--format", "{{json .}}"],
+    // Printed, never run. Every command worth knowing about, including the one
+    // that deletes data.
+    prune: &[
+        (
+            "finch system prune",
+            "stopped containers, networks, dangling images",
+        ),
+        (
+            "finch system prune --volumes",
+            "adds unused volumes — the one that deletes data",
+        ),
+    ],
+    // Run, on request, after printing. Nothing here touches a volume.
+    reclaim: &[ReclaimStep {
+        what: "images, stopped containers and the build cache",
+        args: &["system", "prune", "-a", "-f"],
+    }],
+}
+```
+
+Every runtime enumeration derives from this table: which binaries are looked for, the
+engine names `devp caches clear` accepts, the list in its usage error, and what
+`devp caches containers` runs when given no engine. There is no separate list to keep
+in step.
+
+Two fields are the ones to get right:
+
+- **`prune` and `reclaim` are deliberately separate tables.** `prune` is every command
+  worth *knowing about*, including the volume-deleting variant; it is printed and never
+  run. `reclaim` is only what `devp caches clear <engine>` will execute. There is no
+  argv in any `reclaim` list that touches a volume — so "dev-prune never deletes your
+  volumes" is a property of the table rather than a flag someone could pass or a check
+  someone could forget.
+- **`prompts`** says whether the engine stops to ask on its own. Docker, Podman,
+  nerdctl and finch all do, and all take `-f` to mean the question has been asked
+  already. Apple's `container` does not: its prune subcommands neither ask nor define
+  a `-f`, so they run the moment they are typed. Setting `prompts: false` is what makes
+  `devp caches containers container` say so in as many words before it lists them.
+  dev-prune's own confirmation is unconditional either way.
+
+If the engine's `system df` does not answer in the shape the other four use, teach
+`parse_rows` about it rather than reshaping the engine entry — Apple's answers with a
+single object rather than a row per resource, and that is where it is handled.
+
+---
+
+## ✅ Whichever you added
+
+The gate is the same four commands, and clippy is `-D warnings` including test code:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all --all-features
+npm --prefix site run build
+```
+
+A new adapter changes a count that is written out **in words** across the README, the
+site, `llms.txt`, the AI skill and two marketplace manifests. Grep for the number you
+are replacing before you open the pull request; CI does not check prose.

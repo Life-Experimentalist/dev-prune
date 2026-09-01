@@ -138,6 +138,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local repository is not a cache, and `devp caches clear maven` refuses.
   [Reference](docs/CLI_REFERENCE.md#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json)
 
+- **`devp run --ignore-idle` now prints the manual route next to the AI one.** The notice
+  already pointed at `devp skill` for anyone still stuck; it now also lists the five
+  commands that skill would reach for — `devp run --explain`, `devp status`, `devp doctor`,
+  `devp config show` and `devp man` — so you can work the problem yourself instead of
+  handing your shell to a language model to find out what `--explain` would have told you.
+- **`auto_discover` and `auto_hooks` now say which arrivals each of them actually covers.**
+  Their descriptions in `devp config` read as two vague promises to find things, and
+  neither mentioned the other, so there was no way to tell that the Git hooks only ever see
+  repositories Git itself creates. `auto_hooks` now names its three triggers — clone,
+  commit, merge — and hands everything else to `auto_discover`, which now says that it runs
+  only on the scheduled pass and finds projects by looking beside the ones you already
+  have.
+
 ### For contributors
 
 - **The release workflow registers each published digest with VirusTotal.** A binary with
@@ -174,21 +187,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Nothing about what can be *deleted* changed — lockfile verification runs on every
   selected repository exactly as before and still has no bypass. `[a]` and `[p]` continue
   to arm only idle repositories, because `[Enter]` prunes without asking a second time.
-
-### Changed
-
-- **`devp run --ignore-idle` now prints the manual route next to the AI one.** The notice
-  already pointed at `devp skill` for anyone still stuck; it now also lists the five
-  commands that skill would reach for — `devp run --explain`, `devp status`, `devp doctor`,
-  `devp config show` and `devp man` — so you can work the problem yourself instead of
-  handing your shell to a language model to find out what `--explain` would have told you.
-- **`auto_discover` and `auto_hooks` now say which arrivals each of them actually covers.**
-  Their descriptions in `devp config` read as two vague promises to find things, and
-  neither mentioned the other, so there was no way to tell that the Git hooks only ever see
-  repositories Git itself creates. `auto_hooks` now names its three triggers — clone,
-  commit, merge — and hands everything else to `auto_discover`, which now says that it runs
-  only on the scheduled pass and finds projects by looking beside the ones you already
-  have.
 
 ## [1.16.0] - 2026-09-01
 
