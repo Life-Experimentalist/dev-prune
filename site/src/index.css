@@ -643,6 +643,19 @@ html {
   color: var(--term-text);
 }
 
+/* The credit line is the one place inside the mock terminal that is really
+   clickable. Default link styling would give it away as web chrome, so it
+   inherits the dimmed terminal colour and only admits to being a link on
+   hover. */
+.term-line a {
+  color: inherit;
+  text-decoration: none;
+}
+.term-line a:hover,
+.term-line a:focus-visible {
+  text-decoration: underline;
+}
+
 .c-cyan {
   color: var(--cyan);
 }

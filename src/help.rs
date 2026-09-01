@@ -254,6 +254,12 @@ restore` into a download.
 `devp caches clear <manager>` runs the command this table prints, after showing you \
 what goes and asking.
 
+`--volume V:` (or `--drive`, or `--volume /mnt/data`, or any path on the one you \
+mean) narrows the whole report to the caches that sit on one drive, and the \
+unfiltered table gains a line breaking the total down the same way. On a machine \
+whose projects live on a second disk, 22 GiB of caches is not the figure that \
+decides anything — the two gigabytes on the drive that is full is.
+
 Covered: npm, pnpm, yarn, bun, uv, pip, conda, cargo, go, maven, gradle, nuget, vcpkg, \
 conan, composer, cocoapods and hex. Each manager is asked where its cache is (`npm \
 config get cache`, `go env GOMODCACHE`, …) rather than assumed, with read-only queries \
@@ -268,6 +274,7 @@ EXAMPLES:
                                   Machine-readable
   devp caches clear npm           Empty one, after asking
   devp caches clear all --dry-run What would go, and nothing touched
+  devp caches --volume V:         Only what sits on that drive (--drive is the same)
 
 Run interactively with a terminal, `--json` also copies the document to the clipboard.";
 

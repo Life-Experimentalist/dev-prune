@@ -68,7 +68,7 @@ graph TD
 - **Workspace**: Bounded walk of a registered repository that finds every package-manager project inside it, at any depth, so a monorepo's `frontend/`, `services/api/` and `cli/` are each handled on their own terms.
 - **GlobalConfig**: Persistent JSON storage at `~/.config/dev-prune/registry.json` (or `%APPDATA%\dev-prune\registry.json`).
 - **AdapterRegistry**: Interface managing concrete ecosystem package manager implementations.
-- **NPM / PNPM / Yarn / Bun / UV / Venv / Cargo / Go**: Specialized ecosystem adapters enforcing lockfile safety and managing bloat directories (`node_modules`, `.venv`, `target`, `vendor`).
+- **The adapters**: Twenty-three of them, one per package manager, each enforcing lockfile safety and owning that ecosystem's directories. JavaScript (npm, pnpm, Yarn, Bun), Python (uv, Poetry, PDM, Pipenv, venv), Rust (Cargo), Go, PHP (Composer), Ruby (Bundler), Elixir (Mix, and Mix builds), Apple (CocoaPods, SwiftPM), Dart, Infrastructure (Terraform), JVM (Gradle, Maven) and C/C++ (vcpkg, CMake builds). Eight are opt-in; the list is in [`docs/CLI_REFERENCE.md`](../CLI_REFERENCE.md).
 - **OSDaemon**: Native background task triggering periodic 2-day automated maintenance passes.
 - **GitHooks**: Non-blocking background shell hooks registering newly checked-out Git repositories.
 
@@ -107,7 +107,7 @@ sequenceDiagram
                     PM-->>Eng: Return detected adapters (conflicts already resolved)
                     Eng->>PM: Enforce lockfile verification pass
                     alt Lockfile Verification Succeeded
-                        PM->>FS: Delete bloat directories (node_modules, .venv, target, vendor)
+                        PM->>FS: Delete the adapter's directories (node_modules, .venv, vendor, ...)
                         FS-->>PM: Confirmed deletion & freed bytes
                         PM-->>Eng: Report successful prune
                     else Lockfile Verification Failed
@@ -144,7 +144,7 @@ sequenceDiagram
 > **Git Repository Boundary Guarantee**: Operations are strictly restricted to folders containing a valid `.git` root. Non-Git folders are ignored.
 
 > [!NOTE]
-> **Two-Tier Lockfile Pre-Verification**: Before deleting any directory an adapter claims (`node_modules`, `.venv`, `target`, `vendor`), `dev-prune` verifies lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `Cargo.lock`, `go.sum`).
+> **Two-Tier Lockfile Pre-Verification**: Before deleting any directory an adapter claims (`node_modules`, `.venv`, `vendor`, `Pods` and the rest), `dev-prune` verifies that ecosystem's lockfile (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `Cargo.lock`, `go.sum`, `composer.lock`, `Gemfile.lock`, `mix.lock` — one per adapter).
 
 > [!NOTE]
 > **Any Number of Ecosystems per Repository**: A registered repository may hold any number of projects, in any combination — three managers side by side in the root, one per subtree, or both at once. Each is detected, verified, pruned and restored independently. The discovery walk never leaves the repository, never enters a dependency tree, and never crosses into a nested `.git`.

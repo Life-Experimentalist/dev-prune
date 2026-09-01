@@ -192,9 +192,14 @@ jobs:
           # record. VirusTotal, SmartScreen and every vendor that keys off a file hash
           # treat the two names as the same file, so the download count that clears a
           # new release accrues once instead of twice, and a single false-positive
-          # dispute covers both. Building them as two `[[bin]]` targets would compile
-          # two distinct images - which is why `devp.exe` is not one, even though
-          # `devpw.exe` is. Do not "fix" this into a second target.
+          # dispute covers both.
+          #
+          # `devp` is a `[[bin]]` target in Cargo.toml, so `cargo install` produces both
+          # names - but that path compiles two distinct images and lands two distinct
+          # hashes. What ships here does not: both entries are copies of the one
+          # `dev-prune.exe` this job built, and `target/release/devp.exe` is deliberately
+          # never packaged. Do not "simplify" this into copying each target to its own
+          # name; the identical bytes are the point.
           $stage = New-Item -ItemType Directory -Force -Path "stage-${{ matrix.arch }}"
           Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" (Join-Path $stage 'dev-prune.exe')
           Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" (Join-Path $stage 'devp.exe')
@@ -217,6 +222,30 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" $raw
           $rawHash = (Get-FileHash -Path $raw -Algorithm SHA256).Hash.ToLower()
           "$rawHash  $raw" | Out-File -FilePath "$raw.sha256" -Encoding ascii -NoNewline
+
+          # The digest of each file *inside* the zip, which is the only one an antivirus
+          # ever sees. The sidecars above cover the archive, and an archive's hash stops
+          # meaning anything the moment it is unpacked - so until this existed there was
+          # no published answer to "is the devpw.exe on my disk the one you built?".
+          #
+          # `devpw.exe` is the file that needed it most. It is the binary the scheduled
+          # task runs, so it is the one a behavioural scanner meets first, and being a
+          # separate `[[bin]]` target its digest legitimately differs from the other two
+          # - which is indistinguishable from tampering with nothing to compare against.
+          # `dev-prune.exe` and `devp.exe` appear here too, and their matching digests
+          # are themselves the evidence that the copy above did what it claims.
+          #
+          # sha256sum format, so `sha256sum -c` in the unpacked directory verifies all
+          # three. Not attested, for the same reason no sidecar is: it is a checksum of
+          # an already-attested file.
+          $contents = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.zip.contents.sha256"
+          $lines = Get-ChildItem -Path $stage -File | Sort-Object Name | ForEach-Object {
+            "$((Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
+          }
+          # Written with LF, not `Out-File`. The only thing that reads this file is
+          # `sha256sum -c`, and coreutils treats the CRLF a Windows runner would emit as
+          # part of the filename - so every line fails to match a file that is right there.
+          [IO.File]::WriteAllText((Join-Path $PWD $contents), (($lines -join "`n") + "`n"))
 
       - uses: actions/upload-artifact@v7
         with:
@@ -389,6 +418,23 @@ jobs:
           \`\`\`powershell
           (Get-FileHash dev-prune-v${VERSION}-windows-x64.zip).Hash -eq (Get-Content dev-prune-v${VERSION}-windows-x64.zip.sha256).Split(' ')[0].ToUpper()
           \`\`\`
+
+          An archive's hash stops meaning anything the moment you unpack it, and the
+          unpacked files are the only ones your antivirus ever looks at. So each Windows
+          zip also ships a \`.zip.contents.sha256\` listing the digest of every file inside
+          it — run this in the folder you extracted to, from Git Bash (\`sha256sum\` ships
+          with Git for Windows, and is what reads this format):
+
+          \`\`\`bash
+          sha256sum -c dev-prune-v${VERSION}-windows-x64.zip.contents.sha256
+          \`\`\`
+
+          \`dev-prune.exe\` and \`devp.exe\` are one file under two names and share a digest
+          on purpose, so a scanner builds one reputation record instead of two.
+          \`devpw.exe\` — the console-free build the scheduled task runs — is compiled
+          separately and legitimately has a different one. \`devp trust\` prints the same
+          three digests for the copies already installed on your machine, so you can
+          compare them against this file without downloading anything again.
 
           That sidecar proves the file was not altered in transit. It does not prove
           where it came from — the same hand that swaps an archive swaps its sidecar.

@@ -1,6 +1,6 @@
 ---
 name: dev-prune
-description: Use when asked to reclaim disk space, clean or prune node_modules / .venv / target / vendor, restore project dependencies, or diagnose the devp CLI. Covers the full dev-prune (devp) command surface, its safety rules, exit codes, and troubleshooting.
+description: Use when asked to reclaim disk space, clean or prune dependency directories in any ecosystem (node_modules, .venv, target, vendor, Pods, _build, .terraform and the rest of its twenty-three package managers), restore project dependencies, size package manager caches, or diagnose the devp CLI. Covers the full dev-prune (devp) command surface, its safety rules, exit codes, and troubleshooting.
 ---
 
 # dev-prune AI Skill (`devp`)
@@ -14,7 +14,7 @@ name, and either works everywhere.
 run it, and explain the result. Everything you need is below; the docs map at the end is
 for anything that isn't.
 
-**Skill version: 1.15.0.** This file describes that release of `devp` and no other, and
+**Skill version: 1.16.0.** This file describes that release of `devp` and no other, and
 it is rewritten from the binary rather than maintained by hand. Before you rely on
 anything below, run `devp --version`. If it prints a different number, you are reading
 another release's instructions — its flags, JSON statuses and exit codes may not be
@@ -127,9 +127,10 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "clear the caches that got too big" | `devp caches clear --over-cap all` — empties only the managers past their `cache_max_gb`, leaves the rest alone. Still asks first, still costs the same re-download. With no caps set it clears nothing and says so |
 | "which caches do I still need" / "clear the ones nothing uses" | `devp caches` says how many registered repositories use each manager and what its cache works out to per repository. A manager no registered repository uses is the one case a count is enough to act on: `devp caches clear --unused all` empties exactly those, and costs nothing to re-download for anything still on the disk. Shown only for the twelve managers that are also adapter names — `pip`, `conda`, `nuget`, `conan` and `hex` have no adapter of the same name, so dev-prune says nothing rather than guessing. Refuses when no registered repository is on disk, because every cache would look unused |
 | "my pnpm store looks tiny" / "my projects live on another drive" | `devp caches` looks for a pnpm store at the root of every filesystem that holds a registered repository, not just the one beside the home directory. pnpm hardlinks into `node_modules` and a hardlink cannot cross a filesystem, so projects off the system disk get a store of their own — `V:\.pnpm-store`, `/mnt/data/.pnpm-store`, `/Volumes/Work/.pnpm-store`. Not a Windows thing. Each is its own row and its clear command names it: `pnpm store prune --store-dir <path>` |
+| "which drive is my cache on?" / "my V: drive is full" / "only show me what is on C:" | `devp caches` ends with a `By drive` line splitting the total per volume, largest first, and every row in `--json` carries a `volume` key. `devp caches --volume V:` (alias `--drive`; also `/mnt/data`, `/Volumes/Work`, or any path on the drive you mean, including `.`) narrows the whole report to one drive. On a machine whose projects live on a second disk, the machine-wide total is not the figure that decides anything — the gigabytes on the drive that is full are. The narrowing happens last, after every verdict, so a `cache_max_gb` cap and an unused-cache count still describe the whole machine. Container engines are left out of a filtered report: an engine reports its disk from inside a VM image with no path on this filesystem, so it belongs to no drive. `--volume` with `clear`, `docker` or `containers` is a usage error, not a silently ignored flag — the clear commands empty a manager wherever it is |
 | "how much is Docker using?" / "what is taking my disk, I have containers" | `devp caches docker` (or `caches podman`, or `caches containers` for every engine plus local Kubernetes clusters) — images, containers, volumes and build cache, each sized, with how much the engine says is reclaimable. **Read-only, permanently.** It prints the prune commands; you never run them. Figures come from the engine's own `system df`, not a directory walk — on Docker Desktop and Podman the store is inside a VM disk the host cannot see. An engine that is installed with its daemon stopped is reported as that, with no figures: a blank, not a zero. `devp caches` shows a one-line summary per engine, outside its own total |
 | "empty my npm cache" / "clear all the caches" | `devp caches clear npm` (or `all`) — **ask first**, and say what it costs: every project on the machine re-downloads on its next install, and `devp restore` stops being fast. `--dry-run` shows what would go. Never run this unprompted. `maven` is refused: print `rm -rf ~/.m2/repository` and let the user decide |
-| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the three settings that widen anything (`require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`). Read-only |
+| "what is dev-prune allowed to do on my machine?" / "is this safe?" | `devp trust` — the guarantees the code enforces, then this machine read live: scheduler, hooks, and the three settings that widen anything (`require_confirmation=false`, `allow_manifest_rewrite`, opt-in adapters — `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`), then every binary dev-prune owns with its SHA-256 and a VirusTotal lookup URL for that digest — the running one first. Read-only; the digests are computed locally and the URLs are printed, never fetched, and nothing is ever uploaded |
 | "git says dubious ownership" / "devp run says it cannot examine my repos" | `devp trust --fix-ownership` — adds every registered repository Git refuses to read to the global `safe.directory` list, after showing the list and asking; `--yes` for a script. Repositories Git will not read have no known age and are never pruned, which is why `devp run` reports them |
 | "did I install anything my lockfiles don't know about?" | `devp status --drift` — every environment holding packages its lockfile never recorded, with the one command that records them. A pure read; this is what a prune would refuse on |
 | "why isn't it cleaning this?" | `devp doctor .` — ends by naming the one reason a pass would or would not touch it. Across every repository at once: `devp run --explain` — read-only, every verdict listed including the quiet ones (still active with the actual age, opted out, under the size floor). Conflicts with `--json`; the `--json --dry-run` document already carries every status |
@@ -205,9 +206,12 @@ devp stats --json           # what has already been reclaimed, and by which repo
                             # .lifetime.cache_bytes_freed is `caches clear`, counted apart
 devp run --dry-run --json   # what a pass would do, with exact byte counts
 devp run -y --json          # do it
-devp caches --json          # every package-manager cache, sized, largest first
+devp caches --json          # every package-manager cache, sized, largest first;
+                            # each row carries .volume, the drive it sits on
+devp caches --volume V: --json  # only that drive; .summary.volume says which, and
+                            # `containers` is absent because it belongs to no drive
 devp caches containers --json  # what Docker/Podman/nerdctl hold; carries no prune command
-devp trust --json           # what the tool guarantees, and what this machine has switched on
+devp trust --json           # what the tool guarantees, what this machine has switched on, and the SHA-256 of every binary it owns
 devp status --drift --json  # unrecorded packages per environment, with the record command
 ```
 
@@ -239,6 +243,7 @@ The fields worth reading first:
 | `totals.restore_estimate` / `repositories[].restore_estimate_secs` | how long putting it back would take, from restores timed on *this* machine — `null` until there is one. Never quote it as a whole answer unless `covered_bytes` equals `totals.reclaimable_bytes` |
 | `results[].shared_bytes` / `directories[].shared_bytes` | bytes hardlinked into a pnpm/bun store and therefore excluded from `bytes` — if the user asks why the figure is smaller than the folder size, this is the answer |
 | `summary.total_bytes` (caches) | every package-manager cache added up; `caches[].clear_command` is what the *user* runs, never you |
+| `caches[].volume` / `summary.volume` (caches) | the drive or filesystem a cache sits on (`V:\` on Windows, a mount point elsewhere) — group by it rather than re-deriving a mount table from `path`. Absent where dev-prune cannot tell. `summary.volume` appears only under `--volume`, and its presence means every figure in the document describes one drive rather than the machine |
 | `containers[]` (caches) / `engines[]` (caches containers) | what each container engine holds. **Never added to `summary.total_bytes`** — that figure answers "what could `devp caches clear` free", and none of this is that. An engine with `available: false` carries `reason` and *no* size keys: absent is not zero, so do not report 0 GB when dev-prune could not find out |
 
 `status` tags and `state` tags are separate vocabularies: the first is what a pass *did*,
@@ -564,7 +569,11 @@ their behalf.
 
 `devp trust` and `devp trust --json` report the same facts, read-only, as often as you
 like. Use those. If the user has never run dev-prune interactively, say so and let them
-run `devp config wizard` themselves rather than doing it for them.
+run `devp config wizard` themselves rather than doing it for them. Tell them it is one
+key: **holding `Enter` walks the whole configurator**, taking the recommended answer on
+every row and landing on a summary that needs one more `Enter` to save — or `a` takes
+the rest in one keystroke. Nothing is written until that final `Enter`, and
+`allow_manifest_rewrite` is never taken automatically by either.
 
 **`devp config recommended` is safe for you to run** when the user has asked for the
 recommended setup. It is one-shot, prints every change, needs no terminal, and does not

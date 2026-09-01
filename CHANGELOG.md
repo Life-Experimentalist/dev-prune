@@ -5,6 +5,86 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-09-01
+
+### Added
+
+- **`devp caches --volume V:`** reports only the caches sitting on one drive, and the
+  unfiltered report now ends with a `By drive` line splitting the total the same way.
+  On a machine whose projects live on a second disk, "22 GiB of caches" is not the
+  figure that decides anything — the two gigabytes on the drive that is *full* is, and
+  until now you had to read twelve absolute paths to find it. `--drive` is the same
+  flag; both take a drive (`V:`, `V:\`, or the bare letter `V`), a mount point
+  (`/mnt/data`, `/Volumes/Work`), or any path on the one you mean, so `--volume .` is
+  the drive you are standing on. In `--json`, every cache row gains a `volume` key so a
+  consumer can group by drive without deriving a mount table from `path`.
+
+  The narrowing happens last, after every verdict, so it changes what you see and never
+  what a figure means: a `cache_max_gb` cap still weighs a manager's whole footprint
+  wherever it is, and a cache no registered repository uses does not become unused just
+  because the repositories that use it live on another drive. Container engines are left
+  out of a filtered report entirely — an engine reports its disk from inside a VM image
+  that has no path on this filesystem, so there is no honest drive to file it under, and
+  the JSON document omits `containers` rather than emitting an empty list that would
+  claim none are installed. `devp caches docker` still has that number.
+
+  `--volume` with `clear`, `docker` or `containers` is a usage error rather than a flag
+  that looks accepted and does nothing: the clear commands empty a manager wherever it
+  is, and a `clear` that had silently ignored the drive you handed it would be the worst
+  possible way to find that out.
+
+- **`a` finishes the configurator in one keystroke.** `devp config wizard` takes every
+  remaining safe recommendation and jumps straight to the summary, which still needs its
+  own `Enter` before anything is written. It applies exactly what holding `Enter` down
+  would have applied — `allow_manifest_rewrite` is left off by both, because it can edit
+  a file Git tracks and that stays a deliberate `Space`. `Shift`+`Enter` does the same
+  thing on terminals that report the modifier; `a` is the spelling that works
+  everywhere, so `a` is the one the footer names. The first screen now says so too:
+  hold `Enter` and the whole setup configures itself.
+
+- **`devp trust` now ends with every binary it owns and the SHA-256 of each**, the one
+  you are running marked and listed first, each with a VirusTotal lookup URL for that
+  exact digest. When a scanner objects to dev-prune, the file it objected to is the one
+  on your disk — not the asset on a release page — and until now there was no way to ask
+  the tool which bytes those were. The digests are computed locally and the URLs are
+  printed rather than fetched: nothing is uploaded anywhere, and a digest the service has
+  never seen returns `not found`, which means unscanned rather than clean. On Windows
+  `dev-prune.exe` and `devp.exe` share a digest on purpose — one file under two names, so
+  a scanner builds one reputation record instead of two — and `devpw.exe`, the
+  console-free build the scheduled task runs, is a separate build target that legitimately
+  differs. `devp trust --json` carries the same facts under a new `binaries` array with
+  `sha256` as a field of its own, so a check can compare it against a published checksum
+  without parsing a sentence.
+
+- **Every Windows release now ships a `.zip.contents.sha256`** listing the digest of each
+  file *inside* the archive, in `sha256sum` format — `sha256sum -c` in the folder you
+  extracted to verifies all three at once. An archive's hash stops meaning anything the
+  moment you unpack it, and the unpacked files are the only ones an antivirus ever looks
+  at, so there was previously no published answer to "is the `devpw.exe` on my disk the
+  one you built?". The same digests come out of `devp trust`, which is the side of the
+  comparison you actually control.
+
+### Fixed
+
+- **The configurator no longer skips the settings above the cursor.** After an upgrade
+  added a setting, `devp config wizard` opened *on* that setting — halfway down the
+  list. But the walk only moves downwards and leaves through the finish line at the
+  bottom, so holding `Enter` from there never offered a single row above it. Anyone
+  configuring the tool the way its own footer suggests was configuring a suffix of it.
+  The cursor now starts at the top and the walk reaches everything; the new setting is
+  still marked `NEW` when it comes around.
+
+- **The AI skill now stays current on machines that turned auto-setup off.** dev-prune
+  exports `SKILL.md` — the file Claude Code and the other agents read to learn its flags
+  — and rewrites it after every upgrade. That refresh rode along with the automatic
+  setup pass, so turning setup off (`devp config set auto_setup false`, or
+  `DEV_PRUNE_NO_AUTO_SETUP`) also froze the skill at whichever version installed it: the
+  agent went on describing flags that had been removed two releases ago, confidently,
+  because nothing told it otherwise. An upgrade now refreshes the copies that are
+  already on disk regardless of that setting, and creates none that were not — a machine
+  that never wanted an exported skill still does not get one. `devp doctor` continues to
+  report a stale copy, and `devp skill` still rewrites it on demand.
+
 ## [1.15.0] - 2026-09-01
 
 ### Fixed

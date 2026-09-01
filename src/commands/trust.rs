@@ -98,12 +98,48 @@ impl TrustRow {
     }
 }
 
+/// One executable dev-prune owns on this machine, and the digest a scanner sees.
+///
+/// A separate type from [`TrustRow`] because the hash has to survive into `--json` as a
+/// field of its own. Somebody comparing their copy against a published `.sha256` should
+/// not have to parse it back out of a sentence.
+pub struct BinaryIdentity {
+    /// Stable identifier for `--json`: what this executable is *for*, not what it is
+    /// named, so a reader does not have to know that `devp` is the short name.
+    pub role: &'static str,
+    /// The file name, for a human.
+    pub name: String,
+    /// Where it is.
+    pub path: String,
+    /// Lower-case hex SHA-256, or `None` when the file could not be read.
+    pub sha256: Option<String>,
+    /// Whether this is the executable answering right now.
+    pub running: bool,
+    /// Why this one's digest differs from the others, when it does.
+    pub note: Option<&'static str>,
+}
+
+impl BinaryIdentity {
+    /// The scan report for this file's digest, if it could be hashed.
+    pub fn scan_url(&self) -> Option<String> {
+        self.sha256
+            .as_ref()
+            .map(|h| format!("{}/{h}", constants::VIRUSTOTAL_FILE_BASE))
+    }
+}
+
 /// The whole report.
 pub struct TrustReport {
     /// Structural guarantees. Identical on every machine.
     pub guarantees: Vec<TrustRow>,
     /// Live state, read from the registry and the OS.
     pub machine: Vec<TrustRow>,
+    /// Every executable dev-prune owns here, the one that is running first.
+    ///
+    /// Filled by [`run`] and not by [`build`]: hashing three executables costs more than
+    /// every other row in this report put together, and the first-run configurator opens
+    /// on `build` while the user is waiting at a blank terminal.
+    pub binaries: Vec<BinaryIdentity>,
 }
 
 impl TrustReport {
@@ -123,7 +159,8 @@ impl TrustReport {
 /// Run the `trust` command.
 pub fn run(json_output: bool) -> Result<()> {
     let registry = Registry::load()?;
-    let report = build(&registry);
+    let mut report = build(&registry);
+    report.binaries = binaries();
 
     if json_output {
         return json::emit(&json::trust_document(&report));
@@ -343,6 +380,7 @@ pub(crate) fn build(registry: &Registry) -> TrustReport {
     TrustReport {
         guarantees: guarantees(),
         machine: machine_state(registry),
+        binaries: Vec::new(),
     }
 }
 
@@ -523,9 +561,10 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
         ),
         Verdict::Neutral,
     ));
-    // The managed path, not `current_exe()`: on Windows the scheduler runs a patched
-    // twin and `devp update` replaces the managed copy, so the path that matters to
-    // someone asking what runs on this machine is the one dev-prune owns.
+    // The managed path, not `current_exe()`: on Windows the scheduler runs `devpw.exe`
+    // from the same directory and `devp update` replaces the managed copy, so the path
+    // that matters to someone asking what runs on this machine is the one dev-prune
+    // owns. The binaries section below hashes them all, this one is running or not.
     rows.push(TrustRow::new(
         "binary",
         "Managed binary",
@@ -534,6 +573,115 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
     ));
 
     rows
+}
+
+/// Every executable dev-prune owns on this machine, hashed, the running one first.
+///
+/// This exists because of what an antivirus actually looks at. A scanner judges the file
+/// on the disk in front of it, so a checksum published on a release page answers nothing
+/// on its own — the question is whether *this* copy has that digest. Printing the hash
+/// beside the path lets anyone compare the two themselves, and turns "is the thing I
+/// installed the thing you published?" from a matter of trust into one line of `diff`.
+///
+/// Deliberately not [`daemon::get_exe_path`]: that repairs a stale managed copy as a
+/// side effect of being asked where it is, and a read-only report must not write to the
+/// machine it is describing.
+pub(crate) fn binaries() -> Vec<BinaryIdentity> {
+    let mut found: Vec<(std::path::PathBuf, &'static str, Option<&'static str>)> = Vec::new();
+
+    // The managed set, derived from the one path that is a constant rather than a
+    // reading. `devp` is a hard link or a copy of `dev-prune` and `devpw.exe` is a
+    // separate build target, which is exactly the distinction the digests will show.
+    if let Ok(managed) = crate::setup::managed_exe_path() {
+        let dir = managed.parent().map(|d| d.to_path_buf());
+        found.push((managed, "managed", None));
+        if let Some(dir) = dir {
+            let alias = if cfg!(windows) { "devp.exe" } else { "devp" };
+            found.push((
+                dir.join(alias),
+                "alias",
+                Some(
+                    "The same bytes as dev-prune under a second name, so a scanner \
+                     builds one reputation record instead of two.",
+                ),
+            ));
+            if cfg!(windows) {
+                found.push((
+                    dir.join(constants::WINDOWS_WINDOWLESS_BIN),
+                    "windowless",
+                    Some(
+                        "A different digest by design — the same code linked for \
+                         the GUI subsystem, so the scheduler flashes no console window.",
+                    ),
+                ));
+            }
+        }
+    }
+
+    // Whatever is answering now, which on a `cargo install` machine or inside `npx` is
+    // none of the above. Pushed last and promoted first, so it is never listed twice.
+    let running = std::env::current_exe().ok();
+    if let Some(current) = running.clone() {
+        found.push((current, "other", None));
+    }
+
+    let same = |a: &std::path::Path, b: &std::path::Path| -> bool {
+        // Canonicalised, because on Unix `devp` is a symlink to `dev-prune`: two names
+        // for one inode are one binary, and listing two digests for it would invite
+        // someone to go looking for a difference that cannot exist.
+        match (a.canonicalize(), b.canonicalize()) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => a == b,
+        }
+    };
+
+    let mut rows: Vec<BinaryIdentity> = Vec::new();
+    for (path, role, note) in found {
+        if !path.is_file()
+            || rows
+                .iter()
+                .any(|r| same(std::path::Path::new(&r.path), &path))
+        {
+            continue;
+        }
+        let is_running = running.as_deref().is_some_and(|c| same(c, &path));
+        rows.push(BinaryIdentity {
+            role,
+            name: path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            path: output::clean_path(&path),
+            sha256: sha256_of(&path),
+            running: is_running,
+            note,
+        });
+    }
+
+    // The user asked which one they are running; that answer goes at the top, and the
+    // rest are context for it.
+    rows.sort_by_key(|r| !r.running);
+    rows
+}
+
+/// Lower-case hex SHA-256 of a file, or `None` if it cannot be read.
+///
+/// Read whole rather than streamed: these are single-digit-megabyte executables, and the
+/// alternative is a `Write` bound on the digest type that `sha2` may or may not offer in
+/// the next release.
+fn sha256_of(path: &std::path::Path) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+
+    let bytes = std::fs::read(path).ok()?;
+    let mut h = Sha256::new();
+    h.update(&bytes);
+    // Hex-encoded by hand: `sha2` 0.11 returns a `hybrid_array::Array`, which has no
+    // `LowerHex`, and every `.sha256` sidecar we publish is lower-case hex.
+    Some(h.finalize().iter().fold(String::new(), |mut acc, b| {
+        let _ = write!(acc, "{b:02x}");
+        acc
+    }))
 }
 
 /// Which opt-in adapters are switched on, in the order the report should name them.
@@ -624,6 +772,52 @@ fn print_report(report: &TrustReport) {
         "The guarantees above are enforced in `src/engine.rs` and described in full at \
          docs/SAFETY_INVARIANTS.md. None of them has a bypass flag.",
     );
+
+    print_binaries(&report.binaries);
+}
+
+/// The bottom section: what is actually on this disk, and the digest a scanner reads.
+fn print_binaries(binaries: &[BinaryIdentity]) {
+    if binaries.is_empty() {
+        return;
+    }
+
+    println!();
+    println!("  Binaries on this machine");
+    println!();
+    for b in binaries {
+        let label = if b.running {
+            format!("{} (running)", b.name)
+        } else {
+            b.name.clone()
+        };
+        let mark = if b.running { ">" } else { " " };
+        println!("  {mark}  {label:<30} {}", b.path);
+        match (&b.sha256, b.scan_url()) {
+            (Some(hash), Some(url)) => {
+                println!("     {:<30} {hash}", "SHA-256");
+                println!("     {:<30} {url}", "Scan report");
+            }
+            // A file that is present and unreadable is worth saying out loud. Dropping
+            // the row silently would read as "this one does not have a digest".
+            _ => println!("     {:<30} could not be read", "SHA-256"),
+        }
+        if let Some(note) = b.note {
+            println!("     {note}");
+        }
+        println!();
+    }
+
+    output::print_info(
+        "Those links are lookups by digest, not uploads — dev-prune sends no file \
+         anywhere. A digest the service has never seen comes back `not found`, which \
+         means unscanned rather than clean.",
+    );
+    output::print_info(
+        "A copy installed from a release has the same SHA-256 as the asset published \
+         beside it, so the two can be compared by hand. One built by `cargo install` was \
+         compiled here and matches nothing published.",
+    );
 }
 
 fn print_row(row: &TrustRow) {
@@ -681,6 +875,54 @@ mod tests {
         registry.settings.enable_swift = true;
         registry.settings.enable_gradle = true;
         assert_eq!(opt_in_adapters(&registry), vec!["gradle", "swift"]);
+    }
+
+    #[test]
+    fn build_never_hashes_anything() {
+        // The first-run configurator opens on `build`, and hashing every managed
+        // executable there would put a visible pause in front of the first screen. The
+        // command fills this in afterwards; `build` must leave it empty.
+        assert!(build(&Registry::default()).binaries.is_empty());
+    }
+
+    #[test]
+    fn the_running_binary_is_listed_first_and_hashed() {
+        let found = binaries();
+        let running: Vec<&BinaryIdentity> = found.iter().filter(|b| b.running).collect();
+        assert_eq!(running.len(), 1, "expected exactly one running binary");
+        assert!(found[0].running, "the running binary must lead the list");
+
+        let hash = found[0]
+            .sha256
+            .as_deref()
+            .expect("the running file is readable");
+        assert_eq!(hash.len(), 64);
+        assert!(
+            hash.bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        );
+        assert_eq!(
+            found[0].scan_url().unwrap(),
+            format!("{}/{hash}", constants::VIRUSTOTAL_FILE_BASE)
+        );
+    }
+
+    #[test]
+    fn one_file_is_never_listed_twice() {
+        // On Unix `devp` is a symlink to `dev-prune`, and on Windows the two are byte
+        // identical on purpose. Either way they are one binary, and printing two rows
+        // for it would send someone looking for a difference that cannot exist.
+        let found = binaries();
+        let mut paths: Vec<&str> = found.iter().map(|b| b.path.as_str()).collect();
+        let total = paths.len();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(
+            paths.len(),
+            total,
+            "duplicate path in {found:?}",
+            found = paths
+        );
     }
 
     #[test]

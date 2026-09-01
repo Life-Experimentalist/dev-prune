@@ -362,6 +362,15 @@ pub enum Commands {
         #[arg(long, global = true)]
         json: bool,
 
+        /// Report only the caches that sit on one drive or filesystem: `--volume V:`,
+        /// `--volume /mnt/data`, or any path on it. `--drive` is the same flag.
+        ///
+        /// Not global: it narrows the report, and there is nothing for it to narrow in
+        /// `clear`, `docker` or `containers`, so pairing it with one is a usage error
+        /// rather than a flag that looks accepted and does nothing.
+        #[arg(long, visible_alias = "drive", value_name = "VOLUME")]
+        volume: Option<String>,
+
         #[command(subcommand)]
         action: Option<CachesAction>,
     },
@@ -888,7 +897,22 @@ pub fn run_cli() {
                 commands::trust::run(json)
             }
         }
-        Commands::Caches { json, action } => match action {
+        Commands::Caches {
+            json,
+            volume,
+            action,
+        } => match action {
+            // Refused rather than ignored. `--volume` reads as "act on this drive
+            // only", and a `clear` that silently emptied every drive after being
+            // handed one would be the worst possible way to learn the flag does not
+            // reach here.
+            Some(_) if volume.is_some() => Err(anyhow::Error::new(UsageError(
+                "`--volume` narrows the report and has nothing to narrow in a subcommand. \
+                 Run `devp caches --volume <VOLUME>` on its own to see what is on one \
+                 drive; `devp caches clear <manager>` then empties that manager \
+                 wherever it is."
+                    .to_string(),
+            ))),
             Some(CachesAction::Clear {
                 target,
                 over_cap,
@@ -901,7 +925,7 @@ pub fn run_cli() {
             Some(CachesAction::Containers { engine }) => {
                 commands::containers::run(engine.as_deref(), json)
             }
-            None => commands::caches::run(json),
+            None => commands::caches::run(json, volume.as_deref()),
         },
         Commands::Config { action } => match action {
             Some(ConfigAction::Get { key }) => commands::config::run_get(&key),

@@ -34,7 +34,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.15.0";
+const VERSION = "1.16.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -1070,11 +1070,23 @@ Notes you should rely on, not work around:
                 </span>
               </h1>
               <p className="hero-description">
-                <strong>dev-prune</strong> deletes <code>node_modules</code>,{" "}
-                <code>.venv</code>, <code>target</code> and <code>vendor</code>{" "}
-                from Git repositories you have not touched in a while — but only
-                after the package manager itself confirms a lockfile can rebuild
-                them. Verification is not a flag you can turn off.
+                <strong>dev-prune</strong> finds Git repositories you have not
+                touched in a while and deletes what their package managers can
+                rebuild — <code>node_modules</code>, <code>.venv</code>,{" "}
+                <code>target</code>, <code>vendor</code> and the rest, across
+                twenty-three managers from npm and pip to Composer, Bundler,
+                Mix, CocoaPods and Terraform. Nothing is deleted until the
+                package manager itself confirms a lockfile can restore it.
+                Verification is not a flag you can turn off.
+              </p>
+
+              <p className="hero-description">
+                Pruning is one command of several. The same binary restores what
+                it removed, sizes and clears the caches package managers keep
+                outside your projects, reports what Docker is holding, and shows
+                where the disk went drive by drive &mdash; one tool for every
+                dependency directory on the machine, instead of one per
+                ecosystem.
               </p>
 
               <p className="hero-alias">
@@ -1272,8 +1284,14 @@ Notes you should rely on, not work around:
                         Prune [i] Ignore [q] Quit
                       </div>
                       <div className="term-line c-dim">
-                        dev-prune · made with ♥ by VKrishna04 ·
-                        github.com/Life-Experimentalist/dev-prune
+                        <a href="/">dev-prune</a> · made with ♥ by{" "}
+                        <a href={PORTFOLIO} target="_blank" rel="noreferrer">
+                          VKrishna04
+                        </a>{" "}
+                        ·{" "}
+                        <a href={REPO} target="_blank" rel="noreferrer">
+                          github.com/Life-Experimentalist/dev-prune
+                        </a>
                       </div>
                     </div>
                   )}
@@ -2037,6 +2055,21 @@ Notes you should rely on, not work around:
                   </tr>
                   <tr>
                     <td className="td-name">
+                      <code>devp caches --volume V:</code>
+                    </td>
+                    <td>
+                      Only the caches sitting on one drive. <code>--drive</code>{" "}
+                      is the same flag, and it takes a mount point{" "}
+                      (<code>/mnt/data</code>, <code>/Volumes/Work</code>) or any
+                      path on the drive you mean. The unfiltered report ends with
+                      a <code>By drive</code> line splitting the total the same
+                      way: on a machine whose projects live on a second disk, the
+                      machine-wide total is not the figure that decides anything —
+                      the gigabytes on the drive that is full are
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
                       <code>devp caches docker</code>
                     </td>
                     <td>
@@ -2074,7 +2107,10 @@ Notes you should rely on, not work around:
                     <td>
                       What dev-prune is allowed to do on this machine, on one
                       screen: what the code guarantees everywhere, then every
-                      setting you have switched on that widens it, by name
+                      setting you have switched on that widens it, by name, then
+                      every binary it owns with the SHA-256 an antivirus
+                      actually sees &mdash; the one on your disk, not the one on
+                      the release page
                     </td>
                   </tr>
                   <tr>

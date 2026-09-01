@@ -15,7 +15,8 @@
         <a href="https://devprune.vkrishna04.me">dev-prune</a> (<code>devp</code>)
         reclaims disk space from idle Git repositories by deleting dependency
         directories — <code>node_modules</code>, <code>.venv</code>, <code>target</code>,
-        <code>vendor</code> — only after the project's package manager confirms a
+        <code>vendor</code> and whatever else its twenty-three supported package
+        managers own — only after the project's package manager confirms a
         lockfile can rebuild them.
     ]]></description>
 

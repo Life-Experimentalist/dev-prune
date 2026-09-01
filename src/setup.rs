@@ -510,10 +510,29 @@ pub fn ensure_agent_skills() -> Outcome {
 pub fn stale_skill_copies() -> Vec<PathBuf> {
     let mut copies: Vec<PathBuf> = skill_path().into_iter().collect();
     copies.extend(agent_skill_roots().into_iter().map(|r| r.join("SKILL.md")));
+    stale_among(copies)
+}
+
+/// The ones of `copies` that exist and differ from the embedded skill.
+///
+/// A path that is not there is not stale — it is a copy this machine never had, and
+/// nothing that refreshes may create it.
+fn stale_among(copies: Vec<PathBuf>) -> Vec<PathBuf> {
     copies
         .into_iter()
         .filter(|p| fs::read_to_string(p).is_ok_and(|current| current != EMBEDDED_SKILL_MD))
         .collect()
+}
+
+/// Rewrite copies that are already on disk, and only those.
+///
+/// This is the half of [`ensure_skill_copies`] that is safe to run on a machine which
+/// turned auto-setup off: replacing the contents of a file that machine already
+/// consented to is maintenance, not a new integration.
+fn refresh_stale(stale: Vec<PathBuf>) {
+    for path in stale {
+        let _ = fs::write(path, EMBEDDED_SKILL_MD);
+    }
 }
 
 /// Rewrite every managed copy of `SKILL.md` from the embedded one.
@@ -1198,6 +1217,14 @@ pub fn auto_setup_if_due() {
     let Some(report) = ensure_integrations_if_enabled(&registry) else {
         // Suppressed. Stamp anyway, so a machine that opted out does not re-decide
         // this on every single command.
+        //
+        // The one thing opting out must not do is freeze the instructions AI agents
+        // read at whichever version installed them. The stamp below is what would
+        // freeze them: it is rewritten for every new version without a pass ever
+        // running, so an existing `SKILL.md` here would never be reconsidered again,
+        // and the agent would go on describing flags that were removed two releases
+        // ago — confidently, because nothing told it otherwise.
+        refresh_stale(stale_skill_copies());
         write_stamp();
         crate::commands::config::skip_config_review();
         return;
@@ -1496,6 +1523,24 @@ mod tests {
 
         // A second pass finds it current and leaves it alone.
         assert_eq!(ensure_agent_skills_at(&roots), Outcome::AlreadyPresent);
+    }
+
+    #[test]
+    fn refreshing_rewrites_the_copies_that_exist_and_creates_none() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let present = dir.path().join("SKILL.md");
+        fs::write(&present, "# the instructions from two releases ago").unwrap();
+        let never_installed = dir.path().join("no-agent-here").join("SKILL.md");
+
+        let stale = stale_among(vec![present.clone(), never_installed.clone()]);
+        assert_eq!(stale, vec![present.clone()]);
+
+        refresh_stale(stale);
+        assert_eq!(fs::read_to_string(&present).unwrap(), EMBEDDED_SKILL_MD);
+        assert!(
+            !never_installed.exists(),
+            "a machine that never had a copy must not acquire one from a refresh"
+        );
     }
 
     #[test]

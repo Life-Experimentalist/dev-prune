@@ -1460,6 +1460,46 @@ fn an_unknown_caches_flag_is_a_usage_error_not_a_report() {
     assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
 }
 
+/// `--volume` narrows the report, and there is nothing for it to narrow in `clear`,
+/// `docker` or `containers`. Refused rather than accepted-and-ignored, because a `clear`
+/// handed a drive would otherwise empty every drive.
+#[test]
+fn a_volume_with_a_caches_subcommand_is_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    for args in [
+        vec!["caches", "--volume", "C:", "clear", "npm"],
+        vec!["caches", "--drive", "C:", "docker"],
+        vec!["caches", "--volume", "C:", "containers"],
+    ] {
+        let out = devp(&config).args(&args).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{:?}
+{}",
+            args,
+            combined(&out)
+        );
+    }
+}
+
+/// A drive that does not parse is a usage error, not an empty report: "no caches on
+/// that drive" and "that is not a drive" are different answers, and only one of them
+/// tells the reader to fix what they typed.
+#[test]
+fn a_volume_that_is_not_a_drive_is_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["caches", "--volume", "definitely-not-a-drive"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+}
+
 // The container report runs on whatever the runner happens to have. Docker is present
 // and running on the Linux runners, present with a stopped daemon on the Windows and
 // macOS ones, and absent on a developer machine without it — so nothing below asserts a

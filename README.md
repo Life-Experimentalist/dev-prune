@@ -27,9 +27,17 @@ lockfile that is already committed. A project you have not opened since March is
 gigabytes hostage for a build you are not running.
 
 `dev-prune` finds those directories across every Git repository you register, and deletes
-them — but only after proving the exact command that puts them back would succeed. It is
-a single Rust binary, installs its own background schedule, and answers to two names:
-`dev-prune` and `devp`.
+them — but only after proving the exact command that puts them back would succeed. It
+knows twenty-three package managers, not just the obvious four: Composer, Bundler, Mix,
+CocoaPods and Terraform are as first-class as npm and pip. It is a single Rust binary,
+installs its own background schedule, and answers to two names: `dev-prune` and `devp`.
+
+Deleting is only half of it. The same binary puts everything back (`devp restore`,
+`devp undo`), sizes and clears the caches those package managers keep *outside* your
+projects (`devp caches`), reports what Docker is holding (`devp containers`), and shows
+where the disk actually went, drive by drive (`devp status`, `devp stats`). One tool for
+every dependency directory on the machine, instead of one command per ecosystem and a
+mental note about which ones are safe.
 
 > [!IMPORTANT]
 > **The rule the whole tool is built around:** nothing is deleted unless dev-prune has

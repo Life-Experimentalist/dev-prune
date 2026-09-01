@@ -408,31 +408,181 @@ const PROBES: &[Probe] = &[
     },
 ];
 
-/// Run the `caches` command.
-pub fn run(json_output: bool) -> Result<()> {
+/// Run the `caches` command, for the whole machine or for one drive.
+pub fn run(json_output: bool, volume: Option<&str>) -> Result<()> {
+    // Before the size walk, so a drive that was mistyped costs nothing.
+    let volume = volume.map(resolve_volume).transpose()?;
+
     let reg = registered();
     let mut reports = collect(!json_output, reg.as_ref());
     apply_caps(&mut reports, &caps());
     let deps = reg.as_ref().map(|r| dependents(r, !json_output));
     apply_dependents(&mut reports, deps.as_ref());
 
+    // Narrowed last, after every verdict is decided, so each one stays a statement about
+    // the whole machine. A cap is per manager wherever that manager's caches are, and
+    // "no registered repository uses this" must not become true just because the
+    // repositories that do use it are on another drive.
+    if let Some(root) = &volume {
+        reports = on_volume(reports, root);
+    }
+
     // Asked here rather than left to `devp caches containers`, because the mistake this
     // report exists to prevent is someone clearing 6 GB of npm cache while a stopped
     // Docker daemon holds 40 GB they were never told about. It costs one `system df` per
     // installed engine and nothing at all on a machine with none.
-    let engines = container_summary(!json_output);
+    //
+    // Skipped under `--volume`: an engine reports its own disk from inside a VM image
+    // that has no path on this filesystem, so there is no honest drive to file it under
+    // and quietly filing it under this one would be a fabricated number.
+    let engines = if volume.is_some() {
+        Vec::new()
+    } else {
+        container_summary(!json_output)
+    };
 
     if json_output {
         return json::emit(&json::caches_document(
             &reports,
             deps.as_ref().map(|d| d.repositories),
             &engines,
+            volume.as_deref(),
         ));
     }
 
-    print_report(&reports, deps.as_ref());
+    print_report(&reports, deps.as_ref(), volume.as_deref());
     crate::commands::containers::print_summary(&engines);
     Ok(())
+}
+
+/// Turn what someone typed after `--volume` into the root of a drive or filesystem.
+///
+/// Anything on the volume is accepted, not just its root, because the question is "which
+/// drive" and a path the reader already has in their hand answers it.
+fn resolve_volume(arg: &str) -> Result<PathBuf> {
+    let path = absolutize(normalize_volume_arg(arg));
+    volume_root(&path).ok_or_else(|| {
+        anyhow::Error::new(crate::UsageError(format!(
+            "`{arg}` is not a drive or a path on one. Name a drive (`--volume V:`), a \
+             mount point (`--volume /mnt/data`), or any path that sits on the one you \
+             mean."
+        )))
+    })
+}
+
+/// A relative path names a volume as well as an absolute one, and `--volume .` — the
+/// drive you are standing on — is the shortest way to say it. Neither [`volume_root`]
+/// can see it: the Windows one reads a prefix a relative path has not got, and the Unix
+/// one walks ancestors that stop at the working directory instead of the mount point.
+///
+/// Only a path that exists is expanded. Every unrecognised word is also a valid relative
+/// path on Windows, so absolutising unconditionally would turn `--volume typo` into a
+/// silent report about the current drive — and "that is not a drive" is the answer that
+/// sends someone back to check what they typed.
+fn absolutize(path: PathBuf) -> PathBuf {
+    if path.is_absolute() || !path.exists() {
+        return path;
+    }
+    std::path::absolute(&path).unwrap_or(path)
+}
+
+/// What a person types when asked which drive, turned into a path with a root.
+///
+/// `V:` is a drive-*relative* path to Windows — "wherever the current directory on V:
+/// is" — and has no root component, so [`volume_root`] refuses it. It is also, with a
+/// bare `V`, exactly what gets typed. Anything else is passed through untouched and
+/// stands or falls as a path.
+#[cfg(windows)]
+fn normalize_volume_arg(arg: &str) -> PathBuf {
+    let trimmed = arg.trim();
+    let letter = match trimmed.as_bytes() {
+        [c] if c.is_ascii_alphabetic() => Some(*c),
+        [c, b':'] if c.is_ascii_alphabetic() => Some(*c),
+        _ => None,
+    };
+    match letter {
+        Some(c) => PathBuf::from(format!("{}:\\", c.to_ascii_uppercase() as char)),
+        None => PathBuf::from(trimmed),
+    }
+}
+
+/// Unix has no drive letters to expand, so a mount point is already a path.
+#[cfg(unix)]
+fn normalize_volume_arg(arg: &str) -> PathBuf {
+    PathBuf::from(arg.trim())
+}
+
+/// Whether two volume roots are the same volume.
+///
+/// Compared by what the prefix *means*, never by its text. A cache path that came back
+/// from `canonicalize` carries the verbatim prefix — `\?\C:\` — and the drive someone
+/// typed is `C:\`; those are one drive, and a string comparison says they are two, which
+/// is a filter that silently reports every machine as having no caches anywhere.
+#[cfg(windows)]
+fn same_volume(a: &Path, b: &Path) -> bool {
+    match (volume_key(a), volume_key(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// What a Windows path's prefix names, with the verbatim spelling and the case removed.
+#[cfg(windows)]
+fn volume_key(path: &Path) -> Option<String> {
+    use std::path::{Component, Prefix};
+
+    let Some(Component::Prefix(prefix)) = path.components().next() else {
+        return None;
+    };
+    Some(match prefix.kind() {
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => {
+            (letter.to_ascii_uppercase() as char).to_string()
+        }
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => format!(
+            "{}\\{}",
+            server.to_string_lossy().to_uppercase(),
+            share.to_string_lossy().to_uppercase()
+        ),
+        other => format!("{other:?}").to_uppercase(),
+    })
+}
+
+/// Unix paths are bytes, and two mount points that differ in case are two mount points.
+#[cfg(unix)]
+fn same_volume(a: &Path, b: &Path) -> bool {
+    a == b
+}
+
+/// The rows that sit on one volume.
+///
+/// A row whose volume cannot be determined is dropped rather than kept: `--volume V:`
+/// asks for what is on V:, and "we could not tell" is not that.
+fn on_volume(reports: Vec<CacheReport>, root: &Path) -> Vec<CacheReport> {
+    reports
+        .into_iter()
+        .filter(|r| volume_root(&r.path).is_some_and(|v| same_volume(&v, root)))
+        .collect()
+}
+
+/// What each volume holds, largest first.
+///
+/// Rows whose volume is unknown are left out entirely rather than gathered under a
+/// heading, because a subtotal that does not add up to the total printed above it is
+/// worse than a subtotal that is missing.
+fn volume_totals(reports: &[CacheReport]) -> Vec<(String, u64)> {
+    let mut totals: Vec<(String, u64)> = Vec::new();
+    for r in reports {
+        let Some(root) = volume_root(&r.path) else {
+            continue;
+        };
+        let label = output::clean_path(&root);
+        match totals.iter_mut().find(|(l, _)| *l == label) {
+            Some((_, bytes)) => *bytes += r.bytes,
+            None => totals.push((label, r.bytes)),
+        }
+    }
+    totals.sort_by_key(|(_, bytes)| std::cmp::Reverse(*bytes));
+    totals
 }
 
 /// The container engines on this machine, behind the report's own spinner.
@@ -750,7 +900,7 @@ fn volume_roots(repos: &[PathBuf]) -> Vec<PathBuf> {
 /// the same answer on every Unix. The highest ancestor still on the same device is where
 /// the filesystem starts.
 #[cfg(unix)]
-fn volume_root(path: &Path) -> Option<PathBuf> {
+pub(crate) fn volume_root(path: &Path) -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
 
     let dev = std::fs::metadata(path).ok()?.dev();
@@ -771,7 +921,7 @@ fn volume_root(path: &Path) -> Option<PathBuf> {
 /// the cost of missing the other case is a cache that goes unreported rather than one
 /// that is wrongly cleared.
 #[cfg(windows)]
-fn volume_root(path: &Path) -> Option<PathBuf> {
+pub(crate) fn volume_root(path: &Path) -> Option<PathBuf> {
     use std::path::Component;
 
     let mut components = path.components();
@@ -966,12 +1116,19 @@ fn cargo_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".cargo"))
 }
 
-fn print_report(reports: &[CacheReport], deps: Option<&Dependents>) {
+fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Option<&Path>) {
     output::print_header(i18n::t("caches.header"));
 
     if reports.is_empty() {
         println!();
-        output::print_info(i18n::t("caches.nothing"));
+        match volume {
+            Some(root) => output::print_info(&format!(
+                "No package manager cache on this machine sits on {}. They are somewhere \
+                 else — run `devp caches` without `--volume` to see where.",
+                output::clean_path(root)
+            )),
+            None => output::print_info(i18n::t("caches.nothing")),
+        }
         return;
     }
 
@@ -1017,6 +1174,21 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>) {
         output::plural(reports.len(), "cache", "caches")
     );
 
+    // Where the total actually is. On a machine whose projects live on a second disk,
+    // "22 GiB of caches" is not the number that decides anything — the two gigabytes
+    // sitting on the drive that is full is. Printed only when there is more than one
+    // volume to tell apart, so it never appears under `--volume`, where there is one by
+    // construction and the line would only repeat the total above it.
+    let by_volume = volume_totals(reports);
+    if by_volume.len() > 1 {
+        let named = by_volume
+            .iter()
+            .map(|(label, bytes)| format!("{label} {}", output::format_bytes(*bytes)))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        println!("  {:<30} {:>10}  {named}", "By drive", "");
+    }
+
     // A ranking, not a recommendation. Which of these is worth emptying depends on what
     // the reader is about to do with this machine, and inventing a threshold to call one
     // of them "too big" would be inventing a fact. Naming the order is enough.
@@ -1047,6 +1219,19 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>) {
              counts only repositories dev-prune knows about, so `devp link` anything you keep \
              outside the registry before trusting the number.",
         );
+    }
+
+    if let Some(root) = volume {
+        println!();
+        output::print_info(&format!(
+            "Only the caches on {} are above, and the container engines are not among \
+             them: an engine reports its own disk from inside a VM image with no path on \
+             this filesystem, so there is no drive to file it under — `devp caches \
+             docker` has that number. The clear commands above are not drive-specific \
+             either. They empty that manager's cache wherever it is, which for every \
+             manager but pnpm is one place.",
+            output::clean_path(root)
+        ));
     }
 
     println!();
@@ -2033,6 +2218,91 @@ mod tests {
         let root = volume_root(Path::new(r"V:\Code\ProjectCode")).unwrap();
         assert_eq!(root, PathBuf::from("V:\\"));
         assert_eq!(volume_root(Path::new(r"Code\ProjectCode")), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_drive_someone_types_and_the_drive_on_disk_are_the_same_drive() {
+        // Cache paths come back from `canonicalize`, which stamps the verbatim prefix on
+        // them, and nobody types `\\?\C:\`. Comparing the two as text is a filter that
+        // reports every machine as having no caches on any drive — which is exactly what
+        // it did before this was a function.
+        assert!(same_volume(Path::new(r"\\?\C:\"), Path::new(r"C:\")));
+        assert!(same_volume(Path::new(r"c:\"), Path::new(r"C:\")));
+        assert!(!same_volume(Path::new(r"C:\"), Path::new(r"V:\")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_bare_drive_letter_is_what_people_type_and_has_to_resolve() {
+        // `V:` is drive-*relative* to Windows — the current directory on V:, with no root
+        // component — so it is refused by the parser it has to survive. It is also the
+        // first thing anyone types after `--volume`, as is a bare `V`.
+        for typed in ["V", "v", "V:", "v:", r"V:\", r"V:\Code\ProjectCode"] {
+            assert_eq!(
+                resolve_volume(typed).unwrap(),
+                PathBuf::from(r"V:\"),
+                "{typed}"
+            );
+        }
+        assert!(resolve_volume("not-a-path-at-all").is_err());
+    }
+
+    #[test]
+    fn the_drive_you_are_standing_on_is_a_dot() {
+        // `--volume .` is the shortest way to name the drive you are on, and it is what
+        // the reference tells people to type. A relative path reaches neither
+        // `volume_root`: one reads a prefix it has not got, the other walks ancestors
+        // that stop at the working directory rather than the mount point.
+        let here = std::env::current_dir().unwrap();
+        assert_eq!(resolve_volume(".").unwrap(), volume_root(&here).unwrap());
+        // A word that is not a path is still a usage error, and not a silent report
+        // about the current drive.
+        assert!(resolve_volume("definitely-not-a-drive").is_err());
+    }
+
+    #[test]
+    fn narrowing_to_one_drive_keeps_only_what_is_on_it() {
+        // The whole point of the flag: a drive that is nearly full is the only drive that
+        // matters, and the twenty gigabytes on the other one are noise.
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("cache");
+        std::fs::create_dir_all(&here).unwrap();
+        let root = volume_root(&here).unwrap();
+
+        let mut on_this_one = sized("pnpm", 2_048, Some(1));
+        on_this_one.path = here;
+        let mut nowhere = sized("npm", 10_240, Some(18));
+        nowhere.path = PathBuf::from("relative/and/unresolvable");
+
+        let kept = on_volume(vec![on_this_one, nowhere], &root);
+        assert_eq!(
+            kept.len(),
+            1,
+            "a row whose drive is unknown is not on this one"
+        );
+        assert_eq!(kept[0].manager, "pnpm");
+    }
+
+    #[test]
+    fn the_per_drive_line_adds_up_and_leads_with_the_biggest() {
+        // A subtotal a reader cannot add back up to the printed total is worse than no
+        // subtotal, so a row whose drive cannot be determined is left out rather than
+        // filed under a guess.
+        let dir = tempfile::tempdir().unwrap();
+        let here = dir.path().join("cache");
+        std::fs::create_dir_all(&here).unwrap();
+
+        let mut small = sized("pnpm", 100, None);
+        small.path = here.clone();
+        let mut large = sized("npm", 900, None);
+        large.path = here;
+        let mut unknown = sized("uv", 500, None);
+        unknown.path = PathBuf::from("relative/and/unresolvable");
+
+        let totals = volume_totals(&[small, large, unknown]);
+        assert_eq!(totals.len(), 1);
+        assert_eq!(totals[0].1, 1_000);
     }
 
     #[test]

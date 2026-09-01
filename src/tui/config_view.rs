@@ -286,18 +286,23 @@ fn last_stop(entries: &[SettingEntry]) -> Option<usize> {
         .rposition(|e| matches!(e, SettingEntry::Row(_) | SettingEntry::Finish))
 }
 
-/// Where the cursor starts: the first setting the user has never been shown, when there
-/// is one. After an upgrade that setting is the only reason this screen is in front of
-/// them, and making them hunt for it down a list of twenty is how it gets skipped.
+/// Where the cursor starts: the top of the list, always.
+///
+/// It used to open on the first setting the user had never been shown, so that an
+/// upgrade put its new setting in front of them rather than twenty rows down. That was
+/// the right instinct and the wrong mechanism, because the walk leaves through the
+/// finish line at the *bottom*: starting in the middle meant Enter never visited a
+/// single row above the cursor, and after an upgrade that is most of the list. Someone
+/// holding Enter to configure the tool was silently configuring a suffix of it.
+///
+/// Starting at the top costs the upgrade case nothing. The walk passes through the new
+/// setting on its way down, and the magenta "New in this version" line still says which
+/// one it is when the cursor arrives.
 ///
 /// An index into the drawn entries, not into `rows`: the two stopped being the same
 /// thing when headings joined the list.
-fn opening_index(entries: &[SettingEntry], rows: &[ConfigRow]) -> usize {
-    entries
-        .iter()
-        .position(|e| matches!(e, SettingEntry::Row(i) if rows[*i].is_new))
-        .or_else(|| first_row(entries))
-        .unwrap_or(0)
+fn opening_index(entries: &[SettingEntry]) -> usize {
+    first_row(entries).unwrap_or(0)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -417,7 +422,7 @@ pub fn run(session: ConfigSession<'_>) -> Result<Outcome> {
 
     let setting_entries = settings_entries(&session.rows);
     let mut list = ListState::default();
-    list.select(Some(opening_index(&setting_entries, &session.rows)));
+    list.select(Some(opening_index(&setting_entries)));
 
     let mut picker_list = ListState::default();
     picker_list.select(Some(0));
@@ -481,10 +486,52 @@ fn event_loop(
             return Ok(Outcome::Cancelled);
         }
 
+        // Shift+Enter is the accelerator for the same thing `a` does on the settings
+        // screen. It is deliberately *not* the documented way to get there: whether a
+        // terminal can report the modifier at all depends on the terminal, and
+        // dev-prune pushes no keyboard-enhancement flags, so on a plain Unix terminal
+        // Shift+Enter arrives as a bare Enter and simply behaves like one more step of
+        // the walk. That is a harmless degradation for a bonus key and an unacceptable
+        // one for the only key — hence the letter, which every terminal can send.
+        if key.code == KeyCode::Enter
+            && key.modifiers.contains(KeyModifiers::SHIFT)
+            && skip_ahead(state)
+        {
+            continue;
+        }
+
         if let Some(outcome) = handle_key(state, key.code) {
             return Ok(outcome);
         }
     }
+}
+
+/// Take every safe recommendation at once and jump to the summary.
+///
+/// The whole-hand version of the Enter walk, for someone who already knows what this
+/// screen is going to say. It applies exactly what holding Enter from the top would
+/// have applied — every non-cautious recommendation, and nothing else — so the two
+/// routes cannot disagree about what "the recommended setup" means. Nothing is written
+/// here either: it lands on the summary, and the summary still needs its own Enter.
+///
+/// The adapter checklist is left alone. It is a modal picker over one setting, `a` there
+/// already means "tick everything", and yanking the screen out from under a half-made
+/// selection is not a shortcut.
+fn skip_ahead(state: &mut State<'_>) -> bool {
+    if matches!(state.screen, Screen::Adapters | Screen::Summary) {
+        return false;
+    }
+    for row in &mut state.session.rows {
+        if let Some(rec) = row.recommended
+            && !row.cautious
+        {
+            row.value = rec.to_string();
+        }
+    }
+    state.error = None;
+    state.editing = None;
+    state.screen = Screen::Summary;
+    true
 }
 
 /// Apply one keypress. `Some` ends the view.
@@ -674,6 +721,11 @@ fn settings_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
             }
             let to = step(&state.setting_entries, at, true);
             state.list.select(Some(to));
+        }
+        // The portable spelling of Shift+Enter, and the one the footer names. Same
+        // meaning as it has one screen back: take all the safe advice, in one keystroke.
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            skip_ahead(state);
         }
         KeyCode::Char(' ') if !on_finish => activate(state, current),
         KeyCode::Char('r') | KeyCode::Char('R') if !on_finish => {
@@ -1183,9 +1235,10 @@ fn render_declaration(frame: &mut Frame, state: &mut State<'_>) {
     }
     constraints.extend([
         Constraint::Min(5),
-        // Four rather than three: two borders and two lines. What is true right now, and
-        // what is true about the licence the whole screen is offered under.
-        Constraint::Length(4),
+        // Five rather than four: two borders and three lines. What is true right now,
+        // how to get through the rest of this without reading it, and what is true about
+        // the licence the whole screen is offered under.
+        Constraint::Length(5),
         Constraint::Length(2),
     ]);
     let chunks = Layout::vertical(constraints).split(frame.area());
@@ -1262,6 +1315,15 @@ fn render_declaration(frame: &mut Frame, state: &mut State<'_>) {
                 format!("  {}", state.session.standing),
                 Style::default().fg(Color::Green),
             )),
+            // Said here, on the first screen, rather than left to be discovered from a
+            // footer three screens in. Someone who does not want to read twenty settings
+            // is going to hold a key down regardless; the useful thing is to tell them
+            // which key already does the right thing, not to hope they guess Enter.
+            Line::from(Span::styled(
+                "  In a hurry? Hold Enter — it walks the whole setup, taking the \
+                 recommended answer on every screen.",
+                Style::default().fg(Color::Cyan),
+            )),
             // Dim, and under the green line rather than over it. The promise is the
             // reason to keep reading; the licence is the terms that promise is made on,
             // and putting the terms first is how a screen becomes one nobody finishes.
@@ -1276,7 +1338,12 @@ fn render_declaration(frame: &mut Frame, state: &mut State<'_>) {
     at += 1;
 
     frame.render_widget(
-        footer(&[("↑↓", "read"), ("Enter", "configure"), ("q", "cancel")]),
+        footer(&[
+            ("↑↓", "read"),
+            ("Enter", "configure"),
+            ("hold Enter", "do it all"),
+            ("q", "cancel"),
+        ]),
         chunks[at],
     );
 }
@@ -1594,6 +1661,7 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
             footer(&[
                 ("↑↓", "move"),
                 ("Enter", "review and finish"),
+                ("a", "accept the rest & finish"),
                 ("q", "cancel"),
             ]),
             chunks[3],
@@ -1662,6 +1730,7 @@ fn render_settings(frame: &mut Frame, state: &mut State<'_>) {
         &[
             ("↑↓", "move"),
             ("Enter", "accept advice & next"),
+            ("a", "accept the rest & finish"),
             ("Space", "change"),
             ("r", "reset"),
             ("q/Esc", "cancel"),
@@ -2147,6 +2216,82 @@ mod tests {
     }
 
     #[test]
+    fn a_takes_every_remaining_recommendation_and_lands_on_the_summary() {
+        // The one-keystroke version. It must agree with the walk about what "the
+        // recommended setup" is — every safe recommendation, and the cautious one left
+        // exactly where the walk leaves it.
+        let mut rows = vec![
+            row("enable_cargo", Control::Toggle, "false"),
+            row("enable_node", Control::Toggle, "false"),
+            row("allow_manifest_rewrite", Control::Toggle, "false"),
+            row("auto_update", Control::Toggle, "false"),
+        ];
+        rows[0].recommended = Some("true");
+        rows[1].recommended = Some("true");
+        rows[2].recommended = Some("true");
+        rows[2].cautious = true;
+        let mut st = state(session(rows, &[]));
+
+        // From the top, without walking anything.
+        assert!(handle_key(&mut st, KeyCode::Char('a')).is_none());
+        assert_eq!(st.screen, Screen::Summary);
+        assert_eq!(st.session.rows[0].value, "true");
+        assert_eq!(
+            st.session.rows[1].value, "true",
+            "a row the cursor never reached is still taken"
+        );
+        assert_eq!(
+            st.session.rows[2].value, "false",
+            "the cautious tier is no more automatic here than in the walk"
+        );
+        assert_eq!(
+            st.session.rows[3].value, "false",
+            "a row with no recommendation is left alone"
+        );
+
+        // And it is still only a proposal: the summary saves, this did not.
+        let Some(Outcome::Save(changed)) = handle_key(&mut st, KeyCode::Enter) else {
+            panic!("Enter on the summary saves");
+        };
+        assert_eq!(changed.len(), 2);
+    }
+
+    #[test]
+    fn shift_enter_is_the_same_instruction_as_a() {
+        // Bonus key, same action. It is dispatched before `handle_key` because the
+        // screen handlers only ever see a `KeyCode`, so this is the arm that proves the
+        // modifier actually routes somewhere.
+        let build = || {
+            let mut rows = vec![
+                row("enable_cargo", Control::Toggle, "false"),
+                row("allow_manifest_rewrite", Control::Toggle, "false"),
+            ];
+            rows[0].recommended = Some("true");
+            rows[1].recommended = Some("true");
+            rows[1].cautious = true;
+            state(session(rows, &[]))
+        };
+
+        let mut by_letter = build();
+        handle_key(&mut by_letter, KeyCode::Char('a'));
+
+        let mut by_shift = build();
+        assert!(skip_ahead(&mut by_shift), "settings screen accepts it");
+
+        assert_eq!(by_shift.screen, by_letter.screen);
+        assert_eq!(by_shift.screen, Screen::Summary);
+        for (a, b) in by_shift.session.rows.iter().zip(&by_letter.session.rows) {
+            assert_eq!(a.value, b.value, "{} disagreed", a.key);
+        }
+
+        // The adapter checklist keeps its own `a`, so the accelerator declines there
+        // rather than yanking the screen away mid-selection.
+        by_shift.screen = Screen::Adapters;
+        assert!(!skip_ahead(&mut by_shift));
+        assert_eq!(by_shift.screen, Screen::Adapters);
+    }
+
+    #[test]
     fn holding_enter_walks_the_list_and_ends_at_the_summary() {
         // The promise made to a fresh install: pressing nothing but Enter reviews every
         // setting, takes the safe advice, and lands on the summary — one more Enter
@@ -2585,7 +2730,7 @@ mod tests {
     }
 
     #[test]
-    fn the_view_opens_on_the_first_setting_the_user_has_never_seen() {
+    fn the_view_opens_at_the_top_even_when_a_later_setting_is_new() {
         let mut rows = [
             categorised_row("idle_days", "Scope", Control::Number, "14"),
             categorised_row("auto_update", "Updates", Control::Toggle, "false"),
@@ -2595,15 +2740,31 @@ mod tests {
         // Heading, idle_days, heading, auto_update, auto_config, finish.
         assert_eq!(entries.len(), 6);
         assert_eq!(
-            opening_index(&entries, &rows),
+            opening_index(&entries),
             1,
-            "with nothing new, start at the first row — never on a heading"
+            "start at the first row — never on a heading"
         );
+
+        // The upgrade case, which is the one that used to open at index 4. Everything
+        // above a new setting is still the user's to walk, and Enter only ever moves
+        // down, so a mid-list start meant those rows were never offered at all.
         rows[2].is_new = true;
         assert_eq!(
-            opening_index(&entries, &rows),
-            4,
-            "an index into the drawn list, not into the rows"
+            opening_index(&entries),
+            1,
+            "a new setting further down does not move the start; the walk reaches it"
+        );
+
+        // And it really does reach it: stepping from the top lands on the new row.
+        let mut at = opening_index(&entries);
+        let mut seen = vec![at];
+        while entries[at] != SettingEntry::Finish {
+            at = step(&entries, at, true);
+            seen.push(at);
+        }
+        assert!(
+            seen.contains(&4),
+            "the walk from the top must visit the new setting, saw {seen:?}"
         );
     }
 

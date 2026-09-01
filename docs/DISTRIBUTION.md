@@ -15,7 +15,7 @@ Every way to install **`dev-prune`** (`devp`), what each channel actually ships,
 - **No analytics or diagnostics**: `dev-prune` never transmits workspace directory structures, repository names, user file paths, or usage data. Its single network request is a release check against GitHub's public API — see [PRIVACY.md](PRIVACY.md).
 - **Subprocess Command Injection Prevention**: All lockfile verification commands (`npm`, `pnpm`, `yarn`, `bun`, `uv`, `cargo`, `go`) execute binary targets directly via `std::process::Command` without shell expansion.
 - **Atomic State Storage**: `registry.json` is never written in place. Each update is written in full to a `.tmp` file and then renamed over the target, so an interrupted or failed write leaves the previous registry intact rather than a half-written one.
-- **Sandboxed Scope**: File operations are strictly bounded to verified Git workspaces (`.git` presence) and named bloat folders (`node_modules`, `.venv`, `venv`, `target`, `vendor`).
+- **Sandboxed Scope**: File operations are strictly bounded to verified Git workspaces (`.git` presence) and to the directories an adapter names by hand — `node_modules`, `.venv`, `vendor`, `Pods` and the rest. The set is fixed in the source, one entry per package manager; nothing is deleted because it matched a pattern or a `.gitignore` rule.
 
 ---
 
@@ -69,13 +69,13 @@ Seven single-binary archives are built automatically for every tagged release an
 
 | Asset | Rust target |
 |---|---|
-| `dev-prune-v1.15.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
-| `dev-prune-v1.15.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
-| `dev-prune-v1.15.0-windows-x86.zip` | `i686-pc-windows-msvc` |
-| `dev-prune-v1.15.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
-| `dev-prune-v1.15.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
-| `dev-prune-v1.15.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
-| `dev-prune-v1.15.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
+| `dev-prune-v1.16.0-windows-x64.zip` | `x86_64-pc-windows-msvc` |
+| `dev-prune-v1.16.0-windows-arm64.zip` | `aarch64-pc-windows-msvc` |
+| `dev-prune-v1.16.0-windows-x86.zip` | `i686-pc-windows-msvc` |
+| `dev-prune-v1.16.0-darwin-x64.tar.gz` | `x86_64-apple-darwin` |
+| `dev-prune-v1.16.0-darwin-arm64.tar.gz` | `aarch64-apple-darwin` |
+| `dev-prune-v1.16.0-linux-x64.tar.gz` | `x86_64-unknown-linux-musl` |
+| `dev-prune-v1.16.0-linux-arm64.tar.gz` | `aarch64-unknown-linux-musl` |
 
 The Linux binaries are statically linked against musl. There is no glibc version floor and no per-distribution build: the same `linux-x64` archive runs on Debian, Fedora, Arch, NixOS and Alpine. Pick by CPU architecture and nothing else.
 
@@ -85,10 +85,19 @@ A 32-bit *process* on 64-bit Windows still gets the x64 archive: `install.ps1` r
 
 The install scripts construct these filenames by hand and refuse to install without the matching `.sha256`, so the naming is a contract rather than a convention.
 
+**Each Windows zip also ships a `.zip.contents.sha256`** — the digest of every file *inside* the archive, in the same `sha256sum` format. An archive's hash stops meaning anything the moment you unpack it, and the unpacked files are the only ones an antivirus ever looks at, so without this there was no published answer to "is the `devpw.exe` on my disk the one you built?". Run it in the folder you extracted to, from Git Bash — `sha256sum` ships with Git for
+Windows, and is what reads this format:
+
+```bash
+sha256sum -c dev-prune-v1.16.0-windows-x64.zip.contents.sha256
+```
+
+`dev-prune.exe` and `devp.exe` are one file under two names and share a digest on purpose, so a scanner builds one reputation record instead of two — the matching digests are themselves the evidence the packaging did what it claims. `devpw.exe`, the console-free build the scheduled task runs, is a separate `[[bin]]` target and legitimately has a different one. [`devp trust`](CLI_REFERENCE.md#18-devp-trust---json---fix-ownership) prints the same digests off your own disk, which is the side of the comparison that matters.
+
 Each archive is additionally signed with GitHub build provenance, which ties it to this repository, the release workflow and the commit it was built from — something a checksum cannot do, because whoever produces an archive also produces its checksum. Verify with no key and no account:
 
 ```bash
-gh attestation verify dev-prune-v1.15.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+gh attestation verify dev-prune-v1.16.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
 ```
 
 ### 4. npm (`npm install -g` / `npx` / bun / pnpm / Yarn)

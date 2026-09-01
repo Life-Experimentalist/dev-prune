@@ -1,8 +1,9 @@
 # dev-prune (`devp`) is installed on this machine
 
 `dev-prune` reclaims disk space by deleting dependency and build directories that a
-lockfile can rebuild (`node_modules`, `.venv`, `target`, Go module trees), from Git
-repositories that have been idle. It refuses to delete anything it cannot prove is
+lockfile can rebuild, from Git repositories that have been idle. It knows twenty-three
+package managers, so this is not only `node_modules` and `.venv`: Composer's `vendor`,
+Bundler, CocoaPods' `Pods`, Mix, Terraform and the rest are handled the same way. It refuses to delete anything it cannot prove is
 recoverable. `devp` and `dev-prune` are the same binary.
 
 When the user asks to free disk space, clean or restore dependencies, or asks why a

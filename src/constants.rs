@@ -318,6 +318,15 @@ pub const VSCODE_RELEASE_TAG_PREFIX: &str = "vscode-v";
 pub const RELEASE_DOWNLOAD_BASE: &str =
     "https://github.com/Life-Experimentalist/dev-prune/releases/download";
 
+/// Where a SHA-256 becomes a scan report, with the digest appended as the last segment.
+///
+/// `devp trust` prints one of these per executable it owns. It is a *lookup* by hash and
+/// nothing more: the digest is computed locally, the URL is printed rather than fetched,
+/// and no part of dev-prune ever uploads a file anywhere. The reason it exists is that an
+/// antivirus judges the bytes on the disk in front of it, not the asset on a release
+/// page — so the only hash worth showing someone is the one their own copy has.
+pub const VIRUSTOTAL_FILE_BASE: &str = "https://www.virustotal.com/gui/file";
+
 /// The release-asset name for one platform, without the `.sha256` suffix.
 ///
 /// This is a contract with the packaging steps in `.github/workflows/release.yml`, which

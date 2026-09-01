@@ -129,12 +129,15 @@ pub fn wants_windowless_upgrade() -> bool {
     }
 }
 
-/// Rebuild the windowless scheduler binary after an upgrade, when one is in use.
+/// Replace the windowless scheduler binary after an upgrade, when one is in use.
 ///
-/// Windows-only: the twin (`devpw.exe`) is a patched copy of the managed binary, so
-/// replacing the binary without refreshing the twin would leave the daemon running the
-/// previous release. The other platforms register the real binary directly and have
-/// nothing to refresh.
+/// Windows-only: the twin (`devpw.exe`) is a separate build target shipped beside the
+/// managed binary, so replacing that binary without replacing the twin would leave the
+/// daemon running the previous release. The other platforms register the real binary
+/// directly and have nothing to refresh.
+///
+/// It is *placed* from the delivery, never generated here — see the note on
+/// `windows::place_windowless_twin` for the release that learnt why.
 pub fn refresh_windowless_twin() {
     #[cfg(target_os = "windows")]
     {

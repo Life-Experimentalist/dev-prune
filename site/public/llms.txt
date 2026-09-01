@@ -1,12 +1,13 @@
 # dev-prune (devp)
 
 > A Rust CLI that reclaims disk space from idle Git repositories by deleting dependency
-> and build directories — `node_modules`, `.venv`, `target`, `vendor` — but only after
-> the project's own package manager confirms a lockfile can rebuild them. Apache-2.0,
+> and build directories — `node_modules`, `.venv`, `target`, `vendor` and whatever else
+> its twenty-three supported package managers own — but only after the project's own
+> package manager confirms a lockfile can rebuild them. Apache-2.0,
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.15.0. Written by VKrishna04.
+Version 1.16.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
@@ -18,6 +19,13 @@ Full CLI reference: https://devprune.vkrishna04.me/reference/
 work in every shell. It registers Git repositories, judges each one idle from `git log`
 commit timestamps *and* source file modification times, asks each package manager to
 verify its lockfile, and only then deletes. `devp restore` puts everything back.
+
+It covers the whole disk side of dependencies, not deletion alone: `devp run` prunes,
+`devp restore` and `devp undo` reverse it, `devp caches` sizes and clears the caches
+package managers keep outside projects, `devp containers` reports Docker's, `devp status`
+and `devp stats` show where the space went and is going (filterable by drive), and
+`devp doctor` and `devp trust` audit the installation itself. One tool for every
+dependency directory on the machine rather than one per ecosystem.
 
 The core bet: a `node_modules` in a project you have not touched for weeks is a cache,
 not data — the lockfile is the data. dev-prune deletes only what a lockfile can
@@ -194,7 +202,7 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   Per-repository figures and the pass history are recorded from 1.1.0 onward
 - `devp completions <bash|zsh|fish|powershell|elvish>` — print a shell completion script
   to stdout, generated from the same argument definition the binary parses with
-- `devp caches [--json]` — find and size every package-manager cache and store on the
+- `devp caches [--volume <VOLUME>] [--json]` — find and size every package-manager cache and store on the
   machine (npm, pnpm, yarn, bun, uv, pip, conda, cargo, go, maven, gradle, nuget,
   vcpkg, conan, composer, cocoapods, hex), largest first, with the command that clears each. The report deletes nothing, and no
   scheduler, Git hook or `devp run` ever will: a cache is shared by every project, so no
@@ -229,6 +237,22 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   root of every filesystem holding a registered repository, plus the current one, and
   each such row names its store in the command it prints: `pnpm store prune --store-dir
   <path>`
+  Which brings up the drive question generally: the report ends with a `By drive` line
+  splitting the total per volume, largest first, and every row in `--json` carries a
+  `volume` key naming the drive or filesystem it sits on. `devp caches --volume V:`
+  narrows the whole report to one of them — `--drive` is the same flag, and it also takes
+  a mount point (`/mnt/data`, `/Volumes/Work`) or any path on the drive you mean,
+  including `.`. On a machine whose projects live on a second disk the machine-wide total
+  is not the figure that decides anything; the gigabytes on the drive that is full are.
+  The narrowing happens last, after every verdict, so a `cache_max_gb` cap still measures
+  a manager's whole footprint wherever it is and a cache no registered repository uses
+  does not become unused merely because the repositories that use it are on another
+  drive. Container engines are left out of a filtered report entirely, and the `json`
+  document omits `containers` rather than emitting an empty list: an engine reports its
+  disk from inside a VM image with no path on this filesystem, so it belongs to no drive.
+  `--volume` paired with `clear`, `docker` or `containers` is a usage error rather than a
+  flag that looks accepted and does nothing — the clear commands empty a manager wherever
+  it is, which for every manager but pnpm is one place.
 - `devp caches docker` / `devp caches podman` / `devp caches containers [ENGINE]`
   `[--json]` — what a container engine is holding: images, containers, local volumes and
   build cache, each with a count, a size, and how much of that size the engine says it
@@ -277,7 +301,7 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   size is measured afterwards rather than assumed. `--json` requires `--yes`; exit 1 if
   any cache could not be cleared, 2 for an unknown manager name or for `maven`
 - `devp trust [--json | --fix-ownership [--yes]]` — what dev-prune is allowed to do on this machine, on one
-  screen. Two sections: the guarantees the code enforces on every machine (the seven
+  screen. Three sections: the guarantees the code enforces on every machine (the seven
   safety invariants, no telemetry, build outputs never deleted, container disk never
   deleted — none with a setting or
   a flag behind it), and this machine read live (scheduler, Git hooks, registered
@@ -285,7 +309,17 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   anything: `require_confirmation=false`, `allow_manifest_rewrite`, and
   any opt-in adapter: `enable_cargo`, `enable_gradle`, `enable_maven`,
   `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`,
-  `enable_cmake_build`). No letter grade — the widened settings are named, because
+  `enable_cmake_build`), and every executable dev-prune owns on this machine — the one
+  running marked and listed first, each with its SHA-256 and a VirusTotal lookup URL for
+  that digest, because an antivirus judges the bytes on your disk rather than the asset
+  on a release page. Those links are lookups by hash, computed locally and printed, never
+  fetched and never an upload; a digest the service has not seen returns "not found",
+  which means unscanned, not clean. On Windows `dev-prune.exe` and `devp.exe` share a
+  digest on purpose (one file, two names, one reputation record) and `devpw.exe`, the
+  console-free build the scheduler runs, is a separate build target that legitimately
+  differs. A release-installed copy matches the published `.sha256` and the per-file
+  `.zip.contents.sha256` manifest; a `cargo install` build matches nothing published.
+  No letter grade — the widened settings are named, because
   "trust level: MEDIUM" tells nobody which switch to look at. Read-only, always exit 0.
   `--fix-ownership` is the one exception: it adds every registered repository Git
   currently refuses to read — the "detected dubious ownership" refusal, routine after a
@@ -599,8 +633,12 @@ category per screen — the
 `devp trust` declaration first, then every setting, then a summary of exactly what
 will be written. Enter is the "keep going" key: it takes the safe recommendation on
 the row it is on and moves to the next, so holding it walks the whole list, and on
-the Finish line it opens that summary — one more Enter saves. The walk never takes
-the cautious tier (`allow_manifest_rewrite`); that stays a deliberate Space. It runs
+the Finish line it opens that summary — one more Enter saves. The walk starts at the
+top and visits every row. The walk never takes
+the cautious tier (`allow_manifest_rewrite`); that stays a deliberate Space. `a`
+takes every remaining safe recommendation at once and jumps to the summary — the same
+set the walk would have taken, cautious tier still excluded; Shift+Enter is the same
+thing on terminals that report the modifier. It runs
 itself once on a first install and again after an upgrade adds a setting the machine
 has never been shown, marking that one `NEW`; settings already confirmed are never
 re-asked. `--no-tui` or `DEV_PRUNE_NO_TUI=1` asks one question per line instead,

@@ -452,6 +452,7 @@ pub fn caches_document(
     reports: &[crate::commands::caches::CacheReport],
     registered_repositories: Option<usize>,
     containers: &[crate::commands::containers::EngineReport],
+    volume: Option<&std::path::Path>,
 ) -> Value {
     let total: u64 = reports.iter().map(|r| r.bytes).sum();
 
@@ -465,6 +466,12 @@ pub fn caches_document(
                 "bytes": r.bytes,
                 "clear_command": &r.clear_command,
             });
+            // The drive or filesystem the cache sits on, so a consumer can group by it
+            // without re-deriving a mount table from `path`. Absent where dev-prune
+            // cannot tell, which on Windows means a path with no drive letter.
+            if let Some(root) = crate::commands::caches::volume_root(&r.path) {
+                obj["volume"] = json!(clean_path(&root));
+            }
             if let Some(note) = r.note {
                 obj["note"] = json!(note);
             }
@@ -491,18 +498,31 @@ pub fn caches_document(
     if let Some(n) = registered_repositories {
         summary["registered_repositories"] = json!(n);
     }
+    // Present only under `--volume`, and its presence is the signal that every figure in
+    // this document describes one drive rather than the machine.
+    if let Some(root) = volume {
+        summary["volume"] = json!(clean_path(root));
+    }
 
     // Outside `summary.total_bytes` on purpose, and outside `caches` too. Container disk
     // is not a package manager cache, dev-prune will never clear it, and a consumer
     // summing one figure for "what devp caches could free" must not pick this up.
-    json!({
+    let mut doc = json!({
         "schema": SCHEMA_VERSION,
         "version": constants::VERSION,
         "command": "caches",
         "caches": caches,
-        "containers": container_engines(containers),
         "summary": summary,
-    })
+    });
+    // Absent under `--volume`, for the same reason `registered_repositories` is absent
+    // when there was no registry: an engine reports its disk from inside a VM image with
+    // no path on this filesystem, so it belongs to no drive and was never measured here.
+    // A `"containers": []` would say there are none installed, which is a different
+    // claim and usually a false one.
+    if volume.is_none() {
+        doc["containers"] = json!(container_engines(containers));
+    }
+    doc
 }
 /// The caches `clear` reported but deliberately did not empty, and the reason for each.
 ///
@@ -630,12 +650,33 @@ pub fn trust_document(report: &crate::commands::trust::TrustReport) -> Value {
 
     let widened = report.widened();
 
+    // `sha256` is a field rather than part of a sentence because the whole point of it
+    // is to be compared against a published `.sha256` by something other than a human.
+    // Null when the file could not be read, never an empty string: absent and empty are
+    // different answers and a consumer must be able to tell them apart.
+    let binaries: Vec<Value> = report
+        .binaries
+        .iter()
+        .map(|b| {
+            json!({
+                "role": b.role,
+                "name": b.name,
+                "path": b.path,
+                "sha256": b.sha256,
+                "running": b.running,
+                "scan_report": b.scan_url(),
+                "note": b.note,
+            })
+        })
+        .collect();
+
     json!({
         "schema": SCHEMA_VERSION,
         "version": constants::VERSION,
         "command": "trust",
         "guarantees": rows(&report.guarantees),
         "machine": rows(&report.machine),
+        "binaries": binaries,
         "summary": {
             "widened": widened,
             "widened_count": widened.len(),
@@ -930,6 +971,7 @@ mod tests {
             ],
             Some(3),
             &[],
+            None,
         );
 
         assert_eq!(doc["command"], "caches");
@@ -946,7 +988,7 @@ mod tests {
     fn an_empty_cache_report_is_still_a_document() {
         // A machine with no package manager installed must produce a parseable zero, not
         // an absent `summary` a consumer would have to special-case.
-        let doc = caches_document(&[], None, &[]);
+        let doc = caches_document(&[], None, &[], None);
         assert_eq!(doc["summary"]["total_bytes"], 0);
         assert_eq!(doc["caches"].as_array().unwrap().len(), 0);
         assert_eq!(doc["containers"].as_array().unwrap().len(), 0);
@@ -980,7 +1022,7 @@ mod tests {
                 reclaimable: Some(38_000_000_000),
             }]),
         };
-        let doc = caches_document(&[], None, std::slice::from_ref(&docker));
+        let doc = caches_document(&[], None, std::slice::from_ref(&docker), None);
 
         // The whole point of the separate key. A consumer summing `summary.total_bytes`
         // is asking what `devp caches clear` could free, and 40 GB of images is not that

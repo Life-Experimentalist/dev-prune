@@ -6,8 +6,9 @@
 
 **Universal, lockfile-safe workspace pruner.** Reclaims disk space from idle Git
 repositories by deleting dependency and build directories a lockfile can rebuild —
-`node_modules`, `.venv`, `target`, `vendor` — and refuses to delete anything it cannot
-prove is recoverable.
+`node_modules`, `.venv`, `target`, `vendor` and whatever else its twenty-three
+supported package managers own — and refuses to delete anything it cannot prove is
+recoverable.
 
 > This wiki is a map, not a mirror. The documentation lives **in the repository** —
 > versioned with the code it describes — and on the website. Every link below points at
