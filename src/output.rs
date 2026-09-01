@@ -368,24 +368,65 @@ pub fn styled_adapter(name: &str) -> String {
 /// spawned, nothing is read from disk, and no package manager has to be installed for its
 /// name to be printed.
 pub fn print_banner() {
-    let art = r#"
- ___    _____ __     __    ____  ____  _   _ _   _ _____
-|  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
-| | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|
-| |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|"#;
     // Cyan, not a hard-coded RGB. `truecolor` degrades to nothing useful on a 16- or
     // 256-colour terminal, and it ignored the palette the user picked for their own
     // terminal — a named colour honours it and matches the cyan used everywhere else.
     //
     // The channel is dimmed and the version is not: one is the thing people came to read
     // and the other is the footnote that explains it.
+    println!();
+    for line in banner_art_lines() {
+        let (dev, prune) = split_art_line(line);
+        println!("{}{}", dev.cyan(), prune.cyan().bold());
+    }
+    // Right-aligned under the art rather than trailing its last line, so the two subtitle
+    // lines below start against a straight left edge instead of under a version string.
+    // Padded before colouring: a width in a format spec counts the escape codes the
+    // colouring adds and would indent this by however long they happen to be.
+    let version = format!("v{}", crate::constants::VERSION);
+    let pad = " ".repeat(art_width().saturating_sub(version.len()));
     println!(
-        "{} {} {}\n",
-        art.cyan().bold(),
-        format!("v{}", crate::constants::VERSION).cyan().bold(),
+        "{pad}{} {}",
+        version.cyan().bold(),
         format!("· {}", crate::channel::Channel::detect().badge()).dimmed()
     );
+    println!("{}", crate::constants::TAGLINE);
+    println!("{}\n", crate::constants::TAGLINE_SAFETY.dimmed());
+}
+
+/// The widest line of the art, which the version line is right-aligned against.
+///
+/// Measured rather than written down: the rows are not all the same length, and a
+/// constant would be one more thing to remember the next time the drawing is touched.
+fn art_width() -> usize {
+    banner_art_lines()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+/// Where `DEV` ends and `PRUNE` begins, in characters.
+///
+/// A fixed column rather than anything clever, because the art is a fixed drawing. The
+/// gutter between the two words is three columns wide on every row, and
+/// `the_two_words_split_cleanly` fails the build if an edit ever moves it.
+const ART_SPLIT: usize = 26;
+
+fn banner_art_lines() -> std::str::Lines<'static> {
+    r#" ___    _____ __     __    ____  ____  _   _ _   _ _____
+|  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
+| | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|
+| |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|"#
+        .lines()
+}
+
+/// Split one line of the art into its `DEV` half and its `PRUNE` half.
+///
+/// Two weights rather than two colours: the word that says what the command does carries
+/// the emphasis, and the palette stays at the one hue the rest of the output uses.
+fn split_art_line(line: &str) -> (&str, &str) {
+    line.split_at(ART_SPLIT.min(line.len()))
 }
 
 /// Print the one-line credit, if anything is going to read it.
@@ -459,6 +500,25 @@ pub fn shared_note(shared_bytes: u64, adapter: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_two_words_split_cleanly() {
+        // `ART_SPLIT` is a column counted off a drawing, so the drawing is the only thing
+        // that can invalidate it. An edit that shifts one row by a character would put a
+        // bold `|` on the wrong side of the gap, which nothing else would catch — the
+        // banner still prints, it just looks wrong to whoever runs it next.
+        for line in banner_art_lines() {
+            let gutter: String = line.chars().skip(ART_SPLIT - 3).take(3).collect();
+            assert_eq!(
+                gutter, "   ",
+                "the gutter between DEV and PRUNE moved: {line:?}"
+            );
+            // The other side of the same failure: a split inside a glyph. The two halves
+            // have to reassemble into exactly the row drawn above.
+            let (dev, prune) = split_art_line(line);
+            assert_eq!(format!("{dev}{prune}"), line);
+        }
+    }
 
     #[test]
     fn test_format_bytes() {

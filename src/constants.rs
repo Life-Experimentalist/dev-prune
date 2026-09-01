@@ -39,6 +39,25 @@ pub const HOMEPAGE_URL: &str = "https://devprune.vkrishna04.me";
 pub const ATTRIBUTION_LINE: &str =
     "dev-prune · made with ♥ by VKrishna04 · github.com/Life-Experimentalist/dev-prune";
 
+/// What the banner says the tool is, in one line.
+///
+/// The framing people arrive with is "the `node_modules` cleaner". That was fair when
+/// there were four adapters and has been wrong for a long time — and the banner is the
+/// first screen of every interactive command, so it is the cheapest place to correct it.
+/// No count of package managers here on purpose: a number in a banner is a number that
+/// goes stale the next time an adapter lands.
+pub const TAGLINE: &str = "Every dependency directory on this machine, in one command.";
+
+/// The half of the pitch that is a promise rather than a description.
+///
+/// It sits under [`TAGLINE`] because "deletes directories" is the part a new user is
+/// right to be nervous about, and the answer to it should not be three screens away in
+/// the README. Both halves of the sentence are load-bearing: the lockfile rule is what
+/// the engine actually enforces, and `undo` is what covers the case where the rule was
+/// satisfied and the user still wanted the directory back.
+pub const TAGLINE_SAFETY: &str =
+    "Only what a lockfile can rebuild — and `devp undo` puts back the last run.";
+
 /// The licence sentence under the declaration, in both wizard paths.
 ///
 /// Apache-2.0 needs no click-through and this is not one: the licence governs use

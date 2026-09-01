@@ -64,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one you built?". The same digests come out of `devp trust`, which is the side of the
   comparison you actually control.
 
+### Changed
+
+- **The banner now says what the tool is.** Under the art, two lines: every dependency
+  directory on the machine in one command, and the promise that only what a lockfile can
+  rebuild is ever deleted — with `devp undo` behind that. The screen every interactive
+  command opens with said the name, the version and nothing else, so the first thing a
+  new user saw answered neither "what does this do beyond `node_modules`" nor "what
+  stops it deleting my work". The version now sits at the right edge under the art
+  instead of trailing it, and `PRUNE` carries the weight `DEV` does not.
+
 ### Fixed
 
 - **The configurator no longer skips the settings above the cursor.** After an upgrade
