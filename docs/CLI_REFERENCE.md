@@ -153,6 +153,10 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 
 ### 4. `devp undo`
 - **Description**: Reverts the most recent `init` or `link` registration action.
+- **Off the front page since 1.17.0**: it no longer appears in `devp --help` or in shell
+  completions, because it covers ground [`devp restore`](#9-devp-restore-path---last-run) also
+  covers. It works exactly as before and stays documented here and in `devp man undo`;
+  actual removal is a breaking change and waits for 2.x.
 - **Examples**:
   ```bash
   devp undo
@@ -1653,7 +1657,11 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ---
 
 ### 19. `devp install [--channel <NAME>] [--dry-run]`
-- **Description**: Move this installation from one package manager to another. [`devp update`](#10-devp-update---offline----install----channels) always upgrades the copy that is running, through whichever channel installed it; this command changes *which* channel owns it. With no `--channel` it reports the channel that owns the running binary and lists the names `--channel` accepts.
+- **Description**: Move this installation from one package manager to another.
+- **Off the front page since 1.17.0**: it no longer appears in `devp --help` or in shell
+  completions, because the name reads like "install the tool" and what it does is move
+  an existing installation. It works exactly as before and stays documented here and in
+  `devp man install`; the honest fix is a rename, which waits for 2.x. [`devp update`](#10-devp-update---offline----install----channels) always upgrades the copy that is running, through whichever channel installed it; this command changes *which* channel owns it. With no `--channel` it reports the channel that owns the running binary and lists the names `--channel` accepts.
 - **The order is the safety property**: it installs through the manager you name first, then removes the old copy through the manager that put it there. An install that fails leaves the working copy exactly where it was, so there is no window in which the machine has no `devp`.
 - **On Windows the old manager's command is printed, not run.** Windows will not let a package manager delete a binary that is executing, and no ordering inside one process changes that: `cargo uninstall` fails with `Access is denied` and *keeps* its ledger entry. Exit first, uninstall second, is the only order that clears the record, so the command is handed to you — one line to paste in a new shell — rather than run invisibly after this one exits. On Linux and macOS it is simply run, because there a manager can remove a binary that is running.
 - **Why it uninstalls through the old manager rather than deleting the file**: cargo, npm, uv, pipx and the rest each keep a record of what they installed. A manager whose record still says `dev-prune` is present will put the old binary back on its next upgrade, and two copies on `PATH` means which one wins is an accident of ordering.

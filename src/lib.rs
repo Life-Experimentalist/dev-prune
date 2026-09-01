@@ -155,12 +155,15 @@ fn is_broken_pipe(err: &anyhow::Error) -> bool {
 #[command(version = constants::VERSION)]
 #[command(author = constants::AUTHOR)]
 #[command(long_version = constants::LONG_VERSION.as_str())]
+// The default help lists twenty commands as one flat block. The template swaps
+// clap's subcommand list for the grouped, coloured one `help.rs` builds — the same
+// grouping as the manual's contents page — and the styles colour every page.
+#[command(styles = help::HELP_STYLES)]
+#[command(help_template = help::ROOT_HELP_TEMPLATE.as_str())]
 #[command(
     about = "Universal, lockfile-safe workspace pruner and background dependency cleaner\nNote: `dev-prune` and `devp` are interchangeable binary aliases."
 )]
-#[command(
-    after_help = "EXAMPLES:\n  devp init ~/Code          Scan directory trees & onboard workspaces\n  devp link                 Register current repository\n  devp run                  Execute prune pass across inactive repositories\n  devp status               View system status dashboard\n  devp status --top 10      Show only the ten biggest reclaims\n  devp stats                Lifetime totals, recent passes, biggest repositories\n  devp caches               Size every package manager cache (deletes nothing)\n  devp completions powershell   Emit a shell completion script\n  devp status daemon        Check background daemon status (alias for `devp config daemon status`)\n  devp status . hook        Check workspace Git hook status (alias for `devp config . hook status`)\n  devp config . daemon disable  Disable daemon background pass for current workspace\n  devp restore .            Restore missing node_modules/.venv via lockfile\n  devp undo                 Revert most recent init or link action\n\nBINARY ALIAS:\n  `dev-prune` and `devp` invoke the exact same executable.\n\ndev-prune is written by VKrishna04 and licensed Apache-2.0.\n  https://github.com/Life-Experimentalist/dev-prune"
-)]
+#[command(after_help = help::ROOT_AFTER_HELP.as_str())]
 pub struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -229,6 +232,13 @@ pub enum Commands {
     },
 
     /// Revert the most recent init or link action.
+    //
+    // Off the front page since 1.17.0: it covers ground `devp restore` also covers,
+    // but it shipped in 1.0.0 and the CLI surface is a contract, so it keeps
+    // working — its own `--help`, `devp man undo`, the reference — until 2.x, which
+    // is when it actually goes. `help::HIDDEN_FROM_HELP` keeps the grouped help in
+    // step with this flag.
+    #[command(hide = true)]
     #[command(long_about = help::UNDO_LONG, after_long_help = help::UNDO_EXAMPLES)]
     Undo,
 
@@ -481,6 +491,12 @@ pub enum Commands {
     },
 
     /// Move this install to another package manager: `devp install --channel uv`.
+    //
+    // Off the front page since 1.17.0: the name reads like "install the tool", and
+    // what it does is *move* an installation between package managers. The honest fix
+    // is a rename, which the 1.0.0 CLI contract defers to 2.x — until then it works
+    // exactly as before, just not in `devp --help`.
+    #[command(hide = true)]
     #[command(long_about = help::INSTALL_LONG, after_long_help = help::INSTALL_EXAMPLES)]
     Install {
         /// The package manager to move this installation to. Omit to print which one

@@ -829,3 +829,204 @@ EXAMPLES:
   devp uninstall                  Remove the program; keep config for a reinstall
   devp uninstall --deep           Also wipe config and per-repo .devprune.json (asks)
   devp uninstall --deep -y        Non-interactive; also confirms the stray-copy sweep";
+
+// ---------------------------------------------------------------------------
+// The front page: how the commands are grouped, which of them stay off it, and
+// the colours the help is rendered in.
+// ---------------------------------------------------------------------------
+
+/// How the commands are grouped, and the one line each gets — on the manual's
+/// contents page (`devp man`) and in the categorised `devp --help` alike.
+///
+/// The lines are written here rather than taken from clap's `about`, which truncates
+/// into nonsense at this width ("Export SKILL", "View system dashboard"). Tests check
+/// this table against the real command list, so a command added without a line here
+/// fails the build rather than going missing from the pages a reader navigates from.
+pub const COMMAND_GROUPS: [(&str, &[(&str, &str)]); 5] = [
+    (
+        "Register repositories",
+        &[
+            (
+                "init",
+                "find every Git repository under a path, register them",
+            ),
+            ("link", "register one repository"),
+            ("unlink", "forget one — deletes nothing"),
+            ("undo", "revert the last init or link"),
+        ],
+    ),
+    (
+        "Prune and put back",
+        &[
+            ("run", "delete what a lockfile proves comes back"),
+            ("restore", "reinstall what was deleted"),
+        ],
+    ),
+    (
+        "Look at what is going on",
+        &[
+            ("status", "every repository, its size and its idle days"),
+            ("stats", "space reclaimed over time"),
+            ("history", "which pass deleted what, and what asked it to"),
+            ("caches", "package manager caches on this machine"),
+            ("doctor", "what is broken, and how to fix it"),
+            ("trust", "what this program may do on this machine"),
+        ],
+    ),
+    (
+        "Settings and integration",
+        &[
+            ("config", "settings, the scheduler, Git hooks, icons"),
+            ("setup", "install whatever integration is missing"),
+            ("skill", "rules files for your editor's AI agent"),
+            ("completions", "a completion script for your shell"),
+            ("man", "this manual"),
+        ],
+    ),
+    (
+        "The program itself",
+        &[
+            ("update", "check for a newer release, and install it"),
+            ("install", "move it to another package manager"),
+            ("uninstall", "remove it, integration included"),
+        ],
+    ),
+];
+
+/// Commands that still run but no longer appear in `devp --help`.
+///
+/// `undo` covers ground `restore` also covers, and `install` *moves* an installation
+/// rather than performing one — but both shipped in 1.0.0 and the CLI surface is a
+/// contract, so the rename and the removal wait for 2.x. Until then they leave the
+/// front view only: still invocable, still answering their own `--help`, still in
+/// `devp man` and the reference. The manual keeps listing them, because a manual is
+/// where a thing is looked up, not where it is discovered.
+pub const HIDDEN_FROM_HELP: &[&str] = &["undo", "install"];
+
+/// The palette the help is rendered in. Set once on the top-level command and
+/// propagated by clap to every subcommand, so `devp run --help` matches the front
+/// page. clap drops the colour when stdout is not a terminal, the same way `colored`
+/// does for the hand-built block below.
+pub const HELP_STYLES: clap::builder::Styles = clap::builder::Styles::styled()
+    .header(clap::builder::styling::AnsiColor::Green.on_default().bold())
+    .usage(clap::builder::styling::AnsiColor::Green.on_default().bold())
+    .literal(clap::builder::styling::AnsiColor::Cyan.on_default().bold())
+    .placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
+
+/// The commands section of `devp --help`: [`COMMAND_GROUPS`] minus
+/// [`HIDDEN_FROM_HELP`], group titles and command names coloured.
+///
+/// The padding is applied to the plain name before it is coloured — `{:<12}` on the
+/// coloured string would count the escape codes as width and misalign every line
+/// exactly when the colours are on.
+fn grouped_commands() -> String {
+    use colored::Colorize;
+    let mut out = String::new();
+    for (title, entries) in COMMAND_GROUPS {
+        let visible: Vec<&(&str, &str)> = entries
+            .iter()
+            .filter(|(name, _)| !HIDDEN_FROM_HELP.contains(name))
+            .collect();
+        if visible.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("\n  {}\n", title.bold()));
+        for (name, line) in visible {
+            let pad = " ".repeat(12usize.saturating_sub(name.len()));
+            out.push_str(&format!("    {}{pad}  {line}\n", name.cyan().bold()));
+        }
+    }
+    out
+}
+
+/// The top-level help template: clap's default, with the flat twenty-command list
+/// swapped for the grouped block above. Only the top level gets it — a subcommand's
+/// own list is short enough not to need grouping. The section headings are literal
+/// text here, coloured to match [`HELP_STYLES`], because clap's `{options}` tag
+/// renders the entries without one.
+pub static ROOT_HELP_TEMPLATE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    use colored::Colorize;
+    format!(
+        "{{before-help}}{{about-with-newline}}\n{{usage-heading}} {{usage}}\n\n{commands}\n{block}\n{options}\n{{options}}{{after-help}}",
+        commands = "Commands:".green().bold(),
+        block = grouped_commands(),
+        options = "Options:".green().bold(),
+    )
+});
+
+/// The examples block under the help. Built at runtime for the same reason the
+/// template is: the headings carry colour.
+pub static ROOT_AFTER_HELP: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    use colored::Colorize;
+    format!(
+        "{examples}
+  devp init ~/Code          Scan directory trees & onboard workspaces
+  devp link                 Register current repository
+  devp run                  Execute prune pass across inactive repositories
+  devp status               View system status dashboard
+  devp status --top 10      Show only the ten biggest reclaims
+  devp stats                Lifetime totals, recent passes, biggest repositories
+  devp caches               Size every package manager cache (deletes nothing)
+  devp completions powershell   Emit a shell completion script
+  devp status daemon        Check background daemon status (alias for `devp config daemon status`)
+  devp status . hook        Check workspace Git hook status (alias for `devp config . hook status`)
+  devp config . daemon disable  Disable daemon background pass for current workspace
+  devp restore .            Restore missing node_modules/.venv via lockfile
+
+{alias}
+  `dev-prune` and `devp` invoke the exact same executable.
+
+dev-prune is written by VKrishna04 and licensed Apache-2.0.
+  https://github.com/Life-Experimentalist/dev-prune",
+        examples = "EXAMPLES:".green().bold(),
+        alias = "BINARY ALIAS:".green().bold(),
+    )
+});
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn hidden_from_help_is_exactly_what_the_cli_hides() {
+        // The front page is built from HIDDEN_FROM_HELP, not from clap, so the two
+        // can only stay in step if a test holds them together.
+        let mut command = crate::Cli::command();
+        command.build();
+        for sub in command.get_subcommands() {
+            if sub.get_name() == "help" {
+                continue;
+            }
+            assert_eq!(
+                sub.is_hide_set(),
+                HIDDEN_FROM_HELP.contains(&sub.get_name()),
+                "`{}` disagrees with HIDDEN_FROM_HELP",
+                sub.get_name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_front_page_lists_every_visible_command_and_no_hidden_one() {
+        // Colour off so the assertion sees the names, not the escape codes around
+        // them. The harness pipe would disable it anyway; this makes it not matter.
+        colored::control::set_override(false);
+        let block = grouped_commands();
+        colored::control::unset_override();
+
+        let mut command = crate::Cli::command();
+        command.build();
+        for sub in command.get_subcommands() {
+            let name = sub.get_name();
+            if name == "help" {
+                continue;
+            }
+            // Anchored to the start of a line: `install` appears mid-line in
+            // setup's description, and inside `uninstall`, without being listed.
+            let probe = format!("    {name} ");
+            let listed = block.lines().any(|l| l.starts_with(&probe));
+            assert_eq!(!sub.is_hide_set(), listed, "`{name}`");
+        }
+    }
+}
