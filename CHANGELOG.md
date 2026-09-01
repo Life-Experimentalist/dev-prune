@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   labelled `runs:`, because that is what dev-prune executes and hiding it would be worse
   than repeating it. Maven is unchanged and still prints only the manual command: its
   local repository is not a cache, and `devp caches clear maven` refuses.
-  [Reference](docs/CLI_REFERENCE.md#16-devp-caches-clear-manager--all---unused---over-cap---dry-run---yes---json)
+  [Reference](docs/CLI_REFERENCE.md#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json)
 
 ### For contributors
 

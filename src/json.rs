@@ -81,6 +81,9 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         // bun has no resolve-only write mode; a plain install is what refreshes
         // `bun.lock`, and unlike the others it also populates `node_modules`.
         "bun" => "bun install",
+        // Same again for Deno: `deno install` is the only thing that rewrites
+        // `deno.lock`, and it materialises `node_modules` while it is there.
+        "deno" => "deno install",
         "uv" => "uv lock",
         "poetry" => "poetry lock",
         "pdm" => "pdm lock",
