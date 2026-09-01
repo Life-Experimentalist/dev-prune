@@ -597,14 +597,10 @@ pub(crate) fn binaries() -> Vec<BinaryIdentity> {
         found.push((managed, "managed", None));
         if let Some(dir) = dir {
             let alias = if cfg!(windows) { "devp.exe" } else { "devp" };
-            found.push((
-                dir.join(alias),
-                "alias",
-                Some(
-                    "The same bytes as dev-prune under a second name, so a scanner \
-                     builds one reputation record instead of two.",
-                ),
-            ));
+            // Note deliberately left empty here and decided from the digests below. It
+            // used to assert the identity unconditionally, which made this report state
+            // the one thing it is here to check rather than check it.
+            found.push((dir.join(alias), "alias", None));
             if cfg!(windows) {
                 found.push((
                     dir.join(constants::WINDOWS_WINDOWLESS_BIN),
@@ -658,10 +654,45 @@ pub(crate) fn binaries() -> Vec<BinaryIdentity> {
         });
     }
 
+    annotate_alias(&mut rows);
+
     // The user asked which one they are running; that answer goes at the top, and the
     // rest are context for it.
     rows.sort_by_key(|r| !r.running);
     rows
+}
+
+/// Explain the alias row from the two digests, rather than from what ought to be true.
+///
+/// `devp` is the same bytes as `dev-prune` right up until an upgrade replaces one of them
+/// and not the other — which is the normal state between a `cargo install` and the next
+/// setup pass, since that pass only runs where somebody can see it report. Two different
+/// digests under a caption saying they are the same is the worst outcome available here:
+/// the mismatch a reader came to this report to find, explained away in the one sentence
+/// they will read instead of comparing the hashes themselves.
+///
+/// Says nothing when either file could not be hashed. "Same" and "stale" are both claims,
+/// and a missing digest supports neither.
+fn annotate_alias(rows: &mut [BinaryIdentity]) {
+    let managed = rows
+        .iter()
+        .find(|r| r.role == "managed")
+        .and_then(|r| r.sha256.clone());
+    let Some(alias) = rows.iter_mut().find(|r| r.role == "alias") else {
+        return;
+    };
+    alias.note = match (&managed, &alias.sha256) {
+        (Some(managed), Some(mine)) if managed == mine => Some(
+            "The same bytes as dev-prune under a second name, so a scanner \
+             builds one reputation record instead of two.",
+        ),
+        (Some(_), Some(_)) => Some(
+            "An earlier release under a second name: an upgrade replaced dev-prune \
+             and this has not caught up. The next dev-prune command you run in a \
+             terminal restores the pair.",
+        ),
+        _ => None,
+    };
 }
 
 /// Lower-case hex SHA-256 of a file, or `None` if it cannot be read.
@@ -832,6 +863,42 @@ fn print_row(row: &TrustRow) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two rows, `managed` and `alias`, with the digests a test wants to compare.
+    fn pair(managed: Option<&str>, alias: Option<&str>) -> Vec<BinaryIdentity> {
+        let row = |role: &'static str, sha: Option<&str>| BinaryIdentity {
+            role,
+            name: String::new(),
+            path: String::new(),
+            sha256: sha.map(str::to_string),
+            running: false,
+            note: None,
+        };
+        vec![row("managed", managed), row("alias", alias)]
+    }
+
+    fn alias_note(rows: &[BinaryIdentity]) -> Option<&'static str> {
+        rows.iter().find(|r| r.role == "alias").unwrap().note
+    }
+
+    #[test]
+    fn the_alias_note_follows_the_digests_and_not_the_expectation() {
+        // The whole point of printing two hashes is that somebody can compare them. A
+        // caption asserting they match, printed above two that do not, is worse than no
+        // caption at all.
+        let mut same = pair(Some("aa"), Some("aa"));
+        annotate_alias(&mut same);
+        assert!(alias_note(&same).is_some_and(|n| n.contains("The same bytes")));
+
+        let mut stale = pair(Some("aa"), Some("bb"));
+        annotate_alias(&mut stale);
+        assert!(alias_note(&stale).is_some_and(|n| n.contains("An earlier release")));
+
+        // Neither claim is supportable without both digests.
+        let mut unreadable = pair(Some("aa"), None);
+        annotate_alias(&mut unreadable);
+        assert!(alias_note(&unreadable).is_none());
+    }
 
     #[test]
     fn safe_directory_values_use_the_spelling_git_compares_against() {
