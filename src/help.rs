@@ -309,18 +309,19 @@ The numbers come from the engine's own `system df` rather than from a directory 
 An engine that is installed with its daemon stopped is reported as exactly that, in the engine's own words, rather than as an absence.";
 
 pub const CACHES_CONTAINERS_LONG: &str = "\
-The same read-only report as `devp caches docker`, for every container engine on this machine — docker, podman and nerdctl — or for the one you name.
+The same read-only report as `devp caches docker`, for every container engine on this machine — docker, podman, nerdctl, finch and Apple's `container` — or for the one you name. An engine that is not installed is not mentioned; there is nothing to say about a tool that is not there.
 
 Local Kubernetes clusters are listed by name and deliberately not sized. kind, k3d and minikube run their nodes as containers, or as a VM disk belonging to an engine already in the table, so their disk is counted there. A figure beside the cluster name would be the same gigabytes twice. Delete one with its own tool — `kind delete cluster`, `minikube delete`, `k3d cluster delete` — which is what actually releases the space. The cluster list is read out of your kubeconfig with `kubectl config get-contexts`, which contacts nothing: a context pointing at a production cluster is filtered out by name here rather than by being dialled.";
 
 pub const CACHES_CONTAINERS_EXAMPLES: &str = "\
 EXAMPLES:
-  devp caches docker              Images, containers, volumes, build cache
-  devp caches podman              The same, for Podman
-  devp caches containers          Every engine installed, plus local clusters
-  devp caches containers nerdctl  Just that one
+  devp caches docker                Images, containers, volumes, build cache
+  devp caches podman                The same, for Podman
+  devp caches containers            Every engine installed, plus local clusters
+  devp caches containers nerdctl    Just that one
+  devp caches containers container  Apple's engine, on Apple silicon
   devp caches docker --json | jq '.summary.reclaimable_bytes'
-                                  Machine-readable
+                                    Machine-readable
 
 Nothing here deletes anything. The prune commands are printed for you to run.";
 

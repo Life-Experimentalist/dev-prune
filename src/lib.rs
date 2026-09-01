@@ -559,7 +559,7 @@ pub enum CachesAction {
     /// The same report for every container engine found, or for the one you name.
     #[command(long_about = help::CACHES_CONTAINERS_LONG, after_long_help = help::CACHES_CONTAINERS_EXAMPLES)]
     Containers {
-        /// Which engine: docker, podman or nerdctl. Omit for every one installed.
+        /// docker, podman, nerdctl, finch or container. Omit for every one installed.
         #[arg(value_name = "ENGINE")]
         engine: Option<String>,
     },
