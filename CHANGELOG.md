@@ -222,6 +222,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   1.0.0 is a breaking change, so that waits for 2.x; this release just stops advertising
   them to newcomers.
 
+- **The walkthrough's accelerators now take the cautious recommendation too.** Holding
+  Enter, pressing `a`, or Shift+Enter used to apply every recommendation *except*
+  `allow_manifest_rewrite`, on the theory that a held key must not accept a setting
+  with a warning attached. In practice that meant the accelerators did not produce the
+  recommended setup. They now take it with the rest — its explanation is on the very
+  screen those keys are pressed on, it still arrives switched off, and Space on its
+  row still declines it. Outside the walkthrough nothing moved: `devp config
+  recommended` still leaves it alone unless you pass `--with-cautious`.
+
 ### For contributors
 
 - **The release workflow registers each published digest with VirusTotal.** A binary with

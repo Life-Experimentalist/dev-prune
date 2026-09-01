@@ -92,8 +92,11 @@ pub struct ConfigRow {
     /// the screen that suggested it appears once and the settings list is forever.
     pub recommended: Option<&'static str>,
     /// Whether the recommendation is the cautious tier — advice worth reading about
-    /// before taking. Enter's walk-and-accept never takes these; only a deliberate
-    /// Space on the row does. Meaningless when `recommended` is `None`.
+    /// before taking. The tier arrives unticked, and it is what `devp config
+    /// recommended` holds back for `--with-cautious`; since 1.17.0 the walkthrough's
+    /// accelerators (held Enter, `a`, Shift+Enter) do take it, because by the time
+    /// those keys are pressed the reading has been on screen. Meaningless when
+    /// `recommended` is `None`.
     pub cautious: bool,
     /// Introduced in a release newer than the one this machine last reviewed at.
     pub is_new: bool,
@@ -145,8 +148,11 @@ pub struct Suggestion {
     /// The second tier: worth turning on, with something specific to know first.
     ///
     /// Kept apart rather than mixed in with a warning glyph, because "recommended" and
-    /// "recommended once you know what it does" are different claims and one button
-    /// must not be able to accept both at once.
+    /// "recommended once you know what it does" are different claims. What the tier
+    /// changes is how the setting arrives — under its own heading, switched off — not
+    /// whether the accept-everything keys reach it: since 1.17.0 they do, by the
+    /// owner's call, because the recommendation is to turn it on and this screen is
+    /// where its explanation lives.
     pub cautious: bool,
 }
 
@@ -506,12 +512,12 @@ fn event_loop(
     }
 }
 
-/// Take every safe recommendation at once and jump to the summary.
+/// Take every recommendation at once and jump to the summary.
 ///
 /// The whole-hand version of the Enter walk, for someone who already knows what this
 /// screen is going to say. It applies exactly what holding Enter from the top would
-/// have applied — every non-cautious recommendation, and nothing else — so the two
-/// routes cannot disagree about what "the recommended setup" means. Nothing is written
+/// have applied — every recommendation, the cautious tier included since 1.17.0 — so
+/// the two routes cannot disagree about what "the recommended setup" means. Nothing is written
 /// here either: it lands on the summary, and the summary still needs its own Enter.
 ///
 /// The adapter checklist is left alone. It is a modal picker over one setting, `a` there
@@ -522,9 +528,7 @@ fn skip_ahead(state: &mut State<'_>) -> bool {
         return false;
     }
     for row in &mut state.session.rows {
-        if let Some(rec) = row.recommended
-            && !row.cautious
-        {
+        if let Some(rec) = row.recommended {
             row.value = rec.to_string();
         }
     }
@@ -586,9 +590,11 @@ fn declaration_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
 /// visible one — so the header says what is accepted and which key clears the lot, and
 /// `r` undoes all of it in one keystroke.
 ///
-/// The cautious tier is deliberately untouched. `allow_manifest_rewrite` can leave a
+/// The cautious tier still arrives untouched. `allow_manifest_rewrite` can leave a
 /// change in `git status`, and the tier exists precisely because that is a thing to be
-/// told before rather than after.
+/// told before rather than after — so it is never on before this screen has appeared.
+/// Turning it on takes a keystroke made after arrival: Space on its row, or, since
+/// 1.17.0, any of the accept-everything gestures (`a`, Shift+Enter, the held Enter).
 fn preaccept_recommended(state: &mut State<'_>) {
     for i in 0..state.session.suggestions.len() {
         if !state.session.suggestions[i].cautious {
@@ -645,14 +651,13 @@ fn suggestions_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
             let now = accepted(state, current);
             apply_suggestion(state, current, !now);
         }
-        // One key for the whole first tier, which is the point of the screen. It
-        // deliberately does not reach the cautious tier: a button that accepts the thing
-        // you were told to read about first is not a shortcut, it is a trap.
+        // One key for the whole list, cautious tier included — since 1.17.0, by the
+        // owner's call: the recommendation is to turn `allow_manifest_rewrite` on, and
+        // whoever reaches for "accept all" has had the reading on this screen. The
+        // tier still arrives switched off, so doing nothing still declines it.
         KeyCode::Char('a') | KeyCode::Char('A') => {
             for i in 0..len {
-                if !state.session.suggestions[i].cautious {
-                    apply_suggestion(state, i, true);
-                }
+                apply_suggestion(state, i, true);
             }
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -664,7 +669,7 @@ fn suggestions_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
             state.screen = Screen::Settings;
         }
         // On to the settings, where Enter keeps meaning "keep going": held down it
-        // walks every remaining setting, takes the safe advice on the way, and ends at
+        // walks every remaining setting, takes the advice on the way, and ends at
         // the summary. Nothing is written until the summary says so, which is why this
         // screen does not need a second press to leave.
         KeyCode::Enter => {
@@ -705,16 +710,15 @@ fn settings_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
             state.screen = Screen::Summary;
         }
         // Enter is the "keep going" key: it takes the untaken recommendation on this
-        // row — never a cautious one, those stay a deliberate Space — and moves to the
-        // next stop. Held down from anywhere it walks the rest of the list, accepts the
-        // safe advice on the way, and arrives at the finish line, whose Enter opens the
-        // summary. Changing a value to anything *other* than the recommendation is
-        // Space's job.
+        // row — since 1.17.0 the cautious one too, because its reading was already on
+        // the suggestions screen — and moves to the next stop. Held down from anywhere
+        // it walks the rest of the list, accepts the advice on the way, and arrives at
+        // the finish line, whose Enter opens the summary. Changing a value to anything
+        // *other* than the recommendation is Space's job.
         KeyCode::Enter if !on_finish => {
             state.error = None;
             let row = &mut state.session.rows[current];
             if let Some(rec) = row.recommended
-                && !row.cautious
                 && row.value != rec
             {
                 row.value = rec.to_string();
@@ -723,7 +727,7 @@ fn settings_key(state: &mut State<'_>, code: KeyCode) -> Option<Outcome> {
             state.list.select(Some(to));
         }
         // The portable spelling of Shift+Enter, and the one the footer names. Same
-        // meaning as it has one screen back: take all the safe advice, in one keystroke.
+        // meaning as it has one screen back: take all the advice, in one keystroke.
         KeyCode::Char('a') | KeyCode::Char('A') => {
             skip_ahead(state);
         }
@@ -2196,9 +2200,13 @@ mod tests {
     }
 
     #[test]
-    fn enter_walks_past_a_cautious_recommendation() {
-        // The tier boundary survives the walk. `allow_manifest_rewrite` edits a tracked
-        // file, and the key you can hold down must not be the key that turns it on.
+    fn enter_takes_a_cautious_recommendation_too() {
+        // Reversed in 1.17.0, by the owner's call. The walk used to step past the
+        // cautious tier; now it takes it, because the recommendation is to turn
+        // `allow_manifest_rewrite` on and the walkthrough is where its reading lives.
+        // What keeps the tier honest is arrival, not the walk — it starts switched
+        // off, which `the_safe_tier_arrives_accepted_and_the_cautious_one_does_not`
+        // still holds.
         let mut rows = vec![row("allow_manifest_rewrite", Control::Toggle, "false")];
         rows[0].recommended = Some("true");
         rows[0].cautious = true;
@@ -2206,20 +2214,16 @@ mod tests {
 
         handle_key(&mut st, KeyCode::Enter);
         assert_eq!(
-            st.session.rows[0].value, "false",
-            "the cautious tier is never accepted by the walk"
+            st.session.rows[0].value, "true",
+            "the walk takes the cautious recommendation like any other"
         );
-        // Still reachable — by the deliberate key.
-        handle_key(&mut st, KeyCode::Up); // off the finish line, back onto the row
-        handle_key(&mut st, KeyCode::Char(' '));
-        assert_eq!(st.session.rows[0].value, "true");
     }
 
     #[test]
     fn a_takes_every_remaining_recommendation_and_lands_on_the_summary() {
         // The one-keystroke version. It must agree with the walk about what "the
-        // recommended setup" is — every safe recommendation, and the cautious one left
-        // exactly where the walk leaves it.
+        // recommended setup" is — every recommendation, the cautious one included
+        // since 1.17.0.
         let mut rows = vec![
             row("enable_cargo", Control::Toggle, "false"),
             row("enable_node", Control::Toggle, "false"),
@@ -2241,8 +2245,8 @@ mod tests {
             "a row the cursor never reached is still taken"
         );
         assert_eq!(
-            st.session.rows[2].value, "false",
-            "the cautious tier is no more automatic here than in the walk"
+            st.session.rows[2].value, "true",
+            "the cautious tier is taken here exactly as the walk takes it"
         );
         assert_eq!(
             st.session.rows[3].value, "false",
@@ -2253,7 +2257,7 @@ mod tests {
         let Some(Outcome::Save(changed)) = handle_key(&mut st, KeyCode::Enter) else {
             panic!("Enter on the summary saves");
         };
-        assert_eq!(changed.len(), 2);
+        assert_eq!(changed.len(), 3);
     }
 
     #[test]
@@ -2294,7 +2298,7 @@ mod tests {
     #[test]
     fn holding_enter_walks_the_list_and_ends_at_the_summary() {
         // The promise made to a fresh install: pressing nothing but Enter reviews every
-        // setting, takes the safe advice, and lands on the summary — one more Enter
+        // setting, takes the advice, and lands on the summary — one more Enter
         // there saves. No key sequence, no End, no arming.
         let mut rows = vec![
             row("enable_cargo", Control::Toggle, "false"),
@@ -2355,13 +2359,14 @@ mod tests {
         let Some(Outcome::Save(changed)) = outcome else {
             panic!("held Enter never reached a save");
         };
-        assert_eq!(changed.len(), 1, "{changed:?}");
+        assert_eq!(changed.len(), 2, "{changed:?}");
         assert_eq!(changed[0].key, "enable_cargo");
         assert_eq!(changed[0].value, "true");
+        assert_eq!(changed[1].key, "allow_manifest_rewrite");
         assert_eq!(
             row_value(&st.session.rows, "allow_manifest_rewrite").as_deref(),
-            Some("false"),
-            "the cautious tier survived the whole ride untouched"
+            Some("true"),
+            "the held key takes the cautious recommendation with the rest"
         );
     }
 
@@ -2884,10 +2889,11 @@ mod tests {
     }
 
     #[test]
-    fn accept_all_stops_at_the_cautious_tier() {
-        // The whole reason the second tier exists. A single key that also accepted the
-        // setting the screen just told you to think about would make the warning
-        // decorative.
+    fn accept_all_takes_the_cautious_tier_too() {
+        // Reversed in 1.17.0, by the owner's call: `a` means "give me the recommended
+        // setup", and the recommended setup has `allow_manifest_rewrite` on. What
+        // keeps the warning meaningful is arrival — the tier starts switched off, so
+        // it is on screen before any key that could accept it is pressed.
         let adapters: &[&str] = &["npm"];
         let mut s = session(
             vec![
@@ -2911,15 +2917,15 @@ mod tests {
         );
         assert_eq!(
             row_value(&st.session.rows, "allow_manifest_rewrite").as_deref(),
-            Some("false")
+            Some("true")
         );
 
-        // Reachable, just not by the one key: Space on the row itself still takes it.
+        // Declining is still one deliberate key: Space on the row toggles it back off.
         st.sugg_list.select(Some(1));
         suggestions_key(&mut st, KeyCode::Char(' '));
         assert_eq!(
             row_value(&st.session.rows, "allow_manifest_rewrite").as_deref(),
-            Some("true")
+            Some("false")
         );
     }
 
