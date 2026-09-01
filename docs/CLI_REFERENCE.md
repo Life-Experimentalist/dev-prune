@@ -1492,7 +1492,10 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.16.0 · install script
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|
+                                                  v1.16.0 · install script
+Every dependency directory on this machine, in one command.
+Only what a lockfile can rebuild — and `devp undo` puts back the last run.
 
 dev-prune (devp) v1.16.0
   Binary Aliases:  dev-prune | devp
