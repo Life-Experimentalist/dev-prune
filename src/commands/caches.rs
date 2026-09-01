@@ -744,14 +744,18 @@ fn apply_dependents(reports: &mut [CacheReport], deps: Option<&Dependents>) {
     }
 }
 
-/// What each manager's caches add up to, across every row it has.
+/// What each manager's caches add up to, and how many rows it took.
 ///
 /// The same total the cap is measured against, and for the same reason: "cargo" is one
-/// cache to a person and two rows to this command.
-fn manager_totals(reports: &[CacheReport]) -> BTreeMap<&'static str, u64> {
-    let mut totals: BTreeMap<&'static str, u64> = BTreeMap::new();
+/// cache to a person and two rows to this command. The row count rides along because a
+/// total that spans more than one row has to say so where it is printed — see
+/// [`used_by`].
+fn manager_totals(reports: &[CacheReport]) -> BTreeMap<&'static str, (u64, usize)> {
+    let mut totals: BTreeMap<&'static str, (u64, usize)> = BTreeMap::new();
     for r in reports {
-        *totals.entry(r.manager).or_default() += r.bytes;
+        let entry = totals.entry(r.manager).or_default();
+        entry.0 += r.bytes;
+        entry.1 += 1;
     }
     totals
 }
@@ -1261,7 +1265,7 @@ fn used_by(
     r: &CacheReport,
     dependents: usize,
     deps: Option<&Dependents>,
-    totals: &BTreeMap<&'static str, u64>,
+    totals: &BTreeMap<&'static str, (u64, usize)>,
 ) -> String {
     if dependents == 0 {
         return format!("no registered repository uses {}", r.manager)
@@ -1269,16 +1273,21 @@ fn used_by(
             .to_string();
     }
     let registered = deps.map_or(dependents, |d| d.repositories);
-    let total = totals.get(r.manager).copied().unwrap_or(r.bytes);
+    let (total, rows) = totals.get(r.manager).copied().unwrap_or((r.bytes, 1));
     // Named rather than implied. The label column is blank on a continuation line, and
     // the figure is the manager's total across every row it has — so on go's two rows the
-    // number beside "go build cache" is not that row's size, and the sentence has to say
-    // whose it is.
+    // number beside "go build cache" is larger than that row's size and reads as an
+    // arithmetic error until the sentence says what it summed.
+    let share = output::format_bytes(total / dependents as u64);
+    let each = if rows > 1 {
+        format!("{share} each across its {rows} caches")
+    } else {
+        format!("{share} each")
+    };
     format!(
-        "{} is used by {dependents} of {registered} registered {} · {} each",
+        "{} is used by {dependents} of {registered} registered {} · {each}",
         r.manager,
         output::plural(registered, "repository", "repositories"),
-        output::format_bytes(total / dependents as u64)
     )
     .bold()
     .to_string()
@@ -1692,7 +1701,7 @@ fn print_clear_result(outcomes: &[ClearOutcome]) {
 
 /// Ask before anything is emptied. `--yes` answers for the user; a pipe or a script
 /// without it gets a "no" plus the flag to pass next time.
-fn confirm_clear(yes: bool) -> bool {
+pub fn confirm_clear(yes: bool) -> bool {
     use std::io::{IsTerminal, Write};
     if yes {
         return true;
