@@ -1027,6 +1027,63 @@ container store frees costs a pull of the whole layer stack. A consumer that wan
 grand total is welcome to add them; one that does not would have had no way to separate
 them again.
 
+### `devp history --json`
+
+```jsonc
+{
+  "schema": 1,
+  "version": "1.16.0",
+  "command": "history",
+  "detail_starts_at": "1.17.0",  // the version that began recording `removed` below
+  "passes": [                    // newest first; `pass` is stable under --pass N
+    {
+      "pass": 1,                 // the number `devp history --pass N` takes
+      "at": "2026-09-01T07:02:11+00:00",
+      "bytes_freed": 1610612736,
+      "directories": 1,
+      "repositories": 1,
+      "detail": true,            // false = recorded before 1.17.0, `removed` absent
+      "trigger": "manual",       // "manual" | "scheduled" | "dashboard"
+      "argv": ["run", "--min-size", "500", "--except", "api"],
+      "command_line": "devp run --min-size 500 --except api",
+      "dev_prune_version": "1.17.0",
+      "removed": [
+        {
+          "repo_path": "/home/you/Code/ml",
+          "directory": ".venv",
+          "adapter": "uv",
+          "bytes_freed": 1610612736,
+          "runtime": "3.12"      // null when the adapter reports no runtime version
+        }
+      ]
+    },
+    {
+      "pass": 4,                 // a pass from before the log existed
+      "at": "2026-07-01T03:00:00+00:00",
+      "bytes_freed": 5368709120,
+      "directories": 11,
+      "repositories": 4,
+      "detail": false            // no trigger, no argv, no `removed`
+    }
+  ]
+}
+```
+
+`detail` is the field to branch on, and it is there so that "this pass deleted nothing" and
+"nobody wrote down what this pass deleted" are not the same shape. A pass with
+`detail: false` predates 1.17.0: its four totals came from the registry, which has always
+kept them, and everything else about it was never recorded. A pass with `detail: true`
+always carries `trigger`, `argv`, `command_line`, `dev_prune_version` and `removed`, and a
+`removed` of `[]` on such a pass genuinely means it deleted nothing.
+
+`argv` is the arguments as they were parsed, unjoined; `command_line` is the same thing
+rendered back for a human, with any argument containing a space quoted. Use `argv` to match
+on a flag and `command_line` to print.
+
+`--pass N` filters this document to one entry without renumbering it, so `pass` in the
+output is always the number you would pass back in. `--export` writes exactly this document
+to a file.
+
 ### `devp caches --json`
 
 ```jsonc
@@ -1441,6 +1498,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 - **Description**: What dev-prune has actually done for you, as opposed to what it could do next. Lifetime space reclaimed, how much has been emptied out of package-manager caches, how many prune passes there have been, the most recent pass and how to undo it, the last ten passes, and the ten repositories that have given back the most. Read-only — it touches the registry and nothing else.
 - **Three space figures, not one**: `Space reclaimed` is what pruning gave back, `Caches emptied` is what [`devp caches clear <manager>`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) gave back, and `Containers cleared` is what [`devp caches clear <engine>`](#devp-caches-clear-engine---dry-run---yes---json) gave back. They are never added together, because they do not cost the same to undo: one reinstall in one repository, a download in every project on the machine, and a pull of the whole layer stack. `Caches emptied` counts from **1.9.0** and `Containers cleared` from **1.17.0**; a machine that did either before upgrading starts that figure at zero.
 - **Why it is separate from `status`**: [`devp status`](#6-devp-status---top-n---drift---json) answers "what can I reclaim right now". Folding a history report into it would put a screen of the past above the list people open it for.
+- **When a number here raises a question**, [`devp history`](#20-devp-history---pass-n---limit-n---all---json---export-path) answers it: this report says ten passes freed 27 GiB, that one says which pass, started by what, and every directory it took.
 - **A note on upgraded machines**: the lifetime total has been accumulating since 1.0.0, but the per-repository figures and the pass history are only recorded from **1.1.0** onward. A machine that pruned for months before upgrading will show a large lifetime total next to an empty "Biggest reclaims" section, and the report says so rather than implying nothing ever happened.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the report.
@@ -1558,6 +1616,33 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   devp install --channel winget --dry-run   # print the plan, change nothing
   devp install --channel uv                 # move onto uv, and remove the old copy
   devp install --channel cargo --yes        # skip the confirmation prompt
+  ```
+
+---
+
+### 20. `devp history [--pass N] [--limit N] [--all] [--json] [--export [PATH]]`
+- **Description**: Which pass deleted what, and what asked it to. [`devp stats`](#15-devp-stats---json) says a number of passes freed a number of bytes; this says that pass #2 ran at 09:14 as `devp run --daemon`, took 4.02 GiB out of two repositories, and names all three directories. Read-only — it never deletes anything and never puts anything back.
+- **Two levels, on purpose**: bare `devp history` is one line per pass, because twenty passes across a workspace is thousands of directories and nobody scrolls that. `--pass N` opens one of them in full, grouped by repository, biggest repository first.
+- **What is recorded per pass**: when it ran, what started it, the exact command line, the version of dev-prune that ran it, and every directory removed with its repository, its package manager and its size.
+- **What started it** is one of three, and there are only three: `manual` (you typed [`devp run`](#5-devp-run-target_path)), `scheduled` (the background pass, `devp run --daemon`), and `dashboard` (the `[p]` key inside [`devp status`](#6-devp-status---top-n---drift---json)). A Git hook is not on the list because a hook runs [`devp link`](#2-devp-link-path) and deletes nothing.
+- **Where it is kept**: `prune-log.jsonl` beside the registry, one JSON object per line, holding the **100** most recent passes. It is separate from `registry.json` because every command loads the registry and rewrites it whole; only this command reads the log. Nothing depends on it — deleting the file loses the report and nothing else, and [`devp restore --last-run`](#9-devp-restore-path---last-run) still works, because it reads the registry.
+- **On an upgraded machine**: per-directory detail is recorded from **1.17.0** onward. Passes older than that still appear, with their totals, marked `(totals only)` — the numbers were always in the registry, and a report that showed nothing next to a `devp stats` reading "10 prune passes" would look like a bug rather than a gap.
+- **When the output is long**: the directory list of one pass is capped at 200 entries **when it is going to a terminal**, and says how many were left out. Redirect it or pipe it and nothing is elided. `--export` writes the whole thing regardless.
+- **Flags**:
+  - `--pass N` — one pass in full. `1` is the most recent, matching the numbers in the list. A number nobody has is a usage error (exit `2`), including under `--json`, so a script cannot read an empty result as "that pass deleted nothing".
+  - `--limit N` — how many passes to list. The default is the 20 most recent.
+  - `--all` — list every pass the log holds.
+  - `--json` — emit the whole log as one document instead of the report. Combines with `--pass N` to emit just that one.
+  - `--export [PATH]` — write the JSON document to a file. With a path, exactly that path; with a directory, a generated filename inside it; bare, `dev-prune-history-<date>.json` in your documents folder (`~` if there is no documents folder). Combines with `--pass N` to export one pass.
+- **Exit codes**: `0` on success, including when nothing has ever been pruned. `2` for a pass number that does not exist. `1` if the export cannot be written.
+- **Examples**:
+  ```bash
+  devp history                          # the last 20 passes, one line each
+  devp history --pass 1                 # what the most recent pass deleted
+  devp history --all > passes.txt       # every pass, nothing elided
+  devp history --export                 # a JSON file in your documents folder
+  devp history --export ~/passes.json   # or exactly where you say
+  devp history --json | jq '[.passes[] | select(.trigger == "scheduled")] | length'
   ```
 
 ---

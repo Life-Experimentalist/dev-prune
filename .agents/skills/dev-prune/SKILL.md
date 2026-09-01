@@ -119,6 +119,8 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "show me my repos" | `devp status` (interactive; prints a plain table when not a TTY). In the dashboard: `s` sorts, `f` filters, `/` searches — display only, the totals always cover every registered repository |
 | "just the worst offenders" / "top 10 biggest" | `devp status --top 10` — trims the list, never the totals |
 | "how much has this saved me?" / "what did it clean last week?" | `devp stats` — lifetime total from pruning, a separate one from `devp caches clear <manager>`, a third from `devp caches clear <engine>`, prune passes, the last pass, and the repositories that gave back the most. The three are never added: they cost a reinstall, a re-download everywhere, and a full image pull respectively |
+| "which pass deleted what?" / "what did the scheduled run take last night?" / "why is my node_modules gone?" | `devp history` — one line per pass: when, what started it (`manual`, `scheduled`, `dashboard`), how much, how many directories and repositories. `devp history --pass 1` opens one in full: the exact command line that ran it and every directory removed, grouped by repository. This is the command that answers "was that me or the daemon?" — and the only one that can, because nothing else records the trigger |
+| "give me the whole history to look at" / "export what it has been doing" | `devp history --export` writes the JSON document to the user's documents folder, `--export <path>` to exactly where they say. Prefer `devp history --json` when *you* are the reader; prefer `--export` when the user wants a file. The per-pass detail list is capped at 200 entries on a terminal and never when redirected, so `devp history --all > passes.txt` is complete |
 | "add tab completion" | `devp completions <bash\|zsh\|fish\|powershell\|elvish>` — prints the script to stdout; the user redirects it |
 | "clean up" / "free space" | `devp run --dry-run`, then `devp run -y` |
 | "clean this project" | `devp run . -y` |
@@ -196,8 +198,8 @@ A run in which any repository failed exits `1` even if others succeeded.
 
 ## 🔌 Machine-readable output — prefer this over parsing the human report
 
-`devp run --json`, `devp status --json`, `devp stats --json`, `devp caches --json` and
-`devp trust --json` each
+`devp run --json`, `devp status --json`, `devp stats --json`, `devp history --json`,
+`devp caches --json` and `devp trust --json` each
 emit **one** JSON document on stdout and nothing else; warnings go to stderr. `--json`
 implies non-interactive, so it never blocks on a prompt. `status --json` and
 `stats --json` change nothing at all, not even the registry file. (When a human runs
@@ -221,6 +223,8 @@ devp caches clear docker --dry-run --json  # the commands it would run, and the 
                             # .summary.volumes_untouched is always true
 devp trust --json           # what the tool guarantees, what this machine has switched on, and the SHA-256 of every binary it owns
 devp status --drift --json  # unrecorded packages per environment, with the record command
+devp history --json         # every recorded pass: trigger, argv, and each directory removed
+devp history --pass 1 --json  # just the most recent one, still numbered `pass: 1`
 ```
 
 `stats` reports history, `status` reports opportunity — reach for `stats` when the user
@@ -228,6 +232,16 @@ asks what dev-prune *has* done and `status` when they ask what it *could* do. On
 upgraded from 1.0.0 the per-repository figures and the pass list in `stats` start empty
 while the lifetime total does not; the document's `history_starts_at` field says so, so
 report the gap rather than reading it as "nothing was ever pruned".
+
+`history` is `stats` with the receipts. `stats` says ten passes freed 27 GiB; `history`
+says which pass, what started it, the exact command line, and every directory it took.
+Reach for it whenever a question is about a *particular* deletion rather than a total —
+"what happened to this project's `node_modules`", "did the daemon run last night", "which
+of my repositories does the scheduled pass keep hitting". In `--json`, branch on `detail`:
+`false` means the pass predates 1.17.0 and only its four totals were ever recorded, so a
+missing `removed` there is a gap in the record and not a pass that deleted nothing.
+`detail_starts_at` names the release the per-directory log begins in. Match on `argv` when
+you are looking for a flag; print `command_line` when you are showing the user.
 
 `devp status` sizes every dependency tree in every registered repository, so on a large
 registry it takes several seconds even though it is a pure read. Prefer `--top N` when

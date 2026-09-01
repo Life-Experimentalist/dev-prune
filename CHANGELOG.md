@@ -34,6 +34,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discovery is what covers those, and the table says so instead of leaving you to work it
   out. It also names the one case that still needs a hand, and what is skipped on purpose.
 
+- **`devp history`** answers the question `devp stats` raises. That report says ten passes
+  freed 27.66 GiB; this one says pass #2 ran at 09:14 as `devp run --daemon`, took
+  4.02 GiB out of two repositories, and names all three directories it deleted. Bare, it
+  is one line per pass. `devp history --pass 1` opens one in full: the exact command line,
+  the version that ran it, and every directory removed with its package manager and size,
+  grouped by repository.
+
+  **It records what started each pass**, which nothing did before — `manual` if you typed
+  `devp run`, `scheduled` if it was the background pass, `dashboard` if it was the `[p]`
+  key in `devp status`. There are three ways to start a prune and those are all three, so
+  "was that me or the daemon?" now has an answer rather than an inference.
+
+  Long output has three exits rather than a truncation: detail is per-pass and opt-in, the
+  directory list is capped at 200 entries **only when it is going to a terminal** (redirect
+  or pipe it and nothing is elided), and `devp history --export` writes the whole document
+  to your documents folder — or to exactly the path you name.
+
+  Passes from before this release still appear, marked `(totals only)`: their four numbers
+  were always in the registry, and a history that started empty next to a `devp stats`
+  reading "10 prune passes" would look like a bug rather than a gap. `devp history --json`
+  carries `detail: false` on those, so a script can tell "deleted nothing" from "nobody
+  wrote it down".
+  [Reference](docs/CLI_REFERENCE.md#20-devp-history---pass-n---limit-n---all---json---export-path)
+
 ### Fixed
 
 - **The one safety promise on `devp`'s first screen named the wrong command.** Both the

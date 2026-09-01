@@ -2034,6 +2034,18 @@ Notes you should rely on, not work around:
                   </tr>
                   <tr>
                     <td className="td-name">
+                      <code>devp history</code>
+                    </td>
+                    <td>
+                      Which pass deleted what, and what asked it to &mdash; one
+                      line per pass, then <code>--pass 1</code> for the exact
+                      command line and every directory it took.{" "}
+                      <code>--export</code> writes the lot to your documents
+                      folder
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
                       <code>devp completions &lt;shell&gt;</code>
                     </td>
                     <td>

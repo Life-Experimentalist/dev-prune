@@ -207,6 +207,27 @@ EXAMPLES:
 
 Run interactively with a terminal, `--json` also copies the document to the clipboard.";
 
+pub const HISTORY_LONG: &str = "Which pass deleted what. `devp stats` counts the passes and adds up the bytes; this lists them, newest first, and `--pass 1` opens one up: when it ran, whether someone typed it or the scheduler started it, the exact command with its flags, and every directory it removed grouped under the repository it came from.
+
+The list is one line per pass on purpose. A pass across forty repositories has hundreds of directories in it, so the detail is asked for by number rather than printed by default, and `--export` writes the whole log to a file for the times when the answer really is all of it. Redirect or pipe `--pass N` and nothing is elided — only a terminal gets a cap, because only a terminal has a scrollback to lose it in.
+
+Per-directory detail is recorded from 1.17.0 onward. Passes older than that are still listed, from the totals the registry has always kept, and marked so an upgraded machine does not look like it lost them.
+
+Read-only. It reads the log and the registry and writes nothing, except the file `--export` is asked for.";
+
+pub const HISTORY_EXAMPLES: &str = "EXAMPLES:
+  devp history                    Every pass, one line each, newest first
+  devp history --all              Past the 20 the list stops at
+  devp history --pass 1           What the most recent pass deleted, and what asked it to
+  devp history --pass 3 --json    That pass as one JSON document
+  devp history --export           Write the whole log to your documents folder
+  devp history --export ./log.json
+                                  Write it where you say instead
+  devp history --json | jq '[.passes[] | select(.trigger == \"scheduled\")]'
+                                  Only the passes nobody typed
+
+Run interactively with a terminal, `--json` also copies the document to the clipboard.";
+
 pub const MAN_LONG: &str = "Render the manual, from the same clap definitions `--help` prints, so the manual cannot describe a flag the program does not have.
 
 `devp man` at a terminal prints the contents page: every command grouped by what it is for, one line each, plus the flags that go before the command and the exit codes. `devp man <command>` prints that one command's page — the same text `devp <command> --help` prints, because they are the same definition.

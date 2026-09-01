@@ -312,10 +312,16 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                     // save below reports it.
                     if pruned_dirs.len() > recorded_before {
                         registry.record_prune_progress(pass_at, pruned_dirs.clone());
+                        crate::history::record(
+                            pass_at,
+                            crate::history::Trigger::Dashboard,
+                            &pruned_dirs,
+                        );
                         let _ = registry.save();
                     }
                 }
 
+                crate::history::record(pass_at, crate::history::Trigger::Dashboard, &pruned_dirs);
                 registry.record_prune_progress(pass_at, pruned_dirs);
                 registry.save()?;
 

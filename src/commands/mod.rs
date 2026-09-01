@@ -10,6 +10,7 @@ pub mod config;
 pub mod containers;
 pub mod daemon;
 pub mod doctor;
+pub mod history;
 pub mod hook;
 pub mod icon;
 pub mod init;

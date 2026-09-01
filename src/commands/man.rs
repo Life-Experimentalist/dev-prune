@@ -156,6 +156,7 @@ const CONTENTS_GROUPS: [(&str, &[(&str, &str)]); 5] = [
         &[
             ("status", "every repository, its size and its idle days"),
             ("stats", "space reclaimed over time"),
+            ("history", "which pass deleted what, and what asked it to"),
             ("caches", "package manager caches on this machine"),
             ("doctor", "what is broken, and how to fix it"),
             ("trust", "what this program may do on this machine"),

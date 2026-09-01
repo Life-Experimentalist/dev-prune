@@ -356,6 +356,59 @@ pub fn stats_document(registry: &Registry) -> Value {
     })
 }
 
+/// The full prune log, for `devp history --json` and `devp history --export`.
+///
+/// The whole log, not a page of it: this is the document the `--export` file holds and
+/// the one an assistant is pointed at, and both of those want every pass. The compact
+/// text report is where the trimming lives.
+///
+/// `detail: false` on a pass is the honest form of a gap. Passes older than
+/// [`constants::PRUNE_LOG_STARTS_AT`] have their totals and no directory list, and a
+/// consumer must be able to tell "this pass deleted nothing" from "nobody wrote down
+/// what this pass deleted" — an empty `directories` array on its own says the first.
+///
+/// `only` narrows the document to one pass without renumbering it: `--pass 3 --json`
+/// carries `"pass": 3`, the same number the text report and `--pass` itself use.
+pub fn history_document(passes: &[crate::history::Pass], only: Option<usize>) -> Value {
+    use crate::history::Pass;
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "history",
+        "detail_starts_at": constants::PRUNE_LOG_STARTS_AT,
+        "passes": passes.iter().enumerate()
+            .filter(|(index, _)| only.is_none_or(|n| n == index + 1))
+            .map(|(index, pass)| {
+            let mut entry = json!({
+                // 1 is the newest, matching `devp history --pass N` exactly.
+                "pass": index + 1,
+                "at": pass.at().to_rfc3339(),
+                "bytes_freed": pass.bytes_freed(),
+                "directories": pass.dirs_removed(),
+                "repositories": pass.repos_touched(),
+                "detail": pass.dirs().is_some(),
+            });
+            let map = entry.as_object_mut().expect("json! built an object");
+            if let Pass::Detailed(record) = pass {
+                map.insert("trigger".into(), json!(record.trigger.label()));
+                map.insert("argv".into(), json!(record.argv));
+                map.insert("command_line".into(), json!(record.command_line()));
+                map.insert("dev_prune_version".into(), json!(record.version));
+            }
+            if let Some(dirs) = pass.dirs() {
+                map.insert("removed".into(), json!(dirs.iter().map(|d| json!({
+                    "repo_path": clean_path(&d.repo_path),
+                    "directory": d.bloat_dir,
+                    "adapter": d.adapter,
+                    "bytes_freed": d.size_freed,
+                    "runtime": d.runtime,
+                })).collect::<Vec<_>>()));
+            }
+            entry
+        }).collect::<Vec<_>>(),
+    })
+}
+
 /// One entry per container engine that is installed, for either document that carries
 /// them.
 ///

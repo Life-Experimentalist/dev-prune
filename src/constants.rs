@@ -93,6 +93,30 @@ pub static LONG_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(
 /// as much as a display one. Fifty passes is roughly a year of a fortnightly schedule.
 pub const PRUNE_HISTORY_LIMIT: usize = 50;
 
+/// Name of the append-only prune log, beside the registry.
+///
+/// Separate from `registry.json` because the two have opposite shapes. The registry is
+/// rewritten in full on every save and every command loads it, so a per-directory record
+/// of every pass ever run would be paid for by `devp status`. This file is read by one
+/// command.
+pub const PRUNE_LOG_FILENAME: &str = "prune-log.jsonl";
+
+/// How many passes the prune log keeps in full, per-directory detail.
+///
+/// Not the same decision as [`PRUNE_HISTORY_LIMIT`], and deliberately a different number:
+/// that one is four integers per pass inside a file every command parses, this one is a
+/// line per pass in a file only `devp history` opens. A hundred passes of a realistic
+/// size is well under a megabyte; the oldest come off the front.
+pub const PRUNE_LOG_LIMIT: usize = 100;
+
+/// The release `devp history` starts recording per-directory detail in.
+///
+/// Passes older than this exist — [`PRUNE_HISTORY_LIMIT`] summaries of them are in the
+/// registry — but with four numbers each and no directory list. `devp history` shows them
+/// anyway, marked, because a machine that has pruned for a year and shows an empty log
+/// reads as data loss rather than as a format that changed.
+pub const PRUNE_LOG_STARTS_AT: &str = "1.17.0";
+
 /// How many restore measurements one adapter's throughput average is worth.
 ///
 /// Past this, the running totals are halved before the new sample is added, so the
