@@ -53,10 +53,12 @@ pub const TAGLINE: &str = "Every dependency directory on this machine, in one co
 /// It sits under [`TAGLINE`] because "deletes directories" is the part a new user is
 /// right to be nervous about, and the answer to it should not be three screens away in
 /// the README. Both halves of the sentence are load-bearing: the lockfile rule is what
-/// the engine actually enforces, and `undo` is what covers the case where the rule was
-/// satisfied and the user still wanted the directory back.
+/// the engine actually enforces, and `restore --last-run` is what covers the case where
+/// the rule was satisfied and the user still wanted the directory back. It named `undo`
+/// for six releases, which reverses an `init` or a `link` and has never put a directory
+/// back — the one promise on the first screen pointed at the wrong command.
 pub const TAGLINE_SAFETY: &str =
-    "Only what a lockfile can rebuild — and `devp undo` puts back the last run.";
+    "Only what a lockfile can rebuild — and `devp restore --last-run` puts it back.";
 
 /// The licence sentence under the declaration, in both wizard paths.
 ///
