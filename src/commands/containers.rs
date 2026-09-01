@@ -55,8 +55,10 @@ struct Engine {
     binary: &'static str,
     /// Arguments that make it print its disk usage as JSON.
     ///
-    /// Docker and nerdctl take a Go template; Podman takes a format name. Both produce
-    /// the same four rows, which is why one parser reads either.
+    /// Docker, nerdctl and finch take a Go template; Podman and Apple's `container` take
+    /// a format name. The first four then produce the same rows in one of two
+    /// punctuations, which is why one parser reads either; Apple's is a different
+    /// document and [`parse_rows`] says so.
     df_args: &'static [&'static str],
     /// The reclaim commands worth printing, narrowest first, each with what it costs.
     ///
@@ -73,6 +75,15 @@ struct Engine {
     /// that touches a volume, so "volumes are left alone" is a property of the table
     /// rather than a flag someone can pass or a check that could be forgotten.
     reclaim: &'static [ReclaimStep],
+    /// Whether this engine stops to ask before it prunes.
+    ///
+    /// Docker, Podman, nerdctl and finch all do, and all take `-f` to say the question
+    /// has already been asked — which dev-prune has, by name, in the plan it printed
+    /// first. Apple's `container` has neither the question nor the flag: `container
+    /// prune` removes stopped containers and prints what it reclaimed, and a `-f` it does
+    /// not define would turn every step into a usage error. So this is a fact about the
+    /// engine, checked in the tests, rather than a habit applied to all of them.
+    prompts: bool,
 }
 
 /// One command `devp caches clear <engine>` runs.
@@ -98,6 +109,7 @@ const ENGINES: &[Engine] = &[
     Engine {
         name: "docker",
         binary: "docker",
+        prompts: true,
         df_args: &["system", "df", "--format", "{{json .}}"],
         prune: &[
             (
@@ -139,6 +151,7 @@ const ENGINES: &[Engine] = &[
     Engine {
         name: "podman",
         binary: "podman",
+        prompts: true,
         df_args: &["system", "df", "--format", "json"],
         prune: &[
             (
@@ -172,6 +185,7 @@ const ENGINES: &[Engine] = &[
     Engine {
         name: "nerdctl",
         binary: "nerdctl",
+        prompts: true,
         df_args: &["system", "df", "--format", "{{json .}}"],
         prune: &[
             (
@@ -191,6 +205,70 @@ const ENGINES: &[Engine] = &[
             what: "images, stopped containers and the build cache",
             args: &["system", "prune", "-a", "-f"],
         }],
+    },
+    // finch is nerdctl inside a Lima VM, and it forwards `system` to it verbatim with
+    // flag parsing turned off — so the nerdctl spellings above are the finch spellings,
+    // template and all. Its store is inside that VM's disk image, which is the same
+    // reason the host cannot size it and the engine has to be the one asked.
+    Engine {
+        name: "finch",
+        binary: "finch",
+        prompts: true,
+        df_args: &["system", "df", "--format", "{{json .}}"],
+        prune: &[
+            (
+                "finch system prune",
+                "stopped containers, networks, dangling images",
+            ),
+            (
+                "finch system prune --volumes",
+                "adds unused volumes — the one that deletes data",
+            ),
+        ],
+        reclaim: &[ReclaimStep {
+            what: "images, stopped containers and the build cache",
+            args: &["system", "prune", "-a", "-f"],
+        }],
+    },
+    // Apple's `container`, on Apple silicon. Named after its binary like the rest, so
+    // `devp caches clear container` is the command someone who has been typing
+    // `container` all day would guess.
+    //
+    // It is the odd one here twice over. Its `system df` answers with one object whose
+    // fields are the resource types rather than a row each, and its prune subcommands
+    // have no confirmation and therefore no `-f`. There is also nothing to clear a build
+    // cache with: BuildKit lives in a builder VM, and `container builder delete` removes
+    // the builder itself rather than pruning what it cached, which is more than being
+    // asked for.
+    Engine {
+        name: "container",
+        binary: "container",
+        prompts: false,
+        df_args: &["system", "df", "--format", "json"],
+        prune: &[
+            (
+                "container image prune -a",
+                "every image no container uses, tagged or not",
+            ),
+            (
+                "container prune",
+                "stopped containers and their writable layers",
+            ),
+            (
+                "container volume prune",
+                "unused volumes — the one that deletes data",
+            ),
+        ],
+        reclaim: &[
+            ReclaimStep {
+                what: "images no container uses",
+                args: &["image", "prune", "-a"],
+            },
+            ReclaimStep {
+                what: "stopped containers and their writable layers",
+                args: &["prune"],
+            },
+        ],
     },
 ];
 
@@ -324,8 +402,13 @@ fn query_dir() -> PathBuf {
 
 /// Read an engine's `system df` answer.
 ///
-/// Docker prints one JSON object per line; Podman prints a single array. Accepting both
-/// is three lines and removes an entire class of "works on my machine" from a report
+/// Three shapes. Docker, nerdctl and finch print one JSON object per line; Podman prints
+/// a single array of the same objects; Apple's `container` prints one pretty-printed
+/// object whose *fields* are the resource types, with no `Type` anywhere to read. The
+/// first two differ only in punctuation, which is why one row parser reads either;
+/// the third is a different document and gets its own.
+///
+/// Accepting all three removes an entire class of "works on my machine" from a report
 /// whose whole job is to be believed.
 fn parse_rows(raw: &str) -> Vec<Row> {
     let trimmed = raw.trim();
@@ -335,11 +418,48 @@ fn parse_rows(raw: &str) -> Vec<Row> {
             _ => Vec::new(),
         };
     }
+    // Only a document that is one whole object gets this far as anything but an error:
+    // Docker's several-objects-on-several-lines does not parse as one value, and its
+    // single-object case has a `Type` and no `images`, so it falls through to the loop.
+    if let Ok(v) = serde_json::from_str::<Value>(trimmed)
+        && let Some(rows) = apple_rows(&v)
+    {
+        return rows;
+    }
     trimmed
         .lines()
         .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
         .filter_map(|v| row_from(&v))
         .collect()
+}
+
+/// Apple's `container system df`, which answers with one object rather than a row each.
+///
+/// `{"images":{"total":4,"active":2,"sizeInBytes":12345,"reclaimable":678}, "containers":
+/// {…}, "volumes":{…}}` — counts and byte counts as numbers, no formatted strings to
+/// parse and no percentage to strip. All three keys are required, so anything else that
+/// happens to be one JSON object falls through to the row parser instead of becoming a
+/// report with holes in it.
+///
+/// The three labels are the ones the engine's own table prints, so somebody running
+/// `container system df` beside `devp caches containers` reads the same words in both.
+fn apple_rows(v: &Value) -> Option<Vec<Row>> {
+    let mut rows = Vec::new();
+    for (key, kind) in [
+        ("images", "Images"),
+        ("containers", "Containers"),
+        ("volumes", "Local Volumes"),
+    ] {
+        let usage = v.get(key)?.as_object()?;
+        rows.push(Row {
+            kind: kind.to_string(),
+            total: usage.get("total").and_then(Value::as_u64),
+            active: usage.get("active").and_then(Value::as_u64),
+            bytes: usage.get("sizeInBytes").and_then(Value::as_u64),
+            reclaimable: usage.get("reclaimable").and_then(Value::as_u64),
+        });
+    }
+    Some(rows)
 }
 
 /// One row, from whichever spelling of the fields this engine uses.
@@ -856,6 +976,20 @@ fn print_engine(name: &str, rows: &[Row]) {
     for (command, cost) in engine.prune {
         println!("  {command:<COMMAND_WIDTH$}{cost}");
     }
+    if !engine.prompts {
+        println!();
+        // Worth one line, because the last command in that list deletes data and the
+        // reader's expectation comes from the other engines: everywhere else a prune
+        // stops and asks, and a `-f` in an example is the tell that it would have. This
+        // one has no such flag because it has no such question.
+        output::print_wrapped(
+            "  ",
+            &format!(
+                "{} asks nothing first. Each of those runs the moment you press Return,                  including the last one.",
+                engine.name
+            ),
+        );
+    }
 }
 
 /// The `9.20 GiB reclaimable` cell, blank-padded when the engine did not say.
@@ -991,15 +1125,64 @@ mod tests {
         // These run without a terminal behind them — inside `devp caches clear --yes`, and
         // from a shell whose stdin the engine does not own. A step that stops to ask is a
         // hang, and dev-prune has already asked the only question that matters.
+        //
+        // The engines that ask take `-f` to say it has been answered. Apple's `container`
+        // never asks and defines no such flag, so passing one there would not be caution:
+        // it would be a usage error on every step, which is the same hang's worth of
+        // nothing reclaimed by a different route.
         for engine in ENGINES {
             for step in engine.reclaim {
-                assert!(
-                    step.args.contains(&"-f") || step.args.contains(&"--force"),
-                    "`{}` would stop to ask",
-                    step_command(engine, step)
+                let forced = step.args.contains(&"-f") || step.args.contains(&"--force");
+                assert_eq!(
+                    forced,
+                    engine.prompts,
+                    "`{}` disagrees with what {} does about prompting",
+                    step_command(engine, step),
+                    engine.name
                 );
             }
         }
+    }
+
+    #[test]
+    fn reads_apples_one_object_for_all_three() {
+        // Apple's `container` is not installed on the machines this is developed on, so
+        // the shape is pinned from `DiskUsageStats`/`ResourceUsage` in apple/container
+        // rather than from a run. If those field names ever change, this fails here
+        // instead of the report quietly showing an engine holding nothing.
+        let raw = r#"{
+          "images" : { "total" : 12, "active" : 3, "sizeInBytes" : 4210000000,
+                       "reclaimable" : 3020000000 },
+          "containers" : { "total" : 7, "active" : 1, "sizeInBytes" : 118400000,
+                           "reclaimable" : 118400000 },
+          "volumes" : { "total" : 2, "active" : 0, "sizeInBytes" : 2048,
+                        "reclaimable" : 2048 }
+        }"#;
+        let rows = parse_rows(raw);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].kind, "Images");
+        assert_eq!(rows[0].total, Some(12));
+        assert_eq!(rows[0].active, Some(3));
+        assert_eq!(rows[0].bytes, Some(4_210_000_000));
+        assert_eq!(rows[0].reclaimable, Some(3_020_000_000));
+        // The label is the engine's own, not the JSON key: `volumes` prints as
+        // `Local Volumes`, which is also what the volume-keeping arithmetic matches on.
+        assert_eq!(rows[2].kind, "Local Volumes");
+        assert_eq!(rows[2].bytes, Some(2_048));
+    }
+
+    #[test]
+    fn a_json_object_that_is_not_apples_is_not_read_as_apples() {
+        // Docker printing a single row — one object, on one line — must still be read as
+        // that row rather than swallowed by the branch above.
+        let rows = parse_rows(
+            r#"{"Active":"3","Reclaimable":"3.02GB (71%)","Size":"4.21GB","TotalCount":"12","Type":"Images"}"#,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "Images");
+        // Two of the three keys is not the shape either, and half a report is worse than
+        // the honest "could not read this" the caller prints for no rows.
+        assert!(parse_rows(r#"{"images":{"total":1},"containers":{"total":1}}"#).is_empty());
     }
 
     #[test]

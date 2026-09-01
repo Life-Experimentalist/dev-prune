@@ -1794,8 +1794,10 @@ mod tests {
 
     #[test]
     fn test_js_conflict_ignores_an_unrecognised_package_manager_field() {
-        // A `packageManager` naming something we have no adapter for must not wipe out
-        // the detection entirely — fall through to the lockfile timestamps.
+        // A `packageManager` naming something that is not one of the four contenders for
+        // `node_modules` must not wipe out the detection entirely — fall through to the
+        // lockfile timestamps. Deno is the live example rather than a made-up name: it
+        // has an adapter, and it still does not settle a conflict between npm and yarn.
         let tmp = TempDir::new().unwrap();
         fs::write(
             tmp.path().join("package.json"),

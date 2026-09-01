@@ -39,15 +39,19 @@ impl Deno {
     /// `vendor/` at the project root for something else entirely, and a repository that
     /// carried a `deno.lock` alongside either of those would otherwise have dev-prune
     /// delete Composer's dependency tree and offer `deno install` to put it back.
+    ///
+    /// The config is parsed rather than searched. Looking for the text `"vendor": true`
+    /// finds it inside a comment as readily as in the setting, and `deno.jsonc` is a
+    /// format whose whole point is that it may carry comments — so a line somebody
+    /// commented out would have been read as a live instruction to delete. A config this
+    /// cannot parse is a config that claims nothing: under-claiming leaves a directory
+    /// on disk, and over-claiming deletes one Deno will not put back.
     fn vendors(path: &Path) -> bool {
         ["deno.json", "deno.jsonc"].iter().any(|name| {
             fs::read_to_string(path.join(name))
-                .map(|config| {
-                    config
-                        .split_whitespace()
-                        .collect::<String>()
-                        .contains("\"vendor\":true")
-                })
+                .ok()
+                .and_then(|config| serde_json::from_str::<serde_json::Value>(&config).ok())
+                .and_then(|config| config.get("vendor").and_then(serde_json::Value::as_bool))
                 .unwrap_or(false)
         })
     }
@@ -166,6 +170,16 @@ mod tests {
     fn a_vendor_directory_is_claimed_only_when_the_config_asked_for_one() {
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join("vendor")).unwrap();
+        assert!(Deno.bloat_dirs(dir.path()).is_empty());
+
+        // The setting, commented out. Read as text this says `"vendor":true`; read as
+        // configuration it says nothing at all, and Composer's `vendor/` in a repository
+        // that happens to also hold a `deno.lock` depends on the difference.
+        fs::write(
+            dir.path().join("deno.jsonc"),
+            "{\n  // \"vendor\": true\n}\n",
+        )
+        .unwrap();
         assert!(Deno.bloat_dirs(dir.path()).is_empty());
 
         fs::write(dir.path().join("deno.json"), "{ \"vendor\": true }").unwrap();
