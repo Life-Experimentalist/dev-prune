@@ -134,8 +134,35 @@ struct StatusApp<'a> {
     searching: bool,
     /// If `Some`, the user confirmed and we return these indices.
     confirmed_indices: Option<Vec<usize>>,
+    /// One line explaining the last refused keypress, shown in the prune-mode footer.
+    notice: Option<String>,
     /// Set to true when the user toggles ignore config in .devprune.json or presence of ignore.devprune.json so caller can reload.
     pub should_reload: bool,
+}
+
+/// Why this repository cannot be checked for pruning, or `None` if it can be.
+///
+/// Selectable is deliberately wider than `SkipReason::Candidate`. An *active*
+/// repository is one the engine would skip on the idle threshold alone, and the
+/// dashboard's own executor already runs with `force: true` — so offering it here
+/// promises nothing the prune cannot deliver. On a machine whose repositories are all
+/// worked in daily, candidate-only selection left the mode with nothing to select at
+/// all, which is indistinguishable from a dead feature.
+///
+/// Everything else stays refused because pruning it genuinely would not work:
+/// verification still applies to every row this function accepts.
+fn refusal(repo: &RepoStatusEntry) -> Option<String> {
+    match &repo.reason {
+        SkipReason::Candidate | SkipReason::Active if repo.reclaimable_bytes > 0 => None,
+        SkipReason::Candidate | SkipReason::Active | SkipReason::NoBloat => {
+            Some("nothing to reclaim here".to_string())
+        }
+        SkipReason::Ignored => Some("ignored — press [i] to un-ignore it".to_string()),
+        SkipReason::PathMissing => {
+            Some("path is missing — `devp unlink --missing` clears it".to_string())
+        }
+        SkipReason::ConfigError(e) => Some(format!("config error: {e}")),
+    }
 }
 
 impl<'a> StatusApp<'a> {
@@ -154,6 +181,7 @@ impl<'a> StatusApp<'a> {
             search: String::new(),
             searching: false,
             confirmed_indices: None,
+            notice: None,
             should_reload: false,
         };
         app.rebuild_view();
@@ -259,10 +287,17 @@ impl<'a> StatusApp<'a> {
     }
 
     fn toggle_current(&mut self) {
-        if let Some(i) = self.cursor_repo() {
-            // Only allow toggling candidate repos for pruning
-            if matches!(self.repos[i].reason, SkipReason::Candidate) {
+        let Some(i) = self.cursor_repo() else {
+            return;
+        };
+        match refusal(&self.repos[i]) {
+            // Silently refusing every keypress is what made this mode look broken: a
+            // machine whose repositories are all worked-in daily has no candidates, so
+            // Space did nothing on every row and there was no way to find out why.
+            Some(why) => self.notice = Some(why),
+            None => {
                 self.selected[i] = !self.selected[i];
+                self.notice = None;
             }
         }
     }
@@ -272,6 +307,11 @@ impl<'a> StatusApp<'a> {
     /// Deliberately scoped to the view: with a filter or a search active, "all" has to
     /// mean the rows the user can see. Selecting thirty repositories they filtered out
     /// on a keypress labelled *Toggle All* is how a prune becomes a surprise.
+    ///
+    /// Candidates only, even though Space can now check an active repository too.
+    /// Enter prunes immediately — there is no second confirmation — so one stray `a`
+    /// must never arm every repository that merely has something to reclaim, including
+    /// the one the user is working in right now. Actives are opted into a row at a time.
     fn toggle_all_candidates(&mut self) {
         let visible: Vec<usize> = self
             .view
@@ -314,6 +354,11 @@ impl<'a> StatusApp<'a> {
             .iter()
             .filter(|r| matches!(r.reason, SkipReason::Candidate))
             .count()
+    }
+
+    /// How many rows Space would accept — the honest denominator for the footer.
+    fn selectable_count(&self) -> usize {
+        self.repos.iter().filter(|r| refusal(r).is_none()).count()
     }
 }
 
@@ -466,11 +511,28 @@ fn run_status_loop(
                     // Auto-select the candidates on screen — not every candidate in the
                     // registry. Someone who filtered or searched their way down to four
                     // repositories asked for those four.
+                    //
+                    // Candidates only: an active repository is selectable but never
+                    // pre-checked, because entering a mode must not arm a repository
+                    // the user is still working in.
+                    let mut armed = 0;
                     for i in app.view.clone() {
                         if matches!(app.repos[i].reason, SkipReason::Candidate) {
                             app.selected[i] = true;
+                            armed += 1;
                         }
                     }
+                    // Arming nothing used to be silent, and looked exactly like a mode
+                    // that had failed to open. Say which it is.
+                    app.notice = (armed == 0).then(|| {
+                        if app.view.iter().any(|&i| refusal(&app.repos[i]).is_none()) {
+                            "No repository is past the idle threshold — press [Space] \n                             to select one you are still working in."
+                                .to_string()
+                        } else {
+                            "Nothing here can be pruned — press [f] to widen the filter."
+                                .to_string()
+                        }
+                    });
                 }
                 KeyCode::Char('i') | KeyCode::Char('I') => {
                     // Toggle ignore in .devprune.json on the current repo
@@ -543,6 +605,7 @@ fn run_status_loop(
                         // Exit prune-select mode, go back to browse
                         app.mode = ViewMode::Browse;
                         app.selected.fill(false);
+                        app.notice = None;
                     } else {
                         return Ok(());
                     }
@@ -811,10 +874,13 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                 // colour this screen already uses for "you are in the destructive mode"
                 // — saying it twice made neither reading land.
                 Span::styled(
+                    // "of N candidates" undercounted the moment Space started accepting
+                    // active repositories, and on a machine with no idle repository at
+                    // all it read "0 of 0" while rows were plainly selectable.
                     format!(
-                        "{} of {} candidates  ",
+                        "{} of {} selectable  ",
                         app.selected_count(),
-                        app.candidate_count()
+                        app.selectable_count()
                     ),
                     Style::default().add_modifier(Modifier::BOLD),
                 ),
@@ -846,7 +912,15 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                 Span::styled("[q]", Style::default().fg(Color::Cyan)),
                 Span::raw(" Quit"),
             ]),
-            Line::from(vec![]),
+            // Reuses the blank line the footer already reserved, so the notice costs no
+            // height against the fixed footer constraint.
+            Line::from(match &app.notice {
+                Some(msg) => vec![Span::styled(
+                    format!("⚠ {msg}"),
+                    Style::default().fg(Color::Yellow),
+                )],
+                None => vec![],
+            }),
         ]
     } else {
         vec![
@@ -1276,5 +1350,97 @@ mod tests {
         app.rebuild_view();
         assert_eq!(app.view.len(), 1);
         assert_eq!(reclaimable_split(app.repos), before);
+    }
+
+    #[test]
+    fn space_checks_a_repository_that_is_only_too_recently_worked_in() {
+        // The bug this covers: every repository on a machine used daily is `Active`,
+        // so a candidate-only rule left prune-select with nothing it would accept and
+        // no way to tell that apart from a mode that had failed to open.
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+        app.mode = ViewMode::PruneSelect;
+        app.table_state.select(Some(1)); // `/code/beta` — active, 9 KB to reclaim
+
+        app.toggle_current();
+        assert!(
+            app.selected[1],
+            "an active repository is the user's to pick"
+        );
+        assert!(app.notice.is_none());
+
+        app.toggle_current();
+        assert!(!app.selected[1], "and the same key unchecks it");
+    }
+
+    #[test]
+    fn space_refuses_what_a_prune_could_not_deliver_and_says_why() {
+        let repos = vec![
+            entry("/code/ignored", SkipReason::Ignored, 500, 90),
+            entry("/code/empty", SkipReason::NoBloat, 0, 90),
+            entry("/code/gone", SkipReason::PathMissing, 0, 90),
+            entry(
+                "/code/broken",
+                SkipReason::ConfigError("bad key".into()),
+                0,
+                90,
+            ),
+        ];
+        let mut app = StatusApp::new(&repos);
+        app.mode = ViewMode::PruneSelect;
+
+        for i in 0..repos.len() {
+            app.table_state.select(Some(i));
+            app.toggle_current();
+            assert!(!app.selected[i], "row {i} must stay unchecked");
+            assert!(
+                app.notice.is_some(),
+                "row {i} refused a keypress without explaining itself"
+            );
+        }
+
+        // The un-ignore affordance is on this screen; the refusal points at it.
+        app.table_state.select(Some(0));
+        app.toggle_current();
+        assert!(app.notice.as_deref().unwrap().contains("[i]"));
+    }
+
+    #[test]
+    fn an_active_repository_with_nothing_to_reclaim_is_still_refused() {
+        // Selectable is "the idle threshold is the only thing in the way", not "active".
+        let repos = vec![entry("/code/bare", SkipReason::Active, 0, 1)];
+        let mut app = StatusApp::new(&repos);
+        app.mode = ViewMode::PruneSelect;
+        app.table_state.select(Some(0));
+
+        app.toggle_current();
+        assert!(!app.selected[0]);
+    }
+
+    #[test]
+    fn the_footer_counts_every_row_space_would_accept() {
+        // Not `candidate_count`: it read "0 of 0" on a machine where rows were plainly
+        // selectable, which is the number that made the mode look broken.
+        let repos = sample();
+        let app = StatusApp::new(&repos);
+        assert_eq!(app.candidate_count(), 2, "alpha + delta");
+        assert_eq!(
+            app.selectable_count(),
+            3,
+            "alpha + delta + beta, the active one with bloat"
+        );
+    }
+
+    #[test]
+    fn toggle_all_leaves_active_repositories_alone() {
+        // Enter prunes with no second confirmation, so `a` must never arm a repository
+        // somebody is working in today.
+        let repos = sample();
+        let mut app = StatusApp::new(&repos);
+        app.toggle_all_candidates();
+
+        assert!(app.selected[0], "alpha is a candidate");
+        assert!(app.selected[3], "delta is a candidate");
+        assert!(!app.selected[1], "beta is active and must be opted into");
     }
 }
