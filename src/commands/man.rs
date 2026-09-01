@@ -18,6 +18,7 @@ use clap_mangen::Man;
 use colored::Colorize;
 
 use crate::Cli;
+use crate::help;
 use crate::output;
 
 /// Render the manual: a readable contents page on a terminal, one command's page when
@@ -124,64 +125,6 @@ pub fn run(command_name: Option<&str>, dir: Option<&str>, roff: bool) -> Result<
     Ok(())
 }
 
-/// How the contents page groups the commands, and the one line each gets.
-///
-/// The lines are written here rather than taken from clap's `about`, which is phrased
-/// to sit in a `--help` listing and truncates into nonsense at this width ("Export
-/// SKILL", "View system dashboard"). A test checks this table against the real command
-/// list, so a command added without a line here fails the build rather than going
-/// missing from the only page a reader navigates from.
-const CONTENTS_GROUPS: [(&str, &[(&str, &str)]); 5] = [
-    (
-        "Register repositories",
-        &[
-            (
-                "init",
-                "find every Git repository under a path, register them",
-            ),
-            ("link", "register one repository"),
-            ("unlink", "forget one — deletes nothing"),
-            ("undo", "revert the last init or link"),
-        ],
-    ),
-    (
-        "Prune and put back",
-        &[
-            ("run", "delete what a lockfile proves comes back"),
-            ("restore", "reinstall what was deleted"),
-        ],
-    ),
-    (
-        "Look at what is going on",
-        &[
-            ("status", "every repository, its size and its idle days"),
-            ("stats", "space reclaimed over time"),
-            ("history", "which pass deleted what, and what asked it to"),
-            ("caches", "package manager caches on this machine"),
-            ("doctor", "what is broken, and how to fix it"),
-            ("trust", "what this program may do on this machine"),
-        ],
-    ),
-    (
-        "Settings and integration",
-        &[
-            ("config", "settings, the scheduler, Git hooks, icons"),
-            ("setup", "install whatever integration is missing"),
-            ("skill", "rules files for your editor's AI agent"),
-            ("completions", "a completion script for your shell"),
-            ("man", "this manual"),
-        ],
-    ),
-    (
-        "The program itself",
-        &[
-            ("update", "check for a newer release, and install it"),
-            ("install", "move it to another package manager"),
-            ("uninstall", "remove it, integration included"),
-        ],
-    ),
-];
-
 /// The manual's contents page: what this is, what every command does in one line each,
 /// and the one command that opens any of them.
 ///
@@ -203,7 +146,7 @@ fn print_contents() {
     println!("    devp <command> --help       the same text, from the command itself");
     println!();
 
-    for (title, entries) in CONTENTS_GROUPS {
+    for (title, entries) in help::COMMAND_GROUPS {
         println!("  {}", title.bold());
         for (name, line) in entries {
             println!("    {:<12}  {line}", name.cyan());
@@ -271,7 +214,7 @@ mod tests {
             .map(|s| s.get_name())
             .filter(|n| *n != "help")
             .collect();
-        let listed: Vec<&str> = CONTENTS_GROUPS
+        let listed: Vec<&str> = help::COMMAND_GROUPS
             .iter()
             .flat_map(|(_, e)| e.iter().map(|(n, _)| *n))
             .collect();

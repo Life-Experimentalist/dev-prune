@@ -206,6 +206,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only on the scheduled pass and finds projects by looking beside the ones you already
   have.
 
+- **`devp --help` is grouped and coloured.** Twenty commands as one flat list answered
+  "what exists" and nothing else; the front page now sorts them into the five groups the
+  manual's contents page already used — register, prune, look, configure, the program
+  itself — with the headings and command names coloured wherever the output is a
+  terminal. Every command's own `--help` picks up the same palette. Pipe or redirect it
+  and the colour goes away; the grouping stays.
+
+- **`devp undo` and `devp install` have left the front page.** Both still work exactly
+  as before — their own `--help`, `devp man undo`, `devp man install` and the
+  [reference](docs/CLI_REFERENCE.md#4-devp-undo) all still answer — but neither earns a
+  line in `devp --help` or a shell completion any more: `undo` covers ground
+  `devp restore` also covers, and `install` *moves* an installation between package
+  managers rather than performing one. Renaming or removing a command that shipped in
+  1.0.0 is a breaking change, so that waits for 2.x; this release just stops advertising
+  them to newcomers.
+
 ### For contributors
 
 - **The release workflow registers each published digest with VirusTotal.** A binary with
