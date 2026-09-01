@@ -23,6 +23,7 @@ pub mod cmake_build;
 pub mod cocoapods;
 pub mod composer;
 pub mod dart;
+pub mod deno;
 pub mod go;
 pub mod gradle;
 pub mod maven;
@@ -196,6 +197,14 @@ pub trait PackageManager: Send + Sync {
 }
 
 /// Adapters that all manage `node_modules` and therefore cannot coexist.
+///
+/// Deno is deliberately not one of them. The four here are interchangeable — a
+/// `node_modules` built by one is a `node_modules` the others would have built
+/// differently, so exactly one of them owns the directory. Deno is not an alternative
+/// to them: it detects on `deno.lock`, which a project either has or does not, and a
+/// repository holding both a `deno.lock` and a `package-lock.json` genuinely uses both
+/// tools. The prune pass deduplicates by path, so the shared `node_modules` is still
+/// counted and deleted once.
 const JS_MANAGERS: [&str; 4] = ["npm", "pnpm", "yarn", "bun"];
 
 /// Bookkeeping files that each JavaScript manager writes into `node_modules` when it
@@ -220,6 +229,7 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(pnpm::Pnpm),
         Box::new(yarn::Yarn),
         Box::new(bun::Bun),
+        Box::new(deno::Deno),
         Box::new(uv::Uv),
         Box::new(poetry::Poetry),
         Box::new(pdm::Pdm),
@@ -325,7 +335,7 @@ pub fn is_adapter_name(name: &str) -> bool {
 /// registered. A new adapter that is not added to a group would silently vanish from
 /// the picker, which is the one place a user goes to find it.
 pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
-    ("JavaScript", &["npm", "pnpm", "yarn", "bun"]),
+    ("JavaScript", &["npm", "pnpm", "yarn", "bun", "deno"]),
     ("Python", &["uv", "poetry", "pdm", "pipenv", "venv"]),
     ("Rust", &["cargo"]),
     ("Go", &["go"]),
@@ -1316,7 +1326,7 @@ pub fn adapter_binary(adapter: &str) -> &str {
 ///
 /// `devp doctor` naming a missing manager without saying how to get it is a finding the
 /// reader has to go and research; every other finding it prints carries its own repair.
-const INSTALL_HINTS: [(&str, &str); 16] = [
+const INSTALL_HINTS: [(&str, &str); 17] = [
     ("npm", "ships with Node.js — https://nodejs.org"),
     (
         "pnpm",
@@ -1327,6 +1337,10 @@ const INSTALL_HINTS: [(&str, &str); 16] = [
         "`corepack enable` — https://yarnpkg.com/getting-started/install",
     ),
     ("bun", "https://bun.sh/docs/installation"),
+    (
+        "deno",
+        "https://docs.deno.com/runtime/getting_started/installation/",
+    ),
     (
         "uv",
         "https://docs.astral.sh/uv/getting-started/installation/",
@@ -1780,8 +1794,10 @@ mod tests {
 
     #[test]
     fn test_js_conflict_ignores_an_unrecognised_package_manager_field() {
-        // A `packageManager` naming something we have no adapter for must not wipe out
-        // the detection entirely — fall through to the lockfile timestamps.
+        // A `packageManager` naming something that is not one of the four contenders for
+        // `node_modules` must not wipe out the detection entirely — fall through to the
+        // lockfile timestamps. Deno is the live example rather than a made-up name: it
+        // has an adapter, and it still does not settle a conflict between npm and yarn.
         let tmp = TempDir::new().unwrap();
         fs::write(
             tmp.path().join("package.json"),

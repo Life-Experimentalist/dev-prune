@@ -228,6 +228,21 @@ const ECOSYSTEMS = [
         ),
         restore: <code>bun install --frozen-lockfile</code>,
       },
+      {
+        name: "Deno",
+        detect: <code>deno.lock</code>,
+        deletes: (
+          <>
+            <code>node_modules</code>, <code>vendor</code>
+          </>
+        ),
+        verify: (
+          <>
+            <code>deno.lock</code> complete and not stale
+          </>
+        ),
+        restore: <code>deno install</code>,
+      },
     ],
     tieBreak: (
       <>
@@ -236,7 +251,13 @@ const ECOSYSTEMS = [
         <code>package.json</code>; else whichever manager's bookkeeping files
         are actually inside the installed <code>node_modules</code>; else the
         most recently written lockfile. Only that manager verifies, deletes and
-        restores — the others are not consulted.
+        restores — the others are not consulted. Deno is outside that contest:
+        the other four are alternatives to each other, while a repository
+        holding both a <code>deno.lock</code> and a{" "}
+        <code>package-lock.json</code> genuinely uses both tools. It takes{" "}
+        <code>vendor/</code> only when the Deno config asked for one — Go and
+        Composer use that name for something else entirely — and the shared{" "}
+        <code>node_modules</code> is still counted and deleted once.
       </>
     ),
   },
@@ -1074,7 +1095,7 @@ Notes you should rely on, not work around:
                 touched in a while and deletes what their package managers can
                 rebuild — <code>node_modules</code>, <code>.venv</code>,{" "}
                 <code>target</code>, <code>vendor</code> and the rest, across
-                twenty-three managers from npm and pip to Composer, Bundler,
+                twenty-four managers from npm and pip to Composer, Bundler,
                 Mix, CocoaPods and Terraform. Nothing is deleted until the
                 package manager itself confirms a lockfile can restore it.
                 Verification is not a flag you can turn off.
@@ -1083,7 +1104,7 @@ Notes you should rely on, not work around:
               <p className="hero-description">
                 Pruning is one command of several. The same binary restores what
                 it removed, sizes and clears the caches package managers keep
-                outside your projects, reports what Docker is holding, and shows
+                outside your projects, clears what Docker is holding, and shows
                 where the disk went drive by drive &mdash; one tool for every
                 dependency directory on the machine, instead of one per
                 ecosystem.
@@ -1752,7 +1773,7 @@ Notes you should rely on, not work around:
           <div className="container">
             <div className="section-header">
               <h2 className="section-title">
-                Twenty-three managers.{" "}
+                Twenty-four managers.{" "}
                 <span className="gradient-text">
                   Any number per repository.
                 </span>
@@ -1801,8 +1822,8 @@ Notes you should rely on, not work around:
 
             <div className="info-card eco-contribute">
               <h3>
-                <Puzzle size={18} /> Twenty-four would be better than
-                twenty-three
+                <Puzzle size={18} /> Twenty-five would be better than
+                twenty-four
               </h3>
               <p>
                 Adding a manager is deliberately small: implement one{" "}
@@ -2034,6 +2055,18 @@ Notes you should rely on, not work around:
                   </tr>
                   <tr>
                     <td className="td-name">
+                      <code>devp history</code>
+                    </td>
+                    <td>
+                      Which pass deleted what, and what asked it to &mdash; one
+                      line per pass, then <code>--pass 1</code> for the exact
+                      command line and every directory it took.{" "}
+                      <code>--export</code> writes the lot to your documents
+                      folder
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
                       <code>devp completions &lt;shell&gt;</code>
                     </td>
                     <td>
@@ -2077,10 +2110,25 @@ Notes you should rely on, not work around:
                       volumes and build cache, each sized, with how much of it
                       the engine says it could give back — then the prune
                       commands and what each takes with it. Also{" "}
-                      <code>podman</code>, <code>nerdctl</code>, and{" "}
-                      <code>devp caches containers</code> for every engine at
-                      once plus any local Kubernetes clusters. Read-only,
-                      permanently: it prints the commands, you run them
+                      <code>podman</code>, <code>nerdctl</code>,{" "}
+                      <code>finch</code>, Apple&rsquo;s <code>container</code>,
+                      and <code>devp caches containers</code> for every engine
+                      at once plus any local Kubernetes clusters. The report
+                      deletes nothing; the next row does
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
+                      <code>devp caches clear &lt;engine&gt;</code>
+                    </td>
+                    <td>
+                      Run the narrow prune commands for you &mdash; build cache,
+                      unused images, stopped containers &mdash; after printing
+                      them and asking, and count what came back on{" "}
+                      <code>devp stats</code>. Never a volume: there is no
+                      argument in the table containing the word, and a test
+                      fails the build if one appears. Name the engine; no
+                      schedule, hook or <code>clear all</code> reaches it
                     </td>
                   </tr>
                   <tr>
@@ -2108,7 +2156,10 @@ Notes you should rely on, not work around:
                       What dev-prune is allowed to do on this machine, on one
                       screen: what the code guarantees everywhere, then every
                       setting you have switched on that widens it, by name, then
-                      every binary it owns with the SHA-256 an antivirus
+                      every copy of it on the machine &mdash; not just the
+                      managed ones: everything on your <code>PATH</code> and in
+                      each package manager&rsquo;s install directory, with the
+                      manager that put it there and the SHA-256 an antivirus
                       actually sees &mdash; the one on your disk, not the one on
                       the release page
                     </td>
@@ -2726,21 +2777,25 @@ Notes you should rely on, not work around:
                 command and lets you decide.
               </Faq>
               <Faq q="Docker is bigger than all of these put together. Does it help?">
-                It measures it and refuses to touch it, which is the honest
-                answer to a 40&nbsp;GB Docker install.{" "}
+                It is usually the biggest single thing on a developer's disk,
+                and since 1.17.0 the same binary clears it.{" "}
                 <code>devp caches docker</code> — or <code>podman</code>,{" "}
-                <code>nerdctl</code>, or <code>devp caches containers</code> for
-                all of them — breaks the space down into images, containers,
+                <code>nerdctl</code>, <code>finch</code>, Apple&rsquo;s{" "}
+                <code>container</code>, or <code>devp caches containers</code>{" "}
+                for all of them — breaks the space down into images, containers,
                 local volumes and build cache, says how much of each the engine
                 itself calls reclaimable, and then prints the prune commands
-                narrowest first with what each one takes with it. It never runs
-                them. An image has no lockfile to prove it can be rebuilt, the
-                Dockerfile that built it may not be on this disk, and a named
-                volume is the one thing on your machine that cannot be rebuilt at
-                all — so the same rule that governs everything else here says
-                measure, print, and leave the decision with you.{" "}
-                <code>devp caches clear docker</code> is a usage error that says
-                so. The figures come from the engine's own{" "}
+                narrowest first with what each one takes with it. Then{" "}
+                <code>devp caches clear docker</code> runs the narrow ones for
+                you: build cache, unused images, stopped containers, printed
+                first, after a prompt, and counted on <code>devp stats</code>{" "}
+                so the space you reclaimed on its advice is space it can account
+                for. It will not touch a volume, and there is no flag that makes
+                it &mdash; an image can be pulled again and a build cache
+                rebuilt, but what is inside a named volume is the only copy, so{" "}
+                <code>docker volume prune</code> stays a command it prints and
+                you type. Nothing on a schedule goes near any of it. The figures
+                come from the engine's own{" "}
                 <code>system df</code> rather than a look at the disk, because on
                 Docker Desktop and Podman the store lives inside a VM disk image
                 your filesystem cannot see — and because asking is the only way

@@ -168,7 +168,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   4. Pre-verifies required package manager binaries (`npm`, `pnpm`, `uv`, `cargo`, `go`, etc.).
   5. Calculates reclaimable disk space and launches interactive selection TUI (unless `-y` is passed).
   6. Enforces two-tier lockfile safety with configurable command timeout (`command_timeout_secs`).
-  7. Safely removes the directories each matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` and the rest — one set per package manager, twenty-three of them).
+  7. Safely removes the directories each matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` and the rest — one set per package manager, twenty-four of them).
 
   **A targeted run confirms first.** `devp run <path>` prunes that one repository
   without registering it — and before deleting anything it lists every directory that
@@ -308,13 +308,19 @@ reads unambiguously:
   | `s` | Cycle the sort: relevance, size, longest idle, name |
   | `f` | Cycle the filter: all, candidates, has bloat, problems |
   | `/` | Search paths and adapter names; `Enter` keeps the query, `Esc` clears it |
-  | `p` | Enter Prune-Select mode, with every candidate **on screen** pre-selected |
-  | `Space` | Toggle the current row (Prune-Select mode) |
-  | `a` | Toggle every candidate on screen (Prune-Select mode) |
+  | `p` | Enter Prune-Select mode, with every candidate **on screen** pre-selected. On a machine where nothing is past the idle threshold it opens with nothing checked and says so — use `Space` to pick the repositories you are still working in |
+  | `Space` | Toggle the current row (Prune-Select mode). Accepts any repository with something to reclaim, including an *active* one that is only short of the idle threshold; rows that a prune could not deliver say why instead |
+  | `a` | Toggle every candidate on screen (Prune-Select mode). Candidates only — an active repository is checked one row at a time, because `Enter` prunes immediately |
   | `Enter` | Prune the selected repositories (Prune-Select mode) |
   | `i` | Toggle `ignore` in the repository's `.devprune.json`; the table refreshes immediately. Inert where a committed `project.devprune.json` sets `ignore` — that file wins, so edit it instead |
   | `Esc` | Leave Prune-Select mode, or exit from the browse view |
   | `q` / `Ctrl-C` | Exit the dashboard |
+
+  Choosing an active repository here does the same thing `devp run --ignore-idle` does:
+  the idle threshold is a default, and the dashboard shows how long each repository has
+  been idle so the choice is an informed one. Nothing else is waived — lockfile
+  verification runs on every directory, and a repository whose lockfile cannot be
+  trusted is refused with the reason printed.
 
   The sort, the filter and the search change only what is *displayed*. A repository
   checked for pruning stays checked when a filter hides it, and the counts in the header
@@ -391,10 +397,10 @@ reads unambiguously:
 ### 7. `devp caches [--volume <VOLUME>] [--json]` / `devp caches clear <MANAGER>`
 - **Description**: Finds every package-manager cache and store on the machine, sizes each one, and prints the command that clears it. Largest first, with a total. On its own **it deletes nothing**, and nothing that runs on a schedule ever will; the `clear` subcommand below empties one deliberately, when you type it.
 - **Why the report itself never deletes**: a cache lives outside every repository and is shared by all of them, so no single lockfile can prove its contents are recoverable — which is the bar every deletion in dev-prune has to clear. It is also what makes [`devp restore`](#9-devp-restore-path---last-run) fast: clearing a cache turns the next reinstall into a download. So a cache is only ever emptied by a command you type, when you want the space more than the speed.
-- **Telling it what nothing needs any more**: beside each manager the report now says how many of your registered repositories actually use it, and what its cache works out to per repository — two repositories sharing a 12 GiB cache is 6 GiB each and worth a look, forty sharing the same 12 GiB is 300 MiB each and is the cache doing its job. A manager no registered repository uses at all is the one case where a count is enough to act on, and [`devp caches clear --unused all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly those. The count ignores whether an adapter is enabled or opted in, because the question is which managers your projects *use*, not which ones a prune pass would touch. It is shown only for the twelve managers that are also adapter names; `pip`, `conda`, `nuget`, `conan` and `hex` have no adapter of the same name, so dev-prune says nothing about them rather than guessing that `venv` feeds `pip`. Nothing is counted at all until at least one registered repository is on disk — an empty registry would make every cache look unused, so `--unused` refuses to run instead.
+- **Telling it what nothing needs any more**: beside each manager the report now says how many of your registered repositories actually use it, and what its cache works out to per repository — two repositories sharing a 12 GiB cache is 6 GiB each and worth a look, forty sharing the same 12 GiB is 300 MiB each and is the cache doing its job. A manager no registered repository uses at all is the one case where a count is enough to act on, and [`devp caches clear --unused all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly those. The count ignores whether an adapter is enabled or opted in, because the question is which managers your projects *use*, not which ones a prune pass would touch. It is shown only for the nineteen managers that are also adapter names; the other ten — `pip`, `conda`, `nuget`, `conan`, `hex`, `playwright`, `puppeteer`, `huggingface`, `cypress` and `electron` — have no adapter of the same name, so dev-prune says nothing about them rather than guessing that `venv` feeds `pip`, or that every `node_modules` on the disk feeds the Playwright browser cache. Nothing is counted at all until at least one registered repository is on disk — an empty registry would make every cache look unused, so `--unused` refuses to run instead.
 - **Telling it how big is too big**: a download cache is a bet that re-downloading costs more than the disk it occupies, and the bet stops paying somewhere. `devp config set cache_max_gb uv=10,npm=10` writes that ceiling down, per manager, in gibibytes — GiB, the unit the report prints. A manager over its cap is marked in the report — the cap is measured against the manager's whole footprint, so cargo's registry cache and its unpacked sources are weighed together. **Setting one still deletes nothing.** It marks, and [`devp caches clear --over-cap all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly what is marked, when you type it. Empty by default: no cache is too big until you say what too big is. `devp config wizard` sets caps as a column beside the adapter checklist.
 - **The pnpm store that `pnpm store path` never mentions**: pnpm hardlinks its store into every `node_modules` it fills, and a hardlink cannot cross a filesystem — so projects on a drive that is not your home directory's get a store of their own at the root of *that* filesystem: `V:\.pnpm-store` on a second Windows drive, `/mnt/data/.pnpm-store` on Linux, `/Volumes/Work/.pnpm-store` on an external macOS volume. It is not a Windows idea — it is wherever a developer keeps projects off the system disk. `pnpm store path` only ever answers for the filesystem it is run on, so a machine-wide report asked from your home directory sees the small store beside it and misses the multi-gigabyte one holding your actual projects. dev-prune therefore looks for a store at the root of every filesystem that holds a registered repository, plus the one you are standing in, and gives each its own row. `pnpm store prune` acts on the filesystem it is run on too, so that row names the store in the command it prints — `pnpm store prune --store-dir <path>` — and runs exactly what it printed. `devp caches clear pnpm` empties every pnpm store found, and a `cache_max_gb` cap for `pnpm` is measured against all of them together.
-- **The engine that is usually bigger than all of them put together**: under the table the report adds one line per container engine installed — Docker, Podman, nerdctl — with what it is holding and how much of that it says it could give back. It is there because the mistake this report exists to prevent is clearing 6 GiB of npm cache while a Docker install nobody has looked at in a year sits on 40 GiB. Container disk is **not** in the total above and never will be: dev-prune deletes only what a lockfile proves it can rebuild, an image has no lockfile, and a named volume is the one thing on the machine that cannot be rebuilt at all. [`devp caches docker`](#devp-caches-docker--devp-caches-podman--devp-caches-containers-engine) is the detailed version, and `devp caches clear docker` is a **usage error** (exit `2`) that says so and points at the report.
+- **The engine that is usually bigger than all of them put together**: under the table the report adds one line per container engine installed — Docker, Podman, nerdctl, finch and Apple's `container` — with what it is holding and how much of that it says it could give back. It is there because the mistake this report exists to prevent is clearing 6 GiB of npm cache while a Docker install nobody has looked at in a year sits on 40 GiB. Container disk is **not** in the total above and never will be, because that total answers "what would `devp caches clear all` give back" and `all` never reaches an engine — re-pulling every base image is not something to type by accident. [`devp caches docker`](#devp-caches-docker--devp-caches-podman--devp-caches-containers-engine) is the detailed version, and [`devp caches clear docker`](#devp-caches-clear-engine---dry-run---yes---json) runs the narrow prune commands for you, once you name the engine.
 - **What it looks at**:
 
   | Manager | Cache | Cleared by |
@@ -416,10 +422,23 @@ reads unambiguously:
   | `composer` | cache | `composer clear-cache` |
   | `cocoapods` | cache | `pod cache clean --all` (`CP_CACHE_DIR` respected) |
   | `hex` | package cache | deleting `$HEX_HOME/packages` — Hex ships no clean task |
+  | `bundler` | gem cache | deleting `$(gem env gemdir)/cache` — the downloaded `.gem` archives only, never the installed gems beside them |
+  | `dart` | pub cache | deleting `hosted/` inside the pub cache (`PUB_CACHE` respected) — `dart pub cache clean` would also take the `git/` checkouts and your globally activated executables |
+  | `swift` | swiftpm cache | deleting the shared SwiftPM repository and manifest cache |
+  | `terraform` | plugin cache | deleting `TF_PLUGIN_CACHE_DIR` — reported only if you switched the shared cache on; without it every provider is a private copy inside each project's `.terraform/`, which [`devp run`](#5-devp-run-target_path) prunes instead |
+  | `poetry` | artifact cache | deleting `artifacts/` inside `poetry config cache-dir` — never `virtualenvs/`, which holds the environments themselves |
+  | `pdm` | cache | `pdm cache clear` |
+  | `playwright` | browser bundles | deleting the Playwright browsers directory (`PLAYWRIGHT_BROWSERS_PATH` respected) — `npx playwright install` re-downloads only the versions the installed Playwright asks for |
+  | `puppeteer` | browser bundles | deleting the Puppeteer cache (`PUPPETEER_CACHE_DIR` respected) — `npx puppeteer browsers install` re-downloads the current one |
+  | `huggingface` | hub cache | deleting `hub/` inside the HuggingFace cache (`HF_HOME`, `HF_HUB_CACHE` respected). **Model weights, not packages** — see the warning under `clear` below |
+  | `cypress` | binary cache | deleting the Cypress binary cache (`CYPRESS_CACHE_FOLDER` respected) — `npx cypress install` re-downloads the pinned version |
+  | `electron` | download cache, builder cache | deleting the `electron` and `electron-builder` caches — prebuilt Electron archives, and electron-builder's store of signing tools and packaged runtimes |
+  | `deno` | cache | `deno clean` |
 
   Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, `composer config --global cache-dir`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. CocoaPods and Hex are found the same way (`CP_CACHE_DIR`, `HEX_HOME`) for the simpler reason that neither ships a command that prints the path at all. conda is found by convention too — `~/miniconda3/pkgs`, `~/anaconda3/pkgs`, `~/miniforge3/pkgs`, `~/mambaforge/pkgs` and the `~/.conda/pkgs` it falls back to when the installation is not writable — plus `CONDA_PKGS_DIRS` and, for a conda installed somewhere else entirely, the installation root that `CONDA_EXE` names. `conda config --show pkgs_dirs` would answer exactly, and takes seconds to start on a cold shell, which is the same price Maven charges for the same read-only size. Two probes that resolve to the same directory are counted once.
 
   This is also where most of the .NET and C/C++ story lives, and why a .NET `bin/`+`obj/` is *not* an adapter: it is compiler **output** — no lockfile can prove a deleted one comes back byte-for-byte, so no adapter claims it and none will. (A repository that knows better can still [declare it](#8-devp-config-action), where the required `rebuild` command is the proof the lockfile could not give.) Its *dependencies*, meanwhile, never live in the repository at all; they live in these machine-wide stores, which is exactly what this command reports. Cargo `target/`, Maven `target/`, Gradle `build/`+`.gradle/`, vcpkg `vcpkg_installed/` and a configured CMake build tree are the deliberate exception: they have [opt-in adapters](#5-devp-run-target_path) whose recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle`/`vcpkg.json`/`CMakeLists.txt` plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`. A CMake `build/` is the one of those that has to prove which tool made it: the adapter claims a directory only when it holds a `CMakeCache.txt` naming a source directory inside the same repository, so a `build/` you filled by hand is left alone. The `vcpkg` row here is the classic-mode install tree, shared by every project on the machine; the adapter claims only manifest mode's per-project one.
+- **Two commands per row, not one**: each cache is printed with `clear: devp caches clear <manager>` above `runs: <the manager's own command>`. They are not synonyms, which is why both are there. What dev-prune clears is added to the lifetime cache total in [`devp stats`](#15-devp-stats---json); the same `npm cache clean --force` typed into a terminal is invisible to it, so the report a week later is short by exactly the space you reclaimed. The manager's command is shown rather than hidden because it is what dev-prune executes, and a tool that will not tell you what it runs is worse than one that repeats itself. Maven is the exception and prints only `clear:` with its own command — dev-prune will not run that one, and says so.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the table. Global within `caches`, so `devp caches clear npm --json` parses the same as `devp caches --json clear npm`.
   - `--volume <VOLUME>` (alias `--drive`) — report only the caches that sit on one drive or filesystem. Takes a drive (`V:`, `V:\`, or the bare letter `V`), a mount point (`/mnt/data`, `/Volumes/Work`), or any path on the one you mean — `--volume .` is the drive you are standing on. Unlike `--json` it is **not** global within `caches`: it narrows the report, there is nothing for it to narrow in `clear`, `docker` or `containers`, and pairing it with one of those is a usage error (exit `2`) rather than a flag that looks accepted and does nothing. A drive that does not parse is also a usage error, because "no caches on that drive" and "that is not a drive" are different answers and only one of them tells you to fix what you typed.
@@ -437,11 +456,12 @@ reads unambiguously:
 
 - **Description**: Empties one manager's cache, or every one of them. What is about to go is listed and sized first, and unless `--yes` answers for you, it asks.
 - **Why this is not a contradiction of the above**: the report still deletes nothing, and nothing that runs on its own ever will — no scheduler, no Git hook and no `devp run` clears a cache. `clear` runs only when you type it. It exists because typing the command the report already prints is the whole of what it does, and doing it by hand for every manager on the machine is tedious.
-- **`<MANAGER>`**: a manager name as the report prints it — `npm`, `pnpm`, `yarn`, `bun`, `uv`, `pip`, `conda`, `cargo`, `go`, `gradle`, `nuget`, `vcpkg`, `conan`, `composer`, `cocoapods`, `hex` — or `all` for every one found. A manager that has more than one cache (cargo, go, gradle) clears both. An unrecognised name is a **usage error** (exit `2`) that lists the ones it knows. `maven` is recognised and refused, with the reason and the command — see the next entry but one.
-- **How each one is emptied**: through the manager's own subcommand wherever one exists (`npm cache clean --force`, `pnpm store prune`, `go clean -modcache`), because the manager knows what is still referenced and keeps its own bookkeeping consistent — `pnpm store prune` and `uv cache prune` deliberately keep part of the store, which no directory delete can work out. Only `cargo`, `gradle`, `vcpkg` and `hex`, which ship nothing equivalent, are cleared by removing a directory, and the path removed is the one this command already resolved and sized — never a string handed to a shell. conda's own subcommand carries a caveat it is worth repeating: `conda clean --packages` keeps whatever its environments reference through a hardlink, and conda documents that it does not check for packages an environment linked by *symlink* instead. An environment broken that way is reinstallable from the channel it came from, which is why this is a note on the row rather than a refusal like Maven's, but it is the reason the row says so.
+- **`<MANAGER>`**: a manager name as the report prints it — `npm`, `pnpm`, `yarn`, `bun`, `uv`, `pip`, `conda`, `cargo`, `go`, `gradle`, `nuget`, `vcpkg`, `conan`, `composer`, `cocoapods`, `hex`, `bundler`, `dart`, `swift`, `terraform`, `poetry`, `pdm`, `playwright`, `puppeteer`, `huggingface`, `cypress`, `electron`, `deno` — or `all` for every one found. Every container engine name is accepted here too and handled by [the entry below](#devp-caches-clear-engine---dry-run---yes---json), because `devp caches clear docker` is where a person looks for it; `--over-cap` and `--unused` with an engine name are a **usage error** (exit `2`) rather than a silently ignored flag. A manager that has more than one cache (cargo, go, gradle, electron) clears both. An unrecognised name is a **usage error** (exit `2`) that lists the ones it knows. `maven` is recognised and refused, with the reason and the command — see the next entry but one.
+- **How each one is emptied**: through the manager's own subcommand wherever one exists (`npm cache clean --force`, `pnpm store prune`, `go clean -modcache`), because the manager knows what is still referenced and keeps its own bookkeeping consistent — `pnpm store prune` and `uv cache prune` deliberately keep part of the store, which no directory delete can work out. The rest are cleared by removing a directory, and the path removed is the one this command already resolved and sized — never a string handed to a shell. Some of those ship nothing equivalent at all (`cargo`, `gradle`, `vcpkg`, `hex`, `swift`, and the browser and model caches, which are directories no tool owns a clean command for). The others ship one that does *more* than clear a cache, and dev-prune deliberately does less: `dart pub cache clean` would take your globally activated executables and your `git/` checkouts along with the downloaded packages, `gem cleanup` uninstalls gems rather than emptying the archive cache, and Poetry's cache directory holds `virtualenvs/` beside `artifacts/`. In each of those the row names the one subdirectory that is a download cache, and nothing above it. conda's own subcommand carries a caveat it is worth repeating: `conda clean --packages` keeps whatever its environments reference through a hardlink, and conda documents that it does not check for packages an environment linked by *symlink* instead. An environment broken that way is reinstallable from the channel it came from, which is why this is a note on the row rather than a refusal like Maven's, but it is the reason the row says so.
 - **The one store dev-prune will not empty**: `~/.m2/repository` is Maven's *local repository*, not a download cache. `mvn install` writes there, and so does `mvn install:install-file` — the documented way to use a jar that is in no repository at all, which is how a driver behind a click-through licence or a partner SDK ends up on a machine. Those artifacts, and `-SNAPSHOT` builds of your own modules, exist nowhere else; there is no remote to fetch them back from. Maven does record each artifact's origin in a `_remote.repositories` file, but documents that file as internal and free to change without notice, and writes it only from Maven 3 onward — betting the unrecoverable half of the tree on that is not a bet this tool makes. So `devp caches` sizes the repository and prints the command, `devp caches clear maven` is a **usage error** (exit `2`) that explains why and repeats the command, and `devp caches clear all` skips it with the same note and clears everything else.
 - **If the manager is not installed**: the row is reported as failed rather than worked around. dev-prune will not delete a store directly when the manager that owns it is the only thing that knows what is safe to keep.
 - **What it costs**: nothing is lost — every manager re-downloads what it needs. What goes is time, in every project on the machine, on the next install and the next [`devp restore`](#9-devp-restore-path---last-run).
+- **The one row where "re-downloads it" is not a promise**: `huggingface` is model weights, not packages. A registry hands a published version back forever; a model hub does not. A gated or now-private repository will refuse the file to the same token that fetched it last month, and a checkpoint from a revision that has since been deleted is simply gone. The re-download is also measured in tens of gigabytes rather than tens of megabytes. It is still cleared like any other row, because a cache full of models you evaluated once is exactly the directory this command exists for — but it is the one worth looking inside first, and `--dry-run` prints the path to look at.
 - **Freed size is measured, not assumed**: each cache is sized again after the clear and the report shows `before - after`, so a `prune` that kept half the store says so, and a half-failed clear reports what actually went.
 - **Flags**:
   - `--over-cap` — narrow the selection to managers that have outgrown their `cache_max_gb` entry. `devp caches clear --over-cap all` is the whole point of the setting: it empties every cache that has grown past the ceiling you chose and leaves the rest alone. With no caps set it clears nothing and says so.
@@ -464,12 +484,12 @@ reads unambiguously:
 #### `devp caches docker` / `devp caches podman` / `devp caches containers [ENGINE]`
 
 - **Description**: What a container engine is holding — images, containers, local volumes and build cache — each with a count, a size and how much of that size the engine believes it could give back. Then the commands that would give it back, narrowest first. `docker` and `podman` are shorthands for `containers docker` and `containers podman`; with no engine named, `containers` reports every one it finds and lists any local Kubernetes clusters.
-- **Read-only, permanently.** Nothing here deletes anything, with or without `--yes`, and no scheduler or Git hook ever reaches it. This is the same rule as the rest of the tool rather than extra caution: dev-prune deletes only what a lockfile proves it can rebuild, and nothing here clears that bar. An image's registry tag can be retagged or deleted out from under you, the Dockerfile that built it may not be on this disk, and a named volume is the one thing on the machine that is not reproducible at all. So the prune commands are **printed for you to run**.
+- **This report deletes nothing**, with or without `--yes`, and no scheduler or Git hook reaches container disk at all — that part is permanent. What the report does is print the commands, and from 1.17.0 [`devp caches clear <engine>`](#devp-caches-clear-engine---dry-run---yes---json) runs the narrow ones for you rather than leaving you to retype them in another window. Volumes stay yours: an image's registry tag can be retagged or deleted out from under you and the Dockerfile that built it may not be on this disk, but both can be fetched or rebuilt for the price of time — what is inside a named volume exists nowhere else, at any price.
 - **Why it asks the engine instead of measuring the disk**: on Docker Desktop and Podman the store lives inside a VM disk image the host filesystem cannot see, and `~/.docker` is configuration rather than data — a size taken off the filesystem would be wrong by orders of magnitude, in the reassuring direction. Asking `system df` is also the only way to learn what is *reclaimable*, which is the figure that decides anything: 40 GB of images with 38 GB dangling is a different situation from 40 GB with 2 GB dangling.
 - **An engine that is installed and not running** is reported as exactly that, quoting the engine's own first line, and contributes no figures. "Cannot connect to the daemon" and "permission denied on the socket" are different problems with different fixes, and a tidied-up dev-prune sentence in place of the engine's own would hide which one it is. A blank is not a zero: `--json` omits the size keys entirely rather than sending `0`.
 - **An engine that is not installed** is absent from the report rather than listed as missing. `devp caches docker` on a machine without Docker says so and exits `0`.
 - **Kubernetes is named and deliberately not sized**: kind, k3d and minikube run their nodes as containers, or as a VM disk belonging to an engine already in the table, so their disk is counted there — a figure beside the cluster name would be the same gigabytes twice. The list is read out of your kubeconfig with `kubectl config get-contexts`, which contacts nothing, and a context whose name is not one of the known local ones is filtered out rather than dialled. Delete a cluster with its own tool (`kind delete cluster`, `minikube delete`, `k3d cluster delete`), which is what actually releases the space.
-- **`[ENGINE]`**: `docker`, `podman` or `nerdctl`. An unrecognised name is a **usage error** (exit `2`) that lists the three.
+- **`[ENGINE]`**: `docker`, `podman`, `nerdctl`, `finch` or `container` (Apple's, on Apple silicon). An unrecognised name is a **usage error** (exit `2`) that lists every engine dev-prune knows, generated from the same table the report itself is driven by — so a name in that message is a name that works.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the report. It carries no prune command anywhere, on purpose: no field in the contract should be one command substitution away from `docker system prune --volumes`.
 - **Exit codes**: `0` whether an engine answered, was stopped, or was not installed — none of those is a dev-prune failure. `2` for an engine name it does not know.
@@ -479,7 +499,44 @@ reads unambiguously:
   devp caches podman               # the same, for Podman
   devp caches containers           # every engine installed, plus local clusters
   devp caches containers nerdctl   # just that one
+  devp caches containers container # Apple's engine, on Apple silicon
   devp caches docker --json | jq '.summary.reclaimable_bytes'
+  ```
+
+#### `devp caches clear <ENGINE> [--dry-run] [--yes] [--json]`
+
+- **Description**: Runs the narrow prune commands the report above prints — build cache, unused images, stopped containers — and counts what they gave back. `<ENGINE>` is `docker`, `podman`, `nerdctl`, `finch` or `container`.
+- **What it runs**, printed before it runs anything, and never anything else:
+
+  | Engine | Commands |
+  |---|---|
+  | docker | `docker builder prune -a -f`, `docker image prune -a -f`, `docker container prune -f` |
+  | podman | `podman builder prune -a -f`, `podman image prune -a -f`, `podman container prune -f` |
+  | nerdctl | `nerdctl system prune -a -f` |
+  | finch | `finch system prune -a -f` |
+  | container | `container image prune -a`, `container prune` |
+
+  nerdctl gets one command rather than three because its narrow subcommands are spelled differently across versions and `system prune` is the spelling that has been stable. finch is nerdctl inside a Lima VM and forwards `system` to it verbatim, so it gets the same one.
+
+  Apple's `container` is the odd one twice over. It has no `system prune`, so images and containers are two steps; and its prune subcommands neither ask a question nor define a `-f`, so unlike every row above them these run the moment they are typed. dev-prune still prints the plan and still asks — the confirmation is dev-prune's, not the engine's — and the report says so in as many words before the list. There is no build-cache step because BuildKit lives in a separate builder VM, and `container builder delete` removes that VM rather than pruning what it cached, which is more than clearing a cache.
+- **Volumes are not in that table, and cannot be put in it by a flag.** There is no argument anywhere in it containing the word "volume", and a unit test fails the build if one appears. This is not the same promise as the rest of the tool: an image can be pulled again and a build cache rebuilt, so those are a question of consent, and consent is what the prompt is for. A named volume holds the only copy of what is in it. `docker volume prune` stays a command the report prints and you type.
+- **Why dev-prune runs it at all**: because the alternative was worse. The report used to end by printing four commands and asking you to go and run one, which made the space it reclaimed yours to have remembered — and left dev-prune unable to count it, so 20 GiB of build cache you cleared on its advice never appeared in `devp stats`.
+- **Nothing schedulable reaches this.** No daemon, no Git hook and no `devp run` path calls it, with or without `--yes`. The rule the unattended pass follows — delete only what a lockfile rebuilds — is unchanged; this is the foreground kind, asked for by name, with what is about to happen printed first.
+- **The estimate excludes volumes**: the engine's own reclaimable figure counts unused volumes, and none of the commands above touches one. Printing it whole would promise back space these steps cannot give, so the volume row comes out of the headline number and is named separately as left alone, with `<engine> volume prune` if you have read what is in them and want it gone.
+- **Freed size is the engine's answer, not the sum of the steps**: `system df` before, `system df` after, and the difference. Container layers are shared, so three `image prune` lines can each report a gigabyte while the disk gives back one — adding what the commands claim produces a number that cannot be true.
+- **What it costs**: a pull of the whole layer stack next time, and a cold build cache. That is why `devp stats` counts it on its own line rather than adding it to the other two.
+- **An engine that is not installed**, or is installed with its daemon stopped, is a **usage error** (exit `2`) quoting the engine's own words — dev-prune does not start deleting on a guess about why something did not answer.
+- **Flags**:
+  - `--dry-run` — print the commands and the estimate; run nothing. (Global flag.)
+  - `--yes` / `-y` — skip the confirmation. (Global flag.)
+  - `--json` — emit one machine-readable document. **Requires `--yes` or `--dry-run`**, for the same reason as the manager form.
+- **Exit codes**: `0` if every step finished, `1` if any did not (the rows print either way), `2` for `--json` without `--yes`, for `--over-cap` or `--unused`, or for an engine that did not answer.
+- **Examples**:
+  ```bash
+  devp caches clear docker --dry-run   # the three commands and the estimate
+  devp caches clear docker             # after confirming
+  devp caches clear podman --yes
+  devp caches clear docker --json --yes | jq '.summary.freed_bytes'
   ```
 
 ---
@@ -540,7 +597,7 @@ reads unambiguously:
     | `auto_setup` | `true` | Whether the integration pass may run unattended at all |
     | `auto_config` | `false` | Whether `devp init` / `devp link` write a default `.devprune.json` into newly registered repositories |
     | `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
-    | `auto_discover` | `true` | Whether the scheduled background pass looks for unregistered repositories by itself, using the same sources as [`devp init --auto`](#1-devp-init-paths). Registering is not pruning — a discovered repository is still only touched once it is idle and a lockfile proves the directory rebuildable — and a repository holding an `ignore.devprune.json` is never registered |
+    | `auto_discover` | `true` | Whether the scheduled background pass looks for unregistered repositories by itself, using the same sources as [`devp init --auto`](#1-devp-init-paths). Registering is not pruning — a discovered repository is still only touched once it is idle and a lockfile proves the directory rebuildable — and a repository holding an `ignore.devprune.json` is never registered. Which arrivals reach the hooks and which only discovery can catch: [How a repository gets registered](BACKGROUND_AUTOMATION.md#how-a-repository-gets-registered) |
     | `check_interval_days` | `2` | How often the OS scheduler runs a pass |
     | `auto_hooks` | `true` | Whether that pass may install the global Git hooks |
     | `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds, forwarding every hook on to it. Off by default because that setting is one slot, global to the machine, and already somebody else's: taking it rewires husky, pre-commit or lefthook for every repository you have |
@@ -955,7 +1012,8 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
     "bytes_freed": 6772391936,
-    "cache_bytes_freed": 3221225472,  // `devp caches clear`; never added to bytes_freed
+    "cache_bytes_freed": 3221225472,  // `devp caches clear <manager>`; never added to bytes_freed
+    "container_bytes_freed": 21716742964,  // `devp caches clear <engine>`; never added either
     "prune_passes": 9,           // same number and same meaning as totals.prune_passes above
     "repositories": 12
   },
@@ -979,12 +1037,71 @@ an upgraded machine they start from zero while the lifetime figures do not — w
 `history_starts_at` is there to tell a consumer.
 
 `lifetime.cache_bytes_freed` is a third vintage again: recorded from **1.9.0** onward, and
-zero until the first `devp caches clear` after upgrading. It is deliberately its own key
-rather than part of `bytes_freed`. Both are bytes dev-prune gave back, but they do not
-cost the same to undo: what pruning frees costs one reinstall in one repository, and what
-emptying a shared cache frees costs a download in every project on the disk. A consumer
-that wants the grand total is welcome to add them; one that does not would have had no way
-to separate them again.
+`lifetime.container_bytes_freed` a fourth, from **1.17.0**. Both are zero until the first
+clear of that kind after upgrading, and both are deliberately their own key rather than
+part of `bytes_freed`. All three are bytes dev-prune gave back, and none of them cost the
+same to undo: what pruning frees costs one reinstall in one repository, what emptying a
+shared cache frees costs a download in every project on the disk, and what clearing a
+container store frees costs a pull of the whole layer stack. A consumer that wants the
+grand total is welcome to add them; one that does not would have had no way to separate
+them again.
+
+### `devp history --json`
+
+```jsonc
+{
+  "schema": 1,
+  "version": "1.16.0",
+  "command": "history",
+  "detail_starts_at": "1.17.0",  // the version that began recording `removed` below
+  "passes": [                    // newest first; `pass` is stable under --pass N
+    {
+      "pass": 1,                 // the number `devp history --pass N` takes
+      "at": "2026-09-01T07:02:11+00:00",
+      "bytes_freed": 1610612736,
+      "directories": 1,
+      "repositories": 1,
+      "detail": true,            // false = recorded before 1.17.0, `removed` absent
+      "trigger": "manual",       // "manual" | "scheduled" | "dashboard"
+      "argv": ["run", "--min-size", "500", "--except", "api"],
+      "command_line": "devp run --min-size 500 --except api",
+      "dev_prune_version": "1.17.0",
+      "removed": [
+        {
+          "repo_path": "/home/you/Code/ml",
+          "directory": ".venv",
+          "adapter": "uv",
+          "bytes_freed": 1610612736,
+          "runtime": "3.12"      // null when the adapter reports no runtime version
+        }
+      ]
+    },
+    {
+      "pass": 4,                 // a pass from before the log existed
+      "at": "2026-07-01T03:00:00+00:00",
+      "bytes_freed": 5368709120,
+      "directories": 11,
+      "repositories": 4,
+      "detail": false            // no trigger, no argv, no `removed`
+    }
+  ]
+}
+```
+
+`detail` is the field to branch on, and it is there so that "this pass deleted nothing" and
+"nobody wrote down what this pass deleted" are not the same shape. A pass with
+`detail: false` predates 1.17.0: its four totals came from the registry, which has always
+kept them, and everything else about it was never recorded. A pass with `detail: true`
+always carries `trigger`, `argv`, `command_line`, `dev_prune_version` and `removed`, and a
+`removed` of `[]` on such a pass genuinely means it deleted nothing.
+
+`argv` is the arguments as they were parsed, unjoined; `command_line` is the same thing
+rendered back for a human, with any argument containing a space quoted. Use `argv` to match
+on a flag and `command_line` to print.
+
+`--pass N` filters this document to one entry without renumbering it, so `pass` in the
+output is always the number you would pass back in. `--export` writes exactly this document
+to a file.
 
 ### `devp caches --json`
 
@@ -1055,7 +1172,9 @@ to separate them again.
 
 `caches` is ordered largest first, the same as the table. Only caches that exist on the
 machine appear, so `count` is a count of what was found rather than of what was looked
-for. `clear_command` is a suggestion printed for a human — dev-prune never runs it.
+for. `clear_command` is the manager's own command — what `devp caches clear <manager>`
+executes for every row but `maven`, where it is printed for a human and nothing else.
+`devp caches` itself runs none of them: this document is a report.
 
 `containers` and `summary` are independent totals of two different things. Adding them
 together is always wrong: `summary.total_bytes` answers "what could `devp caches clear`
@@ -1128,7 +1247,8 @@ deleting a database.
 ### `devp caches clear --json`
 
 Requires `--yes` (or `--dry-run`): a prompt on a pipe is a hang, and the notice that
-replaces it would land inside the document.
+replaces it would land inside the document. An engine name produces a different document —
+see [below](#devp-caches-clear-engine---json).
 
 ```jsonc
 {
@@ -1176,6 +1296,42 @@ a before/after pair. `kept` has the same shape in both and is usually empty — 
 or a Maven local repository will look like a machine that simply has none. Exit code is
 `1` if `summary.failed` is non-zero.
 
+### `devp caches clear <engine> --json`
+
+```jsonc
+{
+  "schema": 1,
+  "version": "1.16.0",
+  "command": "caches clear",
+  "dry_run": false,
+  "engine": "docker",
+  "steps": [
+    {
+      "command": "docker builder prune -a -f",
+      "reclaims": "build cache",
+      "ran": true
+      // "error" — present only on a step that did not finish, with the engine's own words
+    }
+  ],
+  "summary": {
+    "bytes_before": 23219981517,
+    "bytes_after": 1503238553,
+    "freed_bytes": 21716742964,  // before minus after, never the sum of the steps
+    "failed": 0,
+    "volumes_untouched": true
+  }
+}
+```
+
+`freed_bytes` is `system df` before minus `system df` after. It is deliberately not the
+sum of what each command reported: container layers are shared, so those add up to more
+than the disk ever held.
+
+`volumes_untouched` is stated rather than left to be inferred. It is the one promise this
+command makes about what it did *not* do, and a consumer should be able to check it
+without reading the argv table inside the binary. It is always `true`; a document without
+it is from a version that could not make the promise.
+
 ### `devp trust --json`
 
 ```jsonc
@@ -1204,6 +1360,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
       "role": "managed",
       "name": "dev-prune.exe",
       "path": "%APPDATA%/dev-prune/bin/dev-prune.exe",
+      "channel": "install script",
       "sha256": "78feef18a95fa15c7a8c3288f220055fcfa0f75d1635f5370697c8878ffdbc1a",
       "running": true,
       "scan_report": "https://www.virustotal.com/gui/file/78feef18a95fa15c7a8c3288f220055fcfa0f75d1635f5370697c8878ffdbc1a",
@@ -1361,8 +1518,9 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ### 15. `devp stats [--json]`
 - **Description**: What dev-prune has actually done for you, as opposed to what it could do next. Lifetime space reclaimed, how much has been emptied out of package-manager caches, how many prune passes there have been, the most recent pass and how to undo it, the last ten passes, and the ten repositories that have given back the most. Read-only — it touches the registry and nothing else.
-- **Two space figures, not one**: `Space reclaimed` is what pruning gave back; `Caches emptied` is what [`devp caches clear`](#7-devp-caches---volume-volume---json--devp-caches-clear-manager) gave back. They are never added together, because getting the first back is one reinstall in one repository and getting the second back is a download in every project on the machine. `Caches emptied` counts from **1.9.0**; a machine that cleared caches before upgrading starts it at zero.
+- **Three space figures, not one**: `Space reclaimed` is what pruning gave back, `Caches emptied` is what [`devp caches clear <manager>`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) gave back, and `Containers cleared` is what [`devp caches clear <engine>`](#devp-caches-clear-engine---dry-run---yes---json) gave back. They are never added together, because they do not cost the same to undo: one reinstall in one repository, a download in every project on the machine, and a pull of the whole layer stack. `Caches emptied` counts from **1.9.0** and `Containers cleared` from **1.17.0**; a machine that did either before upgrading starts that figure at zero.
 - **Why it is separate from `status`**: [`devp status`](#6-devp-status---top-n---drift---json) answers "what can I reclaim right now". Folding a history report into it would put a screen of the past above the list people open it for.
+- **When a number here raises a question**, [`devp history`](#20-devp-history---pass-n---limit-n---all---json---export-path) answers it: this report says ten passes freed 27 GiB, that one says which pass, started by what, and every directory it took.
 - **A note on upgraded machines**: the lifetime total has been accumulating since 1.0.0, but the per-repository figures and the pass history are only recorded from **1.1.0** onward. A machine that pruned for months before upgrading will show a large lifetime total next to an empty "Biggest reclaims" section, and the report says so rather than implying nothing ever happened.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the report.
@@ -1426,7 +1584,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 - **Three sections, and the split is the point**:
   - **Guaranteed by the code** — the seven [safety invariants](SAFETY_INVARIANTS.md) plus the two questions asked as often as any of them: there is no telemetry endpoint, and build output is never deleted. These rows read the same on every machine. None of them has a setting or a flag behind it, and a build where one did not hold would be a bug, not a configuration.
   - **On this machine** — read live: whether the scheduler is installed, whether the Git hooks register repositories on their own, how many repositories are registered, the idle window, the managed binary's path, and the settings that widen what may happen without you asking.
-  - **Binaries on this machine** — every executable dev-prune owns, the one currently running marked and listed first, each with its SHA-256 and a VirusTotal lookup URL for that digest. This exists because an antivirus judges the bytes on your disk, not the asset on a release page, so the only digest worth showing you is your own. The links are lookups by hash: the digest is computed locally, the URL is printed rather than fetched, and no file is uploaded anywhere. A digest the service has never seen returns *not found*, which means unscanned — not clean. On Windows `dev-prune.exe` and `devp.exe` are one file under two names and share a digest on purpose; `devpw.exe`, the console-free build the scheduler runs, is a separate `[[bin]]` target and legitimately differs. A copy installed from a release matches the `.sha256` published beside the asset and the per-file `.zip.contents.sha256` manifest; one built by `cargo install` was compiled locally and matches nothing published.
+  - **Binaries on this machine** — **every** copy of `dev-prune`, `devp` and `devpw` on this machine, not only the managed ones: everything on `PATH`, plus the install directory of every channel dev-prune knows about, whether or not that directory is still on `PATH`. The one currently running is marked and listed first. Each row carries the package manager that put it there, its SHA-256 and a VirusTotal lookup URL for that digest. This exists because an antivirus judges the bytes on your disk, not the asset on a release page, so the only digest worth showing you is your own — and on a machine that has both a `cargo install` and an installer run, "your own" is several files of different ages. The links are lookups by hash: the digest is computed locally, the URL is printed rather than fetched, and no file is uploaded anywhere. A digest the service has never seen returns *not found*, which means unscanned — not clean. On Windows `dev-prune.exe` and `devp.exe` as shipped are one file under two names and share a digest on purpose; `devpw.exe`, the console-free build the scheduler runs, is a separate `[[bin]]` target and legitimately differs. A copy installed from a release matches the `.sha256` published beside the asset and the per-file `.zip.contents.sha256` manifest; one built by `cargo install` was compiled locally and matches nothing published. Shims are not listed — npm's `.cmd` and `.ps1` wrappers are text files that run the real executable, and a digest for one would compare against nothing. Nothing found is ever executed, only hashed. More than one copy is not a fault; [`devp uninstall`](#14-devp-uninstall---deep) lists them with the command that removes each.
 - **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
 - **No letter grade, on purpose**: `trust level: MEDIUM` tells nobody which switch to look at. The report lists the switches.
 - **Row marks**: `+` guaranteed or safe, `!` widened, blank for a neutral fact (a path, a count).
@@ -1443,6 +1601,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   devp trust --json | jq '.summary.widened'
   devp trust --json | jq -e '.summary.widened_count == 0'   # non-zero if anything is widened
   devp trust --json | jq -r '.binaries[] | "\(.sha256)  \(.name)"'   # compare against the release manifest
+  devp trust --json | jq -r '.binaries[] | "\(.channel)\t\(.path)"'   # which manager put each copy there
   ```
 
 ---
@@ -1484,6 +1643,33 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
+### 20. `devp history [--pass N] [--limit N] [--all] [--json] [--export [PATH]]`
+- **Description**: Which pass deleted what, and what asked it to. [`devp stats`](#15-devp-stats---json) says a number of passes freed a number of bytes; this says that pass #2 ran at 09:14 as `devp run --daemon`, took 4.02 GiB out of two repositories, and names all three directories. Read-only — it never deletes anything and never puts anything back.
+- **Two levels, on purpose**: bare `devp history` is one line per pass, because twenty passes across a workspace is thousands of directories and nobody scrolls that. `--pass N` opens one of them in full, grouped by repository, biggest repository first.
+- **What is recorded per pass**: when it ran, what started it, the exact command line, the version of dev-prune that ran it, and every directory removed with its repository, its package manager and its size.
+- **What started it** is one of three, and there are only three: `manual` (you typed [`devp run`](#5-devp-run-target_path)), `scheduled` (the background pass, `devp run --daemon`), and `dashboard` (the `[p]` key inside [`devp status`](#6-devp-status---top-n---drift---json)). A Git hook is not on the list because a hook runs [`devp link`](#2-devp-link-path) and deletes nothing.
+- **Where it is kept**: `prune-log.jsonl` beside the registry, one JSON object per line, holding the **100** most recent passes. It is separate from `registry.json` because every command loads the registry and rewrites it whole; only this command reads the log. Nothing depends on it — deleting the file loses the report and nothing else, and [`devp restore --last-run`](#9-devp-restore-path---last-run) still works, because it reads the registry.
+- **On an upgraded machine**: per-directory detail is recorded from **1.17.0** onward. Passes older than that still appear, with their totals, marked `(totals only)` — the numbers were always in the registry, and a report that showed nothing next to a `devp stats` reading "10 prune passes" would look like a bug rather than a gap.
+- **When the output is long**: the directory list of one pass is capped at 200 entries **when it is going to a terminal**, and says how many were left out. Redirect it or pipe it and nothing is elided. `--export` writes the whole thing regardless.
+- **Flags**:
+  - `--pass N` — one pass in full. `1` is the most recent, matching the numbers in the list. A number nobody has is a usage error (exit `2`), including under `--json`, so a script cannot read an empty result as "that pass deleted nothing".
+  - `--limit N` — how many passes to list. The default is the 20 most recent.
+  - `--all` — list every pass the log holds.
+  - `--json` — emit the whole log as one document instead of the report. Combines with `--pass N` to emit just that one.
+  - `--export [PATH]` — write the JSON document to a file. With a path, exactly that path; with a directory, a generated filename inside it; bare, `dev-prune-history-<date>.json` in your documents folder (`~` if there is no documents folder). Combines with `--pass N` to export one pass.
+- **Exit codes**: `0` on success, including when nothing has ever been pruned. `2` for a pass number that does not exist. `1` if the export cannot be written.
+- **Examples**:
+  ```bash
+  devp history                          # the last 20 passes, one line each
+  devp history --pass 1                 # what the most recent pass deleted
+  devp history --all > passes.txt       # every pass, nothing elided
+  devp history --export                 # a JSON file in your documents folder
+  devp history --export ~/passes.json   # or exactly where you say
+  devp history --json | jq '[.passes[] | select(.trigger == "scheduled")] | length'
+  ```
+
+---
+
 ## 🔍 Rich Environment Audit (`devp -V` / `devp --version`)
 
 Executing `devp -V` prints detailed diagnostic information:
@@ -1495,7 +1681,7 @@ Executing `devp -V` prints detailed diagnostic information:
 |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|
                                                   v1.16.0 · install script
 Every dependency directory on this machine, in one command.
-Only what a lockfile can rebuild — and `devp undo` puts back the last run.
+Only what a lockfile can rebuild — and `devp restore --last-run` puts it back.
 
 dev-prune (devp) v1.16.0
   Binary Aliases:  dev-prune | devp

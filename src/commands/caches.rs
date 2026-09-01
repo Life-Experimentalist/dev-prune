@@ -85,10 +85,11 @@ pub struct CacheReport {
     /// How many registered repositories use this manager, or `None` where dev-prune
     /// cannot say.
     ///
-    /// `None` is not zero. It is the honest answer for the five caches no adapter is
-    /// named after — `pip`, `nuget`, `vcpkg`, `conan`, `conda`, `hex` — where deciding which
-    /// projects feed them would mean inventing a mapping dev-prune has never verified,
-    /// and it is the answer again when there is no registry to compare against. Only
+    /// `None` is not zero. It is the honest answer for the caches no adapter is named
+    /// after — `pip`, `conda`, `nuget`, `conan`, `hex`, `playwright`, `puppeteer`,
+    /// `huggingface`, `cypress` and `electron` — where deciding which projects feed them
+    /// would mean inventing a mapping dev-prune has never verified, and it is the answer
+    /// again when there is no registry to compare against. Only
     /// `Some(0)` means "nothing registered on this machine needs this", and that is the
     /// one reading `devp caches clear --unused` is allowed to act on.
     pub dependents: Option<usize>,
@@ -128,6 +129,16 @@ struct Probe {
     /// directory. `None` means the ecosystem has no such query and only the conventional
     /// locations are available.
     query: Option<(&'static str, &'static [&'static str])>,
+    /// Appended to whatever [`Self::query`] answered, for the managers that will only
+    /// name a directory one level above their cache.
+    ///
+    /// `gem env gemdir` prints the gem home, which holds installed gems, binstubs and
+    /// the `.gem` archives that are the cache; `poetry config cache-dir` prints a
+    /// directory holding both `artifacts/` and `virtualenvs/`. Sizing or deleting either
+    /// answer whole would take environments and installed packages with it, so the probe
+    /// names the one subdirectory that is genuinely a download cache. Ignored by the
+    /// fallback list, which already spells the full path.
+    query_suffix: Option<&'static str>,
     clear_command: &'static str,
     clear: Clear,
     note: Option<&'static str>,
@@ -203,11 +214,104 @@ const HEX_CACHE_CLEAR: &str = r"Remove-Item -Recurse -Force $env:USERPROFILE\.he
 #[cfg(not(windows))]
 const HEX_CACHE_CLEAR: &str = "rm -rf ~/.hex/packages";
 
+/// RubyGems has no command for this. `gem cleanup` removes *older versions of
+/// installed gems*, which touches the installed tree and leaves the downloads alone —
+/// the opposite of what is wanted here. The `.gem` archives under the gem home are the
+/// cache, and deleting them is the only command there is.
+#[cfg(windows)]
+const BUNDLER_CACHE_CLEAR: &str = "Remove-Item -Recurse -Force \"$(gem env gemdir)\\cache\"";
+#[cfg(not(windows))]
+const BUNDLER_CACHE_CLEAR: &str = "rm -rf \"$(gem env gemdir)/cache\"";
+
+/// `dart pub cache clean` empties the whole pub cache, including the `git/` checkouts
+/// and the `bin/` shims `dart pub global activate` writes — none of which is a download
+/// this tool can prove recoverable. `hosted/` is the part that is, so that is the part
+/// reported and the part deleted.
+#[cfg(windows)]
+const DART_HOSTED_CLEAR: &str = r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\Pub\Cache\hosted";
+#[cfg(not(windows))]
+const DART_HOSTED_CLEAR: &str = "rm -rf ~/.pub-cache/hosted";
+
+/// `swift package purge-cache` exists but has to be run from inside a package
+/// directory, which makes it a per-project command for a machine-wide store. The
+/// deletion is what a person can actually type.
+#[cfg(windows)]
+const SWIFTPM_CACHE_CLEAR: &str =
+    r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\org.swift.swiftpm";
+#[cfg(target_os = "macos")]
+const SWIFTPM_CACHE_CLEAR: &str = "rm -rf ~/Library/Caches/org.swift.swiftpm";
+#[cfg(not(any(windows, target_os = "macos")))]
+const SWIFTPM_CACHE_CLEAR: &str = "rm -rf ~/.cache/org.swift.swiftpm";
+
+#[cfg(windows)]
+const TERRAFORM_PLUGIN_CLEAR: &str =
+    r"Remove-Item -Recurse -Force $env:APPDATA\terraform.d\plugin-cache";
+#[cfg(not(windows))]
+const TERRAFORM_PLUGIN_CLEAR: &str = "rm -rf ~/.terraform.d/plugin-cache";
+
+/// Poetry's cache directory holds `artifacts/` beside `virtualenvs/`. Only the first is
+/// a cache; the second is where the environments themselves live, and nothing here will
+/// go near it.
+#[cfg(windows)]
+const POETRY_ARTIFACTS_CLEAR: &str =
+    "Remove-Item -Recurse -Force \"$(poetry config cache-dir)\\artifacts\"";
+#[cfg(not(windows))]
+const POETRY_ARTIFACTS_CLEAR: &str = "rm -rf \"$(poetry config cache-dir)/artifacts\"";
+
+/// Playwright keeps one unpacked browser build per version and removes none of them on
+/// upgrade, so this grows by a few hundred megabytes every time the dependency moves.
+#[cfg(windows)]
+const PLAYWRIGHT_CLEAR: &str = r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\ms-playwright";
+#[cfg(target_os = "macos")]
+const PLAYWRIGHT_CLEAR: &str = "rm -rf ~/Library/Caches/ms-playwright";
+#[cfg(not(any(windows, target_os = "macos")))]
+const PLAYWRIGHT_CLEAR: &str = "rm -rf ~/.cache/ms-playwright";
+
+/// Puppeteer resolves its download directory from the home directory on every platform
+/// rather than through the OS cache location, so this path is the same everywhere.
+#[cfg(windows)]
+const PUPPETEER_CLEAR: &str = r"Remove-Item -Recurse -Force $env:USERPROFILE\.cache\puppeteer";
+#[cfg(not(windows))]
+const PUPPETEER_CLEAR: &str = "rm -rf ~/.cache/puppeteer";
+
+/// `hf cache delete` — `huggingface-cli delete-cache` before it — is an interactive
+/// picker: it draws a checklist and waits for a keypress. dev-prune runs its clear
+/// commands with no terminal attached and a timeout, so driving that would hang until
+/// the timeout and delete nothing. The directory delete is what can be done unattended.
+#[cfg(windows)]
+const HUGGINGFACE_CLEAR: &str =
+    r"Remove-Item -Recurse -Force $env:USERPROFILE\.cache\huggingface\hub";
+#[cfg(not(windows))]
+const HUGGINGFACE_CLEAR: &str = "rm -rf ~/.cache/huggingface/hub";
+
+#[cfg(windows)]
+const CYPRESS_CLEAR: &str = r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\Cypress\Cache";
+#[cfg(target_os = "macos")]
+const CYPRESS_CLEAR: &str = "rm -rf ~/Library/Caches/Cypress";
+#[cfg(not(any(windows, target_os = "macos")))]
+const CYPRESS_CLEAR: &str = "rm -rf ~/.cache/Cypress";
+
+#[cfg(windows)]
+const ELECTRON_CLEAR: &str = r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\electron\Cache";
+#[cfg(target_os = "macos")]
+const ELECTRON_CLEAR: &str = "rm -rf ~/Library/Caches/electron";
+#[cfg(not(any(windows, target_os = "macos")))]
+const ELECTRON_CLEAR: &str = "rm -rf ~/.cache/electron";
+
+#[cfg(windows)]
+const ELECTRON_BUILDER_CLEAR: &str =
+    r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\electron-builder\Cache";
+#[cfg(target_os = "macos")]
+const ELECTRON_BUILDER_CLEAR: &str = "rm -rf ~/Library/Caches/electron-builder";
+#[cfg(not(any(windows, target_os = "macos")))]
+const ELECTRON_BUILDER_CLEAR: &str = "rm -rf ~/.cache/electron-builder";
+
 const PROBES: &[Probe] = &[
     Probe {
         manager: "npm",
         kind: "cache",
         query: Some(("npm", &["config", "get", "cache"])),
+        query_suffix: None,
         clear_command: "npm cache clean --force",
         clear: Clear::Command("npm", &["cache", "clean", "--force"]),
         note: None,
@@ -216,6 +320,7 @@ const PROBES: &[Probe] = &[
         manager: "pnpm",
         kind: "store",
         query: Some(("pnpm", &["store", "path"])),
+        query_suffix: None,
         clear_command: "pnpm store prune",
         clear: Clear::Command("pnpm", &["store", "prune"]),
         note: Some(
@@ -227,6 +332,7 @@ const PROBES: &[Probe] = &[
         manager: "yarn",
         kind: "cache",
         query: Some(("yarn", &["cache", "dir"])),
+        query_suffix: None,
         clear_command: "yarn cache clean",
         clear: Clear::Command("yarn", &["cache", "clean"]),
         note: None,
@@ -235,6 +341,7 @@ const PROBES: &[Probe] = &[
         manager: "bun",
         kind: "cache",
         query: Some(("bun", &["pm", "cache"])),
+        query_suffix: None,
         clear_command: "bun pm cache rm",
         clear: Clear::Command("bun", &["pm", "cache", "rm"]),
         note: None,
@@ -243,6 +350,7 @@ const PROBES: &[Probe] = &[
         manager: "uv",
         kind: "cache",
         query: Some(("uv", &["cache", "dir"])),
+        query_suffix: None,
         // `prune` drops what nothing can use again and keeps the rest; `uv cache clean`
         // is the sledgehammer, and is not what most people mean by "clear the cache".
         clear_command: "uv cache prune",
@@ -253,6 +361,7 @@ const PROBES: &[Probe] = &[
         manager: "pip",
         kind: "cache",
         query: Some(("pip", &["cache", "dir"])),
+        query_suffix: None,
         clear_command: "pip cache purge",
         clear: Clear::Command("pip", &["cache", "purge"]),
         note: None,
@@ -266,6 +375,7 @@ const PROBES: &[Probe] = &[
         manager: "conda",
         kind: "package cache",
         query: None,
+        query_suffix: None,
         clear_command: "conda clean --packages --tarballs --yes",
         clear: Clear::Command("conda", &["clean", "--packages", "--tarballs", "--yes"]),
         note: Some(
@@ -277,6 +387,7 @@ const PROBES: &[Probe] = &[
         manager: "cargo",
         kind: "registry cache",
         query: None,
+        query_suffix: None,
         clear_command: CARGO_CACHE_CLEAR,
         clear: Clear::Directory,
         note: Some("the downloaded .crate archives; clearing them means downloading again"),
@@ -285,6 +396,7 @@ const PROBES: &[Probe] = &[
         manager: "cargo",
         kind: "registry sources",
         query: None,
+        query_suffix: None,
         clear_command: CARGO_SRC_CLEAR,
         clear: Clear::Directory,
         note: Some("unpacked copies of the archives above; cargo re-extracts these offline"),
@@ -293,6 +405,7 @@ const PROBES: &[Probe] = &[
         manager: "go",
         kind: "module cache",
         query: Some(("go", &["env", "GOMODCACHE"])),
+        query_suffix: None,
         clear_command: "go clean -modcache",
         clear: Clear::Command("go", &["clean", "-modcache"]),
         note: None,
@@ -301,6 +414,7 @@ const PROBES: &[Probe] = &[
         manager: "go",
         kind: "build cache",
         query: Some(("go", &["env", "GOCACHE"])),
+        query_suffix: None,
         clear_command: "go clean -cache",
         clear: Clear::Command("go", &["clean", "-cache"]),
         note: Some("compiled build artifacts; clearing them means the next build is a cold one"),
@@ -313,6 +427,7 @@ const PROBES: &[Probe] = &[
         manager: "maven",
         kind: "local repository",
         query: None,
+        query_suffix: None,
         clear_command: MAVEN_REPO_CLEAR,
         clear: Clear::Manual { why: MAVEN_MANUAL },
         note: Some(
@@ -323,6 +438,7 @@ const PROBES: &[Probe] = &[
         manager: "gradle",
         kind: "caches",
         query: None,
+        query_suffix: None,
         clear_command: GRADLE_CACHE_CLEAR,
         clear: Clear::Directory,
         note: Some(
@@ -333,6 +449,7 @@ const PROBES: &[Probe] = &[
         manager: "gradle",
         kind: "wrapper distributions",
         query: None,
+        query_suffix: None,
         clear_command: GRADLE_DISTS_CLEAR,
         clear: Clear::Directory,
         note: Some(
@@ -346,6 +463,7 @@ const PROBES: &[Probe] = &[
         manager: "nuget",
         kind: "global packages",
         query: None,
+        query_suffix: None,
         clear_command: "dotnet nuget locals global-packages --clear",
         clear: Clear::Command("dotnet", &["nuget", "locals", "global-packages", "--clear"]),
         note: Some(
@@ -356,6 +474,7 @@ const PROBES: &[Probe] = &[
         manager: "vcpkg",
         kind: "binary cache",
         query: None,
+        query_suffix: None,
         clear_command: VCPKG_ARCHIVES_CLEAR,
         clear: Clear::Directory,
         note: Some("prebuilt package archives; vcpkg rebuilds from source what it cannot re-fetch"),
@@ -364,6 +483,7 @@ const PROBES: &[Probe] = &[
         manager: "conan",
         kind: "package cache",
         query: None,
+        query_suffix: None,
         clear_command: "conan remove \"*\" --confirm",
         clear: Clear::Command("conan", &["remove", "*", "--confirm"]),
         note: Some(
@@ -378,6 +498,7 @@ const PROBES: &[Probe] = &[
         manager: "composer",
         kind: "cache",
         query: Some(("composer", &["config", "--global", "cache-dir"])),
+        query_suffix: None,
         clear_command: "composer clear-cache",
         clear: Clear::Command("composer", &["clear-cache"]),
         note: Some(
@@ -392,6 +513,7 @@ const PROBES: &[Probe] = &[
         manager: "cocoapods",
         kind: "cache",
         query: None,
+        query_suffix: None,
         clear_command: "pod cache clean --all",
         clear: Clear::Command("pod", &["cache", "clean", "--all"]),
         note: Some("downloaded pod sources, re-fetched by the next pod install"),
@@ -400,11 +522,186 @@ const PROBES: &[Probe] = &[
         manager: "hex",
         kind: "package cache",
         query: None,
+        query_suffix: None,
         clear_command: HEX_CACHE_CLEAR,
         clear: Clear::Directory,
         note: Some(
             "package tarballs shared by every Mix project on the machine; re-fetched by the next mix deps.get",
         ),
+    },
+    // ---------------------------------------------------------------------------
+    // Adapters that prune a project directory but whose machine-wide store had no
+    // probe: `devp run` cleaned the project and `devp caches` could not see where the
+    // bytes it had just freed came back from.
+    // ---------------------------------------------------------------------------
+    Probe {
+        manager: "bundler",
+        kind: "gem cache",
+        query: Some(("gem", &["env", "gemdir"])),
+        query_suffix: Some("cache"),
+        clear_command: BUNDLER_CACHE_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "only the `cache/` subdirectory of the gem home, which holds the downloaded \
+             `.gem` archives. The installed gems beside it, and the binstubs in `bin/`, \
+             are untouched — including anything put there by `gem install ./local.gem`, \
+             which no remote could hand back.",
+        ),
+    },
+    Probe {
+        manager: "dart",
+        kind: "pub cache",
+        query: None,
+        query_suffix: None,
+        clear_command: DART_HOSTED_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "only `hosted/`, the packages pub downloaded from a registry. The `git/` \
+             checkouts and the executables `dart pub global activate` installed live \
+             beside it and are left alone; `dart pub cache clean` would take all three.",
+        ),
+    },
+    Probe {
+        manager: "swift",
+        kind: "swiftpm cache",
+        query: None,
+        query_suffix: None,
+        clear_command: SWIFTPM_CACHE_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "the shared repository and manifest cache SwiftPM fills for every package on \
+             the machine. `swift build` re-clones what it needs, so the first build after \
+             this one is a network build.",
+        ),
+    },
+    Probe {
+        manager: "terraform",
+        kind: "plugin cache",
+        query: None,
+        query_suffix: None,
+        clear_command: TERRAFORM_PLUGIN_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "this exists only if you switched it on with `TF_PLUGIN_CACHE_DIR` or \
+             `plugin_cache_dir` in `.terraformrc`. Without it Terraform downloads a \
+             private copy of every provider into each project's `.terraform/` — which is \
+             what `devp run` prunes — and there is no shared store to report.",
+        ),
+    },
+    Probe {
+        manager: "poetry",
+        kind: "artifact cache",
+        query: Some(("poetry", &["config", "cache-dir"])),
+        query_suffix: Some("artifacts"),
+        clear_command: POETRY_ARTIFACTS_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "only `artifacts/`, the wheels and sdists Poetry downloaded. `virtualenvs/` \
+             sits in the same cache directory and holds the environments themselves — \
+             deleting that would not be clearing a cache.",
+        ),
+    },
+    Probe {
+        manager: "pdm",
+        kind: "cache",
+        query: Some(("pdm", &["config", "cache_dir"])),
+        query_suffix: None,
+        clear_command: "pdm cache clear",
+        clear: Clear::Command("pdm", &["cache", "clear"]),
+        note: None,
+    },
+    // ---------------------------------------------------------------------------
+    // Stores with no adapter of the same name, added because each of them routinely
+    // reaches gigabytes and nothing ever removes an old entry from them. They get no
+    // `dependents` count, for the reason `Dependents` gives.
+    // ---------------------------------------------------------------------------
+    Probe {
+        manager: "playwright",
+        kind: "browser bundles",
+        query: None,
+        query_suffix: None,
+        clear_command: PLAYWRIGHT_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "a full Chromium, Firefox and WebKit build per Playwright version, and the \
+             old ones are never removed when the dependency moves. `npx playwright \
+             install` re-downloads only the versions the installed Playwright asks for, \
+             which is usually why this comes back smaller than it was.",
+        ),
+    },
+    Probe {
+        manager: "puppeteer",
+        kind: "browser bundles",
+        query: None,
+        query_suffix: None,
+        clear_command: PUPPETEER_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "one Chrome build per Puppeteer version. `npx puppeteer browsers install` \
+             re-downloads the current one.",
+        ),
+    },
+    Probe {
+        manager: "huggingface",
+        kind: "hub cache",
+        query: None,
+        query_suffix: None,
+        clear_command: HUGGINGFACE_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "model weights, not packages. This is the one row here where re-downloading \
+             is measured in tens of gigabytes and can fail outright: a gated or \
+             now-private repository will not hand the file back, and a checkpoint from a \
+             revision that has since been deleted is gone. Worth looking at what is in it \
+             before emptying it.",
+        ),
+    },
+    Probe {
+        manager: "cypress",
+        kind: "binary cache",
+        query: None,
+        query_suffix: None,
+        clear_command: CYPRESS_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "one unpacked Electron application per Cypress version, around half a \
+             gigabyte each, and upgrading leaves the previous one in place. `npx cypress \
+             install` re-downloads the version the project pins.",
+        ),
+    },
+    Probe {
+        manager: "electron",
+        kind: "download cache",
+        query: None,
+        query_suffix: None,
+        clear_command: ELECTRON_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "the prebuilt Electron archives every `electron` dependency downloads, kept \
+             per version and per architecture. Re-downloaded on the next install.",
+        ),
+    },
+    Probe {
+        manager: "electron",
+        kind: "builder cache",
+        query: None,
+        query_suffix: None,
+        clear_command: ELECTRON_BUILDER_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "electron-builder's own store of signing tools, `winCodeSign`, `nsis` and the \
+             runtimes it packages with. Re-downloaded on the next build, which makes that \
+             build slow rather than broken.",
+        ),
+    },
+    Probe {
+        manager: "deno",
+        kind: "cache",
+        query: None,
+        query_suffix: None,
+        clear_command: "deno clean",
+        clear: Clear::Command("deno", &["clean"]),
+        note: None,
     },
 ];
 
@@ -688,10 +985,12 @@ fn dependents(reg: &Registered, spinner: bool) -> Dependents {
     let pb = spinner.then(|| output::create_spinner("Checking which caches are still in use..."));
 
     // Seeded at zero for every cache an adapter is named after, so a manager nothing uses
-    // is a counted zero rather than a missing key. The five that are absent — `pip`,
-    // `conda`, `nuget`, `conan` and `hex` — stay absent: dev-prune ships no adapter of
-    // those names, and deciding that `venv` feeds `pip` or that `mix` feeds `hex` would
-    // be a guess standing in for a measurement.
+    // is a counted zero rather than a missing key. The ten that are absent — `pip`,
+    // `conda`, `nuget`, `conan`, `hex`, `playwright`, `puppeteer`, `huggingface`,
+    // `cypress` and `electron` — stay absent: dev-prune ships no adapter of those names,
+    // and deciding that `venv` feeds `pip`, or that every `node_modules` on the disk
+    // feeds the Playwright browser cache, would be a guess standing in for a
+    // measurement.
     let mut by_manager: BTreeMap<&'static str, usize> = PROBES
         .iter()
         .map(|p| p.manager)
@@ -744,14 +1043,18 @@ fn apply_dependents(reports: &mut [CacheReport], deps: Option<&Dependents>) {
     }
 }
 
-/// What each manager's caches add up to, across every row it has.
+/// What each manager's caches add up to, and how many rows it took.
 ///
 /// The same total the cap is measured against, and for the same reason: "cargo" is one
-/// cache to a person and two rows to this command.
-fn manager_totals(reports: &[CacheReport]) -> BTreeMap<&'static str, u64> {
-    let mut totals: BTreeMap<&'static str, u64> = BTreeMap::new();
+/// cache to a person and two rows to this command. The row count rides along because a
+/// total that spans more than one row has to say so where it is printed — see
+/// [`used_by`].
+fn manager_totals(reports: &[CacheReport]) -> BTreeMap<&'static str, (u64, usize)> {
+    let mut totals: BTreeMap<&'static str, (u64, usize)> = BTreeMap::new();
     for r in reports {
-        *totals.entry(r.manager).or_default() += r.bytes;
+        let entry = totals.entry(r.manager).or_default();
+        entry.0 += r.bytes;
+        entry.1 += 1;
     }
     totals
 }
@@ -961,6 +1264,10 @@ fn locate(probe: &Probe, from: &Path) -> Option<PathBuf> {
         )
         .ok()
         .and_then(|raw| path_from_output(&raw))
+        .map(|p| match probe.query_suffix {
+            Some(suffix) => suffix.split('/').fold(p, |acc, seg| acc.join(seg)),
+            None => p,
+        })
         .filter(|p| p.is_dir());
         if answered.is_some() {
             return answered;
@@ -1102,10 +1409,109 @@ fn fallbacks(manager: &str, kind: &str) -> Vec<PathBuf> {
             under(&home, ".hex/packages"),
             under(&cache, "hex/packages"),
         ],
+        // `gem env gemdir` answers this whenever Ruby is installed. These are the shapes
+        // a user-install tree takes when it is not — which is the case worth covering,
+        // since a gem cache nobody can account for is one left behind by a toolchain
+        // that has since been removed.
+        ("bundler", _) => gem_cache_dirs(),
+        ("dart", _) => vec![
+            std::env::var_os("PUB_CACHE").map(|p| PathBuf::from(p).join("hosted")),
+            under(&local, "Pub/Cache/hosted"),
+            under(&home, ".pub-cache/hosted"),
+        ],
+        // SwiftPM's shared cache moved under the platform cache directory; `~/.swiftpm`
+        // is where older toolchains put it and where one can still be sitting.
+        ("swift", _) => vec![
+            under(&cache, "org.swift.swiftpm"),
+            under(&home, ".swiftpm/cache"),
+        ],
+        // Terraform has no default here at all: without `TF_PLUGIN_CACHE_DIR` or a
+        // `plugin_cache_dir` line there is no shared store, and finding nothing is the
+        // correct answer rather than a gap. The two paths are the ones the documentation
+        // uses in its own example.
+        ("terraform", _) => vec![
+            std::env::var_os("TF_PLUGIN_CACHE_DIR").map(PathBuf::from),
+            under(&home, ".terraform.d/plugin-cache"),
+            under(&dirs::data_dir(), "terraform.d/plugin-cache"),
+        ],
+        ("poetry", _) => vec![
+            std::env::var_os("POETRY_CACHE_DIR").map(|p| PathBuf::from(p).join("artifacts")),
+            under(&cache, "pypoetry/Cache/artifacts"),
+            under(&cache, "pypoetry/artifacts"),
+        ],
+        ("pdm", _) => vec![
+            std::env::var_os("PDM_CACHE_DIR").map(PathBuf::from),
+            under(&cache, "pdm/Cache"),
+            under(&cache, "pdm"),
+        ],
+        ("playwright", _) => vec![
+            std::env::var_os("PLAYWRIGHT_BROWSERS_PATH").map(PathBuf::from),
+            under(&cache, "ms-playwright"),
+        ],
+        // Puppeteer joins `.cache` onto the home directory itself instead of asking the
+        // platform where caches go, so this is one path on all three and a
+        // `%LOCALAPPDATA%` guess would miss it on Windows.
+        ("puppeteer", _) => vec![
+            std::env::var_os("PUPPETEER_CACHE_DIR").map(PathBuf::from),
+            under(&home, ".cache/puppeteer"),
+        ],
+        // Same shape, same reason: `huggingface_hub` defaults to `~/.cache/huggingface`
+        // on every platform.
+        ("huggingface", _) => vec![
+            std::env::var_os("HF_HUB_CACHE").map(PathBuf::from),
+            std::env::var_os("HF_HOME").map(|p| PathBuf::from(p).join("hub")),
+            under(&home, ".cache/huggingface/hub"),
+        ],
+        // Cypress, Electron and electron-builder all take the platform cache directory
+        // and add a `Cache` segment on Windows only. Both shapes are listed and the first
+        // that exists wins, which is cheaper than a third `cfg` for one path segment.
+        ("cypress", _) => vec![
+            std::env::var_os("CYPRESS_CACHE_FOLDER").map(PathBuf::from),
+            under(&cache, "Cypress/Cache"),
+            under(&cache, "Cypress"),
+        ],
+        ("electron", "download cache") => vec![
+            std::env::var_os("electron_config_cache").map(PathBuf::from),
+            under(&cache, "electron/Cache"),
+            under(&cache, "electron"),
+        ],
+        ("electron", _) => vec![
+            under(&cache, "electron-builder/Cache"),
+            under(&cache, "electron-builder"),
+        ],
+        ("deno", _) => vec![
+            std::env::var_os("DENO_DIR").map(PathBuf::from),
+            under(&cache, "deno"),
+        ],
         _ => vec![],
     };
 
     candidates.into_iter().flatten().collect()
+}
+
+/// Every `cache/` directory under a conventional user-install gem tree.
+///
+/// The version segment in the middle — `~/.gem/ruby/3.4.0/cache` — is not something a
+/// fixed path can name, so the parents are read instead of guessed at. The last entry is
+/// unconditional so that this probe always has *some* conventional location to point at,
+/// which is what keeps the "every probe can be found without its manager installed"
+/// check meaningful rather than accidentally satisfied.
+fn gem_cache_dirs() -> Vec<Option<PathBuf>> {
+    let mut out = vec![std::env::var_os("GEM_HOME").map(|p| PathBuf::from(p).join("cache"))];
+    let home = dirs::home_dir();
+    for parent in [".gem/ruby", ".local/share/gem/ruby"] {
+        let Some(base) = home
+            .as_ref()
+            .map(|h| parent.split('/').fold(h.clone(), |p, seg| p.join(seg)))
+        else {
+            continue;
+        };
+        if let Ok(entries) = std::fs::read_dir(&base) {
+            out.extend(entries.flatten().map(|e| Some(e.path().join("cache"))));
+        }
+    }
+    out.push(home.map(|h| h.join(".gem").join("cache")));
+    out
 }
 
 /// `CARGO_HOME`, or the default cargo puts it in.
@@ -1145,7 +1551,26 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Opti
             output::format_bytes(r.bytes),
             output::clean_path(&r.path)
         );
-        println!("  {:<30} {:>10}  clear: {}", "", "", r.clear_command);
+        // The manager's own command was the only one printed here, which left the
+        // wrapper missing from the one place someone reads before deciding to empty
+        // something. It is not a synonym for the line below it: what `devp caches clear`
+        // frees is added to the lifetime total in `devp stats`, and the same command
+        // typed into a terminal is invisible to dev-prune, so the report a week later is
+        // short by exactly the space this cleared. The manual command still gets its
+        // line — dev-prune runs it, and hiding what it runs would be worse than
+        // repeating it.
+        // Repeated on both of a manager's rows rather than named once: the rows are
+        // ordered by size, so cargo's two are rarely adjacent and a command printed
+        // beside the first would be nowhere near the second.
+        let clearable = !matches!(r.clear, Clear::Manual { .. });
+        if clearable {
+            println!(
+                "  {:<30} {:>10}  clear: devp caches clear {}",
+                "", "", r.manager
+            );
+        }
+        let verb = if clearable { "runs: " } else { "clear:" };
+        println!("  {:<30} {:>10}  {verb} {}", "", "", r.clear_command);
         if let Some(note) = r.note {
             println!("  {:<30} {:>10}  {}", "", "", note);
         }
@@ -1240,7 +1665,8 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Opti
          no single repository's lockfile can prove it is recoverable — and it is what \
          makes `devp restore` fast, which is why nothing dev-prune runs on a schedule \
          will ever touch one. When you want the space more than the speed, run a clear \
-         command yourself, or `devp caches clear <manager>`.",
+         command yourself, or `devp caches clear <manager>` — only the second is counted \
+         in `devp stats`, because dev-prune never sees the first.",
     );
 }
 
@@ -1261,7 +1687,7 @@ fn used_by(
     r: &CacheReport,
     dependents: usize,
     deps: Option<&Dependents>,
-    totals: &BTreeMap<&'static str, u64>,
+    totals: &BTreeMap<&'static str, (u64, usize)>,
 ) -> String {
     if dependents == 0 {
         return format!("no registered repository uses {}", r.manager)
@@ -1269,16 +1695,21 @@ fn used_by(
             .to_string();
     }
     let registered = deps.map_or(dependents, |d| d.repositories);
-    let total = totals.get(r.manager).copied().unwrap_or(r.bytes);
+    let (total, rows) = totals.get(r.manager).copied().unwrap_or((r.bytes, 1));
     // Named rather than implied. The label column is blank on a continuation line, and
     // the figure is the manager's total across every row it has — so on go's two rows the
-    // number beside "go build cache" is not that row's size, and the sentence has to say
-    // whose it is.
+    // number beside "go build cache" is larger than that row's size and reads as an
+    // arithmetic error until the sentence says what it summed.
+    let share = output::format_bytes(total / dependents as u64);
+    let each = if rows > 1 {
+        format!("{share} each across its {rows} caches")
+    } else {
+        format!("{share} each")
+    };
     format!(
-        "{} is used by {dependents} of {registered} registered {} · {} each",
+        "{} is used by {dependents} of {registered} registered {} · {each}",
         r.manager,
         output::plural(registered, "repository", "repositories"),
-        output::format_bytes(total / dependents as u64)
     )
     .bold()
     .to_string()
@@ -1297,7 +1728,7 @@ fn costliest_per_repository(reports: &[CacheReport]) -> Vec<(&'static str, u64)>
     let mut per: BTreeMap<&'static str, u64> = BTreeMap::new();
     for r in reports {
         if let Some(n) = r.dependents.filter(|n| *n > 0) {
-            let total = totals.get(r.manager).copied().unwrap_or(r.bytes);
+            let total = totals.get(r.manager).map_or(r.bytes, |t| t.0);
             per.insert(r.manager, total / n as u64);
         }
     }
@@ -1347,17 +1778,23 @@ pub fn run_clear(
     json_output: bool,
 ) -> Result<()> {
     let all = target.eq_ignore_ascii_case("all");
-    // A container engine is a thing `devp caches` reports on, so its name is a plausible
-    // thing to type here. "not a manager dev-prune knows" would be both wrong and a dead
-    // end; the answer is that this tool does not delete container disk, and where to go
-    // to see it.
+    // An engine is cleared by the module that knows how to ask it questions; the dispatch
+    // is here because `caches clear docker` is where a person looks for it.
+    //
+    // `all` deliberately does not reach it. A container store is the biggest thing on the
+    // disk and the slowest to put back, and "clear all the caches" typed in a hurry
+    // should not also mean re-pulling every base image tomorrow morning. Naming the
+    // engine is the consent.
     if !all && crate::commands::containers::is_engine(target) {
-        return Err(anyhow::Error::new(crate::UsageError(format!(
-            "dev-prune reports {target}'s disk use and never deletes it — an image has no \
-             lockfile to prove it can be rebuilt, and a volume cannot be rebuilt at all. \
-             `devp caches {target}` shows what it is holding and prints the prune commands \
-             for you to run."
-        ))));
+        if over_cap || unused {
+            return Err(anyhow::Error::new(crate::UsageError(format!(
+                "`--over-cap` and `--unused` pick package manager caches by size cap and by \
+                 which repositories still need them. Neither applies to {target}: an image \
+                 belongs to no repository and `cache_max_gb` does not cover one. Run `devp \
+                 caches clear {target}` on its own."
+            ))));
+        }
+        return crate::commands::containers::run_clear(target, yes, dry_run, json_output);
     }
     if !all
         && !PROBES
@@ -1692,7 +2129,7 @@ fn print_clear_result(outcomes: &[ClearOutcome]) {
 
 /// Ask before anything is emptied. `--yes` answers for the user; a pipe or a script
 /// without it gets a "no" plus the flag to pass next time.
-fn confirm_clear(yes: bool) -> bool {
+pub fn confirm_clear(yes: bool) -> bool {
     use std::io::{IsTerminal, Write};
     if yes {
         return true;
@@ -1746,10 +2183,10 @@ mod tests {
     }
 
     #[test]
-    fn only_five_probed_managers_have_no_adapter_of_the_same_name() {
+    fn the_probed_managers_with_no_adapter_of_the_same_name_are_pinned() {
         // The report, `--unused`, SKILL.md, the CLI reference and llms.txt all state this
         // split in prose, and it went out wrong once already: the docs named a manager
-        // that had since grown an adapter and omitted one that never had. Pin the five
+        // that had since grown an adapter and omitted one that never had. Pin the list
         // here so the next adapter makes the claim fail rather than quietly rot.
         let orphans: Vec<&str> = PROBES
             .iter()
@@ -1758,7 +2195,21 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        assert_eq!(orphans, ["conan", "conda", "hex", "nuget", "pip"]);
+        assert_eq!(
+            orphans,
+            [
+                "conan",
+                "conda",
+                "cypress",
+                "electron",
+                "hex",
+                "huggingface",
+                "nuget",
+                "pip",
+                "playwright",
+                "puppeteer",
+            ]
+        );
     }
 
     #[test]
@@ -2185,9 +2636,23 @@ mod tests {
         );
         assert!(
             line.contains("cargo is used by 2 of 2 registered repositories")
-                && line.contains("6 GiB"),
+                && line.contains("6 GiB each across its 2 caches"),
             "{line}"
         );
+    }
+
+    #[test]
+    fn one_cache_does_not_say_how_many_it_summed() {
+        // The clause exists to explain a figure larger than the row above it. A manager
+        // with a single row has no such gap, and "across its 1 caches" would be noise.
+        let reports = vec![row("bun", "cache", 4)];
+        let line = used_by(
+            &reports[0],
+            2,
+            Some(&counted(2, &[("bun", 2)])),
+            &manager_totals(&reports),
+        );
+        assert!(line.ends_with("2 GiB each"), "{line}");
     }
 
     #[test]

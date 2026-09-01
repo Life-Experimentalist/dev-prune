@@ -113,6 +113,17 @@ fn print_ignore_idle_notice() {
     println!("  exports a SKILL.md that teaches it this tool, exit codes and all. It has");
     println!("  read the manual more recently than either of us.");
     println!();
+    // The same list the skill would work from, spelled out for someone who would rather
+    // not hand their shell to a language model. Both audiences want the identical five
+    // commands, so they are printed once, here, rather than kept only in SKILL.md.
+    println!("  Or do it the old-school way — every step that skill would take, by hand:");
+    println!("    • `devp run --explain`   the verdict for every repository and directory,");
+    println!("                             and the one reason behind each of them.");
+    println!("    • `devp status`          what is registered, how idle it is, what it holds.");
+    println!("    • `devp doctor`          the install itself: hooks, scheduler, config, PATH.");
+    println!("    • `devp config show`     every setting and the value it currently has.");
+    println!("    • `devp man`             the full reference, offline.");
+    println!();
 }
 
 /// `devp run <PATH>` — one workspace, no registry, no selector.
@@ -257,7 +268,7 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
     // same registry behind. A targeted run used to update neither the lifetime totals nor
     // anything `restore` could read: `devp run .` freed two gigabytes and `devp status`
     // still said nothing had ever been pruned.
-    record_targeted_prune(&path, &results, args.dry_run);
+    record_targeted_prune(&path, &results, args.dry_run, args.daemon);
 
     if args.json {
         json::emit(&json::run_document(&results, args.dry_run))?;
@@ -356,7 +367,12 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
 /// Silent on every failure. The directories are already gone by the time this is called,
 /// and a registry that could not be written is not a reason to report the prune itself as
 /// failed — it only costs the user `devp restore --last-run` for this one pass.
-fn record_targeted_prune(path: &std::path::Path, results: &[PruneResult], dry_run: bool) {
+fn record_targeted_prune(
+    path: &std::path::Path,
+    results: &[PruneResult],
+    dry_run: bool,
+    daemon: bool,
+) {
     if dry_run {
         return;
     }
@@ -383,9 +399,13 @@ fn record_targeted_prune(path: &std::path::Path, results: &[PruneResult], dry_ru
     }
 
     let freed: u64 = pruned.iter().map(|d| d.size_freed).sum();
+    // One timestamp for both records, so `devp history` and the registry agree on which
+    // pass this was rather than describing it twice a millisecond apart.
+    let pass_at = chrono::Utc::now();
+    crate::history::record(pass_at, crate::history::Trigger::for_run(daemon), &pruned);
     if let Ok(mut registry) = Registry::load() {
         registry.mark_pruned(path, freed);
-        registry.record_prune(pruned);
+        registry.record_prune_progress(pass_at, pruned);
         let _ = registry.save();
     }
 }
@@ -846,6 +866,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     // One timestamp identifies the whole pass, so every incremental save below
     // supersedes the previous one instead of counting as its own pass.
     let pass_at = chrono::Utc::now();
+    let trigger = crate::history::Trigger::for_run(args.daemon);
 
     for (repo_path, dirs) in &selection {
         let recorded_before = pruned_dirs.len();
@@ -976,10 +997,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         // failure here is silent — the final save below reports it.
         if pruned_dirs.len() > recorded_before {
             registry.record_prune_progress(pass_at, pruned_dirs.clone());
+            crate::history::record(pass_at, trigger, &pruned_dirs);
             let _ = registry.save();
         }
     }
 
+    crate::history::record(pass_at, trigger, &pruned_dirs);
     registry.record_prune_progress(pass_at, pruned_dirs);
     // The save result is checked *after* the JSON document is out. The deletions have
     // already happened, and a registry that cannot be written must not swallow the

@@ -205,11 +205,17 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                 let mut pruned_dirs: Vec<crate::config::PrunedDir> = Vec::new();
                 let pass_at = chrono::Utc::now();
 
-                // The dashboard offered only repositories its own analysis classed as
-                // candidates, so the idle check is settled; everything else follows
-                // the user's settings, exactly as `devp run` resolves them. The bare
-                // `prune_repo` defaults used here before ignored the configured scan
-                // depth, command timeout and manifest-rewrite policy.
+                // `force` here means the idle check is the user's to make, not a
+                // bypass of anything else: the dashboard shows how long each repository
+                // has been idle and they picked these rows off that screen, so asking
+                // the engine the same question again would only refuse the active ones
+                // they deliberately checked. It gates nothing but the two idle
+                // thresholds — lockfile verification still runs on every directory, and
+                // a repository whose lockfile cannot be trusted is refused below.
+                //
+                // Everything else follows the user's settings, exactly as `devp run`
+                // resolves them. The bare `prune_repo` defaults used here before ignored
+                // the configured scan depth, command timeout and manifest-rewrite policy.
                 let opts = engine::PruneOptions {
                     idle_days: 0,
                     dry_run: false,
@@ -306,10 +312,16 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                     // save below reports it.
                     if pruned_dirs.len() > recorded_before {
                         registry.record_prune_progress(pass_at, pruned_dirs.clone());
+                        crate::history::record(
+                            pass_at,
+                            crate::history::Trigger::Dashboard,
+                            &pruned_dirs,
+                        );
                         let _ = registry.save();
                     }
                 }
 
+                crate::history::record(pass_at, crate::history::Trigger::Dashboard, &pruned_dirs);
                 registry.record_prune_progress(pass_at, pruned_dirs);
                 registry.save()?;
 

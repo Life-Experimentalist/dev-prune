@@ -11,6 +11,7 @@ pub mod declared;
 pub mod discovery;
 pub mod engine;
 pub mod help;
+pub mod history;
 pub mod i18n;
 pub mod json;
 pub mod output;
@@ -303,6 +304,30 @@ pub enum Commands {
         json: bool,
     },
 
+    /// List every prune pass, and open one up to see what it deleted and what asked it to.
+    #[command(long_about = help::HISTORY_LONG, after_long_help = help::HISTORY_EXAMPLES)]
+    History {
+        /// Show one pass in full. 1 is the most recent, matching the numbers in the list.
+        #[arg(long, value_name = "N", conflicts_with = "all")]
+        pass: Option<usize>,
+
+        /// How many passes to list. Defaults to the 20 most recent.
+        #[arg(long, value_name = "N", conflicts_with_all = ["all", "pass"])]
+        limit: Option<usize>,
+
+        /// List every recorded pass rather than the most recent few.
+        #[arg(long)]
+        all: bool,
+
+        /// Emit the whole log as one JSON document instead of the text report.
+        #[arg(long)]
+        json: bool,
+
+        /// Write the JSON document to a file. Bare, it goes to your documents folder.
+        #[arg(long, value_name = "PATH", num_args = 0..=1)]
+        export: Option<Option<std::path::PathBuf>>,
+    },
+
     /// Show lifetime space reclaimed, recent prune passes, and the biggest repositories.
     #[command(long_about = help::STATS_LONG, after_long_help = help::STATS_EXAMPLES)]
     Stats {
@@ -494,6 +519,7 @@ impl Commands {
             Commands::Run { json, .. }
             | Commands::Status { json, .. }
             | Commands::Stats { json }
+            | Commands::History { json, .. }
             | Commands::Trust { json, .. }
             | Commands::Caches { json, .. } => *json,
             Commands::Link { quiet, .. } => *quiet,
@@ -533,7 +559,7 @@ pub enum CachesAction {
     /// The same report for every container engine found, or for the one you name.
     #[command(long_about = help::CACHES_CONTAINERS_LONG, after_long_help = help::CACHES_CONTAINERS_EXAMPLES)]
     Containers {
-        /// Which engine: docker, podman or nerdctl. Omit for every one installed.
+        /// docker, podman, nerdctl, finch or container. Omit for every one installed.
         #[arg(value_name = "ENGINE")]
         engine: Option<String>,
     },
@@ -881,6 +907,19 @@ pub fn run_cli() {
         Commands::Status { top, drift, json } => {
             commands::status::run(top.map(|n| n as usize), drift, json)
         }
+        Commands::History {
+            pass,
+            limit,
+            all,
+            json,
+            export,
+        } => commands::history::run(&commands::history::HistoryArgs {
+            pass,
+            limit,
+            all,
+            json,
+            export,
+        }),
         Commands::Stats { json } => commands::stats::run(json),
         Commands::Completions { shell } => commands::completions::run(shell),
         Commands::Man { command, dir, roff } => {

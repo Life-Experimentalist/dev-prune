@@ -44,6 +44,12 @@ pub fn run(json_output: bool) -> Result<()> {
         "Caches emptied:    {}",
         output::format_bytes_styled(registry.total_cache_freed_bytes)
     ));
+    // A third line for the same reason there is a second: an image costs a pull of the
+    // whole layer stack to put back, which is neither of the two bills above.
+    output::print_info(&format!(
+        "Containers cleared: {}",
+        output::format_bytes_styled(registry.total_container_freed_bytes)
+    ));
     output::print_info(&format!(
         "Prune passes:      {}",
         registry.total_pruned_count

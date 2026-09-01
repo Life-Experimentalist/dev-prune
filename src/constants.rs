@@ -53,10 +53,12 @@ pub const TAGLINE: &str = "Every dependency directory on this machine, in one co
 /// It sits under [`TAGLINE`] because "deletes directories" is the part a new user is
 /// right to be nervous about, and the answer to it should not be three screens away in
 /// the README. Both halves of the sentence are load-bearing: the lockfile rule is what
-/// the engine actually enforces, and `undo` is what covers the case where the rule was
-/// satisfied and the user still wanted the directory back.
+/// the engine actually enforces, and `restore --last-run` is what covers the case where
+/// the rule was satisfied and the user still wanted the directory back. It named `undo`
+/// for six releases, which reverses an `init` or a `link` and has never put a directory
+/// back — the one promise on the first screen pointed at the wrong command.
 pub const TAGLINE_SAFETY: &str =
-    "Only what a lockfile can rebuild — and `devp undo` puts back the last run.";
+    "Only what a lockfile can rebuild — and `devp restore --last-run` puts it back.";
 
 /// The licence sentence under the declaration, in both wizard paths.
 ///
@@ -90,6 +92,30 @@ pub static LONG_VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(
 /// The registry is rewritten in full on every save, so this list is a file-size decision
 /// as much as a display one. Fifty passes is roughly a year of a fortnightly schedule.
 pub const PRUNE_HISTORY_LIMIT: usize = 50;
+
+/// Name of the append-only prune log, beside the registry.
+///
+/// Separate from `registry.json` because the two have opposite shapes. The registry is
+/// rewritten in full on every save and every command loads it, so a per-directory record
+/// of every pass ever run would be paid for by `devp status`. This file is read by one
+/// command.
+pub const PRUNE_LOG_FILENAME: &str = "prune-log.jsonl";
+
+/// How many passes the prune log keeps in full, per-directory detail.
+///
+/// Not the same decision as [`PRUNE_HISTORY_LIMIT`], and deliberately a different number:
+/// that one is four integers per pass inside a file every command parses, this one is a
+/// line per pass in a file only `devp history` opens. A hundred passes of a realistic
+/// size is well under a megabyte; the oldest come off the front.
+pub const PRUNE_LOG_LIMIT: usize = 100;
+
+/// The release `devp history` starts recording per-directory detail in.
+///
+/// Passes older than this exist — [`PRUNE_HISTORY_LIMIT`] summaries of them are in the
+/// registry — but with four numbers each and no directory list. `devp history` shows them
+/// anyway, marked, because a machine that has pruned for a year and shows an empty log
+/// reads as data loss rather than as a format that changed.
+pub const PRUNE_LOG_STARTS_AT: &str = "1.17.0";
 
 /// How many restore measurements one adapter's throughput average is worth.
 ///
@@ -554,6 +580,15 @@ pub const CACHE_QUERY_TIMEOUT_SECS: u64 = 5;
 /// daemon that is not running refuses in milliseconds either way, which is the case this
 /// ceiling is not for.
 pub const CONTAINER_QUERY_TIMEOUT_SECS: u64 = 20;
+
+/// Timeout for one reclaim step of `devp caches clear <engine>`.
+///
+/// An order of magnitude above the query, because deleting is not measuring. `docker
+/// image prune -a` on a 30 GB store unlinks tens of thousands of layer files, and on
+/// Docker Desktop it does that inside a VM against a virtual disk. Ten minutes is not an
+/// estimate of how long that takes; it is the point past which the daemon is stuck
+/// rather than slow, and killing the step is better than a command that never returns.
+pub const CONTAINER_PRUNE_TIMEOUT_SECS: u64 = 600;
 
 /// Ceiling for one `devp caches clear` step.
 ///

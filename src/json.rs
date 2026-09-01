@@ -81,6 +81,9 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         // bun has no resolve-only write mode; a plain install is what refreshes
         // `bun.lock`, and unlike the others it also populates `node_modules`.
         "bun" => "bun install",
+        // Same again for Deno: `deno install` is the only thing that rewrites
+        // `deno.lock`, and it materialises `node_modules` while it is there.
+        "deno" => "deno install",
         "uv" => "uv lock",
         "poetry" => "poetry lock",
         "pdm" => "pdm lock",
@@ -331,6 +334,7 @@ pub fn stats_document(registry: &Registry) -> Value {
             // back, but a consumer asking "how much did pruning save me" and one asking
             // "how much will I re-download" want different halves of the sum.
             "cache_bytes_freed": registry.total_cache_freed_bytes,
+            "container_bytes_freed": registry.total_container_freed_bytes,
             // Same name and same number as `totals.prune_passes` in the status document.
             // One per pass that deleted something, wherever it was started from.
             "prune_passes": registry.total_pruned_count,
@@ -352,6 +356,59 @@ pub fn stats_document(registry: &Registry) -> Value {
             "bytes_freed": entry.total_freed_bytes,
             "last_pruned_at": entry.last_pruned_at.map(|t| t.to_rfc3339()),
         })).collect::<Vec<_>>(),
+    })
+}
+
+/// The full prune log, for `devp history --json` and `devp history --export`.
+///
+/// The whole log, not a page of it: this is the document the `--export` file holds and
+/// the one an assistant is pointed at, and both of those want every pass. The compact
+/// text report is where the trimming lives.
+///
+/// `detail: false` on a pass is the honest form of a gap. Passes older than
+/// [`constants::PRUNE_LOG_STARTS_AT`] have their totals and no directory list, and a
+/// consumer must be able to tell "this pass deleted nothing" from "nobody wrote down
+/// what this pass deleted" — an empty `directories` array on its own says the first.
+///
+/// `only` narrows the document to one pass without renumbering it: `--pass 3 --json`
+/// carries `"pass": 3`, the same number the text report and `--pass` itself use.
+pub fn history_document(passes: &[crate::history::Pass], only: Option<usize>) -> Value {
+    use crate::history::Pass;
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "history",
+        "detail_starts_at": constants::PRUNE_LOG_STARTS_AT,
+        "passes": passes.iter().enumerate()
+            .filter(|(index, _)| only.is_none_or(|n| n == index + 1))
+            .map(|(index, pass)| {
+            let mut entry = json!({
+                // 1 is the newest, matching `devp history --pass N` exactly.
+                "pass": index + 1,
+                "at": pass.at().to_rfc3339(),
+                "bytes_freed": pass.bytes_freed(),
+                "directories": pass.dirs_removed(),
+                "repositories": pass.repos_touched(),
+                "detail": pass.dirs().is_some(),
+            });
+            let map = entry.as_object_mut().expect("json! built an object");
+            if let Pass::Detailed(record) = pass {
+                map.insert("trigger".into(), json!(record.trigger.label()));
+                map.insert("argv".into(), json!(record.argv));
+                map.insert("command_line".into(), json!(record.command_line()));
+                map.insert("dev_prune_version".into(), json!(record.version));
+            }
+            if let Some(dirs) = pass.dirs() {
+                map.insert("removed".into(), json!(dirs.iter().map(|d| json!({
+                    "repo_path": clean_path(&d.repo_path),
+                    "directory": d.bloat_dir,
+                    "adapter": d.adapter,
+                    "bytes_freed": d.size_freed,
+                    "runtime": d.runtime,
+                })).collect::<Vec<_>>()));
+            }
+            entry
+        }).collect::<Vec<_>>(),
     })
 }
 
@@ -629,6 +686,53 @@ pub fn caches_clear_document(
         },
     })
 }
+/// `devp caches clear <engine> --json`: what was run, and what the disk gave back.
+///
+/// `freed_bytes` is the engine's own `system df` total before minus the same total after,
+/// never the sum of what each prune command reported. Container layers are shared, so
+/// those add up to more than the disk ever had — a consumer adding the step figures would
+/// get a number that cannot be true.
+///
+/// `volumes_untouched` is stated rather than implied. It is the one promise this command
+/// makes about what it did *not* do, and a consumer should be able to check it without
+/// reading the argv table in the binary.
+pub fn containers_clear_document(
+    outcome: &crate::commands::containers::ClearOutcome,
+    dry_run: bool,
+) -> Value {
+    let steps: Vec<Value> = outcome
+        .steps
+        .iter()
+        .map(|s| {
+            let mut obj = json!({
+                "command": s.command,
+                "reclaims": s.what,
+                "ran": !dry_run && s.problem.is_none(),
+            });
+            if let Some(problem) = &s.problem {
+                obj["error"] = json!(problem);
+            }
+            obj
+        })
+        .collect();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "caches clear",
+        "dry_run": dry_run,
+        "engine": outcome.engine,
+        "steps": steps,
+        "summary": {
+            "bytes_before": outcome.before,
+            "bytes_after": outcome.after,
+            "freed_bytes": if dry_run { 0 } else { outcome.freed() },
+            "failed": outcome.steps.iter().filter(|s| s.problem.is_some()).count(),
+            "volumes_untouched": true,
+        },
+    })
+}
+
 /// `devp trust --json`: what the tool guarantees, and what this machine has switched on.
 ///
 /// Guarantees and machine state stay in separate arrays because they are different kinds
@@ -662,6 +766,7 @@ pub fn trust_document(report: &crate::commands::trust::TrustReport) -> Value {
                 "role": b.role,
                 "name": b.name,
                 "path": b.path,
+                "channel": b.channel,
                 "sha256": b.sha256,
                 "running": b.running,
                 "scan_report": b.scan_url(),
