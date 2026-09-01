@@ -1,7 +1,18 @@
 # Changelog
 
-## [0.4.0] - 2026-08-22
+## [0.4.0] - 2026-09-01
 
+- **`project.devprune.json` gets the same validation as `.devprune.json`.** The
+  committed half of the configuration — the one a whole team inherits on clone, and
+  so the one most likely to be typed by hand — was the only one the extension did
+  not check. Autocomplete, hover docs and error squiggles now cover it too, at the
+  repository root and anywhere below it.
+- **The bundled schema knows the config keys the CLI has added since.** A
+  `prunable.directories` entry — the `path`, the `rebuild` command that puts it
+  back, the optional `why` — completes as you type and explains itself on hover,
+  and so does the `exclude` list that lets one person keep a directory the rest of
+  the team has declared rebuildable. Previously these validated as unknown
+  properties in a file the CLI accepts.
 - **The status bar item now wears the dev-prune mark.** Every state is prefixed with
   the product glyph rather than a borrowed codicon, so the item is findable at a
   glance in a status bar that already holds a dozen others. The glyph is registered
