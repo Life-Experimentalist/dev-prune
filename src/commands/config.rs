@@ -179,6 +179,16 @@ struct Recommendation {
     value: &'static str,
     /// The second tier: recommended, with one specific thing to understand first.
     cautious: bool,
+    /// Whether the value already on the machine counts as having taken the advice, for
+    /// the settings where comparing it to [`Recommendation::value`] asks the wrong
+    /// question.
+    ///
+    /// A toggle has two values and the suggested one is the only one that counts.
+    /// `cache_max_gb` holds a map, and somebody who capped npm at 4 GiB has taken this
+    /// advice already — the advice is "have a ceiling", not "have this number".
+    /// Without this, their own figure would be listed as outstanding on every
+    /// `devp config show` forever, and `devp config recommended` would overwrite it.
+    taken: Option<fn(&str) -> bool>,
 }
 
 /// The safe tier, by the name every command that prints it uses.
@@ -209,6 +219,7 @@ const RECOMMENDED: &[Recommendation] = &[
               considered.",
         value: "true",
         cautious: false,
+        taken: None,
     },
     Recommendation {
         key: "enable_gradle",
@@ -217,6 +228,7 @@ const RECOMMENDED: &[Recommendation] = &[
               anything else. They come back on the next build, under the same 45-day wait.",
         value: "true",
         cautious: false,
+        taken: None,
     },
     Recommendation {
         key: "enable_maven",
@@ -225,6 +237,7 @@ const RECOMMENDED: &[Recommendation] = &[
               has several. `mvn package` brings them back.",
         value: "true",
         cautious: false,
+        taken: None,
     },
     Recommendation {
         key: "enable_swift",
@@ -233,6 +246,7 @@ const RECOMMENDED: &[Recommendation] = &[
               `swift build` recreates the one you actually use.",
         value: "true",
         cautious: false,
+        taken: None,
     },
     Recommendation {
         key: "enable_dart",
@@ -241,6 +255,7 @@ const RECOMMENDED: &[Recommendation] = &[
               and `flutter_build` caches that are worth real disk space.",
         value: "true",
         cautious: false,
+        taken: None,
     },
     Recommendation {
         key: "enable_mix_build",
@@ -249,6 +264,7 @@ const RECOMMENDED: &[Recommendation] = &[
               `mix compile` recreates the one you are working in.",
         value: "true",
         cautious: false,
+        taken: None,
     },
     Recommendation {
         key: "enable_vcpkg",
@@ -258,6 +274,7 @@ const RECOMMENDED: &[Recommendation] = &[
               them.",
         value: "true",
         cautious: false,
+        taken: None,
     },
     Recommendation {
         key: "enable_cmake_build",
@@ -267,6 +284,22 @@ const RECOMMENDED: &[Recommendation] = &[
               build it again — so a `build/` you made by hand is left alone.",
         value: "true",
         cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "cache_max_gb",
+        label: "Cache size ceilings",
+        why: "Every other suggestion here is about one project's folders. This one is about the \
+              download caches all of them share, which only ever grow — npm's on the machine this \
+              was written on had passed 10 GiB while every project it served fit in a fraction of \
+              that. `default=10` is one ceiling for every manager at once. Crossing it deletes \
+              nothing: `devp caches` says which manager is over, and `devp caches clear \
+              --over-cap all` is still typed by hand. Name a manager to give it a figure of its \
+              own — `devp config set cache_max_gb default=10,npm=4`.",
+        value: crate::constants::RECOMMENDED_CACHE_CAP,
+        cautious: false,
+        // Any ceiling at all is the advice taken. See `Recommendation::taken`.
+        taken: Some(|current| parse_cache_caps(current).is_ok_and(|caps| !caps.is_empty())),
     },
     Recommendation {
         key: "allow_manifest_rewrite",
@@ -278,6 +311,7 @@ const RECOMMENDED: &[Recommendation] = &[
               automatic restore.",
         value: "true",
         cautious: true,
+        taken: None,
     },
 ];
 
@@ -785,6 +819,10 @@ const SETTINGS: &[Setting] = &[
 /// until the pass that deletes `node_modules`.
 /// Parse `npm=10,uv=10` into the per-manager cache cap map.
 ///
+/// [`constants::CACHE_CAP_DEFAULT_KEY`] is accepted alongside the manager names and
+/// covers every manager that is not named separately, so a ceiling can be set without
+/// first learning which twenty-nine caches exist.
+///
 /// Validated against the cache manager names `devp caches clear` takes, not the adapter
 /// names [`parse_adapter_days`] uses. The two lists overlap but neither contains the
 /// other — `pip`, `nuget`, `conan`, `conda`, `vcpkg` and `hex` are caches with no
@@ -810,10 +848,14 @@ fn parse_cache_caps(value: &str) -> Result<std::collections::BTreeMap<String, u6
             bail!("`{entry}` must be written as `<manager>=<gib>`, for example `uv=10`.");
         };
         let name = name.trim().to_lowercase();
-        if !crate::commands::caches::is_cache_manager(&name) {
+        if name != crate::constants::CACHE_CAP_DEFAULT_KEY
+            && !crate::commands::caches::is_cache_manager(&name)
+        {
             bail!(
-                "`{name}` is not a manager dev-prune knows a cache for. Valid names: {}",
-                crate::commands::caches::known_managers().join(", ")
+                "`{name}` is not a manager dev-prune knows a cache for. Valid names: {}. \
+                 `{}` caps every manager that is not named separately.",
+                crate::commands::caches::known_managers().join(", "),
+                crate::constants::CACHE_CAP_DEFAULT_KEY
             );
         }
         let parsed: u64 = value.trim().parse().map_err(|_| {
@@ -1312,6 +1354,18 @@ fn recommendation(key: &str) -> Option<&'static Recommendation> {
     RECOMMENDED.iter().find(|r| r.key == key)
 }
 
+/// Whether a value already on the machine counts as having taken a recommendation.
+///
+/// The one place both `devp config show` and `devp config recommended` ask the
+/// question, so a setting cannot be outstanding on one screen and already-set on the
+/// other.
+fn already_taken(rec: &Recommendation, current: &str) -> bool {
+    match rec.taken {
+        Some(is_taken) => is_taken(current),
+        None => current == rec.value,
+    }
+}
+
 /// Which recommendations a machine has not taken yet, in table order.
 fn outstanding(settings: &Settings) -> Vec<&'static Recommendation> {
     RECOMMENDED
@@ -1319,9 +1373,7 @@ fn outstanding(settings: &Settings) -> Vec<&'static Recommendation> {
         .filter(|r| {
             find_setting(r.key)
                 .map(|s| (s.get)(settings))
-                .ok()
-                .as_deref()
-                != Some(r.value)
+                .is_ok_and(|current| !already_taken(r, &current))
         })
         .collect()
 }
@@ -1394,7 +1446,7 @@ pub fn run_recommended(with_cautious: bool) -> Result<()> {
     for rec in RECOMMENDED {
         let setting = find_setting(rec.key)?;
         let current = (setting.get)(&registry.settings);
-        if current == rec.value {
+        if already_taken(rec, &current) {
             already.push(rec);
         } else if rec.cautious && !with_cautious {
             held_back.push(rec);
@@ -2204,6 +2256,39 @@ mod tests {
             std::fs::read_to_string(tmp.path().join(crate::constants::PER_REPO_CONFIG_FILE))
                 .unwrap();
         assert_eq!(on_disk, broken);
+    }
+
+    #[test]
+    fn the_suggested_cap_is_the_constant_it_claims_to_be() {
+        // The suggestion table holds strings and the rest of the program holds a number,
+        // so this is the only thing stopping the two from drifting — and `config
+        // recommended` feeds this literal straight into the setter, so a value that does
+        // not parse would be a runtime error on somebody else's machine.
+        let caps = parse_cache_caps(crate::constants::RECOMMENDED_CACHE_CAP).unwrap();
+        assert_eq!(
+            caps,
+            std::collections::BTreeMap::from([(
+                crate::constants::CACHE_CAP_DEFAULT_KEY.to_string(),
+                crate::constants::RECOMMENDED_CACHE_MAX_GB,
+            )])
+        );
+    }
+
+    #[test]
+    fn a_ceiling_of_your_own_counts_as_having_taken_the_advice() {
+        // The whole reason `taken` exists. Somebody who capped npm at 4 GiB decided
+        // this; listing it as outstanding forever would be nagging, and `devp config
+        // recommended` replacing their map with `default=10` would be worse — it would
+        // throw away a number they chose.
+        let rec = recommendation("cache_max_gb").expect("the cap is recommended");
+        assert!(already_taken(rec, "npm=4"));
+        assert!(already_taken(rec, crate::constants::RECOMMENDED_CACHE_CAP));
+        assert!(!already_taken(rec, "(none)"));
+
+        // And a toggle still answers the plain question.
+        let toggle = recommendation("enable_cargo").expect("cargo is recommended");
+        assert!(already_taken(toggle, "true"));
+        assert!(!already_taken(toggle, "false"));
     }
 
     #[test]

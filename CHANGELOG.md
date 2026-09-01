@@ -108,6 +108,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before it lists them. The confirmation is dev-prune's own, and it is still there.
   [Reference](docs/CLI_REFERENCE.md#devp-caches-clear-engine---dry-run---yes---json)
 
+- **`devp config set cache_max_gb default=10`** caps every download cache at once,
+  without you first having to learn which twenty-nine of them exist. Until now a ceiling
+  had to name a manager, which meant the setting only ever covered the caches you had
+  already thought about — and the one that has quietly passed 10 GiB is rarely one of
+  those. A manager named outright still wins: `default=10,npm=4` holds npm to four and
+  everything else to ten. Setting a ceiling still deletes nothing; it decides what
+  `devp caches` calls too big, and `devp caches clear --over-cap all` is still typed by
+  hand.
+
+  **The first run now suggests it**, alongside the adapters, and `devp config
+  recommended` sets it. It is the first suggestion that is not a yes-or-no, so it is
+  the first one that can already be satisfied by a different answer: any ceiling at all
+  counts as taken. A machine with `npm=4` set by hand is listed as **Already set**,
+  never as outstanding, and `devp config recommended` leaves the number alone rather
+  than replacing the map with its own.
+  [Reference](docs/CLI_REFERENCE.md#8-devp-config-action)
+
 ### Changed
 
 - **Every binary in `devp trust` now shows the version it was built as**, so the list

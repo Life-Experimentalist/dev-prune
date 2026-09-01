@@ -912,7 +912,12 @@ fn apply_caps(reports: &mut [CacheReport], caps: &BTreeMap<String, u64>) {
         *totals.entry(r.manager).or_default() += r.bytes;
     }
     for r in reports.iter_mut() {
-        let Some(&gb) = caps.get(r.manager) else {
+        // A cap naming the manager outranks the one that covers everything: somebody who
+        // wrote `default=10,npm=4` meant npm to be the exception, not to be held to both.
+        let Some(&gb) = caps
+            .get(r.manager)
+            .or_else(|| caps.get(constants::CACHE_CAP_DEFAULT_KEY))
+        else {
             continue;
         };
         r.cap_gb = Some(gb);
@@ -1881,8 +1886,9 @@ pub fn run_clear(
             // all, and caps set that nothing has reached — so say which one it is. The
             // first is a setting the user has not made yet; the second is good news.
             output::print_info(if caps().is_empty() {
-                "No cache size caps are set, so nothing is over one. Set them with `devp config \
-                 set cache_max_gb npm=10,uv=10`, or in `devp config wizard`."
+                "No cache size caps are set, so nothing is over one. Set one for every manager \
+                 with `devp config set cache_max_gb default=10`, or pick them out one at a time \
+                 in `devp config wizard`."
             } else {
                 "Every capped cache is under its cap — nothing to clear."
             });
@@ -2845,6 +2851,31 @@ mod tests {
         // the difference between a setting that is working and one nobody made.
         assert_eq!(reports[0].cap_gb, Some(10));
         assert!(!reports[0].over_cap);
+    }
+
+    #[test]
+    fn the_default_cap_covers_a_manager_nobody_named() {
+        let caps = BTreeMap::from([(constants::CACHE_CAP_DEFAULT_KEY.to_string(), 10)]);
+        let mut reports = vec![row("uv", "cache", 40), row("npm", "cache", 3)];
+        apply_caps(&mut reports, &caps);
+        assert!(reports[0].over_cap);
+        assert_eq!(reports[1].cap_gb, Some(10));
+        assert!(!reports[1].over_cap);
+    }
+
+    #[test]
+    fn a_manager_named_outright_is_not_also_held_to_the_default() {
+        // `default=10,npm=4` means npm is the exception. If the default won, the
+        // exception would be unreachable; if both applied, 5 GiB of npm would be over
+        // one cap and under another and the report would have to pick.
+        let caps = BTreeMap::from([
+            (constants::CACHE_CAP_DEFAULT_KEY.to_string(), 10),
+            ("npm".to_string(), 4),
+        ]);
+        let mut reports = vec![row("npm", "cache", 5)];
+        apply_caps(&mut reports, &caps);
+        assert_eq!(reports[0].cap_gb, Some(4));
+        assert!(reports[0].over_cap);
     }
 
     #[test]

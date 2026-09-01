@@ -2844,9 +2844,13 @@ Notes you should rely on, not work around:
                 <code>pnpm store prune --store-dir &lt;path&gt;</code>.
               </Faq>
               <Faq q="My uv cache is over 10 GB. Can it tell me?">
-                <code>devp config set cache_max_gb uv=10,npm=10</code> writes
-                down how big is too big, per manager, in gibibytes &mdash;
-                GiB, the unit the report prints. A cache is a
+                <code>devp config set cache_max_gb default=10</code> writes
+                down how big is too big &mdash; one ceiling for every manager, in
+                gibibytes, GiB being the unit the report prints. Write{" "}
+                <code>default=10,npm=4</code> to give one manager a figure of its
+                own; a manager named outright is held to that and not also to the
+                default. The first run suggests it, and a ceiling you set yourself
+                is never overwritten by it. A cache is a
                 bet that re-downloading costs more than the disk it occupies,
                 and somewhere the bet stops paying — this is where you say
                 where. A manager past its ceiling is marked in{" "}
