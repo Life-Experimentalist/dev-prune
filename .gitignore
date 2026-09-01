@@ -46,3 +46,9 @@ editors/jetbrains/.gradle/
 editors/jetbrains/gradle/
 editors/jetbrains/gradlew*
 .gstack/
+
+# Written by `devp icon` and by hand for this repository's own folder icon. The
+# file is per-machine: Explorer only reads it once the folder carries the
+# read-only attribute, which git cannot set, so a committed copy would be inert
+# on every clone.
+desktop.ini

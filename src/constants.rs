@@ -9,6 +9,37 @@
 /// Application crate version derived dynamically from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The marker `devp trust` looks for when reading another copy's version.
+///
+/// A binary cannot be asked its version without running it, and `devp trust` must not
+/// run the files it reports on — on Windows one of them is `devpw.exe`, which is linked
+/// for the GUI subsystem, so a shell that invokes it waits forever. So every build
+/// carries its version as a fixed string in its own bytes and the report reads it off
+/// the disk.
+pub const VERSION_STAMP_MARK: &str = "dev-prune-build-stamp/";
+
+/// The stamp this build carries, which is what the scan above finds.
+///
+/// The mark is written out again here rather than composed from `VERSION_STAMP_MARK`,
+/// because `concat!` takes literals and not constants. That leaves two copies of the
+/// mark in every binary — this one, and the search literal itself — so the scan
+/// validates what follows each hit and keeps the first that parses as a version rather
+/// than trusting the first hit.
+pub const VERSION_STAMP: &str =
+    concat!("dev-prune-build-stamp/", env!("CARGO_PKG_VERSION"), "/end");
+
+/// The stamp, kept in the compiled binary by being an exported symbol nothing may drop.
+///
+/// `#[used]` binds the compiler and not the linker, and both `/OPT:REF` and
+/// `--gc-sections` are free to remove a static that nothing reads. Exporting the symbol
+/// as well is what survives them. Neither is proof on three platforms, which is why
+/// `trust`'s tests scan the test executable for this string rather than assume it is
+/// there — a stamp the linker quietly removed would turn every version in the report
+/// into "not stamped", and nothing else would notice.
+#[used]
+#[unsafe(no_mangle)]
+pub static DEV_PRUNE_BUILD_STAMP: &str = VERSION_STAMP;
+
 /// Minimum supported Rust version, derived dynamically from `rust-version` in
 /// `Cargo.toml` — which is the single source of truth for the MSRV. Only `cargo
 /// install` users ever meet it; every other channel ships a prebuilt binary.

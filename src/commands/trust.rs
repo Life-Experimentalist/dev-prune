@@ -113,6 +113,16 @@ pub struct BinaryIdentity {
     pub path: String,
     /// Lower-case hex SHA-256, or `None` when the file could not be read.
     pub sha256: Option<String>,
+    /// The version this copy was built as, read out of its own bytes. `None` for a
+    /// build older than the stamp, which is every release before 1.17.0.
+    pub version: Option<String>,
+    /// `latest release` when this copy matches the newest release dev-prune has been
+    /// told about, `newest here` when no release check has run and this is simply the
+    /// highest version on the machine. `None` otherwise.
+    ///
+    /// Two different claims and two different words, because a machine that has never
+    /// asked GitHub anything cannot honestly call anything "latest".
+    pub marker: Option<&'static str>,
     /// Whether this is the executable answering right now.
     pub running: bool,
     /// Which package manager put this copy here, as a word — `cargo`, `npm`, `uv`,
@@ -164,7 +174,7 @@ impl TrustReport {
 pub fn run(json_output: bool) -> Result<()> {
     let registry = Registry::load()?;
     let mut report = build(&registry);
-    report.binaries = binaries();
+    report.binaries = binaries(registry.latest_known_version.as_deref());
 
     if json_output {
         return json::emit(&json::trust_document(&report));
@@ -600,7 +610,7 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
 /// machine it is describing. Nothing here runs any of the files it finds, which is not a
 /// stylistic point on Windows: `devpw.exe` is linked for the GUI subsystem and a shell
 /// that invokes it waits forever.
-pub(crate) fn binaries() -> Vec<BinaryIdentity> {
+pub(crate) fn binaries(latest_known: Option<&str>) -> Vec<BinaryIdentity> {
     let mut found: Vec<(std::path::PathBuf, &'static str, Option<&'static str>)> = Vec::new();
     let managed_exe = crate::setup::managed_exe_path().ok();
 
@@ -666,6 +676,7 @@ pub(crate) fn binaries() -> Vec<BinaryIdentity> {
             continue;
         }
         let is_running = running.as_deref().is_some_and(|c| same(c, &path));
+        let (sha256, version) = read_identity(&path);
         rows.push(BinaryIdentity {
             role,
             name: path
@@ -674,13 +685,16 @@ pub(crate) fn binaries() -> Vec<BinaryIdentity> {
                 .unwrap_or_default(),
             channel: crate::channel::Channel::detect_at(&path, managed_exe.as_deref()).badge(),
             path: output::clean_path(&path),
-            sha256: sha256_of(&path),
+            sha256,
+            version,
+            marker: None,
             running: is_running,
             note,
         });
     }
 
     annotate_alias(&mut rows);
+    mark_newest(&mut rows, latest_known);
 
     // The user asked which one they are running; that answer goes at the top, and the
     // rest are context for it.
@@ -741,24 +755,108 @@ fn annotate_alias(rows: &mut [BinaryIdentity]) {
     };
 }
 
-/// Lower-case hex SHA-256 of a file, or `None` if it cannot be read.
+/// Say which release put a copy there, and which of them is the newest.
 ///
-/// Read whole rather than streamed: these are single-digit-megabyte executables, and the
-/// alternative is a `Write` bound on the digest type that `sha2` may or may not offer in
-/// the next release.
-fn sha256_of(path: &std::path::Path) -> Option<String> {
+/// `latest_known` is whatever the last update check recorded, which is read from the
+/// registry the report has already loaded — this asks the network for nothing. When it
+/// is absent the highest version found is still worth pointing at, but it is a claim
+/// about this machine and not about the project, and the two are labelled differently
+/// for that reason.
+fn mark_newest(rows: &mut [BinaryIdentity], latest_known: Option<&str>) {
+    if let Some(latest) = latest_known {
+        let mut any = false;
+        for r in rows.iter_mut() {
+            if r.version.as_deref().is_some_and(|v| v == latest) {
+                r.marker = Some("latest release");
+                any = true;
+            }
+        }
+        if any {
+            return;
+        }
+    }
+
+    // Nothing here is the latest release — either none matched, or no check has run.
+    // Point at the highest anyway, since the reason to read this list at all is usually
+    // "which of these three is the one I want to keep".
+    let Some(top) = rows
+        .iter()
+        .filter_map(|r| r.version.as_deref())
+        .max_by(|a, b| {
+            crate::commands::update::compare_versions(a, b).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    // A single stamped copy is not "the newest" of anything worth saying out loud.
+    if rows.iter().filter(|r| r.version.is_some()).count() < 2 {
+        return;
+    }
+    for r in rows.iter_mut() {
+        if r.version.as_deref() == Some(top.as_str()) {
+            r.marker = Some("newest here");
+        }
+    }
+}
+
+/// The version a build stamped into itself, from anywhere those bytes can be had.
+///
+/// Every hit on the mark is validated rather than the first one trusted, because each
+/// binary contains the mark twice: once in the stamp, and once as the search literal
+/// this function compares against. Only one of the two is followed by a version.
+fn version_from_stamp(haystack: &[u8]) -> Option<String> {
+    let mark = constants::VERSION_STAMP_MARK.as_bytes();
+    // Long enough for `999.999.999-rc.99`, short enough that a stray mark in the middle
+    // of a megabyte of code cannot drag arbitrary bytes into the report.
+    const MAX: usize = 32;
+
+    let mut from = 0;
+    while let Some(hit) = haystack[from..]
+        .windows(mark.len())
+        .position(|w| w == mark)
+        .map(|i| from + i)
+    {
+        from = hit + mark.len();
+        let tail = &haystack[from..haystack.len().min(from + MAX)];
+        if let Some(end) = tail.iter().position(|&b| b == b'/')
+            && let Ok(v) = std::str::from_utf8(&tail[..end])
+            // `compare_versions` returns `None` for anything that is not
+            // `major.minor.patch`, which is exactly the check wanted here: the other hit
+            // is followed by whatever the linker laid down next, and that never parses.
+            && crate::commands::update::compare_versions(v, v).is_some()
+        {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
+/// The digest and the version of one file, from a single read of it.
+///
+/// One read rather than two: these are single-digit-megabyte executables and there can
+/// be four of them, and hashing and stamp-scanning the same bytes twice would double the
+/// slowest part of this report for nothing.
+fn read_identity(path: &std::path::Path) -> (Option<String>, Option<String>) {
+    let Ok(bytes) = std::fs::read(path) else {
+        return (None, None);
+    };
+    (Some(sha256_of_bytes(&bytes)), version_from_stamp(&bytes))
+}
+
+/// Lower-case hex SHA-256 of bytes already in hand.
+fn sha256_of_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     use std::fmt::Write as _;
 
-    let bytes = std::fs::read(path).ok()?;
     let mut h = Sha256::new();
-    h.update(&bytes);
+    h.update(bytes);
     // Hex-encoded by hand: `sha2` 0.11 returns a `hybrid_array::Array`, which has no
     // `LowerHex`, and every `.sha256` sidecar we publish is lower-case hex.
-    Some(h.finalize().iter().fold(String::new(), |mut acc, b| {
+    h.finalize().iter().fold(String::new(), |mut acc, b| {
         let _ = write!(acc, "{b:02x}");
         acc
-    }))
+    })
 }
 
 /// Which opt-in adapters are switched on, in the order the report should name them.
@@ -863,14 +961,28 @@ fn print_binaries(binaries: &[BinaryIdentity]) {
     println!("  Binaries on this machine");
     println!();
     for b in binaries {
-        let label = if b.running {
-            format!("{} (running)", b.name)
-        } else {
-            b.name.clone()
+        // Version first in the label, because the question this list is usually opened
+        // with is "which of these am I looking at" and the file names do not answer it —
+        // three of them are called some spelling of the same word.
+        let mut label = match &b.version {
+            Some(v) => format!("{} v{v}", b.name),
+            None => b.name.clone(),
         };
+        if let Some(marker) = b.marker {
+            label.push_str(&format!(" ({marker})"));
+        }
+        if b.running {
+            label.push_str(" (running)");
+        }
         let mark = if b.running { ">" } else { " " };
-        println!("  {mark}  {label:<30} {}", b.path);
+        println!("  {mark}  {label:<44} {}", b.path);
         println!("     {:<30} {}", "Installed with", b.channel);
+        if b.version.is_none() {
+            // Said rather than left blank: a missing version beside three that have one
+            // reads as a failure to look, and it is not — nothing before 1.17.0 carries
+            // a version anywhere a report could read it without running the file.
+            println!("     {:<30} not stamped — built before 1.17.0", "Version");
+        }
         match (&b.sha256, b.scan_url()) {
             (Some(hash), Some(url)) => {
                 println!("     {:<30} {hash}", "SHA-256");
@@ -926,6 +1038,8 @@ mod tests {
             path: String::new(),
             channel: "standalone",
             sha256: sha.map(str::to_string),
+            version: None,
+            marker: None,
             running: false,
             note: None,
         };
@@ -1009,7 +1123,7 @@ mod tests {
 
     #[test]
     fn the_running_binary_is_listed_first_and_hashed() {
-        let found = binaries();
+        let found = binaries(None);
         let running: Vec<&BinaryIdentity> = found.iter().filter(|b| b.running).collect();
         assert_eq!(running.len(), 1, "expected exactly one running binary");
         assert!(found[0].running, "the running binary must lead the list");
@@ -1035,7 +1149,7 @@ mod tests {
         // file, so a machine carrying `dev-prune`, `devp` and `devpw` in `~/.cargo/bin`
         // saw one row and had no way to learn about the other two. Whatever the sweep
         // can find, this must print.
-        let listed = binaries();
+        let listed = binaries(None);
         let canon = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         let shown: Vec<std::path::PathBuf> = listed
             .iter()
@@ -1051,6 +1165,95 @@ mod tests {
                 stray.path.display()
             );
         }
+    }
+
+    /// A row with a version and nothing else a marker test cares about.
+    fn stamped(version: Option<&str>) -> BinaryIdentity {
+        BinaryIdentity {
+            role: "other",
+            name: String::new(),
+            path: String::new(),
+            channel: "standalone",
+            sha256: None,
+            version: version.map(str::to_string),
+            marker: None,
+            running: false,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn the_stamp_survives_the_linker() {
+        // The one failure mode this whole mechanism has. `#[used]` and an exported
+        // symbol should keep the stamp in the file, but neither is a guarantee across
+        // MSVC, ld and ld64, and a linker that dropped it would not fail a build — it
+        // would just make every version in the report read "not stamped". This test
+        // reads the executable it is running from, which carries the stamp for the same
+        // reason a release binary does.
+        let exe = std::env::current_exe().expect("a test knows its own path");
+        let bytes = std::fs::read(&exe).expect("a test can read its own executable");
+        assert_eq!(
+            version_from_stamp(&bytes).as_deref(),
+            Some(constants::VERSION),
+            "no version stamp in {} — the linker dropped it",
+            exe.display()
+        );
+    }
+
+    #[test]
+    fn the_search_literal_is_not_mistaken_for_a_stamp() {
+        // Every binary contains the mark twice: once in its stamp, and once as the
+        // string this scan compares against. The bare mark is followed by whatever the
+        // linker laid down next, so the scan has to validate each hit rather than
+        // return the first.
+        let mut haystack = constants::VERSION_STAMP_MARK.as_bytes().to_vec();
+        haystack.extend_from_slice(b"not-a-version/");
+        haystack.extend_from_slice(constants::VERSION_STAMP.as_bytes());
+        assert_eq!(
+            version_from_stamp(&haystack).as_deref(),
+            Some(constants::VERSION)
+        );
+
+        // And a mark with nothing usable after it is not a version.
+        let mut orphan = constants::VERSION_STAMP_MARK.as_bytes().to_vec();
+        orphan.extend_from_slice(b"1.2/");
+        assert!(version_from_stamp(&orphan).is_none());
+        assert!(version_from_stamp(b"no mark here at all").is_none());
+    }
+
+    #[test]
+    fn latest_is_only_claimed_when_a_release_check_has_answered() {
+        // "latest" is a claim about the project and "newest here" is a claim about the
+        // disk. A machine that has never asked GitHub anything can only make the second
+        // one, and printing the first would be a guess dressed as a fact.
+        let mut rows = vec![stamped(Some("1.16.0")), stamped(Some("1.17.0"))];
+        mark_newest(&mut rows, None);
+        assert_eq!(rows[0].marker, None);
+        assert_eq!(rows[1].marker, Some("newest here"));
+
+        let mut rows = vec![stamped(Some("1.16.0")), stamped(Some("1.17.0"))];
+        mark_newest(&mut rows, Some("1.17.0"));
+        assert_eq!(rows[1].marker, Some("latest release"));
+
+        // A newer release exists than anything installed: nothing is "latest", and the
+        // highest copy on the machine is still worth pointing at.
+        let mut rows = vec![stamped(Some("1.16.0")), stamped(Some("1.17.0"))];
+        mark_newest(&mut rows, Some("2.0.0"));
+        assert_eq!(rows[1].marker, Some("newest here"));
+
+        // One stamped copy is not the newest of anything worth saying.
+        let mut rows = vec![stamped(Some("1.17.0")), stamped(None)];
+        mark_newest(&mut rows, None);
+        assert_eq!(rows[0].marker, None);
+    }
+
+    #[test]
+    fn versions_order_by_component_and_not_by_string() {
+        // "1.9.0" sorts after "1.10.0" as a string, which would put the `(newest here)`
+        // marker on the older copy.
+        let mut rows = vec![stamped(Some("1.9.0")), stamped(Some("1.10.0"))];
+        mark_newest(&mut rows, None);
+        assert_eq!(rows[1].marker, Some("newest here"));
     }
 
     #[test]
@@ -1071,7 +1274,7 @@ mod tests {
         // On Unix `devp` is a symlink to `dev-prune`, and on Windows the two are byte
         // identical on purpose. Either way they are one binary, and printing two rows
         // for it would send someone looking for a difference that cannot exist.
-        let found = binaries();
+        let found = binaries(None);
         let mut paths: Vec<&str> = found.iter().map(|b| b.path.as_str()).collect();
         let total = paths.len();
         paths.sort_unstable();
