@@ -6,7 +6,7 @@
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.14.0. Written by VKrishna04.
+Version 1.15.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
@@ -340,7 +340,10 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) removes every other
   copy after one confirmation (`-y` covers it; non-interactive without `-y` skips the
   sweep with a note). Manager-owned copies get the exact uninstall line printed so the
-  manager's records clear too; `--deep` also clears config
+  manager's records clear too; `--deep` also clears config. On Windows a running
+  binary cannot delete itself, so the running copy is renamed aside and the remains
+  queued for the next restart — no helper process is left behind, and exit `1` means
+  something is still installed under its original name
 - `devp -V` — version plus an environment audit
 
 Global flags: `--dry-run`, `--ignore-idle` (`--force` is the deprecated alias),

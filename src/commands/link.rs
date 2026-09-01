@@ -411,17 +411,36 @@ mod tests {
         }
     }
 
+    /// A repository that adoption will accept, somewhere that is not the OS temp
+    /// directory.
+    ///
+    /// Both of the tests below used to point at this crate's own checkout, which read
+    /// well and was wrong the moment the source is not a checkout: a crates.io tarball
+    /// ships no `.git`, so `cargo test` on the published crate — which is exactly what a
+    /// distro packager runs — failed twice for a reason that had nothing to do with the
+    /// code. Under `target/` for the same reason `test_cli_init_and_status` is:
+    /// `adopt_repo_at` declines anything below the temp directory by design.
+    fn fixture_repo() -> (TempDir, PathBuf) {
+        let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/adopt-fixtures");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = TempDir::new_in(&base).unwrap();
+        let repo = tmp.path().canonicalize().unwrap().join("my-test-repo");
+        // An empty `.git` is all `is_git_repo` looks for, and all adoption reads.
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        (tmp, repo)
+    }
+
     #[test]
     fn the_repository_you_are_standing_in_is_adopted_when_nothing_tracks_it() {
-        // The `git init` gap, from the inside: a real repository (this crate's own),
-        // a registry that has never heard of it, and a starting directory well below
-        // the root — which is where people actually are when they run `devp status`.
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .canonicalize()
-            .unwrap();
+        // The `git init` gap, from the inside: a real repository, a registry that has
+        // never heard of it, and a starting directory well below the root — which is
+        // where people actually are when they run `devp status`.
+        let (_fixture, root) = fixture_repo();
+        let deep = root.join("src").join("commands");
+        std::fs::create_dir_all(&deep).unwrap();
         let mut registry = Registry::default();
 
-        let adopted = adopt_repo_at(&mut registry, &root.join("src").join("commands"));
+        let adopted = adopt_repo_at(&mut registry, &deep);
         assert_eq!(adopted.as_deref(), Some(root.as_path()));
         assert_eq!(registry.repo_count(), 1);
     }
@@ -430,9 +449,7 @@ mod tests {
     fn a_repository_already_registered_is_not_adopted_twice() {
         // Every `devp status` would otherwise report registering the same repository,
         // and the caller would save the registry once per invocation for no change.
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .canonicalize()
-            .unwrap();
+        let (_fixture, root) = fixture_repo();
         let mut registry = Registry::default();
 
         assert!(adopt_repo_at(&mut registry, &root).is_some());

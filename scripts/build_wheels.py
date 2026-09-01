@@ -197,6 +197,29 @@ def read_binary_from_asset(assets: Path, version: str, os_name: str, arch: str) 
         return extracted.read()
 
 
+def read_hidden_binary_from_asset(
+    assets: Path, version: str, os_name: str, arch: str
+) -> bytes | None:
+    """The windowless Windows build, `devpw.exe`, if this platform has one.
+
+    The scheduled task runs it so nothing flashes a console at whoever is logged in. It
+    is a separate build target rather than something the installed binary produces on
+    the machine: a program that writes a modified executable copy of itself and then
+    registers it to run on a schedule is a dropper by every behavioural definition, and
+    endpoint scanners quarantined the binary for exactly that.
+    """
+    if os_name != "windows":
+        return None
+    archive = assets / f"{DIST_NAME}-v{version}-{os_name}-{arch}.zip"
+    if not archive.is_file():
+        raise SystemExit(f"missing asset: {archive}")
+    with zipfile.ZipFile(archive) as zf:
+        try:
+            return zf.read("devpw.exe")
+        except KeyError:
+            raise SystemExit(f"{archive} does not contain devpw.exe") from None
+
+
 def metadata(version: str, readme: str) -> str:
     lines = [
         "Metadata-Version: 2.1",
@@ -240,6 +263,7 @@ def build_wheel(
     version: str,
     tags: list[str],
     binary: bytes,
+    hidden: bytes | None,
     exe_suffix: str,
     readme: str,
     license_text: str,
@@ -254,6 +278,12 @@ def build_wheel(
     # `dev-prune` would quietly make every `devp` in the docs wrong.
     for name in ("dev-prune", "devp"):
         entries.append((f"{data_scripts}/{name}{exe_suffix}", binary, 0o755))
+
+    # The windowless twin, on Windows only. It has to be delivered rather than generated
+    # for the same reason `devp` is a real file: without it the daemon falls back to a
+    # sessionless S4U task, which cannot see mapped network drives.
+    if hidden is not None:
+        entries.append((f"{data_scripts}/devpw{exe_suffix}", hidden, 0o755))
 
     entries.append((f"{dist_info}/METADATA", metadata(version, readme).encode(), 0o644))
     entries.append((f"{dist_info}/WHEEL", wheel_file(tags).encode(), 0o644))
@@ -304,11 +334,15 @@ def main() -> int:
 
     for (os_name, arch), tags in TARGETS.items():
         binary = read_binary_from_asset(args.assets, args.version, os_name, arch)
+        hidden = read_hidden_binary_from_asset(
+            args.assets, args.version, os_name, arch
+        )
         path = build_wheel(
             out_dir=args.out,
             version=args.version,
             tags=tags,
             binary=binary,
+            hidden=hidden,
             exe_suffix=".exe" if os_name == "windows" else "",
             readme=readme,
             license_text=license_text,

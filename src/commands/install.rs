@@ -176,26 +176,22 @@ pub fn run(channel: Option<TargetChannel>, dry_run: bool, yes: bool) -> Result<(
         // is denied` and keeps its ledger entry, and renaming the file aside first only
         // trades that for `corrupt metadata, ... does not exist when it should`, which
         // keeps the entry too. Exiting first is the only order that clears the record,
-        // so the command goes to the same after-exit helper `devp uninstall` uses.
-        //
-        // `Ok(true)` means scheduled rather than done.
+        // and the only way to run something after this process exits is to leave a
+        // detached shell behind — the exact shape anti-virus heuristics quarantine, and
+        // one dev-prune has been quarantined for. So on Windows this command is the
+        // user's to run, and saying so plainly beats doing it invisibly.
         #[cfg(windows)]
-        let removed = if crate::commands::uninstall::schedule_manager_uninstall(current) {
-            Ok(true)
-        } else {
-            Err(anyhow::anyhow!(
-                "it could not be scheduled to run after this command exits"
-            ))
-        };
+        {
+            output::print_warning(&format!(
+                "The {} copy is still here: Windows cannot uninstall a binary while it \
+                 is running. Run this once, in a new shell:\n  {}",
+                current.label(),
+                argv.join(" ")
+            ));
+        }
         #[cfg(not(windows))]
-        let removed = spawn(&argv).map(|()| false);
-
-        match removed {
-            Ok(true) => output::print_success(&format!(
-                "The {} copy is removed a few seconds after this command exits.",
-                current.label()
-            )),
-            Ok(false) => output::print_success(&format!("Removed the {} copy.", current.label())),
+        match spawn(&argv) {
+            Ok(()) => output::print_success(&format!("Removed the {} copy.", current.label())),
             Err(e) => output::print_warning(&format!(
                 "The new copy is installed, but removing the old one failed ({e:#}).\n\
                  Run it yourself when convenient: {}",

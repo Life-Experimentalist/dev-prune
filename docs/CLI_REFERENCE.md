@@ -814,7 +814,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -863,7 +863,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -908,7 +908,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "command": "status --drift",
   "drift": [
     {
@@ -936,7 +936,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "lifetime": {
@@ -977,7 +977,7 @@ to separate them again.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "command": "caches",
   "caches": [
     {
@@ -1047,7 +1047,7 @@ narrowed by which engines it was asked about.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "command": "caches containers",
   "engines": [
     {
@@ -1111,7 +1111,7 @@ replaces it would land inside the document.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -1159,7 +1159,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.14.0",
+  "version": "1.15.0",
   "command": "trust",
   "guarantees": [
     {
@@ -1306,7 +1306,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ---
 
 ### 14. `devp uninstall [--deep]`
-- **Description**: Removes dev-prune from the machine: the OS daemon scheduler, the global `core.hooksPath` (only if it still points at dev-prune), the installed agent skill, the `PATH` entry (or `~/.local/bin` symlinks), and the binaries themselves — both the managed pair and the copy you invoked. On Windows, where a running executable cannot delete itself, a detached helper removes the last files a few seconds after the command exits; nothing needs a reboot or a closed terminal. Without `--deep` the configuration survives, so a reinstall picks up where you left off. With `--deep`, also wipes the global configuration folder (`~/.config/dev-prune/`) and every registered repository's `.devprune.json`; `--deep` asks for confirmation, and refuses outright with no terminal to ask on unless `-y` is passed. Exits `1` if anything could not be removed, naming each leftover. With `DEV_PRUNE_NO_AUTO_SETUP=1` set, the uninstall is hands-off about the integrations that variable told setup never to install: the scheduler and agent skills are left alone (with a note), and the sweep searches only `PATH` instead of also guessing install directories from the home folder.
+- **Description**: Removes dev-prune from the machine: the OS daemon scheduler, the global `core.hooksPath` (only if it still points at dev-prune), the installed agent skill, the `PATH` entry (or `~/.local/bin` symlinks), and the binaries themselves — both the managed pair and the copy you invoked. On Windows, where a running executable cannot delete itself, the copy you invoked is *renamed aside* — which Windows does allow — so the command stops resolving the moment this one finishes, and the leftover file is queued for deletion at the next restart. Nothing is left running behind it: dev-prune starts no process that outlives the command, which is deliberate — a program that leaves a shell behind to delete itself is the shape anti-virus heuristics quarantine. Without `--deep` the configuration survives, so a reinstall picks up where you left off. With `--deep`, also wipes the global configuration folder (`~/.config/dev-prune/`) and every registered repository's `.devprune.json`; `--deep` asks for confirmation, and refuses outright with no terminal to ask on unless `-y` is passed. Exits `1` only if something is still installed *under the name it was installed as* — which is the thing that would keep `devp` resolving. A file that was renamed aside but could not be queued for the restart (queuing writes to `HKLM`, so it needs an elevated shell) is reported with the one `Remove-Item` line that finishes it, and does not fail the uninstall. With `DEV_PRUNE_NO_AUTO_SETUP=1` set, the uninstall is hands-off about the integrations that variable told setup never to install: the scheduler and agent skills are left alone (with a note), and the sweep searches only `PATH` instead of also guessing install directories from the home folder.
 - **The stray-copy sweep**: installing from pip, npm, cargo and uv over time leaves copies of `devp` in `~/.cargo/bin`, `~/.local/bin`, npm's global directory and one `Scripts` folder per virtualenv — some on PATH, some not, and any one of them keeps the command resolving after an "uninstall". Both modes therefore end by scanning every directory on your PATH plus the well-known install locations for other copies of `dev-prune`/`devp` (matched by name only; nothing else in those directories is ever touched, and dev builds under a `target/` folder are skipped). What it finds is listed — each copy annotated with the package manager that owns it — and removed after **one confirmation**: `[y/N]` interactively — a bare Enter declines, `--yes` auto-confirms, and with no terminal and no `--yes` the copies are left in place with a note, without failing the uninstall. For each manager-owned copy the manager's own line (`pip uninstall dev-prune`, `npm uninstall -g dev-prune`, `bun remove -g dev-prune`, `pnpm remove -g dev-prune`, `yarn global remove dev-prune`, `cargo uninstall dev-prune`, `uv tool uninstall dev-prune`, `pipx uninstall dev-prune`) is printed at the end so its records get cleared too.
 - **Examples**:
   ```bash
@@ -1406,13 +1406,14 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ### 19. `devp install [--channel <NAME>] [--dry-run]`
 - **Description**: Move this installation from one package manager to another. [`devp update`](#10-devp-update---offline----install----channels) always upgrades the copy that is running, through whichever channel installed it; this command changes *which* channel owns it. With no `--channel` it reports the channel that owns the running binary and lists the names `--channel` accepts.
 - **The order is the safety property**: it installs through the manager you name first, then removes the old copy through the manager that put it there. An install that fails leaves the working copy exactly where it was, so there is no window in which the machine has no `devp`.
+- **On Windows the old manager's command is printed, not run.** Windows will not let a package manager delete a binary that is executing, and no ordering inside one process changes that: `cargo uninstall` fails with `Access is denied` and *keeps* its ledger entry. Exit first, uninstall second, is the only order that clears the record, so the command is handed to you — one line to paste in a new shell — rather than run invisibly after this one exits. On Linux and macOS it is simply run, because there a manager can remove a binary that is running.
 - **Why it uninstalls through the old manager rather than deleting the file**: cargo, npm, uv, pipx and the rest each keep a record of what they installed. A manager whose record still says `dev-prune` is present will put the old binary back on its next upgrade, and two copies on `PATH` means which one wins is an accident of ordering.
 - **Nothing is migrated, because nothing needs to be.** Settings, the repository registry and the undo history live in the config directory, which no package manager owns and none of them touch.
 - **The receipt**: when the running copy is the one an install script put there, plain `devp install` prints a `Receipt:` line as well — its version, which script wrote it, and when. `install.sh` and `install.ps1` each write `install.json` beside the binary as their last step, and `devp uninstall` removes it along with the binary it describes:
   ```json
   {
     "schema": 1,
-    "version": "1.14.0",
+    "version": "1.15.0",
     "channel": "installer",
     "installed_by": "install.sh",
     "installed_at": "2026-08-25T09:14:02Z",
@@ -1447,9 +1448,9 @@ Executing `devp -V` prints detailed diagnostic information:
 |  _ \ | ____|\ \   / /   |  _ \|  _ \| | | | \ | | ____|
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
-|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.14.0 · install script
+|____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____| v1.15.0 · install script
 
-dev-prune (devp) v1.14.0
+dev-prune (devp) v1.15.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune

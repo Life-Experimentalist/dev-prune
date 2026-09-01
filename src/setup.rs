@@ -421,7 +421,7 @@ fn ensure_twin_of(current_exe: &std::path::Path, parent_dir: &std::path::Path) -
 /// copy fallback, which does not preserve timestamps — the bytes themselves decide,
 /// because calling that pair "different" made every single invocation delete and
 /// recreate an alias whose content never changed.
-fn same_contents(a: &std::path::Path, b: &std::path::Path) -> bool {
+pub(crate) fn same_contents(a: &std::path::Path, b: &std::path::Path) -> bool {
     let (Ok(ma), Ok(mb)) = (fs::metadata(a), fs::metadata(b)) else {
         return false;
     };
@@ -690,21 +690,21 @@ pub fn ensure_daemon(interval_days: u64) -> Outcome {
         }
         // A task registered by a version that only knew the interactive logon flashes a
         // console window at whoever is logged in every time it fires — the single most
-        // trust-destroying thing a background tool can do. Re-register it hidden; a
-        // machine whose scheduler refuses the hidden logon remembers the refusal and is
-        // not asked again.
-        Ok(daemon::DaemonStatus::Installed) if daemon::wants_hidden_upgrade() => {
+        // trust-destroying thing a background tool can do. Re-register it windowless;
+        // a machine whose scheduler refuses the sessionless logon remembers the refusal
+        // and is not asked again.
+        Ok(daemon::DaemonStatus::Installed) if daemon::wants_windowless_upgrade() => {
             match daemon::install_daemon(interval_days) {
                 Ok(()) => Outcome::Installed,
                 Err(e) => Outcome::Failed(format!("{e:#}")),
             }
         }
-        // A settled, hidden task still needs its windowless twin kept current: the twin
+        // A settled task still needs its windowless twin kept current: the twin
         // is a copy of the binary, so an upgrade that replaced the binary would otherwise
         // leave the daemon firing the previous release. No-op on the other platforms, and
         // when no twin is in use.
         Ok(daemon::DaemonStatus::Installed) => {
-            daemon::refresh_hidden_twin();
+            daemon::refresh_windowless_twin();
             Outcome::AlreadyPresent
         }
         Ok(daemon::DaemonStatus::NotInstalled) => match daemon::install_daemon(interval_days) {

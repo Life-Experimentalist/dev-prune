@@ -1,6 +1,6 @@
 [package]
 name = "dev-prune"
-version = "1.14.0"
+version = "1.15.0"
 edition = "2024"
 authors = ["VKrishna04"]
 description = "Universal, lockfile-safe workspace pruner and background dependency cleaner"
@@ -130,6 +130,14 @@ path = "src/main.rs"
 name = "devp"
 path = "src/devp.rs"
 
+[[bin]]
+# The windowless build, for the Windows scheduled task. Defined as its own target so the
+# GUI subsystem comes from the linker: the alternative, patching the subsystem field of
+# its own image at runtime and writing the result out beside itself, is indistinguishable
+# from a dropper to every behavioural scanner that saw it.
+name = "devpw"
+path = "src/devpw.rs"
+
 [dependencies]
 # CLI argument parsing
 clap = { version = "4", features = ["derive", "color", "suggestions"] }
@@ -207,6 +215,11 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     # `GetConsoleWindow`, for the child-window policy in `src/spawn.rs`.
     "Win32_System_Console",
+    # The user PATH lives in `HKCU\Environment`; `src/pathenv.rs` reads and writes it
+    # through advapi32 rather than driving `powershell.exe -EncodedCommand`.
+    "Win32_System_Registry",
+    # `SendMessageTimeoutW`, to broadcast `WM_SETTINGCHANGE` after that write.
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

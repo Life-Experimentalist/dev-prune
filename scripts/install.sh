@@ -94,7 +94,7 @@ REPO="Life-Experimentalist/dev-prune"
 # /releases/latest carries the tag, so one HEAD request answers without parsing JSON.
 # FALLBACK_VERSION exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-FALLBACK_VERSION="1.14.0"
+FALLBACK_VERSION="1.15.0"
 if [ -z "$VERSION" ]; then
     LATEST_URL="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
     case "$LATEST_URL" in
@@ -637,8 +637,7 @@ if [ "$NO_PATH" != "1" ]; then
         # The single quotes are the point: this is PowerShell source, and
         # `$dir`/`$env:`/`$userPath` are its variables, not the shell's. The directory
         # crosses over as an environment variable so it never has to be quoted into the
-        # script text, and the inner double quotes are backtick-escaped for the same
-        # reason.
+        # script text rather than being interpolated into it.
         # shellcheck disable=SC2016
         if DEV_PRUNE_WIN_BIN_DIR="$WIN_BIN_DIR" powershell.exe -NoProfile -NonInteractive -Command '
             $dir = $env:DEV_PRUNE_WIN_BIN_DIR
@@ -663,11 +662,21 @@ if [ "$NO_PATH" != "1" ]; then
                 }
                 # Tell the already-running desktop. Without this, Explorer and every
                 # program it launches keep the old PATH until the next sign-in.
+                #
+                # Borrowed from the .NET environment API rather than sent by hand:
+                # SetEnvironmentVariable is documented to notify other applications for
+                # the User target, and the notification names the whole Environment key,
+                # so a throwaway variable refreshes the Path set above. Written and
+                # deleted in the same breath.
+                #
+                # Not by compiling a scrap of C# at run time to call the window-
+                # message API by hand, which is how this was done before: that is the
+                # defining move of a whole class of droppers, and nobody reading an
+                # installer should have to talk themselves out of it. install.ps1
+                # carries the longer version of this note.
                 try {
-                    $sig = "[DllImport(`"user32.dll`",SetLastError=true,CharSet=CharSet.Auto)]public static extern IntPtr SendMessageTimeout(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);"
-                    $api = Add-Type -MemberDefinition $sig -Name "NativeBroadcast" -Namespace DevPruneInstall -PassThru
-                    $sent = [UIntPtr]::Zero
-                    [void]$api::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$sent)
+                    [Environment]::SetEnvironmentVariable("DEV_PRUNE_PATH_REFRESH", "1", "User")
+                    [Environment]::SetEnvironmentVariable("DEV_PRUNE_PATH_REFRESH", $null, "User")
                 } catch {}
             }
         '; then

@@ -369,7 +369,7 @@ fn install_directly(
 
     // The windowless scheduler twin is a *patched* copy, not a plain one, so it is
     // rebuilt rather than written — from the managed binary that was just replaced.
-    crate::daemon::refresh_hidden_twin();
+    crate::daemon::refresh_windowless_twin();
 
     // The receipt beside the managed copy now names the version that was there a minute
     // ago. Only ever updated, never created: this path also upgrades a managed copy some

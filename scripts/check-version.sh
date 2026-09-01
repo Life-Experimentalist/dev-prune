@@ -64,6 +64,16 @@ expect docs/DISTRIBUTION.md "dev-prune-v$version-linux-x64.tar.gz"
 expect docs/RELEASES_AND_MANUAL_INSTALL.md "dev-prune-v$version-linux-x64.tar.gz"
 expect docs/troubleshooting/INSTALLATION_ISSUES.md "dev-prune-v$version-windows-x64.zip"
 
+# SECURITY.md is the one file here where a stale number costs trust rather than a
+# re-download: it names the supported series, and its `gh attestation verify` examples
+# quote whole asset filenames a reader is meant to paste. Only these three strings are
+# pinned -- the prose below them dates what changed in which release ("through 1.14.x",
+# "as of 1.15.0") and that stays true forever, so a loose version match would demand
+# rewriting history every release.
+expect SECURITY.md "| ${version%.*}.x"
+expect SECURITY.md "dev-prune-v$version-windows-x64.zip"
+expect SECURITY.md "dev-prune-v$version-linux-x64.tar.gz"
+
 # npm/package.json is a template — scripts/npm-prepare.sh rewrites every version in it
 # from the tag before publishing, and asserts it rewrote exactly eight. So a stale number
 # here never reaches the registry; it reaches the reader, and it sat at 1.1.0 for three

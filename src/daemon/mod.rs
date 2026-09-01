@@ -118,10 +118,10 @@ pub fn get_exe_path() -> std::path::PathBuf {
 /// console window at the logged-in user. Only Windows attaches a console to a scheduled
 /// task; the other platforms' schedulers never open a terminal, so there the answer is
 /// always no.
-pub fn wants_hidden_upgrade() -> bool {
+pub fn wants_windowless_upgrade() -> bool {
     #[cfg(target_os = "windows")]
     {
-        windows::wants_hidden_upgrade()
+        windows::wants_windowless_upgrade()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -135,10 +135,10 @@ pub fn wants_hidden_upgrade() -> bool {
 /// replacing the binary without refreshing the twin would leave the daemon running the
 /// previous release. The other platforms register the real binary directly and have
 /// nothing to refresh.
-pub fn refresh_hidden_twin() {
+pub fn refresh_windowless_twin() {
     #[cfg(target_os = "windows")]
     {
-        windows::refresh_hidden_twin();
+        windows::refresh_windowless_twin();
     }
 }
 

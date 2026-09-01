@@ -14,7 +14,7 @@ name, and either works everywhere.
 run it, and explain the result. Everything you need is below; the docs map at the end is
 for anything that isn't.
 
-**Skill version: 1.14.0.** This file describes that release of `devp` and no other, and
+**Skill version: 1.15.0.** This file describes that release of `devp` and no other, and
 it is rewritten from the binary rather than maintained by hand. Before you rely on
 anything below, run `devp --version`. If it prints a different number, you are reading
 another release's instructions — its flags, JSON statuses and exit codes may not be
@@ -148,7 +148,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "is the background stuff working?" | `devp setup --status` |
 | "set it all up" | `devp setup` |
 | "turn the automation off" | `devp config set auto_setup false` |
-| "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed (add `--deep` to wipe config — confirm first) |
+| "remove it" | `devp uninstall` — removes the program itself, PATH entry and agent skill included, then sweeps PATH and the well-known install dirs (`~/.cargo/bin`, `~/.local/bin`, npm global, venv Scripts) for every other copy and removes them after one confirmation. Non-interactively the sweep needs `-y` or it skips those copies with a note. Each manager-owned copy gets its manager's uninstall line printed — on Windows that includes the manager that owns the *running* copy, because Windows will not let a manager delete a binary that is executing; tell the user to run that one line in a new shell. The running binary itself is renamed aside and queued for the next restart, so `devp` stops resolving immediately either way (add `--deep` to wipe config — confirm first) |
 | "is there a newer version?" | `devp update` — prints the installed and latest versions plus the right upgrade command; never installs anything by itself |
 | "upgrade it" | `devp update --install` — downloads the release binary from GitHub, verifies its SHA-256, and replaces every copy this install runs (managed binary, `devp` alias, `devpw` scheduler twin, the running binary); the package manager that delivered the first copy is not run, and the one command that resyncs its version record is printed. Falls back to that manager's own upgrade command if there is no binary for this platform. `auto_update` does the download half by itself after a pass and is on by default; `devp config set auto_update false` stops it, and `devp config set version_lock true` stops every update path at once |
 | "I installed it with cargo, I want it from winget instead" / "move it to uv" | `devp install --channel <name>` — installs through the manager named, then removes the old copy through the manager that owns it, in that order. `devp install` alone reports which channel owns this copy; `--dry-run` prints the plan and runs none of it. Names: `installer`, `cargo`, `npm`, `bun`, `pnpm`, `yarn`, `uv`, `pipx`, `winget`, `scoop`, `homebrew`. bun, pnpm and yarn install the same npm package but are each their own channel: a copy bun put there is upgraded and removed with bun, and running npm against it adds a second copy under npm's prefix while bun's stays stale on `PATH` |

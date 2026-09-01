@@ -3,7 +3,7 @@
 
 // Windows Task Scheduler integration.
 
-use crate::constants::{WINDOWS_HIDDEN_BIN, WINDOWS_TASK_NAME as TASK_NAME};
+use crate::constants::{WINDOWS_TASK_NAME as TASK_NAME, WINDOWS_WINDOWLESS_BIN};
 use crate::daemon::{DaemonStatus, get_exe_path};
 use crate::spawn;
 use anyhow::{Context, Result};
@@ -30,13 +30,13 @@ pub fn build_install_command(exe_path: &str, interval_days: u64) -> Vec<String> 
     ]
 }
 
-/// Builds the schtasks arguments for a hidden installation.
+/// Builds the schtasks arguments for a sessionless (S4U) installation.
 ///
 /// `/RU <account> /NP` registers the task to run whether the user is logged on or not,
 /// without storing a password (an S4U logon). Such a task runs in a non-interactive
 /// session — without it, every firing of the console binary flashes a black window at
 /// whoever is logged in, which reads as malware to anyone watching their own screen.
-pub fn build_install_command_hidden(
+pub fn build_install_command_windowless(
     exe_path: &str,
     interval_days: u64,
     account: &str,
@@ -46,7 +46,7 @@ pub fn build_install_command_hidden(
     args
 }
 
-/// The account to register the hidden task under, as `DOMAIN\user`.
+/// The account to register the S4U task under, as `DOMAIN\user`.
 fn current_account() -> Option<String> {
     let user = std::env::var("USERNAME").ok().filter(|s| !s.is_empty())?;
     Some(match std::env::var("USERDOMAIN") {
@@ -55,77 +55,65 @@ fn current_account() -> Option<String> {
     })
 }
 
-/// Marker recording that this machine's scheduler refused the hidden registration.
+/// Marker recording that this machine's scheduler refused the S4U registration.
 ///
 /// Some policies deny S4U logons to non-elevated callers, and a filesystem that cannot
 /// hold the windowless twin refuses that route too. Without the marker, every setup
 /// pass would re-try the upgrade, fail, and re-register the visible task — churning the
 /// scheduler on every single `devp` invocation.
-fn hidden_refused_marker() -> Option<PathBuf> {
+fn windowless_refused_marker() -> Option<PathBuf> {
     crate::config::Registry::config_dir()
         .ok()
-        .map(|dir| dir.join(crate::constants::SCHEDULER_HIDDEN_REFUSED_MARKER))
+        .map(|dir| dir.join(crate::constants::SCHEDULER_WINDOWLESS_REFUSED_MARKER))
 }
 
-/// Set a PE image's subsystem field to GUI, in place.
+/// Removes every refusal marker from `dir`, whatever it is called.
 ///
-/// The subsystem is a single `u16` in the optional header — `editbin
-/// /SUBSYSTEM:WINDOWS` edits exactly this field — and it is the only difference between
-/// `python.exe` and `pythonw.exe`-style pairs: a GUI-subsystem process never gets a
-/// console, so nothing ever flashes, while pipes and files it writes still work.
-/// Everything is bounds-checked and signature-checked because the input is a file from
-/// disk, not a value this code produced.
-fn patch_subsystem_to_gui(image: &mut [u8]) -> std::result::Result<(), &'static str> {
-    const IMAGE_SUBSYSTEM_WINDOWS_GUI: u16 = 2;
-    const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
-
-    if image.len() < 0x40 || &image[..2] != b"MZ" {
-        return Err("not a DOS/PE executable");
+/// Matching the `scheduler-*-refused` family rather than one filename is what retires
+/// the spelling an older release used, so a rename cannot strand an empty file in the
+/// config directory of every machine that upgrades. Split out from `install` so it can
+/// be tested against a real directory without going near the scheduler.
+fn sweep_refusal_markers(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with("scheduler-") && name.ends_with("-refused") {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
-    let pe_offset =
-        u32::from_le_bytes([image[0x3C], image[0x3D], image[0x3E], image[0x3F]]) as usize;
-    if image.len() < pe_offset + 4 + 20 + 70 || &image[pe_offset..pe_offset + 4] != b"PE\0\0" {
-        return Err("PE signature not found");
-    }
-    // Optional header follows the 4-byte signature and 20-byte COFF header. Its magic
-    // distinguishes PE32 from PE32+, but the subsystem sits at offset 68 in both.
-    let optional = pe_offset + 4 + 20;
-    let magic = u16::from_le_bytes([image[optional], image[optional + 1]]);
-    if magic != 0x10B && magic != 0x20B {
-        return Err("unrecognised optional-header magic");
-    }
-    let subsystem = optional + 68;
-    let current = u16::from_le_bytes([image[subsystem], image[subsystem + 1]]);
-    if current != IMAGE_SUBSYSTEM_WINDOWS_CUI && current != IMAGE_SUBSYSTEM_WINDOWS_GUI {
-        return Err("not a console or GUI executable");
-    }
-    image[subsystem..subsystem + 2].copy_from_slice(&IMAGE_SUBSYSTEM_WINDOWS_GUI.to_le_bytes());
-    Ok(())
 }
 
 /// The windowless twin's path, beside the binary the scheduler would otherwise run.
-fn hidden_twin_path(exe_path: &Path) -> PathBuf {
-    exe_path.with_file_name(WINDOWS_HIDDEN_BIN)
+fn windowless_twin_path(exe_path: &Path) -> PathBuf {
+    exe_path.with_file_name(WINDOWS_WINDOWLESS_BIN)
 }
 
-/// Whether `twin` is already the windowless build of `exe` — same bytes except the one
-/// field the patch changes. Same length is a prerequisite the patch guarantees.
-fn twin_is_current(exe: &Path, twin: &Path) -> bool {
-    let (Ok(source), Ok(existing)) = (std::fs::read(exe), std::fs::read(twin)) else {
-        return false;
-    };
-    let mut expected = source;
-    patch_subsystem_to_gui(&mut expected).is_ok() && expected == existing
-}
-
-/// Create or refresh `devpw.exe` beside `exe_path`, returning its path on success.
+/// The `devpw.exe` that shipped with the running binary, if this delivery carries one.
 ///
-/// Generated locally rather than shipped, so every install channel — the installers,
-/// npm, PyPI, `cargo install`, a bare unzipped archive — gets it without any of them
-/// packaging a second binary. Staged beside and renamed into place like every other
-/// managed write; a rename refused because the twin is mid-fire simply keeps the
-/// previous build, which the next pass replaces.
-fn ensure_hidden_twin(exe_path: &Path) -> Option<PathBuf> {
+/// It is a build target, so it sits beside whatever is executing right now — the
+/// unzipped archive, `~/.cargo/bin`, the directory an installer wrote. A delivery that
+/// predates it, or one that only unpacks the two console names, simply has no twin here
+/// and `install` falls through to its next registration tier.
+fn shipped_windowless_binary() -> Option<PathBuf> {
+    let shipped = std::env::current_exe()
+        .ok()?
+        .with_file_name(WINDOWS_WINDOWLESS_BIN);
+    shipped.is_file().then_some(shipped)
+}
+
+/// Put `devpw.exe` beside `exe_path`, returning its path once it is there.
+///
+/// The twin is *placed*, never generated. An earlier release built it on the machine by
+/// reading its own image, rewriting the PE subsystem field and writing the result out
+/// under a new name — a program emitting a modified executable copy of itself and then
+/// registering it for persistence, which is what a dropper does and what Sophos
+/// quarantined the binary for. The subsystem now comes from the linker instead, so the
+/// only thing left to do here is the same hard-link-or-staged-copy every other managed
+/// file gets.
+fn ensure_windowless_twin(exe_path: &Path) -> Option<PathBuf> {
     // Almost always the managed copy under the config directory, because `get_exe_path`
     // resolves there first. The exception is a machine where that copy could not be made,
     // and then `exe_path` is wherever the package manager put the binary — which for
@@ -138,24 +126,54 @@ fn ensure_hidden_twin(exe_path: &Path) -> Option<PathBuf> {
     {
         return None;
     }
-    let twin = hidden_twin_path(exe_path);
-    if twin_is_current(exe_path, &twin) {
-        return Some(twin);
+    place_windowless_twin(
+        &shipped_windowless_binary()?,
+        &windowless_twin_path(exe_path),
+    )
+}
+
+/// Copy `shipped` to `twin`, or confirm the copy already there is the same release.
+///
+/// Split out from `ensure_windowless_twin` so it can be tested against two real paths: the
+/// caller's half depends on where this process happens to be running from, which under a
+/// test harness is not something a test may assume.
+fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
+    // Running out of the managed directory already: the shipped twin *is* the twin.
+    if shipped == twin {
+        return Some(twin.to_path_buf());
     }
-    let mut image = std::fs::read(exe_path).ok()?;
-    patch_subsystem_to_gui(&mut image).ok()?;
+    if twin.is_file() {
+        if crate::setup::same_contents(twin, shipped) {
+            return Some(twin.to_path_buf());
+        }
+        // An upgrade replaced the shipped binary, so the placed one is a previous
+        // release that the scheduled task still names. Replacing a running executable
+        // fails on Windows; the next pass that is not itself the twin retries.
+        if std::fs::remove_file(twin).is_err() {
+            return Some(twin.to_path_buf());
+        }
+    }
+    if std::fs::hard_link(shipped, twin).is_ok() {
+        return Some(twin.to_path_buf());
+    }
+    // Never `fs::copy` onto a name that exists: the usual reason `hard_link` fails is
+    // that a concurrent pass created it as a hard link to `shipped`, and `fs::copy`
+    // opens its destination with `O_TRUNC` — truncating a hard link empties the shared
+    // inode, destroying the very file being copied. `setup::ensure_twin_of` records the
+    // CI outage that taught this.
+    if twin.is_file() {
+        return Some(twin.to_path_buf());
+    }
+    // Stage beside and rename into place, so a scheduler firing mid-copy never runs a
+    // torn binary.
     let staging = twin.with_extension("new");
-    if std::fs::write(&staging, &image).is_err() {
-        let _ = std::fs::remove_file(&staging);
-        return None;
+    if std::fs::copy(shipped, &staging).is_ok() && std::fs::rename(&staging, twin).is_ok() {
+        return Some(twin.to_path_buf());
     }
-    if std::fs::rename(&staging, &twin).is_err() {
-        let _ = std::fs::remove_file(&staging);
-        // The rename loses only to the twin being the running task or to a concurrent
-        // pass that produced its own build — either way a usable twin is there.
-        return twin.is_file().then_some(twin);
-    }
-    Some(twin)
+    let _ = std::fs::remove_file(&staging);
+    // The rename loses only to a concurrent pass that placed its own copy, which serves
+    // exactly as well.
+    twin.is_file().then(|| twin.to_path_buf())
 }
 
 /// Refresh the windowless twin after an upgrade, when one is in use.
@@ -164,10 +182,10 @@ fn ensure_hidden_twin(exe_path: &Path) -> Option<PathBuf> {
 /// leave the daemon running the previous release forever. Only refreshes a twin that
 /// already exists — creating one is the installer's decision, not a side effect of
 /// every settled setup pass.
-pub fn refresh_hidden_twin() {
+pub fn refresh_windowless_twin() {
     let exe_path = get_exe_path();
-    if hidden_twin_path(&exe_path).is_file() {
-        let _ = ensure_hidden_twin(&exe_path);
+    if windowless_twin_path(&exe_path).is_file() {
+        let _ = ensure_windowless_twin(&exe_path);
     }
 }
 
@@ -186,14 +204,20 @@ pub fn refresh_hidden_twin() {
 pub fn install(interval_days: u64) -> Result<()> {
     let exe_path = get_exe_path();
 
-    if let Some(twin) = ensure_hidden_twin(&exe_path) {
+    // Every path out of this function ends by either writing the refusal marker or
+    // clearing it, so start from neither.
+    if let Ok(dir) = crate::config::Registry::config_dir() {
+        sweep_refusal_markers(&dir);
+    }
+
+    if let Some(twin) = ensure_windowless_twin(&exe_path) {
         let args = build_install_command(&twin.to_string_lossy(), interval_days);
         if let Ok(output) = spawn::command("schtasks").args(&args).output()
             && output.status.success()
         {
             // A machine that once refused may have been elevated or unlocked since;
             // the marker must not outlive the refusal it records.
-            if let Some(marker) = hidden_refused_marker() {
+            if let Some(marker) = windowless_refused_marker() {
                 let _ = std::fs::remove_file(marker);
             }
             return Ok(());
@@ -202,20 +226,20 @@ pub fn install(interval_days: u64) -> Result<()> {
 
     let exe_str = exe_path.to_string_lossy();
     if let Some(account) = current_account() {
-        let args = build_install_command_hidden(&exe_str, interval_days, &account);
+        let args = build_install_command_windowless(&exe_str, interval_days, &account);
         if let Ok(output) = spawn::command("schtasks").args(&args).output()
             && output.status.success()
         {
-            // Hidden, though without the interactive session's credentials. The marker
+            // No window here either, but no logon session's credentials. The marker
             // still records that the *preferred* route failed, so settled passes stop
             // retrying it; an elevated `devp daemon on` retries regardless.
-            if let Some(marker) = hidden_refused_marker() {
+            if let Some(marker) = windowless_refused_marker() {
                 let _ = std::fs::write(marker, "");
             }
             return Ok(());
         }
     }
-    if let Some(marker) = hidden_refused_marker() {
+    if let Some(marker) = windowless_refused_marker() {
         let _ = std::fs::write(marker, "");
     }
 
@@ -376,10 +400,10 @@ fn parse_is_interactive(xml: &str) -> Option<bool> {
 }
 
 /// True when the installed task would flash a console window and this machine has not
-/// already refused the hidden registration that fixes it. `ensure_daemon` uses this to
+/// already refused the S4U registration that fixes it. `ensure_daemon` uses this to
 /// upgrade tasks registered by versions that only knew the interactive logon, or that
 /// predate the windowless twin.
-pub fn wants_hidden_upgrade() -> bool {
+pub fn wants_windowless_upgrade() -> bool {
     let Some(xml) = task_xml() else {
         // No readable definition means no task to upgrade — re-registering a task
         // that cannot be read would be guessing.
@@ -389,16 +413,16 @@ pub fn wants_hidden_upgrade() -> bool {
     // there is nothing left to upgrade to.
     if parse_registered_command(&xml).is_some_and(|exe| {
         exe.file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case(WINDOWS_HIDDEN_BIN))
+            .is_some_and(|name| name.eq_ignore_ascii_case(WINDOWS_WINDOWLESS_BIN))
     }) {
         return false;
     }
-    if hidden_refused_marker().is_some_and(|m| m.exists()) {
+    if windowless_refused_marker().is_some_and(|m| m.exists()) {
         return false;
     }
-    // An S4U task registered by an earlier release is hidden but sessionless; the twin
-    // route restores mapped drives too, so it is still an upgrade — an interactive
-    // console task doubly so.
+    // An S4U task registered by an earlier release shows no window but is sessionless;
+    // the twin route restores mapped drives too, so it is still an upgrade — an
+    // interactive console task doubly so.
     parse_is_interactive(&xml).is_some()
 }
 
@@ -433,15 +457,38 @@ mod tests {
     }
 
     #[test]
-    fn the_hidden_command_adds_the_password_less_run_as_and_nothing_else() {
-        let visible = build_install_command("dev-prune.exe", 2);
-        let hidden = build_install_command_hidden("dev-prune.exe", 2, "PC\\krish");
-        assert_eq!(hidden[..visible.len()], visible[..]);
-        assert_eq!(hidden[visible.len()..], ["/RU", "PC\\krish", "/NP"]);
+    fn the_sweep_takes_every_spelling_of_the_marker_and_leaves_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let unrelated = dir.path().join("repos.json");
+        let current = dir
+            .path()
+            .join(crate::constants::SCHEDULER_WINDOWLESS_REFUSED_MARKER);
+        // What 1.14.0 wrote.
+        let legacy = dir.path().join("scheduler-hidden-refused");
+        for path in [&unrelated, &current, &legacy] {
+            std::fs::write(path, "").unwrap();
+        }
+
+        sweep_refusal_markers(dir.path());
+
+        assert!(unrelated.exists(), "the sweep must not touch the registry");
+        assert!(!current.exists());
+        assert!(
+            !legacy.exists(),
+            "an upgrade must not strand the old spelling"
+        );
     }
 
     #[test]
-    fn the_interactive_logon_is_recognised_and_the_hidden_one_is_not() {
+    fn the_windowless_command_adds_the_password_less_run_as_and_nothing_else() {
+        let visible = build_install_command("dev-prune.exe", 2);
+        let windowless = build_install_command_windowless("dev-prune.exe", 2, "PC\\krish");
+        assert_eq!(windowless[..visible.len()], visible[..]);
+        assert_eq!(windowless[visible.len()..], ["/RU", "PC\\krish", "/NP"]);
+    }
+
+    #[test]
+    fn the_interactive_logon_is_recognised_and_the_s4u_one_is_not() {
         assert_eq!(
             parse_is_interactive("<LogonType>InteractiveToken</LogonType>"),
             Some(true)
@@ -588,107 +635,74 @@ mod tests {
         );
     }
 
-    /// A minimal synthetic PE image: DOS stub, signature, COFF header, and an optional
-    /// header of the given magic with its subsystem field set to `subsystem`.
-    fn synthetic_pe(magic: u16, subsystem: u16) -> Vec<u8> {
-        const PE_OFFSET: usize = 0x80;
-        let optional = PE_OFFSET + 4 + 20;
-        let mut image = vec![0u8; optional + 0xF0];
-        image[0] = b'M';
-        image[1] = b'Z';
-        image[0x3C..0x40].copy_from_slice(&(PE_OFFSET as u32).to_le_bytes());
-        image[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
-        image[optional..optional + 2].copy_from_slice(&magic.to_le_bytes());
-        image[optional + 68..optional + 70].copy_from_slice(&subsystem.to_le_bytes());
-        image
-    }
-
-    fn subsystem_of(image: &[u8]) -> u16 {
-        let pe = u32::from_le_bytes([image[0x3C], image[0x3D], image[0x3E], image[0x3F]]) as usize;
-        let field = pe + 4 + 20 + 68;
-        u16::from_le_bytes([image[field], image[field + 1]])
-    }
-
-    #[test]
-    fn a_console_pe32_plus_image_becomes_gui_and_nothing_else_moves() {
-        let mut image = synthetic_pe(0x20B, 3);
-        let before = image.clone();
-        patch_subsystem_to_gui(&mut image).unwrap();
-        assert_eq!(subsystem_of(&image), 2);
-        // Only the subsystem field may change — here that is one byte (3 → 2).
-        let diffs = before.iter().zip(&image).filter(|(a, b)| a != b).count();
-        assert_eq!(diffs, 1);
-        assert_eq!(image.len(), before.len());
-    }
-
-    #[test]
-    fn a_console_pe32_image_is_patched_at_the_same_relative_offset() {
-        let mut image = synthetic_pe(0x10B, 3);
-        patch_subsystem_to_gui(&mut image).unwrap();
-        assert_eq!(subsystem_of(&image), 2);
-    }
-
-    #[test]
-    fn an_already_gui_image_is_left_valid_and_unchanged() {
-        let mut image = synthetic_pe(0x20B, 2);
-        let before = image.clone();
-        patch_subsystem_to_gui(&mut image).unwrap();
-        assert_eq!(image, before);
-    }
-
-    #[test]
-    fn garbage_and_truncated_inputs_are_refused_not_corrupted() {
-        assert!(patch_subsystem_to_gui(&mut []).is_err());
-        assert!(patch_subsystem_to_gui(&mut b"not an executable".to_vec()).is_err());
-        // Valid DOS header pointing past the end of the file.
-        let mut truncated = synthetic_pe(0x20B, 3);
-        truncated.truncate(0x82);
-        assert!(patch_subsystem_to_gui(&mut truncated).is_err());
-        // A driver or other non-console, non-GUI subsystem must not be touched.
-        let mut native = synthetic_pe(0x20B, 1);
-        assert!(patch_subsystem_to_gui(&mut native).is_err());
-        // An unknown optional-header magic means the subsystem offset is a guess.
-        let mut bad_magic = synthetic_pe(0x999, 3);
-        assert!(patch_subsystem_to_gui(&mut bad_magic).is_err());
-    }
-
     #[test]
     fn the_twin_lives_beside_the_managed_binary_under_the_reserved_name() {
-        let twin = hidden_twin_path(Path::new("C:\\cfg\\bin\\dev-prune.exe"));
-        assert_eq!(twin, Path::new("C:\\cfg\\bin\\devpw.exe"));
+        let twin = windowless_twin_path(Path::new(r"C:\cfg\bin\dev-prune.exe"));
+        assert_eq!(twin, Path::new(r"C:\cfg\bin\devpw.exe"));
+    }
+
+    /// A delivery that carries no `devpw.exe` must not be answered by inventing one —
+    /// `install` has two further tiers that still work without it.
+    #[test]
+    fn a_missing_shipped_twin_places_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let shipped = dir.path().join("nowhere").join(WINDOWS_WINDOWLESS_BIN);
+        let twin = dir.path().join(WINDOWS_WINDOWLESS_BIN);
+        assert!(place_windowless_twin(&shipped, &twin).is_none());
+        assert!(!twin.exists());
     }
 
     #[test]
-    fn the_twin_is_generated_refreshed_when_stale_and_recognised_when_current() {
-        let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("dev-prune.exe");
-        std::fs::write(&exe, synthetic_pe(0x20B, 3)).unwrap();
+    fn the_shipped_twin_is_placed_verbatim_and_refreshed_when_it_is_a_previous_release() {
+        let ship_dir = tempfile::tempdir().unwrap();
+        let managed = tempfile::tempdir().unwrap();
+        let shipped = ship_dir.path().join(WINDOWS_WINDOWLESS_BIN);
+        let twin = managed.path().join(WINDOWS_WINDOWLESS_BIN);
+        std::fs::write(&shipped, b"release one").unwrap();
 
-        let twin = ensure_hidden_twin(&exe).expect("twin should be generated");
-        assert_eq!(subsystem_of(&std::fs::read(&twin).unwrap()), 2);
-        assert!(twin_is_current(&exe, &twin));
+        assert_eq!(place_windowless_twin(&shipped, &twin).unwrap(), twin);
+        assert_eq!(std::fs::read(&twin).unwrap(), b"release one");
 
-        // An upgrade replaces the source binary; the twin must be rebuilt, not trusted.
-        let mut upgraded = synthetic_pe(0x20B, 3);
-        upgraded.push(0xAA);
-        std::fs::write(&exe, &upgraded).unwrap();
-        assert!(!twin_is_current(&exe, &twin));
-        let refreshed = ensure_hidden_twin(&exe).unwrap();
+        // Idempotent: an unchanged release must not rewrite the file.
+        assert_eq!(place_windowless_twin(&shipped, &twin).unwrap(), twin);
+        assert_eq!(std::fs::read(&twin).unwrap(), b"release one");
+
+        // An upgrade replaces the shipped binary; the placed copy is stale and the
+        // scheduled task still names it, so it must be replaced rather than trusted.
+        std::fs::write(&shipped, b"release two, which is longer").unwrap();
+        assert_eq!(place_windowless_twin(&shipped, &twin).unwrap(), twin);
         assert_eq!(
-            std::fs::read(&refreshed).unwrap().len(),
-            upgraded.len(),
-            "a stale twin must be replaced by the patched copy of the new binary"
+            std::fs::read(&twin).unwrap(),
+            b"release two, which is longer"
         );
-        assert!(twin_is_current(&exe, &refreshed));
+        assert!(!twin.with_extension("new").exists(), "no staging debris");
     }
 
+    /// The twin is byte-for-byte what shipped. Nothing here edits an executable, which is
+    /// the whole point of making it a build target.
     #[test]
-    fn a_source_that_is_not_a_pe_produces_no_twin() {
+    fn placing_the_twin_never_alters_a_byte_of_it() {
+        let ship_dir = tempfile::tempdir().unwrap();
+        let managed = tempfile::tempdir().unwrap();
+        let shipped = ship_dir.path().join(WINDOWS_WINDOWLESS_BIN);
+        let twin = managed.path().join(WINDOWS_WINDOWLESS_BIN);
+        let image: Vec<u8> = (0u16..4096).map(|b| (b % 251) as u8).collect();
+        std::fs::write(&shipped, &image).unwrap();
+
+        place_windowless_twin(&shipped, &twin).unwrap();
+        assert_eq!(std::fs::read(&twin).unwrap(), image);
+        assert_eq!(std::fs::read(&shipped).unwrap(), image);
+    }
+
+    /// Running out of the managed directory already: there is nothing to place, and in
+    /// particular nothing that could truncate the file onto itself.
+    #[test]
+    fn a_twin_that_is_already_the_shipped_file_is_left_alone() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("dev-prune.exe");
-        std::fs::write(&exe, b"#!/bin/sh\n").unwrap();
-        assert!(ensure_hidden_twin(&exe).is_none());
-        assert!(!hidden_twin_path(&exe).exists());
+        let twin = dir.path().join(WINDOWS_WINDOWLESS_BIN);
+        std::fs::write(&twin, b"the one and only").unwrap();
+        assert_eq!(place_windowless_twin(&twin, &twin).unwrap(), twin);
+        assert_eq!(std::fs::read(&twin).unwrap(), b"the one and only");
     }
 
     #[test]
@@ -699,7 +713,7 @@ mod tests {
         assert!(
             registered
                 .file_name()
-                .is_some_and(|n| n.eq_ignore_ascii_case(WINDOWS_HIDDEN_BIN))
+                .is_some_and(|n| n.eq_ignore_ascii_case(WINDOWS_WINDOWLESS_BIN))
         );
     }
 }

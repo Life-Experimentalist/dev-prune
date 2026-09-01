@@ -23,14 +23,19 @@
 // `corrupt metadata, ... does not exist when it should` and leaves its ledger entry
 // standing, so the command printed as the remedy can no longer succeed.
 //
-// On Windows a running executable cannot delete itself, so whatever is still in use is
-// handed to a detached PowerShell (or `cmd.exe`) helper that waits for this process to
-// exit and then deletes it. The manager commands go the same way for the same reason,
-// one step further along: while its binary is executing, `cargo uninstall` fails with
-// `Access is denied` and *also* keeps the entry, and renaming the file aside first only
-// trades that failure for the `corrupt metadata` one. Exit first, then uninstall, is
-// the only order that clears the record. That is scheduled work, not failure — the
-// command reports it and exits `0`.
+// On Windows a running executable cannot delete itself. dev-prune does not work around
+// that by leaving a shell behind to finish the job after it exits: that shape is the
+// textbook self-delete, and it is what gets an unsigned binary quarantined. It renames
+// the locked image aside instead — which Windows does allow — hands the residue to the
+// session manager for the next boot, and prints whatever survives both.
+//
+// A package manager's own uninstall cannot be rescued the same way. While its binary is
+// executing, `cargo uninstall` fails with `Access is denied` and keeps its ledger entry,
+// and renaming the file aside first only trades that failure for the `corrupt metadata`
+// one, which keeps the entry too. Exit first, then uninstall, is the only order that
+// clears the record, so that command is printed for the user rather than run.
+//
+// Neither is a failure: the command reports both and exits `0`.
 
 use anyhow::{Context, Result};
 use std::collections::HashSet;
@@ -235,33 +240,28 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
         setup::suppress_next_auto_setup();
     }
 
-    // 8. One detached helper for everything that is in use right now. PowerShell is
-    // preferred: its single-quoted string literals are fully literal, so a path
-    // carrying `%` survives, where `cmd.exe` would expand it and a `/C` command line
-    // has no way to escape one. `cmd.exe` remains the fallback for a machine without
-    // PowerShell, and whatever neither could take is listed for manual removal.
-    let scheduled = pending_files.len() + pending_dirs.len() + pending_commands.len();
-    let (leftover, commands_scheduled) =
-        spawn_deletion_helper(&pending_files, &pending_dirs, &pending_commands);
-    if scheduled > 0 {
-        if leftover.len() + pending_commands.len() < scheduled || commands_scheduled {
-            output::print_info(
-                "The running binary cannot remove itself — the rest is finished \
-                 automatically a few seconds after this command exits.",
-            );
-        }
-        if !leftover.is_empty() {
-            report_manual_removal(&leftover);
-            left_behind.push("the binaries".to_string());
-        }
-        if !commands_scheduled {
-            // Nothing will run those uninstalls after this process exits, so the user
-            // has to. Put their managers back on the list printed below.
-            for channel in &pending_commands {
-                if !manager_hints.contains(channel) {
-                    manager_hints.push(*channel);
-                }
-            }
+    // 8. Everything above that Windows refused because this very process holds the file
+    // open. It is finished here, in this process, or it is reported -- never handed to
+    // a background shell. `finish_locked_removals` has the reasoning.
+    let (residue, still_installed) = finish_locked_removals(&pending_files, &pending_dirs);
+    if !residue.is_empty() {
+        report_manual_removal(&residue);
+    } else if !pending_files.is_empty() || !pending_dirs.is_empty() {
+        output::print_info(
+            "The binary running this command cannot delete itself. Its name is free \
+             again, and Windows removes what is left of the file at the next restart.",
+        );
+    }
+    if still_installed {
+        left_behind.push("the binaries".to_string());
+    }
+    // A package manager cannot uninstall a binary that is executing either, and no
+    // ordering inside this process changes that -- see the note at the top of the file.
+    // Its command goes back onto the list printed below, for the user to run once this
+    // command has exited.
+    for channel in &pending_commands {
+        if !manager_hints.contains(channel) {
+            manager_hints.push(*channel);
         }
     }
 
@@ -316,10 +316,10 @@ fn remove_binaries(
         for stem in ["dev-prune", "devp"] {
             candidates.push(bin_dir.join(exe_name(stem)));
         }
-        // The windowless scheduler twin, generated beside the managed binary on Windows
-        // and nowhere else. `WINDOWS_HIDDEN_BIN` already carries its `.exe`.
+        // The windowless scheduler twin, which ships in the Windows archives as its own
+        // build target. `WINDOWS_WINDOWLESS_BIN` already carries its `.exe`.
         #[cfg(windows)]
-        candidates.push(bin_dir.join(crate::constants::WINDOWS_HIDDEN_BIN));
+        candidates.push(bin_dir.join(crate::constants::WINDOWS_WINDOWLESS_BIN));
     }
 
     if let Ok(current) = std::env::current_exe() {
@@ -695,7 +695,11 @@ fn sweep_dirs() -> Vec<PathBuf> {
 /// two `.exe`s: npm writes `.cmd` and `.ps1` shims plus an extensionless sh shim for
 /// Git Bash, and each is a separate file to delete.
 fn sweep_names() -> Vec<String> {
-    let stems = ["dev-prune", "devp"];
+    // `devpw` is the windowless scheduler twin. It is a build target like the other
+    // two, so `cargo install` puts it on PATH beside them and an uninstall that did not
+    // look for it would leave a working copy of the whole CLI behind under a name
+    // nobody thinks to check.
+    let stems = ["dev-prune", "devp", "devpw"];
     if cfg!(windows) {
         let mut names: Vec<String> = Vec::new();
         for stem in stems {
@@ -772,8 +776,10 @@ fn reinstall_hint() -> String {
 /// through Program Files for a name they were never told, so each line carries the
 /// name, the directory it sits in, what kind of thing it is and how big it is.
 fn report_manual_removal(paths: &[PathBuf]) {
-    output::print_error(&format!(
-        "{} item(s) are still in use and could not be scheduled for removal.",
+    output::print_warning(&format!(
+        "{} item(s) were open in this process and could not be removed from inside it. \
+         Delete them once this command has exited, or restart — from an elevated shell \
+         Windows would have taken them at the next boot on its own.",
         paths.len()
     ));
     for path in paths {
@@ -806,213 +812,175 @@ fn report_manual_removal(paths: &[PathBuf]) {
     }
 }
 
-/// Quote a path as a PowerShell single-quoted string literal.
-///
-/// Inside single quotes PowerShell expands nothing at all — not `$var`, not a backtick
-/// escape, and crucially not `%VAR%`. The only character with meaning is the closing
-/// quote, and doubling it is the documented way to write a literal one. That makes this
-/// a complete escape rule for an arbitrary path, which is exactly what `cmd /C` could
-/// not offer.
+/// What became of one file that Windows would not let this process delete.
 #[cfg(windows)]
-fn ps_quote(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', "''"))
+enum Retired {
+    /// Gone, or queued with the session manager for the next boot.
+    Handled,
+    /// Renamed out of the way. Still on disk, but nothing resolves to it any more.
+    Aside(PathBuf),
+    /// Still sitting at the name it was installed under.
+    Stuck(PathBuf),
 }
 
-/// Schedule the work that cannot happen until this process exits: deleting the files
-/// Windows has locked, and running the uninstalls of the managers that own them.
+/// Finish, from inside this process, the removals Windows refused while the binary was
+/// executing -- and report, rather than defer, whatever is left.
 ///
-/// Returns the paths that could not be handed over — empty in the normal case — and
-/// whether the manager commands were handed over at all. A caller that gets `false`
-/// must tell the user to run them, because nothing else now will.
+/// Returns the paths still on disk, and whether any of them is still at the name it was
+/// installed under. That second value is the difference between an uninstall that
+/// worked and one that did not: a file renamed aside resolves to nothing, is on the
+/// sweep list, and is cleared by the next install; a file still at `devp.exe` is a
+/// working install that was asked to go away and did not.
 ///
-/// PowerShell rather than `cmd.exe`, because `cmd` expands `%VAR%` even inside double
-/// quotes and a `/C` command line has no escape for a literal `%`. A path carrying one
-/// therefore could not be passed at all: it used to be reported and left on disk. The
-/// `cmd` route survives only as the fallback for a machine where PowerShell cannot be
-/// launched, and there the old restriction still applies.
+/// Nothing here starts a child process, and that is deliberate. The obvious way to
+/// delete a running executable on Windows is to leave a shell behind to do it once you
+/// have exited: a `cmd /C` line that pings itself to pass the time and then deletes the
+/// file is the canonical form, and a hidden PowerShell running `Start-Sleep` before
+/// `Remove-Item -Recurse -Force` is the same idea in better clothes. Both are also the
+/// canonical *malware* self-delete. The literal strings are enough for a static scanner
+/// to score on, and spawning either with `CREATE_NO_WINDOW` out of an unsigned binary
+/// is enough for a behavioural one. dev-prune has been quarantined for less, so it does
+/// neither, and what is left is what Windows itself offers for a file that is in use:
+///
+/// 1. Rename the locked image aside. A running executable cannot be deleted, but it
+///    can be renamed -- the handle follows the file, not the name -- so the name is
+///    free at once and a reinstall is never blocked by the copy it replaces.
+/// 2. Ask the session manager to delete the residue at the next boot, through
+///    `MoveFileEx` with `MOVEFILE_DELAY_UNTIL_REBOOT`.
+/// 3. Report what survived both, with the command that finishes it by hand.
 #[cfg(windows)]
-fn spawn_deletion_helper(
-    files: &[PathBuf],
-    dirs: &[PathBuf],
-    channels: &[Channel],
-) -> (Vec<PathBuf>, bool) {
-    if files.is_empty() && dirs.is_empty() && channels.is_empty() {
-        return (Vec::new(), true);
+fn finish_locked_removals(files: &[PathBuf], dirs: &[PathBuf]) -> (Vec<PathBuf>, bool) {
+    let mut residue: Vec<PathBuf> = Vec::new();
+    let mut stuck = false;
+    for file in files {
+        match retire_file(file) {
+            Retired::Handled => {}
+            Retired::Aside(path) => residue.push(path),
+            Retired::Stuck(path) => {
+                residue.push(path);
+                stuck = true;
+            }
+        }
     }
-    if spawn_powershell_helper(files, dirs, channels) {
-        return (Vec::new(), true);
+    for dir in dirs {
+        stuck |= purge_tree(dir, &mut residue);
     }
+    (residue, stuck)
+}
 
-    // Fallback. `cmd` cannot be given a literal `%`, so those paths stay behind and are
-    // returned for the caller to report.
-    let has_percent = |p: &&PathBuf| p.to_string_lossy().contains('%');
-    let left_behind: Vec<PathBuf> = files
-        .iter()
-        .chain(dirs.iter())
-        .filter(has_percent)
-        .cloned()
-        .collect();
-    let safe_files: Vec<PathBuf> = files.iter().filter(|p| !has_percent(p)).cloned().collect();
-    let safe_dirs: Vec<PathBuf> = dirs.iter().filter(|p| !has_percent(p)).cloned().collect();
-
-    // The manager commands are fixed argv of ASCII words, so `%` is not a question for
-    // them; they ride along whenever `cmd` starts at all.
-    if (safe_files.is_empty() && safe_dirs.is_empty() && channels.is_empty())
-        || spawn_cmd_helper(&safe_files, &safe_dirs, channels)
-    {
-        (left_behind, true)
-    } else {
-        (files.iter().chain(dirs.iter()).cloned().collect(), false)
+/// The name a locked file is renamed to: `devp.exe` becomes `devp.exe.old`.
+///
+/// That name is already on the sweep list, so the residue is cleared by the next
+/// install or the next uninstall without anyone having to be told about it.
+#[cfg(windows)]
+fn aside_name(path: &Path) -> PathBuf {
+    match path.extension() {
+        Some(ext) => path.with_extension(format!("{}.old", ext.to_string_lossy())),
+        None => path.with_extension("old"),
     }
 }
 
-/// The manager uninstalls, as one PowerShell statement each.
-///
-/// `&` because these are native commands, not cmdlets, and the call operator is what
-/// makes PowerShell run a quoted string as one. Output goes nowhere: the helper has no
-/// console to write to, and a failure here is already covered by the retries.
+/// Delete one file; failing that, get its name out of the way and queue the rest.
 #[cfg(windows)]
-fn ps_manager_commands(channels: &[Channel]) -> String {
-    let mut out = String::new();
-    for channel in channels {
-        let Some(argv) = channel.uninstall_argv() else {
-            continue;
+fn retire_file(path: &Path) -> Retired {
+    if fs::remove_file(path).is_ok() || fs::symlink_metadata(path).is_err() {
+        return Retired::Handled;
+    }
+    let aside = aside_name(path);
+    let Ok(()) = fs::rename(path, &aside) else {
+        // The rename is the part that matters, so its failure is the real one: the
+        // install is still resolvable at this name.
+        return if delete_on_reboot(path) {
+            Retired::Handled
+        } else {
+            Retired::Stuck(path.to_path_buf())
         };
-        out.push_str("& ");
-        for token in &argv {
-            out.push_str(&ps_quote(Path::new(token)));
-            out.push(' ');
-        }
-        out.push_str("*> $null; ");
+    };
+    if delete_on_reboot(&aside) {
+        Retired::Handled
+    } else {
+        Retired::Aside(aside)
     }
-    out
 }
 
-/// The PowerShell form of the retry loop. `true` if the helper was launched.
-#[cfg(windows)]
-fn spawn_powershell_helper(files: &[PathBuf], dirs: &[PathBuf], channels: &[Channel]) -> bool {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    let mut attempt = String::new();
-    for file in files {
-        attempt.push_str(&format!(
-            "Remove-Item -LiteralPath {} -Force -ErrorAction SilentlyContinue; ",
-            ps_quote(file)
-        ));
-    }
-    for dir in dirs {
-        attempt.push_str(&format!(
-            "Remove-Item -LiteralPath {} -Recurse -Force -ErrorAction SilentlyContinue; ",
-            ps_quote(dir)
-        ));
-    }
-    // Last in the round: a manager whose binary is still locked would fail with `Access
-    // is denied` and keep its record, which is the whole reason this is deferred, so it
-    // gets every attempt the deletions get rather than one shot at the end.
-    attempt.push_str(&ps_manager_commands(channels));
-
-    // Three attempts, two seconds apart — the same reasoning as the `cmd` loop below.
-    let mut script = String::new();
-    for _ in 0..3 {
-        script.push_str("Start-Sleep -Seconds 2; ");
-        script.push_str(&attempt);
-    }
-
-    // Windows PowerShell 5.1 ships with every supported Windows and lives at a fixed
-    // place, so it is tried by absolute path first. The rest cover the machines where
-    // it does not answer — Nano Server, an image built without the Windows PowerShell
-    // feature, or a policy that blocks the inbox copy while permitting PowerShell 7 —
-    // and those are found through `PATH`, because 7.x installs beside its own major
-    // version rather than into `System32`.
-    for program in [
-        crate::spawn::system32(r"WindowsPowerShell\v1.0\powershell.exe"),
-        String::from("pwsh.exe"),
-        String::from("pwsh-preview.exe"),
-        String::from("powershell.exe"),
-    ] {
-        let spawned = std::process::Command::new(&program)
-            .args(["-NoProfile", "-NonInteractive", "-Command"])
-            .arg(&script)
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .is_ok();
-        if spawned {
-            return true;
-        }
-    }
-    false
-}
-
-/// The original `cmd.exe` form, kept as the fallback. Callers must have filtered out
-/// any path containing `%` before calling this.
-#[cfg(windows)]
-fn spawn_cmd_helper(files: &[PathBuf], dirs: &[PathBuf], channels: &[Channel]) -> bool {
-    use std::os::windows::process::CommandExt;
-    // Not in windows-sys's prelude of imported constants anywhere else in this crate;
-    // documented value of CREATE_NO_WINDOW.
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-    // Three attempts, two seconds apart. One would cover the normal case — this
-    // process exits the moment the command returns, releasing the image lock — but a
-    // slow exit, an antivirus scan hooked on process teardown, or the user running
-    // `devp` again inside the first window would otherwise leave the binary behind
-    // with nothing ever retrying. `cmd /C` cannot use labels, so the loop is unrolled.
-    let mut attempt = String::new();
-    for file in files {
-        attempt.push_str(&format!(" & del /F /Q \"{}\"", file.display()));
-    }
-    for dir in dirs {
-        attempt.push_str(&format!(" & rmdir /S /Q \"{}\"", dir.display()));
-    }
-    for channel in channels {
-        if let Some(argv) = channel.uninstall_argv() {
-            attempt.push_str(&format!(" & {} >nul 2>&1", argv.join(" ")));
-        }
-    }
-    let mut script = String::new();
-    for _ in 0..3 {
-        script.push_str("ping -n 3 127.0.0.1 >nul");
-        script.push_str(&attempt);
-        script.push_str(" & ");
-    }
-    script.push_str("exit");
-
-    std::process::Command::new(crate::spawn::system32("cmd.exe"))
-        // `raw_arg`, because std's quoting would wrap the whole script in quotes and
-        // `cmd /C` would then treat it as one file name rather than a command line.
-        .raw_arg(format!("/C {script}"))
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .is_ok()
-}
-
-/// Hand one manager's uninstall to the helper that runs after this process exits.
+/// Remove a directory tree, carrying on past the entries that are locked.
 ///
-/// `false` if nothing could be scheduled, in which case the caller has to tell the user
-/// to run the command themselves. Windows only: everywhere else a manager can uninstall
-/// a binary that is running, so there is nothing to defer.
+/// `fs::remove_dir_all` stops at the first error, which here is reliably the running
+/// binary -- so everything beside it would be left standing for no reason. Returns
+/// whether any file inside is still at its installed name; the directory itself
+/// surviving is residue to report, not an install that refused to go.
 #[cfg(windows)]
-pub(crate) fn schedule_manager_uninstall(channel: Channel) -> bool {
-    spawn_deletion_helper(&[], &[], &[channel]).1
+fn purge_tree(dir: &Path, residue: &mut Vec<PathBuf>) -> bool {
+    if fs::remove_dir_all(dir).is_ok() || fs::symlink_metadata(dir).is_err() {
+        return false;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        residue.push(dir.to_path_buf());
+        return false;
+    };
+    let mut stuck = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // The entry's own type, never the target's: a link here is removed, not
+        // followed. A directory link needs `remove_dir` where a file link needs
+        // `remove_file`, and neither touches whatever it points at.
+        match entry.file_type() {
+            Ok(t) if t.is_symlink() => {
+                if fs::remove_file(&path).is_err() && fs::remove_dir(&path).is_err() {
+                    residue.push(path);
+                }
+            }
+            Ok(t) if t.is_dir() => stuck |= purge_tree(&path, residue),
+            _ => match retire_file(&path) {
+                Retired::Handled => {}
+                Retired::Aside(left) => residue.push(left),
+                Retired::Stuck(left) => {
+                    residue.push(left);
+                    stuck = true;
+                }
+            },
+        }
+    }
+    if fs::remove_dir(dir).is_ok() {
+        return stuck;
+    }
+    // Something inside is still open. The reboot queue is replayed in the order it was
+    // written and every file above was queued first, so this directory is empty by the
+    // time its own entry is read.
+    if !delete_on_reboot(dir) {
+        residue.push(dir.to_path_buf());
+    }
+    stuck
 }
 
-/// On Unix an open file can be unlinked and a package manager can uninstall a binary
-/// that is running, so nothing ever needs scheduling; this exists so the call site
-/// compiles unconditionally and is unreachable in practice.
+/// Queue a path with the session manager for deletion at the next boot.
+///
+/// `MoveFileEx` with a null destination and `MOVEFILE_DELAY_UNTIL_REBOOT` is what
+/// Windows offers for a file that is in use, and what an installer replacing one is
+/// expected to use. It appends to `PendingFileRenameOperations` under `HKLM`, so it
+/// needs administrator rights: from an elevated shell the residue is gone after the
+/// next restart, and from an ordinary one this fails and the caller reports the path
+/// instead. Nothing is left running either way.
+#[cfg(windows)]
+fn delete_on_reboot(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_DELAY_UNTIL_REBOOT, MoveFileExW};
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `wide` is NUL-terminated and outlives the call, and a null destination is
+    // the documented spelling of "delete this" for this function.
+    unsafe { MoveFileExW(wide.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT) != 0 }
+}
+
+/// On Unix an open file can be unlinked, so nothing is ever left locked; this exists so
+/// the call site compiles unconditionally and is unreachable in practice.
 #[cfg(not(windows))]
-fn spawn_deletion_helper(
-    _files: &[PathBuf],
-    _dirs: &[PathBuf],
-    _channels: &[Channel],
-) -> (Vec<PathBuf>, bool) {
-    (Vec::new(), true)
+fn finish_locked_removals(_files: &[PathBuf], _dirs: &[PathBuf]) -> (Vec<PathBuf>, bool) {
+    (Vec::new(), false)
 }
 
 #[cfg(test)]
@@ -1032,14 +1000,90 @@ mod tests {
         );
     }
 
-    /// Only Windows needs the rename-aside; elsewhere the sweep is the two stems plus
-    /// the `.new` staging name an interrupted update can leave beside either of them.
+    /// Only Windows needs the rename-aside; elsewhere the sweep is the three stems plus
+    /// the `.new` staging name an interrupted update can leave beside any of them.
     #[test]
     #[cfg(not(windows))]
     fn elsewhere_the_sweep_is_the_stems_and_their_staging_names() {
         assert_eq!(
             sweep_names(),
-            ["dev-prune", "dev-prune.new", "devp", "devp.new"]
+            [
+                "dev-prune",
+                "dev-prune.new",
+                "devp",
+                "devp.new",
+                "devpw",
+                "devpw.new"
+            ]
         );
+    }
+
+    /// The residue has to land on a name the sweep already knows, or an uninstall that
+    /// could not delete the running image leaves a file nothing will ever clear.
+    #[test]
+    #[cfg(windows)]
+    fn the_name_a_locked_binary_is_renamed_to_is_one_the_sweep_looks_for() {
+        let aside = aside_name(Path::new(r"C:\bin\devp.exe"));
+        assert_eq!(aside.file_name().unwrap(), "devp.exe.old");
+        assert!(sweep_names().contains(&"devp.exe.old".to_string()));
+        // A name with no extension at all still gets one, rather than being left alone
+        // under the name the install resolves to.
+        assert_eq!(
+            aside_name(Path::new(r"C:\bin\devp")).file_name().unwrap(),
+            "devp.old"
+        );
+    }
+
+    /// Nothing is locked in a test, so every path here is the one that just deletes the
+    /// file — which is the case that has to stay cheap and silent.
+    #[test]
+    #[cfg(windows)]
+    fn an_unlocked_file_is_simply_deleted_and_no_residue_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("devp.exe");
+        std::fs::write(&file, b"binary").unwrap();
+
+        let (residue, still_installed) = finish_locked_removals(std::slice::from_ref(&file), &[]);
+
+        assert!(residue.is_empty(), "{residue:?}");
+        assert!(!still_installed);
+        assert!(!file.exists());
+        assert!(
+            !aside_name(&file).exists(),
+            "nothing should be renamed aside"
+        );
+    }
+
+    /// `remove_dir_all` stops at the first entry it cannot take; the tree walk must not,
+    /// or one locked binary strands every unrelated file beside it.
+    #[test]
+    #[cfg(windows)]
+    fn a_tree_with_nothing_locked_in_it_goes_completely() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("dev-prune");
+        std::fs::create_dir_all(config.join("bin")).unwrap();
+        std::fs::write(config.join("bin").join("devp.exe"), b"binary").unwrap();
+        std::fs::write(config.join("registry.json"), b"{}").unwrap();
+
+        let (residue, still_installed) = finish_locked_removals(&[], std::slice::from_ref(&config));
+
+        assert!(residue.is_empty(), "{residue:?}");
+        assert!(!still_installed);
+        assert!(!config.exists());
+    }
+
+    /// A directory that is already gone is the normal case after a light uninstall, and
+    /// must not be reported as something the user has to clean up.
+    #[test]
+    #[cfg(windows)]
+    fn a_path_that_is_already_gone_is_not_reported() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("never-existed");
+
+        let (residue, still_installed) =
+            finish_locked_removals(&[missing.join("devp.exe")], &[missing]);
+
+        assert!(residue.is_empty(), "{residue:?}");
+        assert!(!still_installed);
     }
 }

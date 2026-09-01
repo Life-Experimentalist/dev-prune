@@ -187,9 +187,25 @@ jobs:
           # `Validation-Defender-Error` on microsoft/winget-pkgs#422665. It also orphaned
           # the copy on every upgrade, because WinGet replaces its package directory
           # whole. Four megabytes of duplicate is the cheap half of that trade.
+          #
+          # Byte-identical, and that is load-bearing: one SHA-256 means one reputation
+          # record. VirusTotal, SmartScreen and every vendor that keys off a file hash
+          # treat the two names as the same file, so the download count that clears a
+          # new release accrues once instead of twice, and a single false-positive
+          # dispute covers both. Building them as two `[[bin]]` targets would compile
+          # two distinct images - which is why `devp.exe` is not one, even though
+          # `devpw.exe` is. Do not "fix" this into a second target.
           $stage = New-Item -ItemType Directory -Force -Path "stage-${{ matrix.arch }}"
           Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" (Join-Path $stage 'dev-prune.exe')
           Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" (Join-Path $stage 'devp.exe')
+          # The windowless build, which the scheduled task runs so it cannot flash a
+          # console at whoever is logged in. It is a `[[bin]]` target, not something the
+          # installed binary generates: a program that rewrites its own image and writes
+          # the result out under a second name is a dropper by every behavioural
+          # definition, and that is what got the 1.5.0 zip quarantined. WinGet exposes
+          # only the `NestedInstallerFiles` the manifest declares, so shipping it here
+          # does not put a third command on PATH.
+          Copy-Item "target/${{ matrix.target }}/release/devpw.exe" (Join-Path $stage 'devpw.exe')
           $asset = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.zip"
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $asset
           $hash = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
@@ -397,8 +413,9 @@ jobs:
           fail_on_unmatched_files: true
 
   # npm carries the binaries themselves, not a postinstall downloader. Eight packages go
-  # out: seven platform packages holding one executable each, marked with `os`/`cpu` so
-  # npm resolves exactly one of them, and the `dev-prune` dispatcher that lists all seven
+  # out: seven platform packages holding that platform's executables — one on Unix, three
+  # on Windows since `devpw.exe` shipped — marked with `os`/`cpu` so npm resolves exactly
+  # one of them, and the `dev-prune` dispatcher that lists all seven
   # as optionalDependencies. A postinstall download would break `npm ci --ignore-scripts`,
   # offline installs and every locked-down CI runner; this layout does not.
   #

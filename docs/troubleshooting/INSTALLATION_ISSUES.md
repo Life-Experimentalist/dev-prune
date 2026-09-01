@@ -24,6 +24,7 @@ This document addresses all potential issues related to installing **`dev-prune`
 10. [A terminal window flashes briefly after logging in (Windows)](#10-a-terminal-window-flashes-briefly-after-logging-in-windows)
 11. [I installed with one manager, then ran the one-liner — which copy am I running?](#11-i-installed-with-one-manager-then-ran-the-one-liner--which-copy-am-i-running)
 12. [I re-ran the one-liner and it said there was nothing to do](#12-i-re-ran-the-one-liner-and-it-said-there-was-nothing-to-do)
+13. [My anti-virus quarantined `devp.exe`](#13-my-anti-virus-quarantined-devpexe)
 
 ---
 
@@ -133,8 +134,8 @@ Unblock-File "$env:APPDATA\dev-prune\bin\dev-prune.exe","$env:APPDATA\dev-prune\
 listed here for the hand-downloaded path — where unblocking the **archive before
 extracting** means nothing inside it is ever marked:
 ```powershell
-Unblock-File .\dev-prune-v1.14.0-windows-x64.zip
-Expand-Archive .\dev-prune-v1.14.0-windows-x64.zip -DestinationPath .
+Unblock-File .\dev-prune-v1.15.0-windows-x64.zip
+Expand-Archive .\dev-prune-v1.15.0-windows-x64.zip -DestinationPath .
 ```
 
 If you are standing in front of the dialog right now, you do not need any of the above:
@@ -464,16 +465,22 @@ is the scheduled `devp run` doing its normal, silent work — nothing is wrong, 
 looks alarming, and it should not be visible at all.
 
 Since 1.2.1 the task runs a **windowless build of the binary, `devpw.exe`** — the same
-relationship `pythonw.exe` has to `python.exe`. It is generated locally, beside the
-managed copy, by taking `dev-prune.exe` and setting one field in its header so Windows
-never gives it a console; nothing is downloaded and no second binary ships in any
-package. Because it runs in your own logged-on session, it also keeps full access to
-mapped network drives and Dev Drives. Upgrading re-registers the existing task
-automatically on the next setup pass, and refreshes `devpw.exe` after every dev-prune
-upgrade so the daemon never runs a stale build.
+relationship `pythonw.exe` has to `python.exe`. It is a third executable, built for the
+GUI subsystem so Windows never gives it a console, and it ships in the Windows archives
+alongside `dev-prune.exe` and `devp.exe`. Because it runs in your own logged-on session,
+it keeps full access to mapped network drives and Dev Drives. Upgrading re-registers the
+existing task on the next setup pass and replaces `devpw.exe` with the new release's, so
+the daemon never runs a stale build.
 
-If that windowless build cannot be created, setup falls back to a hidden password-less
-task (an S4U logon), and then to the old visible task, so the daemon is never lost.
+Releases before 1.15.0 *generated* that file on your machine instead of shipping it, by
+copying `dev-prune.exe` and editing one field in its PE header. It worked, but a program
+that writes a modified executable copy of itself and then registers it to run on a
+schedule is, feature for feature, what a dropper does — several endpoint scanners
+quarantined the binary for it. Nothing is generated now.
+
+If the twin is missing — an older archive, or a delivery that only unpacks the two
+console names — setup falls back to a hidden password-less task (an S4U logon), and then
+to the old visible task, so the daemon is never lost.
 
 > **macOS and Linux never show this.** Their schedulers — launchd LaunchAgents and
 > systemd user timers — run background jobs without ever attaching a terminal, so there
@@ -633,3 +640,93 @@ why it has to be typed rather than picked up from a setting.
 Touch a copy it did not install. If another manager put a `dev-prune` on your PATH, the
 script names it and leaves it alone; see
 [which copy am I running](#11-i-installed-with-one-manager-then-ran-the-one-liner--which-copy-am-i-running).
+
+---
+
+### 13. My anti-virus quarantined `devp.exe`
+
+#### Symptom
+A third-party endpoint product — Sophos, Bitdefender, Malwarebytes, or a corporate agent —
+deletes or quarantines the executable, often **before it has been run once**. The name is
+generic: `Mal/Generic-S`, `Trojan.Generic`, `ML/PE-A`, `Heur.AdvML.B`. VirusTotal shows a
+handful of engines flagging it while the majority pass.
+
+#### Cause
+A generic name means a **machine-learning or heuristic verdict**, not a signature match.
+Nothing matched a known sample; a classifier looked at the file and scored it. The score
+is what the file *contains and does*, so the honest answer is that dev-prune used to look
+genuinely suspicious in ways that had nothing to do with what it is for:
+
+| What the scanner saw | Why it was there | Status |
+|---|---|---|
+| `powershell.exe -EncodedCommand <base64>` that ran `Add-Type`/`DllImport` | Editing the user `PATH` and broadcasting `WM_SETTINGCHANGE` | **Removed in 1.15.0.** The registry and `user32` calls are made directly |
+| An executable writing a modified copy of its own image under a new name | Generating the windowless `devpw.exe` for the scheduled task | **Removed in 1.15.0.** `devpw.exe` is a build target and ships in the archive |
+| A detached shell left running to delete the program a few seconds later | `devp uninstall` finishing the job on a binary that cannot delete itself | **Removed in 1.15.0.** The running file is renamed aside and the remains queued with `MoveFileEx`; no child process outlives any command |
+| Spawning `attrib` to hide a file | Marking `desktop.ini` system+hidden so Explorer reads the folder icon | **Removed in 1.15.0.** `SetFileAttributes` is called directly |
+| Registering a scheduled task on first run | The prune daemon | Still there — it is the feature, and it is now only done when a person is at the keyboard |
+| Recursive directory deletion, plus network calls, plus crypto | Pruning `node_modules`, checking for updates, hashing downloads | Still there — those four together are also the ransomware template, which is why a signature-free classifier reacts to them |
+
+The first four were real defects and are fixed. The rest is a tool that deletes
+directories for a living, and no amount of rewriting changes that shape.
+
+The remaining variable is **reputation**. These classifiers weight how many machines have
+seen a file; a freshly published, unsigned binary has been seen by nobody, so it starts
+from the least trusted position and every heuristic counts for more. Code signing is
+[in progress](https://about.signpath.io/product/open-source) and will help — but a
+certificate is not a pass mark, and signed malware is common enough that no serious engine
+treats it as one.
+
+#### Solution
+
+**1. Check the file is the one that was published.** Every release ships a `.sha256`
+beside each asset. If this does not match, stop — the file was altered in transit, and
+your scanner is right.
+```powershell
+$asset = "dev-prune-v1.15.0-windows-x64.zip"
+(Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
+Get-Content "$asset.sha256"
+```
+
+**2. Report it as a false positive.** This is the step that actually fixes it, for you and
+for everyone after you — the vendors turn these around in days, and the sample is what
+retrains the classifier.
+
+| Vendor | Submission |
+|---|---|
+| Microsoft Defender | <https://www.microsoft.com/en-us/wdsi/filesubmission> |
+| Kaspersky | <https://opentip.kaspersky.com/> |
+| Avast, AVG | <https://www.avast.com/report-false-positive> |
+| Avira | <https://www.avira.com/en/analysis/submit> |
+| WithSecure | <https://community.withsecure.com/en/kb/articles/29360-how-to-submit-a-false-positive-or-negative-sample-file-or-url-to-withsecure> |
+| Sophos | <https://support.sophos.com/support/s/filesubmission> |
+| Bitdefender | <https://www.bitdefender.com/submit/> |
+| Malwarebytes | <https://www.malwarebytes.com/support> |
+| SecureAge | <https://www.secureage.com/contact-us> (no dedicated form) |
+| Arctic Wolf | <https://arcticwolf.com/company/contact-us/> (no dedicated form) |
+| Anything else | Search "*&lt;vendor&gt;* false positive submission" |
+
+If the detection came from a VirusTotal report rather than from your own scanner, dispute
+it there as well — <https://www.virustotal.com/gui/contact-us/false-positive>. That does
+not clear the individual engines; each vendor above has to be told separately.
+
+Include the release URL, the SHA-256, and that the source is public at
+<https://github.com/Life-Experimentalist/dev-prune>. A reproducible open-source build is
+the strongest thing you can hand an analyst.
+
+**3. Tell us.** Open an issue with the vendor, the detection name and the version. A
+detection that survives 1.15.0 is something to investigate, not something to explain away.
+
+> **Restoring the file from quarantine is not the same as fixing this**, and an exclusion
+> for `%APPDATA%\dev-prune\bin\` is worse: it silences that folder for every future
+> detection, including real ones. If you need dev-prune working before the vendor
+> responds, restore the specific file — not the directory — and submit the sample the same
+> day.
+
+#### What will not help
+
+- **Rebuilding from source.** `cargo install dev-prune` produces a binary with the same
+  behaviour, no reputation at all, and no Mark of the Web to explain it. Some scanners
+  are *more* suspicious of it, not less.
+- **Renaming the executable.** Nothing looks at the name.
+- **Turning the scanner off.** If your machine is managed, you cannot; if it is not, you
+  should not, for this.

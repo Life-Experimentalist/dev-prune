@@ -14,24 +14,16 @@
 use std::ffi::OsStr;
 use std::process::Command;
 
-/// Absolute path to an executable under `System32`.
-///
-/// By name alone these resolve through `PATH` — and some callers run exactly while
-/// `PATH` is being edited (the uninstaller's tail, the user-PATH registry writes).
-/// `SystemRoot` is set by the kernel for every process on every Windows, so it is the
-/// one thing in the environment here that cannot have been rearranged by the work
-/// just done.
-#[cfg(windows)]
-pub fn system32(relative: &str) -> String {
-    let root = std::env::var("SystemRoot").unwrap_or_else(|_| String::from(r"C:\Windows"));
-    format!("{root}\\System32\\{relative}")
-}
-
 /// A `Command` that will not flash a console window when this process has none.
 ///
-/// Every child the CLI spawns goes through here. The one deliberate exception is the
-/// uninstaller's deletion helper, which manages its own creation flags because it must
-/// outlive this process.
+/// Every child that can be spawned on Windows is built here. The launchd and systemd
+/// calls go straight to `Command::new`, which is the same thing there: the policy
+/// below is a no-op off Windows, and neither platform has a console to inherit.
+///
+/// What holds on every platform is the other half. Every child is waited on, and
+/// nothing in this program starts a process that outlives the command that started
+/// it -- there is no detached helper anywhere, which is deliberate and is checked by
+/// grepping for `.spawn()`.
 pub fn command<S: AsRef<OsStr>>(program: S) -> Command {
     let mut cmd = Command::new(program);
     apply_window_policy(&mut cmd);

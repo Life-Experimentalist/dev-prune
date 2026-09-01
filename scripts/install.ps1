@@ -7,8 +7,9 @@
 # What this does:
 #   1. Downloads the release binary from GitHub Releases
 #   2. Verifies it against the published SHA-256 checksum
-#   3. Installs it to %APPDATA%\dev-prune\bin as both dev-prune.exe and devp.exe, and
-#      clears any Mark of the Web so SmartScreen has nothing to challenge
+#   3. Installs it to %APPDATA%\dev-prune\bin as dev-prune.exe, devp.exe and the
+#      windowless devpw.exe the background task runs, clearing any Mark of the Web
+#      so SmartScreen has nothing to challenge
 #   4. Adds that directory to the User PATH
 #   5. Runs `dev-prune setup`, which installs the parts that were missing: the exported
 #      SKILL.md, the global Git auto-registration hooks, and the scheduled task
@@ -99,7 +100,7 @@ $repo = 'Life-Experimentalist/dev-prune'
 # redirect carries the tag, so one HEAD request answers without parsing JSON.
 # $fallbackVersion exists for offline mirrors and rate-limited CI: it must always name
 # a published release, and the release workflow refuses to tag until it matches.
-$fallbackVersion = '1.14.0'
+$fallbackVersion = '1.15.0'
 if (-not $version) {
     try {
         $resp = Invoke-WebRequest -Uri "https://github.com/$repo/releases/latest" -Method Head -MaximumRedirection 5 -UseBasicParsing -ErrorAction Stop
@@ -121,6 +122,7 @@ $binDir = if ($BinDir) {
 }
 $exePath = Join-Path $binDir 'dev-prune.exe'
 $aliasPath = Join-Path $binDir 'devp.exe'
+$windowlessPath = Join-Path $binDir 'devpw.exe'
 
 # The two facts about this run that nothing on the machine can work out afterwards, so
 # the receipt at the end has to be told them. Both start false and are only ever raised
@@ -531,6 +533,7 @@ try {
     # into the install directory.
     Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
     $extracted = Join-Path $tmpDir 'dev-prune.exe'
+    $extractedWindowless = Join-Path $tmpDir 'devpw.exe'
     if (-not (Test-Path $extracted)) {
         throw "Archive did not contain dev-prune.exe at its root."
     }
@@ -585,10 +588,26 @@ try {
         Write-Host "    Close any running devp and run: dev-prune setup" -ForegroundColor Yellow
     }
 
+    # The windowless build the scheduled task runs, so nothing flashes a console at
+    # whoever is logged in. It ships in the archive rather than being generated here or
+    # by the binary itself: a program that writes a modified executable copy of itself
+    # and then registers it to run on a schedule is what endpoint scanners quarantine.
+    # Archives from before 1.15.0 do not contain it, and the daemon simply falls back to
+    # its next registration tier, so a missing file is a skip and never an error.
+    if (Test-Path $extractedWindowless) {
+        try {
+            Install-Binary -Source $extractedWindowless -Destination $windowlessPath
+            Write-Host "[OK] Installed: $windowlessPath" -ForegroundColor Green
+        } catch {
+            Write-Host "[!] Could not write $windowlessPath ($($_.Exception.Message))." -ForegroundColor Yellow
+            Write-Host "    The background task will run visibly until the next install." -ForegroundColor Yellow
+        }
+    }
+
     # Copy-Item carries an alternate data stream across with the file, so a mark on the
     # archive would have survived into both installed copies. Clear them for the same
     # reason the archive was cleared above. `devp.exe` may legitimately not exist here.
-    Unblock-File -Path $exePath, $aliasPath -ErrorAction SilentlyContinue
+    Unblock-File -Path $exePath, $aliasPath, $windowlessPath -ErrorAction SilentlyContinue
 } finally {
     Remove-Item -Path $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -630,12 +649,31 @@ if (-not $noPath) {
             }
             $envKey.SetValue('Path', $newPath, $kind)
             # The raw write does not broadcast WM_SETTINGCHANGE the way the .NET
-            # environment API did; without it Explorer and new terminals keep the old
+            # environment API does; without it Explorer and new terminals keep the old
             # PATH until the next sign-in.
-            $sig = '[DllImport("user32.dll",SetLastError=true,CharSet=CharSet.Auto)]public static extern IntPtr SendMessageTimeout(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);'
-            $broadcast = Add-Type -MemberDefinition $sig -Name 'NativeBroadcast' -Namespace DevPruneInstall -PassThru
-            $result = [UIntPtr]::Zero
-            [void]$broadcast::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
+            #
+            # So borrow the broadcast from that API instead of sending one by hand.
+            # SetEnvironmentVariable is documented to notify other applications for the
+            # User and Machine targets, and the notification names the whole Environment
+            # key rather than the variable that triggered it - so writing any throwaway
+            # name refreshes the Path written two lines above. It is written and
+            # immediately deleted; nothing of it outlives this block.
+            #
+            # What stood here instead was the direct route: compile a scrap of C# at
+            # run time and call the window-message API through it by hand. It worked,
+            # and it is a shape no installer should have. Compiling code inside a script
+            # people pipe into a shell is the defining move of a whole class of
+            # droppers, antivirus heuristics score it as such, and a reader auditing
+            # this one-liner has no way to tell the two apart. Reaching an already
+            # documented API costs two lines and needs no defending.
+            try {
+                [Environment]::SetEnvironmentVariable('DEV_PRUNE_PATH_REFRESH', '1', 'User')
+                [Environment]::SetEnvironmentVariable('DEV_PRUNE_PATH_REFRESH', $null, 'User')
+            } catch {
+                # A refresh is a convenience: the PATH entry is already written, and
+                # terminals opened after the next sign-in pick it up regardless.
+                Write-Host "[!] Could not refresh the desktop environment; open a new terminal." -ForegroundColor Yellow
+            }
         } else {
             [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
         }

@@ -215,14 +215,14 @@ fn apply_folder_icon(config_dir: &Path, _ico_path: &Path, _png_path: &Path) {
         );
         let _ = fs::write(&ini_file, ini_content);
 
-        let clean_ini = output::clean_path(&ini_file);
-        let clean_dir = output::clean_path(config_dir);
-        let _ = crate::spawn::command("attrib")
-            .args(["+h", "+s", &clean_ini])
-            .output();
-        let _ = crate::spawn::command("attrib")
-            .args(["+s", &clean_dir])
-            .output();
+        // Explorer only reads `desktop.ini` when the file is hidden *and* system and
+        // the folder itself is system. That used to be `attrib +h +s`, spawned twice;
+        // it is the same two calls made directly now. Launching a process whose whole
+        // purpose is to hide a file is a shape worth not having in a binary that
+        // scanners are already looking at, and there is nothing `attrib` does here that
+        // `SetFileAttributes` does not.
+        mark_system(&ini_file, true);
+        mark_system(config_dir, false);
     }
 
     #[cfg(target_os = "linux")]
@@ -339,6 +339,37 @@ fn register_file_type() {
         "gtk-update-icon-cache",
         &[data_home.join("icons").join("hicolor")],
     );
+}
+
+/// Mark a path system, and optionally hidden, as `desktop.ini` requires.
+///
+/// Best effort, exactly like the `attrib` calls it replaces: a folder icon that does not
+/// take is cosmetic, and must never be the reason `devp icon` reports a failure.
+#[cfg(target_os = "windows")]
+fn mark_system(path: &Path, hidden: bool) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_SYSTEM, GetFileAttributesW, INVALID_FILE_ATTRIBUTES,
+        SetFileAttributesW,
+    };
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `wide` is NUL-terminated and outlives both calls, which only read and
+    // write this one path's attribute word.
+    let current = unsafe { GetFileAttributesW(wide.as_ptr()) };
+    if current == INVALID_FILE_ATTRIBUTES {
+        return;
+    }
+    let mut attrs = current | FILE_ATTRIBUTE_SYSTEM;
+    if hidden {
+        attrs |= FILE_ATTRIBUTE_HIDDEN;
+    }
+    // SAFETY: as above.
+    unsafe { SetFileAttributesW(wide.as_ptr(), attrs) };
 }
 
 #[cfg(target_os = "linux")]

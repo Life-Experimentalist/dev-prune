@@ -80,7 +80,7 @@ while read -r asset_os asset_arch node_os node_arch kind pkg; do
 npm install -g dev-prune
 \`\`\`
 
-This package holds nothing but the prebuilt \`dev-prune\` binary for **$asset_os $asset_arch**.
+This package holds nothing but the prebuilt \`dev-prune\` executables for **$asset_os $asset_arch**.
 It exists because npm has no other way to ship a per-platform executable: \`dev-prune\`
 lists all seven platform packages as optional dependencies, and npm installs only the one
 matching your machine. Installing this one directly gives you a binary with no launcher

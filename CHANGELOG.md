@@ -5,6 +5,98 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-09-01
+
+### Fixed
+
+- **Anti-virus no longer quarantines the binary.** Sophos deleted `devp.exe` from
+  `%APPDATA%\dev-prune\bin` before it could be run once, VirusTotal reported it as a
+  trojan, and Microsoft's WinGet validation had already failed it for the same reason.
+  These were not false positives about what dev-prune *does* — they were two things it
+  genuinely did that no ordinary tool needs to:
+
+  - Setting your `PATH` ran `powershell.exe -EncodedCommand <base64>`, and the script
+    inside compiled C# at runtime to call into `user32.dll`. An encoded PowerShell
+    command that builds code on the fly to reach a Windows API is, feature for feature,
+    what commodity malware loaders do. dev-prune now calls the registry and `user32`
+    directly, and **setup and first run no longer start PowerShell at all**.
+  - The install one-liner did the same thing from the outside. `install.ps1` — and the
+    Windows branch of `install.sh` — also built code at run time, to tell the desktop
+    to re-read your `PATH` after writing it. Windows hands a script to the installed
+    anti-virus as it runs, so a `iwr … | iex` install could trip a heuristic before it
+    had written a single file, and anyone who read the one-liner before pasting it had
+    to take the comment's word for what the C# did. Both scripts now reach a documented
+    .NET call that broadcasts the same notification.
+  - The windowless build the background task runs, `devpw.exe`, was produced *on your
+    machine* by reading `dev-prune.exe`, editing a field in its header and writing the
+    result out under a new name. A program that writes a modified executable copy of
+    itself and then registers it to run on a schedule is the textbook description of a
+    dropper. It is now a normal build target that ships in the archive, so nothing is
+    generated locally.
+  - `devp uninstall` finished the job by leaving a detached shell behind — a hidden
+    PowerShell, or a `cmd` line that pings itself to pass the time and then deletes the
+    file — to remove the running binary a few seconds after the command exited. That is
+    the canonical self-delete; the strings alone score on a static scan, and launching
+    either windowless out of an unsigned binary is exactly what a behavioural engine
+    watches for. **dev-prune now starts no child process it does not wait for, anywhere.**
+    The uninstall renames the locked binary aside — which Windows allows, where deleting
+    it does not — hands the remains to Windows for the next restart, and prints whatever
+    is left.
+
+  If a scanner already quarantined a copy, restore that specific file — never add a
+  folder exclusion — and see
+  [Installation Issues §13](docs/troubleshooting/INSTALLATION_ISSUES.md) for what to send
+  the vendor as a false-positive report.
+
+- The `%APPDATA%\dev-prune\bin` Defender-exclusion advice in
+  `docs/RELEASES_AND_MANUAL_INSTALL.md` contradicted the troubleshooting guide, which
+  correctly tells you not to. An exclusion silences that folder for every future
+  detection, including real ones; the row now points at `Unblock-File` and at the
+  false-positive submission process instead.
+
+### Changed
+
+- **Windows archives now contain three executables**: `dev-prune.exe`, `devp.exe` and
+  `devpw.exe`. The one-liner installs all three, and the npm and PyPI packages carry
+  them. Nothing about how you use dev-prune changes — `devpw` is only ever run by the
+  scheduled task, so it stays out of your way and stops a console window flashing when
+  the daemon fires.
+
+- **`devp uninstall` now prints the package-manager command instead of running it for
+  you.** If you installed with `cargo install`, `pip` or `npm`, Windows will not let that
+  manager delete the binary while it is executing, and the only order that clears the
+  manager's own records is to exit first and uninstall second. dev-prune used to schedule
+  that command in a background shell. It now tells you the single line to run —
+  `cargo uninstall dev-prune`, say — and exits `0`. Everything else about the uninstall
+  is unchanged, and on Linux and macOS nothing changes at all: there a package manager
+  can remove a binary that is running.
+
+### For contributors
+
+- `devpw` is a third `[[bin]]` target (`src/devpw.rs`), and it gets the GUI subsystem
+  from `#![cfg_attr(windows, windows_subsystem = "windows")]` rather than from patching
+  a PE header at runtime. `patch_subsystem_to_gui` and `twin_is_current` are gone from
+  `src/daemon/windows.rs`; what is left places the shipped file with the same
+  hard-link-or-staged-copy every other managed file gets. Cargo cannot scope a `[[bin]]`
+  to one platform, so on Linux and macOS `devpw` is a stub that explains itself and exits
+  `2` rather than a third seven-megabyte copy of the CLI on `PATH`; `devp uninstall`
+  sweeps the name on every platform.
+
+- `src/commands/uninstall.rs` gained `finish_locked_removals`, which renames a locked file
+  aside and queues the residue with `MoveFileEx(.., MOVEFILE_DELAY_UNTIL_REBOOT)` — the
+  documented mechanism, and one that needs no child process. `spawn_powershell_helper`,
+  `spawn_cmd_helper`, `ps_quote`, `schedule_manager_uninstall` and `spawn::system32` are
+  gone with it. No code path starts a process that outlives the command that started
+  it, and the only shell dev-prune ever launched is no longer launched at all.
+
+- The Windows binaries now carry a filled-in version block — `CompanyName`,
+  `LegalCopyright`, `FileDescription`, `Comments` — and an `asInvoker` application
+  manifest. Previously there was no manifest at all and most of those fields were blank,
+  which is one of the inputs a reputation engine has to judge an unsigned binary on.
+- `src/pathenv.rs` talks to `HKCU\Environment` through `advapi32` and broadcasts
+  `WM_SETTINGCHANGE` through `SendMessageTimeoutW`, using two features newly enabled on
+  the existing `windows-sys` dependency. No new crate, and no interpreter.
+
 ## [1.14.0] - 2026-08-31
 
 ### Added

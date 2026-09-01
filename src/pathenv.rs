@@ -70,100 +70,178 @@ fn path_value_without(path_value: &str, dir: &str) -> Option<String> {
 #[cfg(windows)]
 mod imp {
     use super::*;
-    use std::process::Command;
 
-    /// A PowerShell script as `-EncodedCommand` base64 (UTF-16LE). The encoded form
-    /// exists for two reasons: no quoting layer between here and the interpreter (the
-    /// scripts carry both quote styles), and no codepage — a console in an OEM
-    /// codepage would otherwise mangle every non-ASCII character in a PATH entry.
-    fn encoded_command(script: &str) -> String {
-        const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let bytes: Vec<u8> = script
-            .encode_utf16()
-            .flat_map(|u| u.to_le_bytes())
-            .collect();
-        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-        for chunk in bytes.chunks(3) {
-            let n = (u32::from(chunk[0]) << 16)
-                | (u32::from(chunk.get(1).copied().unwrap_or(0)) << 8)
-                | u32::from(chunk.get(2).copied().unwrap_or(0));
-            out.push(TABLE[(n >> 18) as usize & 63] as char);
-            out.push(TABLE[(n >> 12) as usize & 63] as char);
-            out.push(if chunk.len() > 1 {
-                TABLE[(n >> 6) as usize & 63] as char
-            } else {
-                '='
-            });
-            out.push(if chunk.len() > 2 {
-                TABLE[n as usize & 63] as char
-            } else {
-                '='
-            });
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        HKEY, HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE, REG_EXPAND_SZ, REG_SZ, REG_VALUE_TYPE,
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        HWND_BROADCAST, SMTO_ABORTIFHUNG, SendMessageTimeoutW, WM_SETTINGCHANGE,
+    };
+
+    // This module talks to the registry directly rather than driving `powershell.exe`.
+    // The script it used to run was passed as `-EncodedCommand` base64 and reached
+    // `SendMessageTimeout` through `Add-Type`/`DllImport` — an encoded PowerShell
+    // command that compiles code at runtime to P/Invoke into user32 is, feature for
+    // feature, what commodity loaders do, and every behavioural scanner scores it that
+    // way. Sophos quarantined the binary on that profile before it could run once.
+    // Nothing here needs an interpreter: these are three `advapi32` calls and one
+    // `user32` broadcast.
+
+    /// A NUL-terminated UTF-16 string, as every `*W` entry point wants one.
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// An open registry key that closes itself.
+    struct Key(HKEY);
+
+    impl Drop for Key {
+        fn drop(&mut self) {
+            // SAFETY: the handle came from a successful `RegOpenKeyExW`, and a `Key` is
+            // only ever built from one, so this closes a live handle exactly once.
+            unsafe { RegCloseKey(self.0) };
         }
-        out
     }
 
-    fn powershell(script: &str) -> Command {
-        // Absolute first: these registry edits are what runs while the user PATH is
-        // in flux, so resolving the interpreter *through* `PATH` is the one thing
-        // this function must not do. Windows PowerShell has lived at this path since
-        // Vista; if it is somehow gone, fall back to whatever lookup finds.
-        let exe = crate::spawn::system32(r"WindowsPowerShell\v1.0\powershell.exe");
-        let program = if std::path::Path::new(&exe).exists() {
-            exe
+    /// Open `HKCU\Environment`, the key holding the *user* PATH.
+    fn open_environment(access: u32) -> Option<Key> {
+        let subkey = wide("Environment");
+        let mut hkey: HKEY = std::ptr::null_mut();
+        // SAFETY: `subkey` is NUL-terminated and outlives the call, and `hkey` is a
+        // valid out-pointer.
+        let rc = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, access, &mut hkey) };
+        // Built only on success: an unopened handle must not reach `Key`, whose `Drop`
+        // would close it.
+        if rc == ERROR_SUCCESS {
+            Some(Key(hkey))
         } else {
-            String::from("powershell")
-        };
-        let mut cmd = crate::spawn::command(program);
-        cmd.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-EncodedCommand",
-            &encoded_command(script),
-        ]);
-        cmd
+            None
+        }
     }
 
-    /// Read the *user* PATH — the persisted value under `HKCU\Environment`, not this
-    /// process's inherited one, which also carries the machine PATH. Read raw:
-    /// `DoNotExpandEnvironmentNames` keeps `%USERPROFILE%`-style entries as their
-    /// owner spelled them, so a later write cannot bake them into literal paths.
+    /// Read `Path` from an open key, as `(value, kind)`.
+    ///
+    /// `RegQueryValueExW` hands back the value *raw*. The .NET call this replaced —
+    /// `[Environment]::GetEnvironmentVariable('Path','User')` — expands it first, and
+    /// writing that back bakes `%USERPROFILE%`-style entries into literal paths for
+    /// good; reading through the registry API leaves every entry as its owner spelled
+    /// it. A missing `Path` value is an empty PATH, not a failure: a profile that never
+    /// had one is a normal state.
+    fn query_path(key: &Key) -> Option<(String, REG_VALUE_TYPE)> {
+        let name = wide("Path");
+        let mut kind: REG_VALUE_TYPE = 0;
+        let mut len: u32 = 0;
+        // SAFETY: a null data pointer with a zero length asks for the size only.
+        let rc = unsafe {
+            RegQueryValueExW(
+                key.0,
+                name.as_ptr(),
+                std::ptr::null(),
+                &mut kind,
+                std::ptr::null_mut(),
+                &mut len,
+            )
+        };
+        if rc == ERROR_FILE_NOT_FOUND {
+            return Some((String::new(), REG_EXPAND_SZ));
+        }
+        if rc != ERROR_SUCCESS {
+            return None;
+        }
+
+        let mut buf = vec![0u8; len as usize];
+        // SAFETY: `buf` holds exactly the `len` bytes the sizing call asked for, and
+        // `len` is updated in place with the count actually written.
+        let rc = unsafe {
+            RegQueryValueExW(
+                key.0,
+                name.as_ptr(),
+                std::ptr::null(),
+                &mut kind,
+                buf.as_mut_ptr(),
+                &mut len,
+            )
+        };
+        if rc != ERROR_SUCCESS {
+            return None;
+        }
+        buf.truncate(len as usize);
+        Some((decode_utf16_value(&buf), kind))
+    }
+
+    /// Decode a `REG_SZ`/`REG_EXPAND_SZ` payload.
+    ///
+    /// The registry stores UTF-16 and promises neither a terminator nor only one, so
+    /// the value ends at the first NUL if there is one and at the end of the buffer if
+    /// there is not. A trailing odd byte cannot begin a code unit and is dropped.
+    fn decode_utf16_value(buf: &[u8]) -> String {
+        let units: Vec<u16> = buf
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .take_while(|&unit| unit != 0)
+            .collect();
+        String::from_utf16_lossy(&units)
+    }
+
     fn read_user_path() -> Option<String> {
-        let script = "\
-            [Console]::OutputEncoding=[System.Text.Encoding]::UTF8\n\
-            $k=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment')\n\
-            if($null -eq $k){exit 1}\n\
-            $v=$k.GetValue('Path','',[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)\n\
-            [Console]::Out.Write([string]$v)";
-        let out = powershell(script).output().ok()?;
-        out.status
-            .success()
-            .then(|| String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+        let key = open_environment(KEY_READ)?;
+        query_path(&key).map(|(value, _)| value)
     }
 
     /// Persist a new user PATH, keeping the registry value's kind — flattening
     /// `REG_EXPAND_SZ` to `REG_SZ` would stop every `%VAR%` entry expanding — and
-    /// broadcasting `WM_SETTINGCHANGE` so Explorer and new shells pick it up (the raw
-    /// registry write does not send it the way the .NET environment API did).
+    /// broadcasting `WM_SETTINGCHANGE` so Explorer and new shells pick it up, which the
+    /// registry write does not do on its own.
     fn write_user_path(value: &str) -> bool {
-        let escaped = value.replace('\'', "''");
-        let script = format!(
-            "$v='{escaped}'\n\
-             $k=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment',$true)\n\
-             if($null -eq $k){{exit 1}}\n\
-             $kind=[Microsoft.Win32.RegistryValueKind]::ExpandString\n\
-             try{{$kind=$k.GetValueKind('Path')}}catch{{}}\n\
-             if($kind -ne [Microsoft.Win32.RegistryValueKind]::String){{$kind=[Microsoft.Win32.RegistryValueKind]::ExpandString}}\n\
-             $k.SetValue('Path',$v,$kind)\n\
-             $sig='[DllImport(\"user32.dll\",SetLastError=true,CharSet=CharSet.Auto)]public static extern IntPtr SendMessageTimeout(IntPtr hWnd,uint Msg,UIntPtr wParam,string lParam,uint fuFlags,uint uTimeout,out UIntPtr lpdwResult);'\n\
-             $t=Add-Type -MemberDefinition $sig -Name 'NativeBroadcast' -Namespace DevPrune -PassThru\n\
-             $r=[UIntPtr]::Zero\n\
-             [void]$t::SendMessageTimeout([IntPtr]0xffff,0x1A,[UIntPtr]::Zero,'Environment',2,5000,[ref]$r)"
-        );
-        powershell(&script)
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+        let Some(key) = open_environment(KEY_READ | KEY_SET_VALUE) else {
+            return false;
+        };
+        // Anything not already a plain string is written back as expandable: that is
+        // what Windows itself creates `Path` as, and it is the safe way to guess.
+        let kind = match query_path(&key) {
+            Some((_, REG_SZ)) => REG_SZ,
+            _ => REG_EXPAND_SZ,
+        };
+
+        let data = wide(value);
+        let bytes = std::mem::size_of_val(data.as_slice()) as u32;
+        let name = wide("Path");
+        // SAFETY: `data` is NUL-terminated UTF-16 and `bytes` is its exact length in
+        // bytes, terminator included, which is what `RegSetValueExW` wants for a string.
+        let rc = unsafe {
+            RegSetValueExW(
+                key.0,
+                name.as_ptr(),
+                0,
+                kind,
+                data.as_ptr().cast::<u8>(),
+                bytes,
+            )
+        };
+        if rc != ERROR_SUCCESS {
+            return false;
+        }
+
+        let environment = wide("Environment");
+        let mut delivered: usize = 0;
+        // SAFETY: `environment` is NUL-terminated and outlives the call. The PATH is
+        // already written by this point, so a failed broadcast costs a stale Explorer
+        // environment until the next sign-in, never the edit itself; `SMTO_ABORTIFHUNG`
+        // keeps one wedged top-level window from stalling setup behind it.
+        unsafe {
+            SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_SETTINGCHANGE,
+                0,
+                environment.as_ptr() as isize,
+                SMTO_ABORTIFHUNG,
+                5000,
+                &mut delivered,
+            )
+        };
+        true
     }
 
     pub fn ensure_reachable(bin_dir: &Path) -> Outcome {
@@ -210,6 +288,67 @@ mod imp {
             Ok(true)
         } else {
             anyhow::bail!("could not write the user PATH")
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn utf16(s: &str) -> Vec<u8> {
+            s.encode_utf16().flat_map(u16::to_le_bytes).collect()
+        }
+
+        #[test]
+        fn a_registry_string_ends_at_its_first_terminator_if_it_has_one() {
+            // No terminator at all: the whole buffer is the value.
+            assert_eq!(decode_utf16_value(&utf16(r"C:\a;C:\b")), r"C:\a;C:\b");
+
+            // One terminator, and the doubled form Windows sometimes stores.
+            let mut one = utf16(r"C:\a");
+            one.extend_from_slice(&[0, 0]);
+            assert_eq!(decode_utf16_value(&one), r"C:\a");
+            let mut two = utf16(r"C:\a");
+            two.extend_from_slice(&[0, 0, 0, 0]);
+            assert_eq!(decode_utf16_value(&two), r"C:\a");
+
+            // Anything past the terminator is not part of the value.
+            let mut trailing = utf16(r"C:\a");
+            trailing.extend_from_slice(&[0, 0]);
+            trailing.extend_from_slice(&utf16("junk"));
+            assert_eq!(decode_utf16_value(&trailing), r"C:\a");
+
+            // A dangling odd byte cannot begin a code unit.
+            let mut odd = utf16(r"C:\a");
+            odd.push(b'x');
+            assert_eq!(decode_utf16_value(&odd), r"C:\a");
+
+            assert_eq!(decode_utf16_value(&[]), "");
+        }
+
+        /// A `%VAR%` entry has to survive the round trip unexpanded: expanding it and
+        /// writing it back is what bakes one user's home directory into another's PATH.
+        #[test]
+        fn an_unexpanded_entry_is_read_back_verbatim() {
+            let raw = r"%USERPROFILE%\bin;C:\Windows\System32";
+            assert_eq!(decode_utf16_value(&utf16(raw)), raw);
+        }
+
+        /// Non-ASCII is why this is decoded as UTF-16 rather than taken as bytes: a
+        /// console codepage would have mangled it, which is what the old PowerShell
+        /// reader had to work around.
+        #[test]
+        fn a_non_ascii_entry_survives_decoding() {
+            let raw = r"C:\Users\Müller\bin;C:\Users\日本\bin";
+            assert_eq!(decode_utf16_value(&utf16(raw)), raw);
+        }
+
+        /// The registry plumbing end to end: open, size, read, decode. Read-only, so it
+        /// is safe on a real machine — it asserts nothing about that machine's own PATH,
+        /// only that reading it succeeds.
+        #[test]
+        fn the_user_path_can_be_read_from_the_registry() {
+            assert!(read_user_path().is_some(), "could not read the user PATH");
         }
     }
 }

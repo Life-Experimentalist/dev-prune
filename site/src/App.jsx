@@ -34,7 +34,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.14.0";
+const VERSION = "1.15.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -2834,8 +2834,10 @@ Notes you should rely on, not work around:
                 binaries themselves — then finds every other copy that pip, npm,
                 cargo or uv left behind and removes them all after one
                 confirmation, printing each manager's own uninstall line so its
-                records clear too. On Windows the last files disappear a few
-                seconds after the command exits — no reboot needed. Add{" "}
+                records clear too. On Windows a running program cannot delete
+                itself, so the copy you invoked is renamed aside — the command
+                stops resolving straight away — and Windows removes what is left
+                at the next restart. Nothing is left running behind it. Add{" "}
                 <code>--deep</code> to also wipe the configuration directory and
                 every registered repository's <code>.devprune.json</code> — it
                 asks first.

@@ -603,14 +603,21 @@ pub const OPENVSX_URL: &str = "https://open-vsx.org/extension/VKrishna04/dev-pru
 
 /// Name of the Windows Task Scheduler task the daemon registers.
 pub const WINDOWS_TASK_NAME: &str = "DevPrune";
-/// File name of the windowless scheduler binary — `dev-prune.exe` with its PE subsystem
-/// set to GUI, the same relationship `pythonw.exe` has to `python.exe`. Generated
-/// locally beside the managed binary; never shipped in any archive.
-pub const WINDOWS_HIDDEN_BIN: &str = "devpw.exe";
+/// File name of the windowless scheduler binary — the same CLI built for the GUI
+/// subsystem, the relationship `pythonw.exe` has to `python.exe`. A `[[bin]]` target, so
+/// it ships in the Windows archives and `cargo install` places it; nothing generates it
+/// on a user's machine.
+pub const WINDOWS_WINDOWLESS_BIN: &str = "devpw.exe";
 /// Marker file (in the config directory) recording that this machine's Task Scheduler
-/// refused the hidden (S4U) task registration, so setup keeps the visible task instead
-/// of retrying the upgrade on every pass.
-pub const SCHEDULER_HIDDEN_REFUSED_MARKER: &str = "scheduler-hidden-refused";
+/// refused the sessionless (S4U) task registration, so setup keeps the console task
+/// instead of retrying the upgrade on every pass.
+///
+/// Named for what the task *is* and not for what it is not: this value lands in the
+/// binary's string table a few bytes from `devpw.exe`, and "devpw" next to "hidden" is
+/// what a reviewer running `strings` reads first. Nothing here is concealed from
+/// anyone — the task is listed in Task Scheduler under its own name and the marker is
+/// an empty file in the config directory — so the vocabulary must not imply otherwise.
+pub const SCHEDULER_WINDOWLESS_REFUSED_MARKER: &str = "scheduler-windowless-refused";
 
 /// Label of the macOS LaunchAgent the daemon registers (also names its plist file).
 pub const MACOS_LAUNCHD_LABEL: &str = "com.devprune.daemon";
