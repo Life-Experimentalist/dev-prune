@@ -187,15 +187,30 @@ pub const DEFAULT_IDLE_DAYS: u64 = 15;
 /// caution, it is the feature never firing.
 pub const DEFAULT_BUILD_IDLE_DAYS: u64 = 45;
 
-/// The per-manager cache size cap `devp config wizard` offers, in gibibytes.
+/// The cache size cap the first run suggests, in gibibytes.
 ///
 /// Not a default: `cache_max_gb` is empty until someone puts a number in it, and an
-/// empty map means no cache is ever called too big. This is only the figure the wizard
-/// pre-fills and the docs recommend, and 10 GiB is where it sits because that is the
-/// size at which a download cache stops being a time-saver and starts being the largest
-/// directory on the disk — a `uv` cache measured on the author's machine had passed it
-/// while every project it served fit in a tenth of that.
+/// empty map means no cache is ever called too big. This is the figure the suggestions
+/// screen and `devp config recommended` offer, and 10 GiB is where it sits because that
+/// is the size at which a download cache stops being a time-saver and starts being the
+/// largest directory on the disk — a `uv` cache measured on the author's machine had
+/// passed it while every project it served fit in a tenth of that.
 pub const RECOMMENDED_CACHE_MAX_GB: u64 = 10;
+
+/// The `cache_max_gb` key that caps every manager without naming one.
+///
+/// A word rather than `*`, because the caps are typed at a shell: a glob would need
+/// quoting in every example the docs print and in every one somebody copies, and would
+/// be silently expanded by the shells that do not need it. `default=10,npm=4` also says
+/// what it does without a legend.
+pub const CACHE_CAP_DEFAULT_KEY: &str = "default";
+
+/// What the first run suggests for `cache_max_gb`.
+///
+/// [`RECOMMENDED_CACHE_MAX_GB`] written out, because the suggestion table holds
+/// `&'static str` values and there is no formatting at compile time. A test in
+/// `commands::config` fails if the two ever stop agreeing.
+pub const RECOMMENDED_CACHE_CAP: &str = "default=10";
 
 /// One gibibyte, for turning `cache_max_gb` into the byte count a cache is measured in.
 pub const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;

@@ -236,9 +236,9 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   `build/` directories are compiler outputs no lockfile can prove rebuildable, so
   dev-prune never deletes them, while their dependencies live in these machine-wide
   stores. Cargo `target/`, Maven `target/` and Gradle `build/`+`.gradle/` are the one
-  exception, via the opt-in adapters below. `devp config set cache_max_gb uv=10,npm=10`
-  writes down how big is too big, per manager, in gibibytes (GiB, the unit the report
-  prints), and a manager past its cap
+  exception, via the opt-in adapters below. `devp config set cache_max_gb default=10`
+  writes down how big is too big, in gibibytes (GiB, the unit the report
+  prints), for every manager at once, and a manager past its cap
   is marked in the report — measured against the manager's whole footprint, so cargo's
   registry cache and its unpacked sources are weighed together. Setting a cap still
   deletes nothing; it marks, and `devp caches clear --over-cap all` empties exactly what
@@ -674,10 +674,12 @@ which are off because of what their directories cost to rebuild rather than beca
 anyone dislikes them.
 
 `cache_max_gb` is a per-manager ceiling in gibibytes (GiB, the unit the report
-prints), written `uv=10,npm=10`. It is
+prints), written `default=10,npm=4`. It is
 keyed by the names `devp caches clear` takes — `npm`, `pnpm`, `uv`, `pip`, `cargo`,
 `go`, `nuget` and the rest — not by adapter name, because the two lists overlap
-without either containing the other. A manager over its cap is marked in `devp caches`
+without either containing the other. `default` is the extra key: it covers every
+manager not named separately, so one entry caps all twenty-nine caches, and a manager
+named outright is held to its own figure rather than to both. A manager over its cap is marked in `devp caches`
 and cleared only by `devp caches clear --over-cap`; the cap itself never deletes
 anything. `devp config set cache_max_gb -` clears the map.
 
@@ -712,7 +714,9 @@ no terminal at all.
 `devp config recommended` is the non-interactive shortcut: it applies everything the
 first run recommends without a caveat — `enable_cargo`, `enable_gradle`,
 `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`,
-`enable_cmake_build`. `allow_manifest_rewrite` is a second tier of one, held back
+`enable_cmake_build`, and `cache_max_gb=default=10`. That last one is the only
+suggestion that is not a yes-or-no, so any ceiling already set counts as taken: a
+machine with `npm=4` is left alone rather than overwritten. `allow_manifest_rewrite` is a second tier of one, held back
 unless `--with-cautious` is passed, because it lets `cargo` and `go` edit files Git
 tracks. `devp config show` lists whatever is still outstanding. Neither marks the
 settings reviewed, so the walkthrough a machine is owed still opens.

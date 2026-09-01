@@ -131,7 +131,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "put the dependencies back" | `devp restore .` |
 | "undo that prune" / "I need it all back" | `devp restore --last-run` — reinstalls exactly what the last pass deleted, in every repository it touched, rebuilding each virtual environment on the Python version it was originally built with |
 | "where is my disk actually going?" / "how big is my npm cache?" | `devp caches` — sizes every package-manager cache and store (npm, pnpm, yarn, bun, uv, pip, conda, cargo, go, maven, gradle, nuget, vcpkg, conan, composer, cocoapods, hex, bundler, dart, swift, terraform, poetry, pdm, playwright, puppeteer, huggingface, cypress, electron, deno) and prints the command that clears each. Read-only |
-| "my uv cache is over 10 GB" / "tell me when a cache gets too big" | `devp config set cache_max_gb uv=10,npm=10` — a ceiling in GiB, per cache manager (the names `devp caches clear` takes, not adapter names). A manager past its cap is marked in `devp caches`; **the cap itself never deletes anything**. Off by default; 10 is the figure the wizard offers. `-` clears the map |
+| "my uv cache is over 10 GB" / "tell me when a cache gets too big" | `devp config set cache_max_gb default=10` — a ceiling in GiB for every manager at once, or `default=10,npm=4` to give one its own figure (keyed by the names `devp caches clear` takes, not adapter names). A manager past its cap is marked in `devp caches`; **the cap itself never deletes anything**. Off by default; the first run suggests `default=10`. `-` clears the map |
 | "clear the caches that got too big" | `devp caches clear --over-cap all` — empties only the managers past their `cache_max_gb`, leaves the rest alone. Still asks first, still costs the same re-download. With no caps set it clears nothing and says so |
 | "which caches do I still need" / "clear the ones nothing uses" | `devp caches` says how many registered repositories use each manager and what its cache works out to per repository. A manager no registered repository uses is the one case a count is enough to act on: `devp caches clear --unused all` empties exactly those, and costs nothing to re-download for anything still on the disk. Shown only for the twelve managers that are also adapter names — `pip`, `conda`, `nuget`, `conan` and `hex` have no adapter of the same name, so dev-prune says nothing rather than guessing. Refuses when no registered repository is on disk, because every cache would look unused |
 | "my pnpm store looks tiny" / "my projects live on another drive" | `devp caches` looks for a pnpm store at the root of every filesystem that holds a registered repository, not just the one beside the home directory. pnpm hardlinks into `node_modules` and a hardlink cannot cross a filesystem, so projects off the system disk get a store of their own — `V:\.pnpm-store`, `/mnt/data/.pnpm-store`, `/Volumes/Work/.pnpm-store`. Not a Windows thing. Each is its own row and its clear command names it: `pnpm store prune --store-dir <path>` |
@@ -412,7 +412,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 
 | Key | Default | Meaning |
 | :--- | :---: | :--- |
-| `cache_max_gb` | *(none)* | Per-manager cache size caps in GiB, as `uv=10,npm=10`. Keyed by cache-manager name (`npm`, `pnpm`, `uv`, `pip`, `cargo`, `go`, `nuget`, …), not adapter name. Marks an over-cap manager in `devp caches`; only `devp caches clear --over-cap` acts on it. `-` clears it |
+| `cache_max_gb` | *(none)* | Per-manager cache size caps in GiB, as `default=10,npm=4`. Keyed by cache-manager name (`npm`, `pnpm`, `uv`, `pip`, `cargo`, `go`, `nuget`, …), not adapter name, plus `default` for every manager not named separately. Marks an over-cap manager in `devp caches`; only `devp caches clear --over-cap` acts on it. `-` clears it |
 
 **Running without being asked**
 
@@ -605,7 +605,9 @@ recommended setup. It is one-shot, prints every change, needs no terminal, and d
 mark the declaration as seen — the walkthrough still opens for them later. It turns on
 `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`,
 `enable_mix_build`, `enable_vcpkg` and `enable_cmake_build`, all of which make build
-trees deletable.
+trees deletable, and sets `cache_max_gb` to `default=10` — a reporting ceiling that
+still deletes nothing. If the user has already set a ceiling of their own it is left
+alone, so running this never throws away a number they picked.
 
 `--with-cautious` additionally sets `allow_manifest_rewrite`, which lets `cargo` and
 `go` update `Cargo.lock` and `go.mod` during a restore — files Git tracks. **Do not
