@@ -223,7 +223,11 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   to stdout, generated from the same argument definition the binary parses with
 - `devp caches [--volume <VOLUME>] [--json]` — find and size every package-manager cache and store on the
   machine (npm, pnpm, yarn, bun, uv, pip, conda, cargo, go, maven, gradle, nuget,
-  vcpkg, conan, composer, cocoapods, hex), largest first, with the command that clears each. The report deletes nothing, and no
+  vcpkg, conan, composer, cocoapods, hex), largest first, with two commands per row:
+  `devp caches clear <manager>` and, below it, the manager's own command that dev-prune
+  runs for it. Both, because they are not synonyms — what dev-prune clears is added to the
+  lifetime cache total in `devp stats`, and the same command typed into a terminal is
+  invisible to it. Maven prints only its own command; dev-prune will not run that one. The report deletes nothing, and no
   scheduler, Git hook or `devp run` ever will: a cache is shared by every project, so no
   one lockfile can prove it recoverable, and it is what makes `devp restore` fast. This is also where the
   .NET and C/C++ ecosystems are covered — their in-repository `bin/`+`obj/` and CMake
@@ -354,6 +358,13 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   `.zip.contents.sha256` manifest; a `cargo install` build matches nothing published.
   No letter grade — the widened settings are named, because
   "trust level: MEDIUM" tells nobody which switch to look at. Read-only, always exit 0.
+  The binaries section lists *every* copy of `dev-prune`, `devp` and `devpw` on the
+  machine — everything on `PATH` plus each channel's install directory even when it is
+  no longer on `PATH` — with the manager that installed it (`channel`), its SHA-256 and
+  a VirusTotal lookup URL for that digest, running copy first. Several copies is normal
+  and not a fault: a `cargo install` and an installer run each leave one and they update
+  separately, which is why their digests can differ. Shims (`.cmd`, `.ps1`) are excluded
+  because hashing a text wrapper answers nothing. Nothing found is executed, only hashed
   `--fix-ownership` is the one exception: it adds every registered repository Git
   currently refuses to read — the "detected dubious ownership" refusal, routine after a
   Windows reinstall or a restored backup — to the global `safe.directory` list, after

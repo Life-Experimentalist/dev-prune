@@ -115,6 +115,10 @@ pub struct BinaryIdentity {
     pub sha256: Option<String>,
     /// Whether this is the executable answering right now.
     pub running: bool,
+    /// Which package manager put this copy here, as a word — `cargo`, `npm`, `uv`,
+    /// `standalone`. The path alone does not answer "why do I have three of these",
+    /// and the answer decides which command removes the one you did not want.
+    pub channel: &'static str,
     /// Why this one's digest differs from the others, when it does.
     pub note: Option<&'static str>,
 }
@@ -583,11 +587,22 @@ fn machine_state(registry: &Registry) -> Vec<TrustRow> {
 /// beside the path lets anyone compare the two themselves, and turns "is the thing I
 /// installed the thing you published?" from a matter of trust into one line of `diff`.
 ///
+/// The report used to know about the managed directory and the running file and nothing
+/// else, which meant a machine with `cargo install`ed copies of all three names beside
+/// each other saw exactly one of them listed. That is the wrong count to print under a
+/// heading reading "binaries on this machine", and it hides the case this report is for:
+/// several copies, different ages, and only one of them the one being scanned. The
+/// discovery is [`uninstall::find_stray_copies`] — everything on `PATH` plus the install
+/// directory of every channel, whether or not that channel is still on `PATH`.
+///
 /// Deliberately not [`daemon::get_exe_path`]: that repairs a stale managed copy as a
 /// side effect of being asked where it is, and a read-only report must not write to the
-/// machine it is describing.
+/// machine it is describing. Nothing here runs any of the files it finds, which is not a
+/// stylistic point on Windows: `devpw.exe` is linked for the GUI subsystem and a shell
+/// that invokes it waits forever.
 pub(crate) fn binaries() -> Vec<BinaryIdentity> {
     let mut found: Vec<(std::path::PathBuf, &'static str, Option<&'static str>)> = Vec::new();
+    let managed_exe = crate::setup::managed_exe_path().ok();
 
     // The managed set, derived from the one path that is a constant rather than a
     // reading. `devp` is a hard link or a copy of `dev-prune` and `devpw.exe` is a
@@ -621,6 +636,16 @@ pub(crate) fn binaries() -> Vec<BinaryIdentity> {
         found.push((current, "other", None));
     }
 
+    // Every other copy on this machine. Shims are skipped: npm's `.cmd` and `.ps1`
+    // wrappers are a few lines of text that run the real executable, and a SHA-256 of
+    // one compares against nothing published, so a row for it would be a digest that
+    // looks like an answer and is not.
+    for stray in crate::commands::uninstall::find_stray_copies() {
+        if is_executable_image(&stray.path) {
+            found.push((stray.path, "other", None));
+        }
+    }
+
     let same = |a: &std::path::Path, b: &std::path::Path| -> bool {
         // Canonicalised, because on Unix `devp` is a symlink to `dev-prune`: two names
         // for one inode are one binary, and listing two digests for it would invite
@@ -647,6 +672,7 @@ pub(crate) fn binaries() -> Vec<BinaryIdentity> {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            channel: crate::channel::Channel::detect_at(&path, managed_exe.as_deref()).badge(),
             path: output::clean_path(&path),
             sha256: sha256_of(&path),
             running: is_running,
@@ -660,6 +686,26 @@ pub(crate) fn binaries() -> Vec<BinaryIdentity> {
     // rest are context for it.
     rows.sort_by_key(|r| !r.running);
     rows
+}
+
+/// Whether this file is a machine image rather than a wrapper around one.
+///
+/// The sweep that finds these deliberately casts wider — an uninstall has to delete the
+/// `.cmd` shim and the `.exe.old` an interrupted update left behind, or it leaves a
+/// working install under a name nobody checks. A trust report wants the opposite: the
+/// files an antivirus actually forms an opinion about.
+fn is_executable_image(path: &std::path::Path) -> bool {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let stems = ["dev-prune", "devp", "devpw"];
+    if cfg!(windows) {
+        stems
+            .iter()
+            .any(|s| name.eq_ignore_ascii_case(&format!("{s}.exe")))
+    } else {
+        stems.contains(&name)
+    }
 }
 
 /// Explain the alias row from the two digests, rather than from what ought to be true.
@@ -824,6 +870,7 @@ fn print_binaries(binaries: &[BinaryIdentity]) {
         };
         let mark = if b.running { ">" } else { " " };
         println!("  {mark}  {label:<30} {}", b.path);
+        println!("     {:<30} {}", "Installed with", b.channel);
         match (&b.sha256, b.scan_url()) {
             (Some(hash), Some(url)) => {
                 println!("     {:<30} {hash}", "SHA-256");
@@ -849,6 +896,13 @@ fn print_binaries(binaries: &[BinaryIdentity]) {
          beside it, so the two can be compared by hand. One built by `cargo install` was \
          compiled here and matches nothing published.",
     );
+    if binaries.len() > 1 {
+        output::print_info(
+            "More than one copy is not a fault — a `cargo install` and an installer run \
+             each leave one, and they update separately. `devp uninstall` lists them with \
+             the command that removes each.",
+        );
+    }
 }
 
 fn print_row(row: &TrustRow) {
@@ -870,6 +924,7 @@ mod tests {
             role,
             name: String::new(),
             path: String::new(),
+            channel: "standalone",
             sha256: sha.map(str::to_string),
             running: false,
             note: None,
@@ -972,6 +1027,43 @@ mod tests {
             found[0].scan_url().unwrap(),
             format!("{}/{hash}", constants::VIRUSTOTAL_FILE_BASE)
         );
+    }
+
+    #[test]
+    fn every_executable_found_on_path_is_listed() {
+        // The report used to know only about the managed directory and the running
+        // file, so a machine carrying `dev-prune`, `devp` and `devpw` in `~/.cargo/bin`
+        // saw one row and had no way to learn about the other two. Whatever the sweep
+        // can find, this must print.
+        let listed = binaries();
+        let canon = |p: &std::path::Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+        let shown: Vec<std::path::PathBuf> = listed
+            .iter()
+            .map(|b| canon(std::path::Path::new(&b.path)))
+            .collect();
+        for stray in crate::commands::uninstall::find_stray_copies() {
+            if !is_executable_image(&stray.path) {
+                continue;
+            }
+            assert!(
+                shown.contains(&canon(&stray.path)),
+                "{} is on this machine but missing from the report",
+                stray.path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn shims_are_not_hashed() {
+        // A `.cmd` shim is a text file that runs the real one. Hashing it would print a
+        // digest that compares against nothing we publish.
+        assert!(!is_executable_image(std::path::Path::new("devp.cmd")));
+        assert!(!is_executable_image(std::path::Path::new("devp.ps1")));
+        assert!(!is_executable_image(std::path::Path::new(
+            "dev-prune.exe.old"
+        )));
+        let real = if cfg!(windows) { "devpw.exe" } else { "devpw" };
+        assert!(is_executable_image(std::path::Path::new(real)));
     }
 
     #[test]

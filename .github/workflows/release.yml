@@ -814,9 +814,133 @@ jobs:
             winget-submission
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+  # A release binary has no reputation on the day it ships, and "no reputation" is what
+  # a heuristic engine scores as suspicious. The 1.5.0 zip was quarantined that way. The
+  # fix is not to argue with the engines, it is to make sure every image we publish is
+  # already known to them before the first user downloads it — a digest VirusTotal has
+  # never seen comes back `not found`, and `devp trust` has to print that answer beside
+  # a file the user just installed.
+  #
+  # So this looks each digest up and submits only the ones nothing has seen. It never
+  # gates the release: a fresh cross-compiled binary picks up heuristic hits from some
+  # of the seventy engines for weeks, that number falls on its own as downloads
+  # accumulate, and a workflow that failed on it would block every release forever.
+  scan:
+    name: VirusTotal
+    needs: [publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # `devpw.exe` ships only inside the Windows zips, and it is the image a behavioural
+      # scanner meets first because it is the one the scheduled task runs. Pulling it out
+      # here is the only way it gets a record of its own.
+      - name: Unpack the windowless binary from the Windows archives
+        run: |
+          set -eu
+          mkdir -p scan
+          cp dist/dev-prune-v*-linux-* dist/dev-prune-v*-darwin-* scan/ 2>/dev/null || true
+          cp dist/*.exe dist/*.zip dist/*.tar.gz scan/ 2>/dev/null || true
+          rm -f scan/*.sha256
+          for zip in dist/*-windows-*.zip; do
+            [ -f "$zip" ] || continue
+            arch=$(basename "$zip" .zip | sed 's/.*-windows-//')
+            unzip -o -j "$zip" devpw.exe -d "scan-tmp" >/dev/null
+            mv scan-tmp/devpw.exe "scan/devpw-windows-${arch}.exe"
+          done
+          rm -rf scan-tmp
+          ls -lh scan
+
+      - name: Look up each digest, submit what is unknown
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: |
+          set -eu
+
+          if [ -z "${VT_API_KEY:-}" ]; then
+            echo "::warning::No VT_API_KEY secret — nothing was looked up or submitted."
+            {
+              echo "## VirusTotal"
+              echo
+              echo "Not run: this repository has no \`VT_API_KEY\` secret."
+              echo "Add one under Settings → Secrets and variables → Actions to have each"
+              echo "release's binaries registered before the first user downloads them."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          api="https://www.virustotal.com/api/v3"
+          gui="https://www.virustotal.com/gui/file"
+          # The free tier allows four requests a minute. Every file costs one lookup and
+          # an unknown one costs a second for the upload, so the pause goes before each
+          # request rather than after each file.
+          pause() { sleep 16; }
+
+          {
+            echo "## VirusTotal — v${VERSION}"
+            echo
+            echo "| File | SHA-256 | Status |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          seen=""
+          submitted=0
+          for f in scan/*; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f")
+            sha=$(sha256sum "$f" | cut -d' ' -f1)
+
+            # The Windows raw `.exe` and the `dev-prune.exe`/`devp.exe` inside the zip
+            # are one file under three names on purpose. One digest, one record, one row.
+            case " $seen " in *" $sha "*) continue ;; esac
+            seen="$seen $sha"
+
+            pause
+            code=$(curl -sS -o resp.json -w '%{http_code}' \
+              -H "x-apikey: $VT_API_KEY" "$api/files/$sha")
+
+            if [ "$code" = "200" ]; then
+              # Deliberately not "N of 70 clean": the stats object carries timeouts and
+              # unsupported types as well, and a total assembled here would be a number
+              # this repository invented. The link goes to the real one.
+              stats=$(jq -r '.data.attributes.last_analysis_stats | "\(.malicious) malicious, \(.suspicious) suspicious"' resp.json)
+              status="already known — $stats"
+            elif [ "$code" = "404" ]; then
+              pause
+              up=$(curl -sS -o upload.json -w '%{http_code}' -X POST \
+                -H "x-apikey: $VT_API_KEY" --form "file=@$f" "$api/files")
+              if [ "$up" = "200" ]; then
+                status="submitted — analysis queued"
+                submitted=$((submitted + 1))
+              else
+                status="upload failed (HTTP $up)"
+                echo "::warning::VirusTotal upload of $name failed with HTTP $up"
+              fi
+            else
+              status="lookup failed (HTTP $code)"
+              echo "::warning::VirusTotal lookup of $name failed with HTTP $code"
+            fi
+
+            echo "| \`$name\` | [\`${sha}\`]($gui/$sha) | $status |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          {
+            echo
+            echo "$submitted file(s) newly submitted. Detection counts on a same-day"
+            echo "release are noise from engines that have never seen the digest before;"
+            echo "they fall as downloads accumulate. A vendor that is still flagging a"
+            echo "release weeks later is worth a false-positive dispute, and that is a"
+            echo "form on the vendor's own site, not something this workflow can do."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   summary:
     name: What actually shipped
-    needs: [publish, publish-npm, publish-pypi, publish-crate, packaging, submit-winget]
+    needs: [publish, publish-npm, publish-pypi, publish-crate, packaging, submit-winget, scan]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -829,6 +953,7 @@ jobs:
           CRATE: ${{ needs.publish-crate.result }}
           PKG: ${{ needs.packaging.result }}
           WINGET: ${{ needs.submit-winget.result }}
+          SCAN: ${{ needs.scan.result }}
         run: |
           set -eu
           describe() {
@@ -872,6 +997,14 @@ jobs:
               success) echo "| winget-pkgs | ✅ pull request opened — merging is a Microsoft review |" ;;
               skipped) echo "| winget-pkgs | ⚠️ **not submitted** — channel not enabled (set \`WINGET_PUBLISH\`) |" ;;
               *)       echo "| winget-pkgs | ❌ **failed** — see the job log |" ;;
+            esac
+            # Not a channel and not a gate: it says whether every published digest is
+            # now on file somewhere a user can look it up, which is what `devp trust`
+            # sends them to do.
+            case "$SCAN" in
+              success) echo "| VirusTotal | ✅ every published digest looked up, unknown ones submitted |" ;;
+              skipped) echo "| VirusTotal | ⚠️ skipped |" ;;
+              *)       echo "| VirusTotal | ❌ **failed** — see the job log |" ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"
 

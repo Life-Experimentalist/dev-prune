@@ -1149,7 +1149,26 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Opti
             output::format_bytes(r.bytes),
             output::clean_path(&r.path)
         );
-        println!("  {:<30} {:>10}  clear: {}", "", "", r.clear_command);
+        // The manager's own command was the only one printed here, which left the
+        // wrapper missing from the one place someone reads before deciding to empty
+        // something. It is not a synonym for the line below it: what `devp caches clear`
+        // frees is added to the lifetime total in `devp stats`, and the same command
+        // typed into a terminal is invisible to dev-prune, so the report a week later is
+        // short by exactly the space this cleared. The manual command still gets its
+        // line — dev-prune runs it, and hiding what it runs would be worse than
+        // repeating it.
+        // Repeated on both of a manager's rows rather than named once: the rows are
+        // ordered by size, so cargo's two are rarely adjacent and a command printed
+        // beside the first would be nowhere near the second.
+        let clearable = !matches!(r.clear, Clear::Manual { .. });
+        if clearable {
+            println!(
+                "  {:<30} {:>10}  clear: devp caches clear {}",
+                "", "", r.manager
+            );
+        }
+        let verb = if clearable { "runs: " } else { "clear:" };
+        println!("  {:<30} {:>10}  {verb} {}", "", "", r.clear_command);
         if let Some(note) = r.note {
             println!("  {:<30} {:>10}  {}", "", "", note);
         }
@@ -1244,7 +1263,8 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Opti
          no single repository's lockfile can prove it is recoverable — and it is what \
          makes `devp restore` fast, which is why nothing dev-prune runs on a schedule \
          will ever touch one. When you want the space more than the speed, run a clear \
-         command yourself, or `devp caches clear <manager>`.",
+         command yourself, or `devp caches clear <manager>` — only the second is counted \
+         in `devp stats`, because dev-prune never sees the first.",
     );
 }
 

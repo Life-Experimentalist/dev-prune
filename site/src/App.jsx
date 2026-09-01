@@ -2134,7 +2134,10 @@ Notes you should rely on, not work around:
                       What dev-prune is allowed to do on this machine, on one
                       screen: what the code guarantees everywhere, then every
                       setting you have switched on that widens it, by name, then
-                      every binary it owns with the SHA-256 an antivirus
+                      every copy of it on the machine &mdash; not just the
+                      managed ones: everything on your <code>PATH</code> and in
+                      each package manager&rsquo;s install directory, with the
+                      manager that put it there and the SHA-256 an antivirus
                       actually sees &mdash; the one on your disk, not the one on
                       the release page
                     </td>

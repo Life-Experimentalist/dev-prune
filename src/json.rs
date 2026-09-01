@@ -763,6 +763,7 @@ pub fn trust_document(report: &crate::commands::trust::TrustReport) -> Value {
                 "role": b.role,
                 "name": b.name,
                 "path": b.path,
+                "channel": b.channel,
                 "sha256": b.sha256,
                 "running": b.running,
                 "scan_report": b.scan_url(),

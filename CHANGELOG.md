@@ -58,6 +58,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrote it down".
   [Reference](docs/CLI_REFERENCE.md#20-devp-history---pass-n---limit-n---all---json---export-path)
 
+### Changed
+
+- **`devp trust` now lists every copy of dev-prune on the machine**, not just the ones it
+  manages. It looks in every directory on `PATH` and in the install directory of every
+  channel it knows about — including the ones that stop being on `PATH` when a venv
+  deactivates or a profile line goes — and prints each copy with the manager that
+  installed it, its SHA-256 and the lookup URL for that digest.
+
+  The old report knew about the managed directory and the file that was running, so a
+  machine carrying `dev-prune`, `devp` and `devpw` in `~/.cargo/bin` as well saw one row
+  out of four. That is the wrong count to print under "binaries on this machine", and it
+  hid the case the section exists for: several copies, different ages, and only one of
+  them the one your antivirus just looked at. Several copies is not a fault — a
+  `cargo install` and an installer run each leave one and they upgrade separately — and
+  `devp uninstall` names the command that removes each. Shims are left out: a `.cmd`
+  wrapper is a text file that runs the real executable, so a digest for it compares
+  against nothing. Nothing found is ever executed, only hashed. `--json` gains a
+  `channel` field per binary.
+  [Reference](docs/CLI_REFERENCE.md#18-devp-trust---json---fix-ownership)
+
+- **`devp caches` now prints `devp caches clear <manager>` beside each cache**, above the
+  manager's own command rather than instead of it. The two are not synonyms: what
+  dev-prune clears is added to the lifetime total in `devp stats`, and `npm cache clean`
+  typed into a terminal is invisible to it — so the report a week later was short by
+  exactly the space you had reclaimed. The manager's command still gets its own line,
+  labelled `runs:`, because that is what dev-prune executes and hiding it would be worse
+  than repeating it. Maven is unchanged and still prints only the manual command: its
+  local repository is not a cache, and `devp caches clear maven` refuses.
+  [Reference](docs/CLI_REFERENCE.md#16-devp-caches-clear-manager--all---unused---over-cap---dry-run---yes---json)
+
+### For contributors
+
+- **The release workflow registers each published digest with VirusTotal.** A binary with
+  no reputation is what heuristic engines score as suspicious, which is how the 1.5.0 zip
+  came to be quarantined; the answer is for every image to be known before the first user
+  downloads it, so that `devp trust` sends people to a report that exists. The job looks
+  each digest up and submits only what nothing has seen — including `devpw.exe`, which
+  ships inside the Windows zips and so had no record of its own. It never fails the
+  release: same-day detection counts are noise that falls as downloads accumulate, and a
+  workflow that gated on them would block every release forever. Skipped with a warning
+  when the repository has no `VT_API_KEY` secret.
+
 ### Fixed
 
 - **The one safety promise on `devp`'s first screen named the wrong command.** Both the
