@@ -668,15 +668,16 @@ reads unambiguously:
     `Enter` is the "keep going" key. On a row with an untaken recommendation it takes
     that advice and moves on; on any other row it just moves on; on the **Finish** line
     it opens a summary listing exactly what will be written, and one more `Enter`
-    writes it. So pressing nothing but `Enter` reviews every setting, accepts the safe
+    writes it. So pressing nothing but `Enter` reviews every setting, accepts the
     recommendations along the way, and finishes — the whole first-run walkthrough is
     one key, held down. The walk starts at the top of the list and visits every row,
     so what it configures is the whole thing rather than whatever happened to be below
-    the cursor. The one thing it never takes is the cautious tier
-    (`allow_manifest_rewrite`): turning that on stays a deliberate `Space` on its row.
-    `a` is the impatient version — it takes every remaining safe recommendation at once
+    the cursor. Since 1.17.0 that includes the cautious tier
+    (`allow_manifest_rewrite`): it is recommended on, so the walk takes it with the
+    rest — it still starts switched off, and `Space` on its row still declines it.
+    `a` is the impatient version — it takes every remaining recommendation at once
     and jumps straight to the summary, applying exactly what holding `Enter` would have
-    applied, cautious tier included in the exclusion. `Shift`+`Enter` does the same
+    applied. `Shift`+`Enter` does the same
     thing where your terminal reports the modifier; `a` is the spelling that works
     everywhere, which is why it is the one in the footer. Arrow keys move without
     accepting anything, `Space` changes the highlighted setting

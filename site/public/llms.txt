@@ -703,13 +703,14 @@ person and stays made. English is the only catalogue a native speaker has review
 `devp config wizard` opens all thirty-one in a full-screen configurator, one
 category per screen — the
 `devp trust` declaration first, then every setting, then a summary of exactly what
-will be written. Enter is the "keep going" key: it takes the safe recommendation on
+will be written. Enter is the "keep going" key: it takes the recommendation on
 the row it is on and moves to the next, so holding it walks the whole list, and on
 the Finish line it opens that summary — one more Enter saves. The walk starts at the
-top and visits every row. The walk never takes
-the cautious tier (`allow_manifest_rewrite`); that stays a deliberate Space. `a`
-takes every remaining safe recommendation at once and jumps to the summary — the same
-set the walk would have taken, cautious tier still excluded; Shift+Enter is the same
+top and visits every row. Since 1.17.0 that includes
+the cautious tier (`allow_manifest_rewrite`) — recommended on, so the walk takes it;
+it still starts switched off, and Space on its row still declines it. `a`
+takes every remaining recommendation at once and jumps to the summary — the same
+set the walk would have taken; Shift+Enter is the same
 thing on terminals that report the modifier. It runs
 itself once on a first install and again after an upgrade adds a setting the machine
 has never been shown, marking that one `NEW`; settings already confirmed are never
