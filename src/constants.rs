@@ -557,6 +557,15 @@ pub const CACHE_QUERY_TIMEOUT_SECS: u64 = 5;
 /// ceiling is not for.
 pub const CONTAINER_QUERY_TIMEOUT_SECS: u64 = 20;
 
+/// Timeout for one reclaim step of `devp caches clear <engine>`.
+///
+/// An order of magnitude above the query, because deleting is not measuring. `docker
+/// image prune -a` on a 30 GB store unlinks tens of thousands of layer files, and on
+/// Docker Desktop it does that inside a VM against a virtual disk. Ten minutes is not an
+/// estimate of how long that takes; it is the point past which the daemon is stuck
+/// rather than slow, and killing the step is better than a command that never returns.
+pub const CONTAINER_PRUNE_TIMEOUT_SECS: u64 = 600;
+
 /// Ceiling for one `devp caches clear` step.
 ///
 /// Ten minutes, not the five seconds a query gets: `go clean -modcache` and deleting a

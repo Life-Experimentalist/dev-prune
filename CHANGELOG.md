@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`devp caches clear docker`** (also `podman`, `nerdctl`) runs the container prune
+  commands the report has been printing since 1.13.0, instead of asking you to go and type
+  one in another window. Build cache, unused images, stopped containers — printed first,
+  after a prompt, and counted on its own line in `devp stats`, so the 20 GiB you reclaimed
+  on dev-prune's advice is space dev-prune can actually account for. `--dry-run` shows the
+  commands and the estimate and touches nothing.
+
+  **It will not touch a volume, and there is no flag that makes it.** No argument anywhere
+  in its table contains the word, and a unit test fails the build if one appears. An image
+  can be pulled again and a build cache rebuilt; what is inside a named volume is the only
+  copy. `docker volume prune` stays a command it prints and you type — and the estimate
+  has the engine's unused-volume figure taken out of it and named separately, rather than
+  promising back space these commands cannot give.
+
+  Nothing on a schedule reaches any of this: no daemon, no Git hook, no `devp run`, and
+  not `devp caches clear all` either. Naming the engine is the consent.
+  [Reference](docs/CLI_REFERENCE.md#devp-caches-clear-engine---dry-run---yes---json)
+
 - **[How a repository gets registered](docs/BACKGROUND_AUTOMATION.md#how-a-repository-gets-registered)**
   is every way a repository can land on a machine, and which of the three mechanisms
   catches it. A repository you unzipped, copied from another machine, restored from a
@@ -17,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   out. It also names the one case that still needs a hand, and what is skipped on purpose.
 
 ### Fixed
+
+- **The one safety promise on `devp`'s first screen named the wrong command.** Both the
+  bare-`devp` banner and the first screen of `devp setup` ended with "Only what a lockfile
+  can rebuild — and `devp undo` puts back the last run." `devp undo` reverses an `init` or
+  a `link`; it has never put a pruned directory back, in any release. The command that
+  does is `devp restore --last-run`, which is what both screens now say.
+- **`devp caches` explains the per-repository figure that looked like an arithmetic
+  error.** A row reading `go build cache 2.7 GiB · go is used by 3 of 9 registered
+  repositories · 1.5 GiB each` was correct and unreadable: the figure covers both of go's
+  caches, and the row it is printed beside is the smaller one. It now says what it summed
+  — `1.5 GiB each across its 2 caches` — and only where a manager has more than one.
 
 - **`devp status` → `[p]` can now select the repositories it is showing you.** Prune-select
   mode only ever accepted repositories already past the idle threshold, so on a machine

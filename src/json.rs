@@ -331,6 +331,7 @@ pub fn stats_document(registry: &Registry) -> Value {
             // back, but a consumer asking "how much did pruning save me" and one asking
             // "how much will I re-download" want different halves of the sum.
             "cache_bytes_freed": registry.total_cache_freed_bytes,
+            "container_bytes_freed": registry.total_container_freed_bytes,
             // Same name and same number as `totals.prune_passes` in the status document.
             // One per pass that deleted something, wherever it was started from.
             "prune_passes": registry.total_pruned_count,
@@ -629,6 +630,53 @@ pub fn caches_clear_document(
         },
     })
 }
+/// `devp caches clear <engine> --json`: what was run, and what the disk gave back.
+///
+/// `freed_bytes` is the engine's own `system df` total before minus the same total after,
+/// never the sum of what each prune command reported. Container layers are shared, so
+/// those add up to more than the disk ever had — a consumer adding the step figures would
+/// get a number that cannot be true.
+///
+/// `volumes_untouched` is stated rather than implied. It is the one promise this command
+/// makes about what it did *not* do, and a consumer should be able to check it without
+/// reading the argv table in the binary.
+pub fn containers_clear_document(
+    outcome: &crate::commands::containers::ClearOutcome,
+    dry_run: bool,
+) -> Value {
+    let steps: Vec<Value> = outcome
+        .steps
+        .iter()
+        .map(|s| {
+            let mut obj = json!({
+                "command": s.command,
+                "reclaims": s.what,
+                "ran": !dry_run && s.problem.is_none(),
+            });
+            if let Some(problem) = &s.problem {
+                obj["error"] = json!(problem);
+            }
+            obj
+        })
+        .collect();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "caches clear",
+        "dry_run": dry_run,
+        "engine": outcome.engine,
+        "steps": steps,
+        "summary": {
+            "bytes_before": outcome.before,
+            "bytes_after": outcome.after,
+            "freed_bytes": if dry_run { 0 } else { outcome.freed() },
+            "failed": outcome.steps.iter().filter(|s| s.problem.is_some()).count(),
+            "volumes_untouched": true,
+        },
+    })
+}
+
 /// `devp trust --json`: what the tool guarantees, and what this machine has switched on.
 ///
 /// Guarantees and machine state stay in separate arrays because they are different kinds

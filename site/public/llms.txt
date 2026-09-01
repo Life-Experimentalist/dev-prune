@@ -55,11 +55,12 @@ cannot. It is not a generic disk cleaner: directories outside registered Git
 repositories are never touched. Machine-wide package caches are *reported* by
 `devp caches` (with the vendor's own clear command) and never deleted by anything that
 runs on its own, because a shared cache cannot be proven recoverable by any one lockfile
-and it is what makes restore fast. Container engines get the same treatment one step
-further: `devp caches docker` reports what Docker, Podman or nerdctl are holding and
-prints the prune commands, and nothing in dev-prune will ever run one.
-`devp caches clear <manager>` empties one when you
-type it, after showing what goes and asking.
+and it is what makes restore fast. Container engines are reported the same way by
+`devp caches docker`, and nothing that runs on its own will ever touch one.
+`devp caches clear <manager>` empties a cache when you type it, and
+`devp caches clear <engine>` runs Docker's or Podman's own narrow prune commands when you
+name the engine — both after showing what goes and asking, and neither ever touching a
+volume, which is the one thing here that nothing can hand back.
 
 ## Install
 
@@ -196,8 +197,9 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   into a pinned venv, an ad-hoc `uv pip install`), with the one command that records
   them — a pure read, and the same comparison a prune refuses on
 - `devp stats [--json]` — what has already been reclaimed: lifetime total from pruning,
-  a separate lifetime total from `devp caches clear` (never added to it: one costs a
-  reinstall in one repository, the other a download in every project), prune passes,
+  a separate one from `devp caches clear <manager>`, and a third from `devp caches clear
+  <engine>` (never added together: one costs a reinstall in one repository, the next a
+  download in every project, the last a pull of the whole layer stack), prune passes,
   the most recent pass and how to undo it, and the repositories that gave back the most.
   Per-repository figures and the pass history are recorded from 1.1.0 onward
 - `devp completions <bash|zsh|fish|powershell|elvish>` — print a shell completion script
@@ -257,12 +259,9 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   `[--json]` — what a container engine is holding: images, containers, local volumes and
   build cache, each with a count, a size, and how much of that size the engine says it
   could give back. Then the prune commands that would give it back, narrowest first, with
-  what each takes with it. **Read-only, permanently** — there is no flag and no `clear`
-  verb that makes dev-prune run one of them, and no scheduler or Git hook reaches this
-  code at all. That is the same rule as the rest of the tool rather than extra caution: an
-  image has no lockfile to prove it can be rebuilt, the Dockerfile that built it may not
-  be on this disk, and a named volume is the one thing on the machine that cannot be
-  rebuilt at all. `devp caches clear docker` is a usage error that says so. The figures
+  what each takes with it. **This report deletes nothing**, and no scheduler or Git hook
+  reaches container disk at all — that part is permanent. `devp caches clear <engine>`
+  runs the narrow ones for you when you name the engine; see below. The figures
   come from the engine's own `system df` rather than a directory walk, because on Docker
   Desktop and Podman the store lives inside a VM disk image the host filesystem cannot
   see — a size taken off the disk would be wrong by orders of magnitude, in the
@@ -280,6 +279,23 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   container disk is not a package manager cache and adding the two figures together is
   always wrong. Exit 0 whether an engine answered, was stopped, or was not installed;
   2 for an engine name it does not know
+- `devp caches clear <docker|podman|nerdctl> [--dry-run] [--yes] [--json]` — run the
+  narrow prune commands the report above prints, after printing them and asking:
+  `builder prune -a -f`, `image prune -a -f` and `container prune -f` for docker and
+  podman, and `system prune -a -f` for nerdctl, whose narrow subcommands are spelled
+  differently across versions. **No volume, ever**: there is no argument anywhere in that
+  table containing the word, and a unit test fails the build if one appears. That is not
+  the lockfile rule — an image can be pulled again and a build cache rebuilt, so those are
+  a question of consent, and the prompt is the consent — it is that a named volume holds
+  the only copy of what is inside it. The headline estimate has the engine's unused-volume
+  figure subtracted out and names it separately as left alone, pointing at
+  `<engine> volume prune` as yours to type. Freed space is `system df` before minus after,
+  never the sum of what the commands claimed: layers are shared, so those add up to more
+  than the disk ever held. It is counted on its own line in `devp stats`. Not reachable
+  from `clear all`, from any scheduler, or from a Git hook — naming the engine is the
+  consent. An engine that is not installed, or whose daemon is stopped, is exit 2 quoting
+  the engine's own words rather than a guess. `--over-cap` and `--unused` with an engine
+  name are exit 2: an image belongs to no repository and `cache_max_gb` does not cover one
 - `devp caches clear <manager|all> [--over-cap] [--unused] [--dry-run] [--yes] [--json]` — empty one manager's
   cache, or every one of them, after listing and sizing what goes and asking. A
   convenience, never automation: only this command clears a cache, and only when you
@@ -446,10 +462,13 @@ with a `git clone` of possibly-untrusted code.
 - Never deletes a machine-wide cache on its own. `devp caches` reports them with each
   vendor's own clear command, and `devp caches clear` empties one only when you type it —
   no scheduler, Git hook or prune pass ever touches one.
-- Never deletes container disk. `devp caches docker`, `devp caches podman` and `devp
-  caches containers` report what each engine holds and print the prune commands; nothing
-  in dev-prune runs one, with or without `--yes`. `devp caches clear docker` is a usage
-  error that points back at the report.
+- Never deletes container disk on its own. No prune pass, scheduler or Git hook reaches
+  an engine, and `devp caches clear all` does not either. `devp caches clear docker` does,
+  when you name it and answer the prompt.
+- Never deletes a volume, in any command, with any flag. There is no argument in
+  dev-prune's container table containing the word "volume", and a unit test fails the
+  build if one appears. `docker volume prune` stays a command the report prints and you
+  type.
 - Never empties Maven's local repository at all. `~/.m2/repository` holds artifacts
   `mvn install:install-file` put there that no remote can hand back, so dev-prune sizes
   it, prints the command, and leaves running it to you.

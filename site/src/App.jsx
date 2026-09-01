@@ -1083,7 +1083,7 @@ Notes you should rely on, not work around:
               <p className="hero-description">
                 Pruning is one command of several. The same binary restores what
                 it removed, sizes and clears the caches package managers keep
-                outside your projects, reports what Docker is holding, and shows
+                outside your projects, clears what Docker is holding, and shows
                 where the disk went drive by drive &mdash; one tool for every
                 dependency directory on the machine, instead of one per
                 ecosystem.
@@ -2079,8 +2079,22 @@ Notes you should rely on, not work around:
                       commands and what each takes with it. Also{" "}
                       <code>podman</code>, <code>nerdctl</code>, and{" "}
                       <code>devp caches containers</code> for every engine at
-                      once plus any local Kubernetes clusters. Read-only,
-                      permanently: it prints the commands, you run them
+                      once plus any local Kubernetes clusters. The report
+                      deletes nothing; the next row does
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
+                      <code>devp caches clear &lt;engine&gt;</code>
+                    </td>
+                    <td>
+                      Run the narrow prune commands for you &mdash; build cache,
+                      unused images, stopped containers &mdash; after printing
+                      them and asking, and count what came back on{" "}
+                      <code>devp stats</code>. Never a volume: there is no
+                      argument in the table containing the word, and a test
+                      fails the build if one appears. Name the engine; no
+                      schedule, hook or <code>clear all</code> reaches it
                     </td>
                   </tr>
                   <tr>
@@ -2726,21 +2740,24 @@ Notes you should rely on, not work around:
                 command and lets you decide.
               </Faq>
               <Faq q="Docker is bigger than all of these put together. Does it help?">
-                It measures it and refuses to touch it, which is the honest
-                answer to a 40&nbsp;GB Docker install.{" "}
+                It is usually the biggest single thing on a developer's disk,
+                and since 1.17.0 the same binary clears it.{" "}
                 <code>devp caches docker</code> — or <code>podman</code>,{" "}
                 <code>nerdctl</code>, or <code>devp caches containers</code> for
                 all of them — breaks the space down into images, containers,
                 local volumes and build cache, says how much of each the engine
                 itself calls reclaimable, and then prints the prune commands
-                narrowest first with what each one takes with it. It never runs
-                them. An image has no lockfile to prove it can be rebuilt, the
-                Dockerfile that built it may not be on this disk, and a named
-                volume is the one thing on your machine that cannot be rebuilt at
-                all — so the same rule that governs everything else here says
-                measure, print, and leave the decision with you.{" "}
-                <code>devp caches clear docker</code> is a usage error that says
-                so. The figures come from the engine's own{" "}
+                narrowest first with what each one takes with it. Then{" "}
+                <code>devp caches clear docker</code> runs the narrow ones for
+                you: build cache, unused images, stopped containers, printed
+                first, after a prompt, and counted on <code>devp stats</code>{" "}
+                so the space you reclaimed on its advice is space it can account
+                for. It will not touch a volume, and there is no flag that makes
+                it &mdash; an image can be pulled again and a build cache
+                rebuilt, but what is inside a named volume is the only copy, so{" "}
+                <code>docker volume prune</code> stays a command it prints and
+                you type. Nothing on a schedule goes near any of it. The figures
+                come from the engine's own{" "}
                 <code>system df</code> rather than a look at the disk, because on
                 Docker Desktop and Podman the store lives inside a VM disk image
                 your filesystem cannot see — and because asking is the only way

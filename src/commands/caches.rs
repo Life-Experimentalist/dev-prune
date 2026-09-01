@@ -1306,7 +1306,7 @@ fn costliest_per_repository(reports: &[CacheReport]) -> Vec<(&'static str, u64)>
     let mut per: BTreeMap<&'static str, u64> = BTreeMap::new();
     for r in reports {
         if let Some(n) = r.dependents.filter(|n| *n > 0) {
-            let total = totals.get(r.manager).copied().unwrap_or(r.bytes);
+            let total = totals.get(r.manager).map_or(r.bytes, |t| t.0);
             per.insert(r.manager, total / n as u64);
         }
     }
@@ -1356,17 +1356,23 @@ pub fn run_clear(
     json_output: bool,
 ) -> Result<()> {
     let all = target.eq_ignore_ascii_case("all");
-    // A container engine is a thing `devp caches` reports on, so its name is a plausible
-    // thing to type here. "not a manager dev-prune knows" would be both wrong and a dead
-    // end; the answer is that this tool does not delete container disk, and where to go
-    // to see it.
+    // An engine is cleared by the module that knows how to ask it questions; the dispatch
+    // is here because `caches clear docker` is where a person looks for it.
+    //
+    // `all` deliberately does not reach it. A container store is the biggest thing on the
+    // disk and the slowest to put back, and "clear all the caches" typed in a hurry
+    // should not also mean re-pulling every base image tomorrow morning. Naming the
+    // engine is the consent.
     if !all && crate::commands::containers::is_engine(target) {
-        return Err(anyhow::Error::new(crate::UsageError(format!(
-            "dev-prune reports {target}'s disk use and never deletes it — an image has no \
-             lockfile to prove it can be rebuilt, and a volume cannot be rebuilt at all. \
-             `devp caches {target}` shows what it is holding and prints the prune commands \
-             for you to run."
-        ))));
+        if over_cap || unused {
+            return Err(anyhow::Error::new(crate::UsageError(format!(
+                "`--over-cap` and `--unused` pick package manager caches by size cap and by \
+                 which repositories still need them. Neither applies to {target}: an image \
+                 belongs to no repository and `cache_max_gb` does not cover one. Run `devp \
+                 caches clear {target}` on its own."
+            ))));
+        }
+        return crate::commands::containers::run_clear(target, yes, dry_run, json_output);
     }
     if !all
         && !PROBES
@@ -2194,9 +2200,23 @@ mod tests {
         );
         assert!(
             line.contains("cargo is used by 2 of 2 registered repositories")
-                && line.contains("6 GiB"),
+                && line.contains("6 GiB each across its 2 caches"),
             "{line}"
         );
+    }
+
+    #[test]
+    fn one_cache_does_not_say_how_many_it_summed() {
+        // The clause exists to explain a figure larger than the row above it. A manager
+        // with a single row has no such gap, and "across its 1 caches" would be noise.
+        let reports = vec![row("bun", "cache", 4)];
+        let line = used_by(
+            &reports[0],
+            2,
+            Some(&counted(2, &[("bun", 2)])),
+            &manager_totals(&reports),
+        );
+        assert!(line.ends_with("2 GiB each"), "{line}");
     }
 
     #[test]

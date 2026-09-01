@@ -1570,30 +1570,58 @@ fn an_engine_dev_prune_does_not_know_is_a_usage_error() {
 }
 
 #[test]
-fn clearing_a_container_engine_is_refused_rather_than_attempted() {
+fn clearing_a_container_engine_refuses_the_selections_that_cannot_apply() {
     let tmp = TempDir::new().unwrap();
     let config = tmp.path().join("config");
 
+    // Neither of these reaches an engine, so the answer is the same on a machine with
+    // Docker running and on one without it — which is why they are the two the contract
+    // pins. `--over-cap` reads `cache_max_gb` and `--unused` counts the repositories that
+    // need a cache; an image is not covered by either idea, and silently ignoring the
+    // flag would let `clear docker --unused` delete every image on the disk while the
+    // user believed they had narrowed it to the ones nothing needs.
     for engine in ["docker", "podman", "nerdctl"] {
-        let out = devp(&config)
-            .args(["caches", "clear", engine, "--yes"])
-            .output()
-            .unwrap();
-
-        // Exit 2, not 1: asking dev-prune to delete container disk is a usage error,
-        // because there is no configuration under which it would have worked.
-        assert_eq!(
-            out.status.code(),
-            Some(2),
-            "`devp caches clear {engine}` was not refused:\n{}",
-            combined(&out)
-        );
-        let text = combined(&out);
-        assert!(
-            text.contains(&format!("devp caches {engine}")),
-            "the refusal did not point at the report that does work:\n{text}"
-        );
+        for flag in ["--over-cap", "--unused"] {
+            let out = devp(&config)
+                .args(["caches", "clear", engine, flag, "--yes"])
+                .output()
+                .unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(2),
+                "`devp caches clear {engine} {flag}` was not a usage error:\n{}",
+                combined(&out)
+            );
+            let text = combined(&out);
+            assert!(
+                text.contains(engine),
+                "the refusal did not name the engine it was about:\n{text}"
+            );
+        }
     }
+}
+
+#[test]
+fn clearing_a_container_engine_as_json_still_demands_an_answer() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    // The same rule `caches clear` follows for package managers, checked here because
+    // this path is a different function: `--json` cannot stop to ask, so it must refuse
+    // rather than either hang on a prompt nobody can see or delete without one.
+    let out = devp(&config)
+        .args(["caches", "clear", "docker", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "`--json` without `--yes` was not refused:\n{}",
+        combined(&out)
+    );
+    let text = combined(&out);
+    assert!(text.contains("--yes"), "{text}");
+    assert!(text.contains("--dry-run"), "{text}");
 }
 
 #[test]

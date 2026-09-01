@@ -1194,6 +1194,19 @@ pub struct Registry {
     /// zero and starts counting from the next clear.
     #[serde(default)]
     pub total_cache_freed_bytes: u64,
+    /// Total bytes given back by `devp caches clear <engine>`, ever, on this machine.
+    ///
+    /// A third counter rather than a third contributor to one of the other two, for the
+    /// same reason they are already separate: undo cost. A prune costs one reinstall in
+    /// one repository, a cache clear costs a download in every project on the disk, and
+    /// an image costs a pull of the whole layer stack — or a rebuild, if the Dockerfile
+    /// is still around. Three different bills should not be added up into one number and
+    /// presented as a single achievement.
+    ///
+    /// Recorded from 1.17.0 onward, so a registry written before then deserializes to
+    /// zero and starts counting from the next clear.
+    #[serde(default)]
+    pub total_container_freed_bytes: u64,
     /// How many prune passes have deleted something, ever.
     ///
     /// One per *pass*, not per repository and not per directory — a `devp run` that
@@ -1263,6 +1276,7 @@ impl Default for Registry {
             repositories: HashMap::new(),
             total_freed_bytes: 0,
             total_cache_freed_bytes: 0,
+            total_container_freed_bytes: 0,
             total_pruned_count: 0,
             last_added_repos: Vec::new(),
             last_prune: None,
@@ -1515,6 +1529,11 @@ impl Registry {
     /// Credit `bytes` to the machine's running cache-clear total.
     pub fn record_cache_clear(&mut self, bytes: u64) {
         self.total_cache_freed_bytes += bytes;
+    }
+
+    /// Credit `bytes` to the machine's running container-reclaim total.
+    pub fn record_container_clear(&mut self, bytes: u64) {
+        self.total_container_freed_bytes += bytes;
     }
 
     /// Record what a prune pass deleted, replacing any earlier record.
