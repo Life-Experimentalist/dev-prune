@@ -5,6 +5,46 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2026-09-01
+
+### Added
+
+- **[How a repository gets registered](docs/BACKGROUND_AUTOMATION.md#how-a-repository-gets-registered)**
+  is every way a repository can land on a machine, and which of the three mechanisms
+  catches it. A repository you unzipped, copied from another machine, restored from a
+  backup or received over Dropbox never runs `git`, so no hook can ever fire for it —
+  discovery is what covers those, and the table says so instead of leaving you to work it
+  out. It also names the one case that still needs a hand, and what is skipped on purpose.
+
+### Fixed
+
+- **`devp status` → `[p]` can now select the repositories it is showing you.** Prune-select
+  mode only ever accepted repositories already past the idle threshold, so on a machine
+  where you have touched everything recently — the normal case — pressing `p` armed
+  nothing, `[Space]` did nothing, and a mode that opened empty looked exactly like a mode
+  that had failed to open. `[Space]` now selects any repository with something to reclaim,
+  including one you are working in today, and a row it still refuses says why: nothing to
+  reclaim, ignored, path missing, or a `.devprune.json` it could not read. The footer
+  counts against what is actually selectable rather than against everything on screen.
+  Nothing about what can be *deleted* changed — lockfile verification runs on every
+  selected repository exactly as before and still has no bypass. `[a]` and `[p]` continue
+  to arm only idle repositories, because `[Enter]` prunes without asking a second time.
+
+### Changed
+
+- **`devp run --ignore-idle` now prints the manual route next to the AI one.** The notice
+  already pointed at `devp skill` for anyone still stuck; it now also lists the five
+  commands that skill would reach for — `devp run --explain`, `devp status`, `devp doctor`,
+  `devp config show` and `devp man` — so you can work the problem yourself instead of
+  handing your shell to a language model to find out what `--explain` would have told you.
+- **`auto_discover` and `auto_hooks` now say which arrivals each of them actually covers.**
+  Their descriptions in `devp config` read as two vague promises to find things, and
+  neither mentioned the other, so there was no way to tell that the Git hooks only ever see
+  repositories Git itself creates. `auto_hooks` now names its three triggers — clone,
+  commit, merge — and hands everything else to `auto_discover`, which now says that it runs
+  only on the scheduled pass and finds projects by looking beside the ones you already
+  have.
+
 ## [1.16.0] - 2026-09-01
 
 ### Added

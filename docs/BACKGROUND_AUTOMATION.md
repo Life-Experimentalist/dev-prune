@@ -83,6 +83,52 @@ flowchart TD
 ```
 *Figure 1: What `devp setup` does, and every point at which it declines to.*
 
+### How a repository gets registered
+
+A repository is only ever pruned if dev-prune knows about it, and there are three ways it
+comes to know: you say so, Git says so, or the scheduled pass finds it. Every way a
+repository can arrive on a machine is caught by one of the three.
+
+| How the repository arrived | What registers it |
+|---|---|
+| `git clone`, including from an IDE or a GUI client — they all shell out to `git` | The `post-checkout` hook, immediately |
+| `git init`, or a scaffolder that runs it for you (`cargo new`, `npm create`, `degit`) | The `post-commit` hook, at your first commit. Until that commit, discovery |
+| `git worktree add` | The `post-checkout` hook. A linked worktree keeps `.git` as a *file*, and that counts |
+| A submodule checked out by `git submodule update` | Discovery, as a repository in its own right — pruning the parent never reaches inside it |
+| Unzipped from an archive, or extracted from a tarball | Nothing Git-side fires. Discovery |
+| Copied, `robocopy`'d or `rsync`'d from another machine; restored from a backup | Discovery |
+| Landed by Dropbox, OneDrive, Syncthing or another sync client | Discovery |
+| Appeared when you mounted a second disk or plugged in an external drive | Discovery, if a root reaches it — see below |
+| Moved or renamed on disk | Discovery finds it at the new path; `devp unlink --missing` clears the stale row at the old one |
+| You ran `devp init`, `devp init --auto` or `devp link` | You did |
+
+The hooks are the fast path, and they cover exactly one thing: repositories **Git itself
+creates or updates**. Everything in the middle of that table — unzipped, copied, restored,
+synced — never runs `git` at all, so no hook can fire for it, and no hook ever will. That
+is the entire reason `auto_discover` exists.
+
+#### The one case that still needs a hand
+
+Discovery works outward from roots, and its roots are the parent of every repository you
+already have, the directory you are standing in, and the conventional code folders under
+your home. A repository unzipped somewhere with no registered neighbour, outside those
+folders, that you never `cd` into, is reachable from none of them. Name the area once:
+
+```bash
+devp init /mnt/archive/restored-projects
+```
+
+From then on the neighbourhood root covers everything that ever lands beside it. It is one
+command per *area*, not one per repository.
+
+#### What is deliberately never registered
+
+Repositories that are somebody else's dependency rather than your project. The scan does
+not descend into `node_modules`, `venv`, `target`, `vendor`, `bower_components`, `AppData`
+or any dot-directory, so a checkout vendored inside one is never seen at all; repositories
+under a `cache` or `tmp` ancestor, or named `temp_git_*`, are seen, counted and skipped. A
+Go module cache holding four hundred checkouts adds four hundred rows to nothing.
+
 ### What the scheduled pass registers
 
 The setup pass registers no repository itself. The scheduled prune pass — `devp run

@@ -308,13 +308,19 @@ reads unambiguously:
   | `s` | Cycle the sort: relevance, size, longest idle, name |
   | `f` | Cycle the filter: all, candidates, has bloat, problems |
   | `/` | Search paths and adapter names; `Enter` keeps the query, `Esc` clears it |
-  | `p` | Enter Prune-Select mode, with every candidate **on screen** pre-selected |
-  | `Space` | Toggle the current row (Prune-Select mode) |
-  | `a` | Toggle every candidate on screen (Prune-Select mode) |
+  | `p` | Enter Prune-Select mode, with every candidate **on screen** pre-selected. On a machine where nothing is past the idle threshold it opens with nothing checked and says so — use `Space` to pick the repositories you are still working in |
+  | `Space` | Toggle the current row (Prune-Select mode). Accepts any repository with something to reclaim, including an *active* one that is only short of the idle threshold; rows that a prune could not deliver say why instead |
+  | `a` | Toggle every candidate on screen (Prune-Select mode). Candidates only — an active repository is checked one row at a time, because `Enter` prunes immediately |
   | `Enter` | Prune the selected repositories (Prune-Select mode) |
   | `i` | Toggle `ignore` in the repository's `.devprune.json`; the table refreshes immediately. Inert where a committed `project.devprune.json` sets `ignore` — that file wins, so edit it instead |
   | `Esc` | Leave Prune-Select mode, or exit from the browse view |
   | `q` / `Ctrl-C` | Exit the dashboard |
+
+  Choosing an active repository here does the same thing `devp run --ignore-idle` does:
+  the idle threshold is a default, and the dashboard shows how long each repository has
+  been idle so the choice is an informed one. Nothing else is waived — lockfile
+  verification runs on every directory, and a repository whose lockfile cannot be
+  trusted is refused with the reason printed.
 
   The sort, the filter and the search change only what is *displayed*. A repository
   checked for pruning stays checked when a filter hides it, and the counts in the header
@@ -540,7 +546,7 @@ reads unambiguously:
     | `auto_setup` | `true` | Whether the integration pass may run unattended at all |
     | `auto_config` | `false` | Whether `devp init` / `devp link` write a default `.devprune.json` into newly registered repositories |
     | `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
-    | `auto_discover` | `true` | Whether the scheduled background pass looks for unregistered repositories by itself, using the same sources as [`devp init --auto`](#1-devp-init-paths). Registering is not pruning — a discovered repository is still only touched once it is idle and a lockfile proves the directory rebuildable — and a repository holding an `ignore.devprune.json` is never registered |
+    | `auto_discover` | `true` | Whether the scheduled background pass looks for unregistered repositories by itself, using the same sources as [`devp init --auto`](#1-devp-init-paths). Registering is not pruning — a discovered repository is still only touched once it is idle and a lockfile proves the directory rebuildable — and a repository holding an `ignore.devprune.json` is never registered. Which arrivals reach the hooks and which only discovery can catch: [How a repository gets registered](BACKGROUND_AUTOMATION.md#how-a-repository-gets-registered) |
     | `check_interval_days` | `2` | How often the OS scheduler runs a pass |
     | `auto_hooks` | `true` | Whether that pass may install the global Git hooks |
     | `auto_hooks_chain` | `false` | Whether it may take a `core.hooksPath` another tool holds, forwarding every hook on to it. Off by default because that setting is one slot, global to the machine, and already somebody else's: taking it rewires husky, pre-commit or lefthook for every repository you have |

@@ -476,8 +476,8 @@ const SETTINGS: &[Setting] = &[
         category: Category::Unattended,
         since: "1.14.0",
         kind: Kind::Toggle,
-        help: "Let the scheduled pass find and register repositories you never added.",
-        plain: "Finds the rest of your projects on its own, so nothing is missed just because you never added it.",
+        help: "Let the scheduled pass register repositories no Git hook could see — unzipped, copied or restored ones.",
+        plain: "Finds projects you never added by looking beside the ones you already have, so a repository you unzipped or copied from another machine still gets cleaned up.",
         get: |s| s.auto_discover.to_string(),
         set: |s, v| {
             s.auto_discover = parse_bool("auto_discover", v)?;
@@ -489,8 +489,8 @@ const SETTINGS: &[Setting] = &[
         category: Category::Unattended,
         since: "1.0.0",
         kind: Kind::Toggle,
-        help: "Install the Git hooks that register repositories as you clone them.",
-        plain: "Registers new repositories automatically as you clone them, so you never have to add them by hand.",
+        help: "Install the Git hooks that register a repository when you clone, commit or merge in it.",
+        plain: "Adds repositories as Git creates them. Anything Git did not create — a copied or unzipped project — is left to `auto_discover`.",
         get: |s| s.auto_hooks.to_string(),
         set: |s, v| {
             s.auto_hooks = parse_bool("auto_hooks", v)?;

@@ -113,6 +113,17 @@ fn print_ignore_idle_notice() {
     println!("  exports a SKILL.md that teaches it this tool, exit codes and all. It has");
     println!("  read the manual more recently than either of us.");
     println!();
+    // The same list the skill would work from, spelled out for someone who would rather
+    // not hand their shell to a language model. Both audiences want the identical five
+    // commands, so they are printed once, here, rather than kept only in SKILL.md.
+    println!("  Or do it the old-school way — every step that skill would take, by hand:");
+    println!("    • `devp run --explain`   the verdict for every repository and directory,");
+    println!("                             and the one reason behind each of them.");
+    println!("    • `devp status`          what is registered, how idle it is, what it holds.");
+    println!("    • `devp doctor`          the install itself: hooks, scheduler, config, PATH.");
+    println!("    • `devp config show`     every setting and the value it currently has.");
+    println!("    • `devp man`             the full reference, offline.");
+    println!();
 }
 
 /// `devp run <PATH>` — one workspace, no registry, no selector.
