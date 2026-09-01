@@ -228,6 +228,21 @@ const ECOSYSTEMS = [
         ),
         restore: <code>bun install --frozen-lockfile</code>,
       },
+      {
+        name: "Deno",
+        detect: <code>deno.lock</code>,
+        deletes: (
+          <>
+            <code>node_modules</code>, <code>vendor</code>
+          </>
+        ),
+        verify: (
+          <>
+            <code>deno.lock</code> complete and not stale
+          </>
+        ),
+        restore: <code>deno install</code>,
+      },
     ],
     tieBreak: (
       <>
@@ -236,7 +251,13 @@ const ECOSYSTEMS = [
         <code>package.json</code>; else whichever manager's bookkeeping files
         are actually inside the installed <code>node_modules</code>; else the
         most recently written lockfile. Only that manager verifies, deletes and
-        restores — the others are not consulted.
+        restores — the others are not consulted. Deno is outside that contest:
+        the other four are alternatives to each other, while a repository
+        holding both a <code>deno.lock</code> and a{" "}
+        <code>package-lock.json</code> genuinely uses both tools. It takes{" "}
+        <code>vendor/</code> only when the Deno config asked for one — Go and
+        Composer use that name for something else entirely — and the shared{" "}
+        <code>node_modules</code> is still counted and deleted once.
       </>
     ),
   },
@@ -1074,7 +1095,7 @@ Notes you should rely on, not work around:
                 touched in a while and deletes what their package managers can
                 rebuild — <code>node_modules</code>, <code>.venv</code>,{" "}
                 <code>target</code>, <code>vendor</code> and the rest, across
-                twenty-three managers from npm and pip to Composer, Bundler,
+                twenty-four managers from npm and pip to Composer, Bundler,
                 Mix, CocoaPods and Terraform. Nothing is deleted until the
                 package manager itself confirms a lockfile can restore it.
                 Verification is not a flag you can turn off.
@@ -1752,7 +1773,7 @@ Notes you should rely on, not work around:
           <div className="container">
             <div className="section-header">
               <h2 className="section-title">
-                Twenty-three managers.{" "}
+                Twenty-four managers.{" "}
                 <span className="gradient-text">
                   Any number per repository.
                 </span>
@@ -1801,8 +1822,8 @@ Notes you should rely on, not work around:
 
             <div className="info-card eco-contribute">
               <h3>
-                <Puzzle size={18} /> Twenty-four would be better than
-                twenty-three
+                <Puzzle size={18} /> Twenty-five would be better than
+                twenty-four
               </h3>
               <p>
                 Adding a manager is deliberately small: implement one{" "}
@@ -2089,9 +2110,10 @@ Notes you should rely on, not work around:
                       volumes and build cache, each sized, with how much of it
                       the engine says it could give back — then the prune
                       commands and what each takes with it. Also{" "}
-                      <code>podman</code>, <code>nerdctl</code>, and{" "}
-                      <code>devp caches containers</code> for every engine at
-                      once plus any local Kubernetes clusters. The report
+                      <code>podman</code>, <code>nerdctl</code>,{" "}
+                      <code>finch</code>, Apple&rsquo;s <code>container</code>,
+                      and <code>devp caches containers</code> for every engine
+                      at once plus any local Kubernetes clusters. The report
                       deletes nothing; the next row does
                     </td>
                   </tr>
@@ -2758,8 +2780,9 @@ Notes you should rely on, not work around:
                 It is usually the biggest single thing on a developer's disk,
                 and since 1.17.0 the same binary clears it.{" "}
                 <code>devp caches docker</code> — or <code>podman</code>,{" "}
-                <code>nerdctl</code>, or <code>devp caches containers</code> for
-                all of them — breaks the space down into images, containers,
+                <code>nerdctl</code>, <code>finch</code>, Apple&rsquo;s{" "}
+                <code>container</code>, or <code>devp caches containers</code>{" "}
+                for all of them — breaks the space down into images, containers,
                 local volumes and build cache, says how much of each the engine
                 itself calls reclaimable, and then prints the prune commands
                 narrowest first with what each one takes with it. Then{" "}

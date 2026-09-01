@@ -75,7 +75,7 @@ written down, and the answer to "will you add X" is yes, here is the recipe.
 - **More adapters.** The trait, registration and test recipe are in
   [`ADDING_ADAPTERS.md`](ADDING_ADAPTERS.md), and the opt-in mechanism (`opt_in()`,
   `enable_*` settings, `build_idle_days`) already exists for anything whose deletion
-  costs a recompile rather than a download. Twenty-three ship as of 1.9.0, and the obvious
+  costs a recompile rather than a download. Twenty-four ship as of 1.17.0, and the obvious
   ecosystems are covered — what is left is the awkward one. **Nix**: `result` symlinks
   are already refused for being symlinks, and a real adapter would have to reason about
   the store, which is a different kind of problem from "a lockfile says this comes back".

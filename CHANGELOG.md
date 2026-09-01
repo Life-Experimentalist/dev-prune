@@ -9,12 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`devp caches clear docker`** (also `podman`, `nerdctl`) runs the container prune
-  commands the report has been printing since 1.13.0, instead of asking you to go and type
-  one in another window. Build cache, unused images, stopped containers — printed first,
-  after a prompt, and counted on its own line in `devp stats`, so the 20 GiB you reclaimed
-  on dev-prune's advice is space dev-prune can actually account for. `--dry-run` shows the
-  commands and the estimate and touches nothing.
+- **`devp caches clear docker`** (also `podman`, `nerdctl`, `finch` and Apple's
+  `container`) runs the container prune commands the report has been printing since
+  1.13.0, instead of asking you to go and type one in another window. Build cache, unused
+  images, stopped containers — printed first, after a prompt, and counted on its own line
+  in `devp stats`, so the 20 GiB you reclaimed on dev-prune's advice is space dev-prune
+  can actually account for. `--dry-run` shows the commands and the estimate and touches
+  nothing.
 
   **It will not touch a volume, and there is no flag that makes it.** No argument anywhere
   in its table contains the word, and a unit test fails the build if one appears. An image
@@ -57,6 +58,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   carries `detail: false` on those, so a script can tell "deleted nothing" from "nobody
   wrote it down".
   [Reference](docs/CLI_REFERENCE.md#20-devp-history---pass-n---limit-n---all---json---export-path)
+
+- **`devp caches` now finds the stores that were quietly the largest things on the disk.**
+  Playwright and Puppeteer keep a whole browser build per version, Cypress an unpacked
+  Electron application per version, and none of them ever removes the old one when the
+  dependency moves — on the machine this was written on that was 2.9 GiB nothing had ever
+  reported. The HuggingFace hub cache, the Electron download cache and electron-builder's
+  own store are in the report for the same reason. Each gets the row every other cache
+  gets: a size, the path, `devp caches clear <name>`, and the command that clears it.
+
+  **`huggingface` carries a warning the others do not**, because it is the one row where
+  "re-download it" is not a promise. A gated or now-private repository will not hand the
+  weights back to the token that fetched them last month, a checkpoint from a deleted
+  revision is gone, and the re-download is tens of gigabytes rather than tens of
+  megabytes. It is cleared like anything else when you type it — with the path printed
+  first, so you can look inside before you do.
+  [Reference](docs/CLI_REFERENCE.md#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json)
+
+- **Six adapters that pruned projects with nothing to show for it now have a cache row.**
+  `devp run` has always cleaned a Bundler, pub, SwiftPM, Terraform, Poetry or PDM project;
+  `devp caches` could not see the machine-wide store those projects were reinstalling
+  from, so the report answered "where did my disk go" with a gap exactly where the answer
+  was. Each is asked where its cache is rather than assumed — `gem env gemdir`,
+  `poetry config cache-dir`, `pdm config cache_dir` — and each row names the one
+  subdirectory that is genuinely a download cache. That last part is the whole care taken
+  here: `dart pub cache clean` would also delete your globally activated executables and
+  your `git/` checkouts, and Poetry's cache directory holds `virtualenvs/` beside
+  `artifacts/`. dev-prune clears the archives and nothing else.
+  [Reference](docs/CLI_REFERENCE.md#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json)
+
+- **A Deno adapter**, the twenty-fourth. It detects on `deno.lock` and takes the
+  `node_modules` a Deno project with npm dependencies materialises, sized the way bun's is
+  because Deno hardlinks it out of `DENO_DIR` too. `deno install` puts it back, and
+  `devp caches clear deno` empties the shared cache behind it.
+
+  It takes `vendor/` **only when the Deno config asked for one**. Go and Composer both use
+  that name at a project root for something else entirely, and a repository carrying a
+  `deno.lock` alongside either would otherwise have had its Composer dependencies deleted
+  with `deno install` offered to put them back. The config is parsed rather than searched,
+  so a `"vendor": true` somebody commented out in a `deno.jsonc` reads as what it is.
+  [Reference](README.md#supported-ecosystems)
+
+- **finch and Apple's `container`** join the container report and `devp caches clear`.
+  finch is nerdctl inside a Lima VM and forwards `system` to it verbatim, so it reads and
+  clears exactly as nerdctl does. Apple's engine is the odd one: its `system df` answers
+  with a single object rather than a row per resource, it has no `system prune`, and its
+  prune subcommands neither ask a question nor define a `-f` — so those steps run the
+  moment they are typed, and `devp caches containers container` says so in as many words
+  before it lists them. The confirmation is dev-prune's own, and it is still there.
+  [Reference](docs/CLI_REFERENCE.md#devp-caches-clear-engine---dry-run---yes---json)
 
 ### Changed
 

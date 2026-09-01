@@ -68,7 +68,7 @@ graph TD
 - **Workspace**: Bounded walk of a registered repository that finds every package-manager project inside it, at any depth, so a monorepo's `frontend/`, `services/api/` and `cli/` are each handled on their own terms.
 - **GlobalConfig**: Persistent JSON storage at `~/.config/dev-prune/registry.json` (or `%APPDATA%\dev-prune\registry.json`).
 - **AdapterRegistry**: Interface managing concrete ecosystem package manager implementations.
-- **The adapters**: Twenty-three of them, one per package manager, each enforcing lockfile safety and owning that ecosystem's directories. JavaScript (npm, pnpm, Yarn, Bun), Python (uv, Poetry, PDM, Pipenv, venv), Rust (Cargo), Go, PHP (Composer), Ruby (Bundler), Elixir (Mix, and Mix builds), Apple (CocoaPods, SwiftPM), Dart, Infrastructure (Terraform), JVM (Gradle, Maven) and C/C++ (vcpkg, CMake builds). Eight are opt-in; the list is in [`docs/CLI_REFERENCE.md`](../CLI_REFERENCE.md).
+- **The adapters**: Twenty-four of them, one per package manager, each enforcing lockfile safety and owning that ecosystem's directories. JavaScript (npm, pnpm, Yarn, Bun, Deno), Python (uv, Poetry, PDM, Pipenv, venv), Rust (Cargo), Go, PHP (Composer), Ruby (Bundler), Elixir (Mix, and Mix builds), Apple (CocoaPods, SwiftPM), Dart, Infrastructure (Terraform), JVM (Gradle, Maven) and C/C++ (vcpkg, CMake builds). Eight are opt-in; the list is in [`docs/CLI_REFERENCE.md`](../CLI_REFERENCE.md).
 - **OSDaemon**: Native background task triggering periodic 2-day automated maintenance passes.
 - **GitHooks**: Non-blocking background shell hooks registering newly checked-out Git repositories.
 
