@@ -314,7 +314,15 @@ pub fn status_document(
 /// that changed, so a consumer can say so rather than reporting a regression.
 /// `lifetime.cache_bytes_freed` is the third vintage: 1.9.0 onward, and zero on every
 /// machine that has not emptied a cache since upgrading.
-pub fn stats_document(registry: &Registry) -> Value {
+///
+/// `by_manager` and `by_trigger` are the fourth: they are summed from the prune log, so
+/// they cover only the passes it holds — `detail_starts_at`, not `history_starts_at`. Each carries its own `passes_not_counted`,
+/// and the two numbers differ on purpose — a pass can have a directory list without a
+/// trigger, so the manager breakdown reaches back further than the trigger split does.
+pub fn stats_document(registry: &Registry, passes: &[crate::history::Pass]) -> Value {
+    let (managers, managers_uncounted) = crate::commands::stats::rank_managers(passes);
+    let (triggers, triggers_uncounted) = crate::commands::stats::split_by_trigger(passes);
+
     let mut repos: Vec<(&std::path::PathBuf, &crate::config::RepoEntry)> =
         registry.repositories.iter().collect();
     repos.sort_by(|a, b| {
@@ -328,6 +336,9 @@ pub fn stats_document(registry: &Registry) -> Value {
         "version": constants::VERSION,
         "command": "stats",
         "history_starts_at": constants::HISTORY_STARTS_AT,
+        // The other vintage, and the one `by_manager` and `by_trigger` are bounded by.
+        // Same key and same meaning as in the history document.
+        "detail_starts_at": constants::PRUNE_LOG_STARTS_AT,
         "lifetime": {
             "bytes_freed": registry.total_freed_bytes,
             // Its own key, never added to `bytes_freed`. Both are bytes this tool gave
@@ -356,6 +367,26 @@ pub fn stats_document(registry: &Registry) -> Value {
             "bytes_freed": entry.total_freed_bytes,
             "last_pruned_at": entry.last_pruned_at.map(|t| t.to_rfc3339()),
         })).collect::<Vec<_>>(),
+        // Every manager, not the ten the text report ranks: a consumer that wanted a
+        // top-ten can take one, and one that wanted the tail cannot get it back.
+        "by_manager": {
+            "passes_not_counted": managers_uncounted,
+            "managers": managers.iter().map(|m| json!({
+                "manager": m.manager,
+                "bytes_freed": m.bytes,
+                "directories": m.dirs,
+            })).collect::<Vec<_>>(),
+        },
+        "by_trigger": {
+            "passes_not_counted": triggers_uncounted,
+            // Always all three, including the zeros. A missing `scheduled` key and one
+            // reading zero mean the same thing here, and only one of them says it.
+            "triggers": triggers.iter().map(|t| json!({
+                "trigger": t.trigger.label(),
+                "bytes_freed": t.bytes,
+                "passes": t.passes,
+            })).collect::<Vec<_>>(),
+        },
     })
 }
 
@@ -1112,10 +1143,57 @@ mod tests {
         };
         registry.record_cache_clear(6_000_000_000);
 
-        let doc = stats_document(&registry);
+        let doc = stats_document(&registry, &[]);
 
         assert_eq!(doc["lifetime"]["bytes_freed"], 12_000_000_000u64);
         assert_eq!(doc["lifetime"]["cache_bytes_freed"], 6_000_000_000u64);
+    }
+
+    #[test]
+    fn the_breakdowns_report_what_they_could_not_count() {
+        use crate::config::PrunedDir;
+        use crate::history::{Pass, PassRecord, Trigger};
+
+        let registry = crate::config::Registry::default();
+        let logged = Pass::Detailed(PassRecord {
+            at: chrono::Utc::now(),
+            trigger: Trigger::Scheduled,
+            argv: vec!["run".to_string()],
+            version: "1.17.0".to_string(),
+            dirs: vec![PrunedDir {
+                repo_path: std::path::PathBuf::from("/tmp/api"),
+                bloat_dir: "node_modules".to_string(),
+                adapter: "npm".to_string(),
+                size_freed: 900,
+                runtime: None,
+            }],
+        });
+        // A pre-log pass, as `history::merged` reconstructs one: a total, and nothing to
+        // attribute it to.
+        let recovered = Pass::Summary {
+            at: chrono::Utc::now() - chrono::Duration::days(1),
+            bytes_freed: 100,
+            dirs_removed: 1,
+            repos_touched: 1,
+            dirs: None,
+        };
+
+        let doc = stats_document(&registry, &[logged, recovered]);
+
+        assert_eq!(doc["by_manager"]["managers"][0]["manager"], "npm");
+        assert_eq!(doc["by_manager"]["managers"][0]["bytes_freed"], 900);
+        assert_eq!(doc["by_manager"]["passes_not_counted"], 1);
+
+        // All three triggers, and the one pass that has none accounted for separately.
+        let triggers = doc["by_trigger"]["triggers"].as_array().unwrap();
+        assert_eq!(triggers.len(), 3);
+        let scheduled = triggers
+            .iter()
+            .find(|t| t["trigger"] == "scheduled")
+            .unwrap();
+        assert_eq!(scheduled["passes"], 1);
+        assert_eq!(scheduled["bytes_freed"], 900);
+        assert_eq!(doc["by_trigger"]["passes_not_counted"], 1);
     }
 
     #[test]

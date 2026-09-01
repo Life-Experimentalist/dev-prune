@@ -121,6 +121,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "show me my repos" | `devp status` (interactive; prints a plain table when not a TTY). In the dashboard: `s` sorts, `f` filters, `/` searches — display only, the totals always cover every registered repository |
 | "just the worst offenders" / "top 10 biggest" | `devp status --top 10` — trims the list, never the totals |
 | "how much has this saved me?" / "what did it clean last week?" | `devp stats` — lifetime total from pruning, a separate one from `devp caches clear <manager>`, a third from `devp caches clear <engine>`, prune passes, the last pass, and the repositories that gave back the most. The three are never added: they cost a reinstall, a re-download everywhere, and a full image pull respectively |
+| "which package manager is costing me the most?" / "is the scheduler actually running?" | `devp stats` again — its last two sections break the same reclaims down by package manager and by what started each pass (`manual`, `scheduled`, `dashboard`). A `scheduled` line at zero passes means nothing has run unattended; check `devp status daemon` |
 | "which pass deleted what?" / "what did the scheduled run take last night?" / "why is my node_modules gone?" | `devp history` — one line per pass: when, what started it (`manual`, `scheduled`, `dashboard`), how much, how many directories and repositories. `devp history --pass 1` opens one in full: the exact command line that ran it and every directory removed, grouped by repository. This is the command that answers "was that me or the daemon?" — and the only one that can, because nothing else records the trigger |
 | "give me the whole history to look at" / "export what it has been doing" | `devp history --export` writes the JSON document to the user's documents folder, `--export <path>` to exactly where they say. Prefer `devp history --json` when *you* are the reader; prefer `--export` when the user wants a file. The per-pass detail list is capped at 200 entries on a terminal and never when redirected, so `devp history --all > passes.txt` is complete |
 | "add tab completion" | `devp completions <bash\|zsh\|fish\|powershell\|elvish>` — prints the script to stdout; the user redirects it |
@@ -234,6 +235,13 @@ asks what dev-prune *has* done and `status` when they ask what it *could* do. On
 upgraded from 1.0.0 the per-repository figures and the pass list in `stats` start empty
 while the lifetime total does not; the document's `history_starts_at` field says so, so
 report the gap rather than reading it as "nothing was ever pruned".
+
+`by_manager` and `by_trigger` are bounded by `detail_starts_at` (1.17.0) instead, because
+they are summed from the prune log. Each carries its own `passes_not_counted`, and the two
+are different numbers on purpose — quote the one belonging to the section you are quoting
+from. `by_manager` covers pruning only: cache and container clears are not passes and are
+not in it, so it will not add up to `lifetime.bytes_freed` and should never be presented
+as if it should.
 
 `history` is `stats` with the receipts. `stats` says ten passes freed 27 GiB; `history`
 says which pass, what started it, the exact command line, and every directory it took.

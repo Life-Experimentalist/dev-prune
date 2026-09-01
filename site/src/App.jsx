@@ -1368,6 +1368,28 @@ Notes you should rely on, not work around:
                           {"   "}(last pruned 30 days ago)
                         </span>
                       </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-bold">By package manager</div>
+                      <div className="term-line">
+                        {"     "}6.80 GB npm{"     "}11 directories
+                      </div>
+                      <div className="term-line">
+                        {"     "}4.10 GB cargo{"   "}3 directories
+                      </div>
+                      <div className="term-line">
+                        {"     "}1.51 GB uv{"      "}6 directories
+                      </div>
+                      <div className="term-line">&nbsp;</div>
+                      <div className="term-line c-bold">How passes start</div>
+                      <div className="term-line">
+                        {"     "}9.90 GB scheduled{"   "}7 passes{"   "}(79%)
+                      </div>
+                      <div className="term-line">
+                        {"     "}2.51 GB manual{"      "}2 passes{"   "}(21%)
+                      </div>
+                      <div className="term-line">
+                        {"        "}0 B dashboard{"   "}0 passes{"    "}(0%)
+                      </div>
                     </div>
                   )}
 

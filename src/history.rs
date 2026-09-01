@@ -48,6 +48,13 @@ pub enum Trigger {
 }
 
 impl Trigger {
+    /// Every trigger, in the order `devp stats` lists them.
+    ///
+    /// The report prints all three even at zero, because a `scheduled` line reading zero
+    /// is the answer to "is the daemon doing anything" — and iterating the variants from
+    /// here is what stops a fourth one from being added and silently never printed.
+    pub const ALL: [Trigger; 3] = [Trigger::Manual, Trigger::Scheduled, Trigger::Dashboard];
+
     /// The word the report prints.
     pub fn label(self) -> &'static str {
         match self {
@@ -281,6 +288,18 @@ impl Pass {
         match self {
             Pass::Detailed(r) => r.repos_touched(),
             Pass::Summary { repos_touched, .. } => *repos_touched,
+        }
+    }
+
+    /// What started the pass, where that is known.
+    ///
+    /// `None` for a pass recovered from the registry summary: the summary has never
+    /// carried a trigger, so a machine that pruned before 1.17.0 cannot say afterwards
+    /// which of those passes it typed and which the scheduler ran.
+    pub fn trigger(&self) -> Option<Trigger> {
+        match self {
+            Pass::Detailed(r) => Some(r.trigger),
+            Pass::Summary { .. } => None,
         }
     }
 

@@ -201,8 +201,14 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   a separate one from `devp caches clear <manager>`, and a third from `devp caches clear
   <engine>` (never added together: one costs a reinstall in one repository, the next a
   download in every project, the last a pull of the whole layer stack), prune passes,
-  the most recent pass and how to undo it, and the repositories that gave back the most.
-  Per-repository figures and the pass history are recorded from 1.1.0 onward
+  the most recent pass and how to undo it, the repositories that gave back the most,
+  which package managers those reclaims came from, and how the passes were started
+  (`manual`, `scheduled` or `dashboard`, each printed even at zero — a `scheduled` line
+  reading zero passes is how you learn the daemon is not running).
+  Per-repository figures and the pass history are recorded from 1.1.0 onward; the two
+  breakdowns from 1.17.0, since they are summed from the prune log. The manager
+  breakdown covers pruning only — a cache clear is not a pass — so it does not add up
+  to the lifetime total, and each breakdown reports how many passes it could not count
 - `devp history [--pass N] [--limit N] [--all] [--json] [--export [PATH]]` — which pass
   deleted what, and what asked it to. `stats` says ten passes freed 27 GiB; this says
   that pass #2 ran at 09:14 as `devp run --daemon`, took 4.02 GiB out of two
