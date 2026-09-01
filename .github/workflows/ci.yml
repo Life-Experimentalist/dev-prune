@@ -176,11 +176,15 @@ jobs:
           mkdir -p fake/assets
           printf 'not a real binary' > fake/dev-prune
           printf 'not a real binary' > fake/dev-prune.exe
+          printf 'not a real binary' > fake/devpw.exe
           for t in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
             tar -czf "fake/assets/dev-prune-v9.9.9-$t.tar.gz" -C fake dev-prune
           done
+          # The real Windows zips carry `devpw.exe` beside `dev-prune.exe`, and
+          # `scripts/build_wheels.py` refuses an archive without it. A fixture holding
+          # only `dev-prune.exe` therefore passes CI and fails the release.
           for t in windows-x64 windows-arm64 windows-x86; do
-            (cd fake && zip -q "assets/dev-prune-v9.9.9-$t.zip" dev-prune.exe)
+            (cd fake && zip -q "assets/dev-prune-v9.9.9-$t.zip" dev-prune.exe devpw.exe)
           done
           ls fake/assets
 
