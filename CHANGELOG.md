@@ -110,6 +110,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Every binary in `devp trust` now shows the version it was built as**, so the list
+  answers the question people open it with. Three of those files are called some spelling
+  of the same word, and until now the only thing telling them apart was a path and a
+  digest — which meant "which of these is the old one" could only be answered by
+  uninstalling something and seeing what broke. The newest is marked `(latest release)`
+  when a release check has confirmed that is genuinely the newest release, and
+  `(newest here)` when no check has run and it is only the highest version on this
+  machine. The two words are different claims and are never swapped.
+
+  The version is read out of each file's own bytes. `devp trust` does not run the files
+  it reports on — one of them is `devpw.exe`, which is linked for the GUI subsystem, so
+  anything that invokes it from a shell waits forever — so every build from 1.17.0 on
+  carries its version as a fixed string a reader can find without executing it. Copies
+  built before that show `not stamped`, which is said out loud rather than left blank: a
+  gap beside three filled-in rows reads as a failure to look, and it is not.
+
+  `devp trust --json` gains `version` and `marker` on each `binaries` entry, both `null`
+  where they do not apply.
+  [Reference](docs/CLI_REFERENCE.md#18-devp-trust---json---fix-ownership)
+
 - **`devp trust` now lists every copy of dev-prune on the machine**, not just the ones it
   manages. It looks in every directory on `PATH` and in the install directory of every
   channel it knows about — including the ones that stop being on `PATH` when a venv

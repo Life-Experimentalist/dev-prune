@@ -768,6 +768,11 @@ pub fn trust_document(report: &crate::commands::trust::TrustReport) -> Value {
                 "path": b.path,
                 "channel": b.channel,
                 "sha256": b.sha256,
+                // Null rather than absent for a build that predates the stamp, for the
+                // same reason `sha256` is: "this copy does not say" and "this consumer
+                // is reading an older schema" are different answers.
+                "version": b.version,
+                "marker": b.marker,
                 "running": b.running,
                 "scan_report": b.scan_url(),
                 "note": b.note,

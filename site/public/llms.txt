@@ -372,8 +372,12 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   "trust level: MEDIUM" tells nobody which switch to look at. Read-only, always exit 0.
   The binaries section lists *every* copy of `dev-prune`, `devp` and `devpw` on the
   machine — everything on `PATH` plus each channel's install directory even when it is
-  no longer on `PATH` — with the manager that installed it (`channel`), its SHA-256 and
-  a VirusTotal lookup URL for that digest, running copy first. Several copies is normal
+  no longer on `PATH` — with the version it was built as, the manager that installed it
+  (`channel`), its SHA-256 and a VirusTotal lookup URL for that digest, running copy
+  first. The version is read out of the file's own bytes, never by running it, so it is
+  absent for anything built before 1.17.0; the highest copy is marked `latest release`
+  when a release check has confirmed that is the newest release and `newest here` when
+  it is only the highest version on this machine. Several copies is normal
   and not a fault: a `cargo install` and an installer run each leave one and they update
   separately, which is why their digests can differ. Shims (`.cmd`, `.ps1`) are excluded
   because hashing a text wrapper answers nothing. Nothing found is executed, only hashed
