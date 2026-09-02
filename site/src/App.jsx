@@ -922,27 +922,6 @@ export default function App() {
       note: "Command Prompt has no iwr, so it borrows PowerShell for the download. Same install; devp resolves in the next Command Prompt you open.",
       cmd: 'powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"',
     },
-    brew: {
-      group: "manager",
-      label: "Homebrew",
-      registry: "Homebrew tap — Life-Experimentalist/homebrew-tap.",
-      note: "macOS and Linux, Intel and ARM. The fully-qualified name taps as it installs, so there is no separate brew tap step — and because the formula belongs to a tap, brew upgrade keeps finding new versions. Installs both names and generates your shell completions from the binary.",
-      cmd: "brew install Life-Experimentalist/tap/dev-prune",
-    },
-    scoop: {
-      group: "manager",
-      label: "Scoop",
-      registry: "Scoop bucket — Life-Experimentalist/scoop-bucket.",
-      note: "64-bit, ARM and 32-bit Windows. The manifest carries the download hash, so there is nothing left to trust, and the bucket is what makes scoop update dev-prune work later. Registers both dev-prune and devp.",
-      cmd: "scoop bucket add life-experimentalist https://github.com/Life-Experimentalist/scoop-bucket; scoop install dev-prune",
-    },
-    winget: {
-      group: "manager",
-      label: "WinGet",
-      registry: "The winget-pkgs community repository.",
-      note: "Submitted and awaiting a Microsoft reviewer — every winget-pkgs version is a pull request a person signs off, so this command starts resolving when that merges, and not before. WinGet installs the dev-prune name; the devp twin appears the first time you run it.",
-      cmd: "winget install VKrishna04.dev-prune",
-    },
     npm: {
       group: "manager",
       label: "npm",
@@ -970,6 +949,20 @@ export default function App() {
       registry: "crates.io. binstall skips it for the GitHub release archive.",
       note: "crates.io stores source, not binaries, so cargo install always compiles (Rust 1.88+). cargo binstall downloads the same prebuilt archive the installers use.",
       cmd: "cargo binstall dev-prune",
+    },
+    brew: {
+      group: "manager",
+      label: "Homebrew",
+      registry: "Homebrew tap — Life-Experimentalist/homebrew-tap.",
+      note: "macOS and Linux, Intel and ARM. The fully-qualified name taps as it installs, so there is no separate brew tap step — and because the formula belongs to a tap, brew upgrade keeps finding new versions. Installs both names and generates your shell completions from the binary.",
+      cmd: "brew install Life-Experimentalist/tap/dev-prune",
+    },
+    scoop: {
+      group: "manager",
+      label: "Scoop",
+      registry: "Scoop bucket — Life-Experimentalist/scoop-bucket.",
+      note: "64-bit, ARM and 32-bit Windows. The manifest carries the download hash, so there is nothing left to trust, and the bucket is what makes scoop update dev-prune work later. Registers both dev-prune and devp.",
+      cmd: "scoop bucket add life-experimentalist https://github.com/Life-Experimentalist/scoop-bucket; scoop install dev-prune",
     },
     release: {
       group: "manual",

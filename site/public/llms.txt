@@ -105,11 +105,8 @@ afterwards: a formula or manifest installed by URL belongs to no tap and no buck
 (`Life-Experimentalist/homebrew-tap`) and bucket (`Life-Experimentalist/scoop-bucket`)
 exist for that, and each pulls its one file from `packaging/` in this repository daily.
 
-`winget install VKrishna04.dev-prune` is submitted and awaiting review
-(microsoft/winget-pkgs#422809); every winget-pkgs version is a pull request a person at
-Microsoft signs off, so that command starts resolving when it merges and not before.
 `brew install dev-prune` with no tap prefix means homebrew-core, which has a notability
-bar and is not submitted.
+bar and is not submitted. dev-prune is not in winget-pkgs.
 
 ## Editor integration
 
