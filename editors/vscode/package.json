@@ -89,6 +89,11 @@
 				"title": "Dry Run in Terminal (devp run --dry-run)"
 			},
 			{
+				"command": "devprune.pruneRepo",
+				"category": "dev-prune",
+				"title": "Prune This Repository in Terminal (devp run .)"
+			},
+			{
 				"command": "devprune.installSkill",
 				"category": "dev-prune",
 				"title": "Install AI Agent Skill (devp skill)"

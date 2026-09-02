@@ -20,7 +20,8 @@ fetch —:
   from `devp status --json`, with repository and candidate counts in the tooltip.
   Clicking it opens a small menu: refresh, dry-run in a terminal, open the
   dashboard, install the AI agent skill, open the CLI reference. The same
-  read-only set lives in the command palette under *dev-prune:*. Reading is all
+  set lives in the command palette under *dev-prune:*, alongside a *Prune This
+  Repository* command that runs `devp run .` in a terminal. Reading is all
   the extension ever does on its own — anything that deletes runs as a visible
   `devp` command in a terminal you can read before it acts.
 - **A heads-up when the CLI is missing** — a workspace with a `.devprune.json` but

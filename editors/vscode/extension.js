@@ -496,6 +496,14 @@ function registerCommands(context) {
 			// the command the user would run next is the one they just watched.
 			runDevpInTerminal('run --dry-run');
 		}),
+		vscode.commands.registerCommand('devprune.pruneRepo', () => {
+			if (!requireTrust()) return;
+			// Same action as the status-bar QuickPick's prune entry, reachable
+			// from the palette. The CLI owns the safety story — a repository
+			// that is not an idle candidate is refused there, with the reason
+			// printed in the terminal the user is already watching.
+			runDevpInTerminal('run .');
+		}),
 		vscode.commands.registerCommand('devprune.createConfig', () => {
 			const root = workspaceRoot();
 			if (!root) return;

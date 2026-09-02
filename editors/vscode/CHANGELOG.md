@@ -14,6 +14,12 @@
   could outlive the old 15-second limit — the extension then hid its status bar
   item without a word. The limit is now 60 seconds, and reaching it shows
   “devp: not responding” with Refresh one click away, instead of nothing.
+- **Prune This Repository is now a palette command.** Pruning was reachable
+  only through the status-bar QuickPick, and only while it showed a candidate;
+  everything else the QuickPick offers already had a Command Palette twin. The
+  new command runs `devp run .` in a visible terminal, same as the QuickPick
+  entry — the CLI still decides whether this repository is safely prunable and
+  says so in that terminal if not.
 
 ## [0.4.0] - 2026-09-01
 

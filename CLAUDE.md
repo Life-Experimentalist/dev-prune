@@ -149,6 +149,10 @@ Docs describe what the code does *now*. There is no "planned", "coming soon" or
   scripts' offline fallback, the site banner, `llms.txt`, and the docs that quote a whole
   asset filename. Never hard-code a version anywhere that check does not cover.
 - `schemas/` holds the JSON schema for `.devprune.json`; a new config key goes there too.
+  The published URL — `https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json` —
+  is pinned by SchemaStore's catalog and by every `$schema` line in users' config files:
+  never move, rename or restructure it. CI checks the URL resolves; a new major schema
+  version gets a new `v2/` path, it does not touch `v1/`.
 
 ---
 
