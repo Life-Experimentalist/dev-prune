@@ -57,6 +57,15 @@ pub enum Declaration {
 /// are on.
 const SHELL_BUILTINS: &[&str] = &["echo", "true", ":"];
 
+/// Builtins that mark the command as shell-shaped rather than a tool invocation.
+///
+/// `cd docs && npm run build` runs fine pasted into a shell, but its first word proves
+/// nothing about what this machine can rebuild — and macOS ships a `/usr/bin/cd` shim,
+/// so a plain `PATH` search would accept there what Windows refuses. Refused
+/// everywhere, with the rewrite in the message, so a committed declaration means one
+/// thing on every clone.
+const SHELL_ONLY: &[&str] = &["cd", "pushd", "source", ".", "export", "set"];
+
 /// Check every declaration in a repository, in the order the file lists them.
 ///
 /// Directories that simply are not there are dropped rather than reported: a declared
@@ -147,6 +156,14 @@ fn check(repo_path: &Path, entry: &DeclaredDir) -> Result<Option<Target>, String
         ));
     }
     let tool = first_word(rebuild);
+    if SHELL_ONLY.contains(&tool) {
+        return Err(format!(
+            "`{label}` is declared prunable, rebuilt by `{rebuild}`, but `{tool}` is a \
+             shell builtin, not a program this machine can be checked for — put the \
+             tool first, e.g. `npm --prefix docs run build` rather than \
+             `cd docs && npm run build`."
+        ));
+    }
     if !SHELL_BUILTINS.contains(&tool) && !on_path(tool) {
         return Err(format!(
             "`{label}` is declared prunable, rebuilt by `{rebuild}`, but `{tool}` is not \
@@ -393,6 +410,16 @@ mod tests {
             declared("vendor", "definitely-not-a-real-tool-xyz build"),
         );
         assert!(reason.contains("is not on this machine"), "{reason}");
+    }
+
+    #[test]
+    fn a_rebuild_starting_with_cd_gets_the_rewrite_not_install_advice() {
+        let tmp = repo();
+        fs::create_dir_all(tmp.path().join("docs/out")).unwrap();
+        let reason = refusal(tmp.path(), declared("docs/out", "cd docs && npm run build"));
+        assert!(reason.contains("shell builtin"), "{reason}");
+        assert!(reason.contains("--prefix"), "{reason}");
+        assert!(!reason.contains("Install"), "{reason}");
     }
 
     #[test]
