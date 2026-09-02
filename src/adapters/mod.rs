@@ -24,6 +24,7 @@ pub mod cocoapods;
 pub mod composer;
 pub mod dart;
 pub mod deno;
+pub mod dotnet_build;
 pub mod go;
 pub mod gradle;
 pub mod maven;
@@ -249,6 +250,7 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(dart::Dart),
         Box::new(vcpkg::Vcpkg),
         Box::new(cmake_build::CmakeBuild),
+        Box::new(dotnet_build::DotnetBuild),
     ]
 }
 
@@ -288,6 +290,9 @@ fn opt_in_enabled() -> &'static [String] {
                 }
                 if r.settings.enable_cmake_build {
                     names.push("cmake_build".to_string());
+                }
+                if r.settings.enable_dotnet_build {
+                    names.push("dotnet_build".to_string());
                 }
                 names
             })
@@ -347,6 +352,7 @@ pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("Infrastructure", &["terraform"]),
     ("Dart & Flutter", &["dart"]),
     ("C & C++", &["vcpkg", "cmake_build"]),
+    (".NET", &["dotnet_build"]),
 ];
 
 /// The language group `name` belongs to, or `"Other"` if it somehow belongs to none.
@@ -1301,7 +1307,7 @@ pub(crate) fn python_runtime_available(tag: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-const NO_RESTORE_BINARY: [&str; 7] = [
+const NO_RESTORE_BINARY: [&str; 8] = [
     "venv",
     "gradle",
     "maven",
@@ -1309,6 +1315,7 @@ const NO_RESTORE_BINARY: [&str; 7] = [
     "swift",
     "vcpkg",
     "cmake_build",
+    "dotnet_build",
 ];
 
 /// Adapters whose executable is not called what the adapter is called.
@@ -1482,6 +1489,7 @@ mod tests {
                 "cargo",
                 "cmake_build",
                 "dart",
+                "dotnet_build",
                 "gradle",
                 "maven",
                 "mix_build",

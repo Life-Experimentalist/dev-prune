@@ -5,7 +5,27 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.17.1] - 2026-09-02
+## [1.18.0] - 2026-09-02
+
+### Added
+
+- **`devp config set enable_dotnet_build true`** adds a twenty-fifth adapter: the .NET
+  build output MSBuild writes. `bin/` and `obj/` are the most generic directory names a
+  repository can hold, so the adapter demands proof before claiming either — NuGet's
+  restore writes `obj/project.assets.json` recording exactly which project it restored,
+  and only when that record names a project file in the same directory is `obj/`
+  claimed, with `bin/` going along only when it holds nothing but `Debug`/`Release`
+  build output. A `bin/` full of committed tools, or an `obj/` someone made by hand, is
+  never touched. Opt-in like every build-tree adapter and idle-gated by
+  `build_idle_days`; the next `dotnet build` writes both directories again.
+
+- **`devp caches` now sizes ccache and sccache**, the compiler caches behind most C,
+  C++ and Rust CI recipes — routinely several gigabytes that no row accounted for
+  before. ccache is asked where its cache is (`ccache --get-config cache_dir`) and
+  cleared with its own `ccache --clear`; sccache ships neither a path query nor a clear
+  command, so its row uses the documented locations (`SCCACHE_DIR` respected) and
+  `devp caches clear sccache` deletes the directory — after `sccache --stop-server`
+  if the daemon is holding it open, which the report says on the row.
 
 ### Fixed
 

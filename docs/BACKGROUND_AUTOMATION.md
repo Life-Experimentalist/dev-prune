@@ -213,7 +213,7 @@ flowchart TD
 - **CheckDisableDaemon**: Reads `disable_daemon` from the per-repo config — `project.devprune.json` and `.devprune.json` both, the personal file winning where they disagree.
 - **CheckIdle**: Evaluates git commit log and file `mtime` modification timestamps.
 - **EnforceLockfile**: Safety gate executing lockfile verification pass with timeout.
-- **Prune**: Removes the directories the matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` — whichever of the twenty-four applies).
+- **Prune**: Removes the directories the matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` — whichever of the twenty-five applies).
 - **Abort**: Preserves files if lockfile verification fails.
 
 ---

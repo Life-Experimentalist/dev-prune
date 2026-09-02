@@ -258,6 +258,15 @@ const POETRY_ARTIFACTS_CLEAR: &str =
 #[cfg(not(windows))]
 const POETRY_ARTIFACTS_CLEAR: &str = "rm -rf \"$(poetry config cache-dir)/artifacts\"";
 
+/// sccache ships no cache-clearing subcommand — `--stop-server` stops the daemon and
+/// nothing empties the directory — so the directory delete is the only unattended way.
+#[cfg(windows)]
+const SCCACHE_CLEAR: &str = r"Remove-Item -Recurse -Force $env:LOCALAPPDATA\Mozilla\sccache";
+#[cfg(target_os = "macos")]
+const SCCACHE_CLEAR: &str = "rm -rf ~/Library/Caches/Mozilla.sccache";
+#[cfg(not(any(windows, target_os = "macos")))]
+const SCCACHE_CLEAR: &str = "rm -rf ~/.cache/sccache";
+
 /// Playwright keeps one unpacked browser build per version and removes none of them on
 /// upgrade, so this grows by a few hundred megabytes every time the dependency moves.
 #[cfg(windows)]
@@ -488,6 +497,34 @@ const PROBES: &[Probe] = &[
         clear: Clear::Command("conan", &["remove", "*", "--confirm"]),
         note: Some(
             "recipes and binaries shared by every Conan project; re-fetched on the next install",
+        ),
+    },
+    // `ccache --get-config cache_dir` prints the directory bare, which is exactly the
+    // shape `path_from_output` reads; the manual documents `-k`/`--get-config` and
+    // `-C`/`--clear` back to the 3.x line, so the long spellings work everywhere.
+    Probe {
+        manager: "ccache",
+        kind: "compiler cache",
+        query: Some(("ccache", &["--get-config", "cache_dir"])),
+        query_suffix: None,
+        clear_command: "ccache --clear",
+        clear: Clear::Command("ccache", &["--clear"]),
+        note: Some(
+            "compiled objects keyed by source and flags; the next build repopulates it one cache miss at a time",
+        ),
+    },
+    // sccache prints statistics, never paths — every `--show-stats` line is labelled —
+    // and ships no clear subcommand, so both halves of this row are the conventional
+    // locations.
+    Probe {
+        manager: "sccache",
+        kind: "compiler cache",
+        query: None,
+        query_suffix: None,
+        clear_command: SCCACHE_CLEAR,
+        clear: Clear::Directory,
+        note: Some(
+            "compiled objects keyed by source and flags; the next build repopulates it. If a clear is refused, `sccache --stop-server` first — the daemon holds the directory open",
         ),
     },
     // Composer will say where its cache is, and asking is the only way to get it right:
@@ -1391,6 +1428,24 @@ fn fallbacks(manager: &str, kind: &str) -> Vec<PathBuf> {
             std::env::var_os("CONAN_HOME").map(|p| PathBuf::from(p).join("p")),
             under(&home, ".conan2/p"),
         ],
+        // ccache prefers a `~/.ccache` that already exists over the platform cache
+        // directory, so the legacy spot is checked first, the same way ccache does.
+        ("ccache", _) => vec![
+            std::env::var_os("CCACHE_DIR").map(PathBuf::from),
+            under(&home, ".ccache"),
+            under(&cache, "ccache"),
+            under(&local, "ccache"),
+        ],
+        // Both Windows shapes are listed because sccache's documentation says
+        // `%LOCALAPPDATA%\Mozilla\sccache` and the directories crate it resolves that
+        // through appends a `cache` segment; the first that exists wins.
+        ("sccache", _) => vec![
+            std::env::var_os("SCCACHE_DIR").map(PathBuf::from),
+            under(&local, "Mozilla/sccache/cache"),
+            under(&local, "Mozilla/sccache"),
+            under(&cache, "Mozilla.sccache"),
+            under(&cache, "sccache"),
+        ],
         // Only reached when `composer` is not installed, which is the case worth
         // covering: the cache a PHP toolchain left behind is the one nobody remembers.
         ("composer", _) => vec![
@@ -2204,6 +2259,7 @@ mod tests {
         assert_eq!(
             orphans,
             [
+                "ccache",
                 "conan",
                 "conda",
                 "cypress",
@@ -2214,6 +2270,7 @@ mod tests {
                 "pip",
                 "playwright",
                 "puppeteer",
+                "sccache",
             ]
         );
     }

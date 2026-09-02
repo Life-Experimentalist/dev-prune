@@ -871,6 +871,7 @@ fn opt_in_adapters(registry: &Registry) -> Vec<&'static str> {
         ("mix_build", s.enable_mix_build),
         ("vcpkg", s.enable_vcpkg),
         ("cmake_build", s.enable_cmake_build),
+        ("dotnet_build", s.enable_dotnet_build),
     ]
     .into_iter()
     .filter_map(|(name, on)| on.then_some(name))

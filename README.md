@@ -28,7 +28,7 @@ gigabytes hostage for a build you are not running.
 
 `dev-prune` finds those directories across every Git repository you register, and deletes
 them — but only after proving the exact command that puts them back would succeed. It
-knows twenty-four package managers, not just the obvious four: Composer, Bundler, Mix,
+knows twenty-five package managers, not just the obvious four: Composer, Bundler, Mix,
 CocoaPods and Terraform are as first-class as npm and pip. It is a single Rust binary,
 installs its own background schedule, and answers to two names: `dev-prune` and `devp`.
 
@@ -678,11 +678,11 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
 
-The eight build-tool adapters ship **disabled**, because a build tree is regenerated
+The nine build-tool adapters ship **disabled**, because a build tree is regenerated
 by recompiling, not downloading — it costs more to get back. `devp config set
 enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` /
 `enable_dart true` / `enable_mix_build true` / `enable_vcpkg true` /
-`enable_cmake_build true` switches them on, and their candidates wait for
+`enable_cmake_build true` / `enable_dotnet_build true` switches them on, and their candidates wait for
 `build_idle_days` (45 by default), applied as the *maximum* of it and `idle_days` — the
 build-tool gate only ever makes pruning later, never earlier.
 
@@ -792,7 +792,7 @@ once on a first install — so the defaults are something you agreed to rather t
 inherited — and again after an upgrade adds a setting you have never been shown.
 
 If you already know what you want, `devp config recommended` is the one-command version:
-it turns on the eight adapters and build trees that are off by default because they are
+it turns on the nine adapters and build trees that are off by default because they are
 not universally wanted, and leaves `allow_manifest_rewrite` — the one recommendation
 that edits files Git tracks — named, explained and off unless you add
 `--with-cautious`. `devp config show` lists whatever you have not taken yet.
@@ -830,7 +830,7 @@ rather than downloading. That is the whole reason each one is a switch.
 
 | Key | Default | Meaning |
 | :--- | :---: | :--- |
-| `enable_cargo` … `enable_cmake_build` | `false` | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all eight |
+| `enable_cargo` … `enable_dotnet_build` | `false` | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all nine |
 
 **Shared download caches** — one key, because the cap only ever marks.
 

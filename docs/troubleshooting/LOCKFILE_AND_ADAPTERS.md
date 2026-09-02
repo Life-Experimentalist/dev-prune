@@ -42,7 +42,7 @@ This guide details diagnostics, configuration overrides, and fix command workflo
 During `devp run`, pruning a Node.js repository aborts with `npm lockfile sync failed: npm ci --dry-run --ignore-scripts failed (exit code Some(1))`.
 
 #### Cause
-`dev-prune` enforces lockfile integrity before deleting any dependency directory — `node_modules`, `.venv`, `vendor`, `Pods`, whichever of the twenty-four adapters matched — and that check is **read-only**: it proves the lockfile can rebuild the tree, and refuses rather than repairing a lockfile that cannot. This error occurs if:
+`dev-prune` enforces lockfile integrity before deleting any dependency directory — `node_modules`, `.venv`, `vendor`, `Pods`, whichever of the twenty-five adapters matched — and that check is **read-only**: it proves the lockfile can rebuild the tree, and refuses rather than repairing a lockfile that cannot. This error occurs if:
 1. `npm` (or `pnpm`, `yarn`, `bun`, `uv`, `cargo`, `go`) returns a non-zero exit code because the lockfile has drifted from the manifest, or because of a corrupted lockfile or peer dependency conflicts.
 2. Network resolution failed during the package verification pass.
 3. The command exceeded the default 10-minute timeout limit.

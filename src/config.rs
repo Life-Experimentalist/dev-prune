@@ -142,6 +142,11 @@ pub struct Settings {
     /// project again. See [`crate::adapters::cmake_build`].
     #[serde(default)]
     pub enable_cmake_build: bool,
+    /// Whether the opt-in .NET build-output adapter is active. Off by default: `bin/`
+    /// and `obj/` are compiled output, and they come back by running `dotnet build`
+    /// again. See [`crate::adapters::dotnet_build`].
+    #[serde(default)]
+    pub enable_dotnet_build: bool,
     /// Idle days required before *build-tree* directories — everything the opt-in
     /// adapters claim — are pruned.
     ///
@@ -342,6 +347,7 @@ impl Default for Settings {
             enable_mix_build: false,
             enable_vcpkg: false,
             enable_cmake_build: false,
+            enable_dotnet_build: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: constants::DEFAULT_AUTO_UPDATE,
             version_lock: constants::DEFAULT_VERSION_LOCK,
