@@ -47,15 +47,32 @@ pub trait PackageManager: Send + Sync {
     /// user's `command_timeout_secs`, threaded explicitly.
     fn restore(&self, project_path: &Path, timeout: std::time::Duration) -> Result<()>;
 
-    /// `restore`, told the name the pruned directory had. Has a default impl that
-    /// ignores the name and calls `restore`; override it only if your manager can
-    /// rebuild under more than one directory name (venv does — `venv`, `env`, ...).
+    /// `restore`, told the name the pruned directory had and the runtime tag recorded
+    /// when it was deleted (`None` when nothing was recorded). Has a default impl that
+    /// ignores both and calls `restore`; override it only if your manager can rebuild
+    /// under more than one directory name (venv does — `venv`, `env`, ...).
     fn restore_named(
         &self,
         project_path: &Path,
         dir_name: &str,
+        runtime: Option<&str>,
         timeout: std::time::Duration,
-    ) -> Result<()> { let _ = dir_name; self.restore(project_path, timeout) }
+    ) -> Result<()> { let _ = (dir_name, runtime); self.restore(project_path, timeout) }
+
+    /// The language runtime `dir_name` was built against, recorded at prune time and
+    /// handed back through `restore_named`. Defaults to `None`; only the Python
+    /// managers answer it, because only their directories embed one interpreter.
+    fn runtime_tag(&self, project_path: &Path, dir_name: &str) -> Option<String> {
+        let _ = (project_path, dir_name);
+        None
+    }
+
+    /// Installed-but-unrecorded packages, surfaced by `devp status --drift` before a
+    /// prune is attempted. Defaults to empty — "nothing detected", not "proven clean".
+    fn drift(&self, project_path: &Path) -> Vec<DriftReport> {
+        let _ = project_path;
+        Vec::new()
+    }
 
     /// Lockfiles that identify this manager. Only needed if your adapter can
     /// share a bloat directory with another one. Defaults to an empty slice.

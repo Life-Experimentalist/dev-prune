@@ -624,17 +624,42 @@ const ECOSYSTEMS = [
           </>
         ),
       },
+      {
+        name: "dotnet_build",
+        detect: (
+          <>
+            <code>*.csproj</code> / <code>*.fsproj</code> /{" "}
+            <code>*.vbproj</code>
+          </>
+        ),
+        deletes: (
+          <>
+            <code>bin</code>, <code>obj</code>
+          </>
+        ),
+        verify: (
+          <>
+            <code>obj/project.assets.json</code> records the project file
+            beside it
+          </>
+        ),
+        restore: (
+          <>
+            next <code>dotnet build</code>
+          </>
+        ),
+      },
     ],
     tieBreak: (
       <>
         <strong>Off until you switch them on.</strong> A build directory takes
         far longer to get back than a dependency directory — a full recompile,
-        not a download — so these seven, and Cargo above, ship disabled and
+        not a download — so these eight, and Cargo above, ship disabled and
         invisible. <code>devp config set enable_gradle true</code> /{" "}
         <code>enable_maven true</code> / <code>enable_swift true</code> /{" "}
         <code>enable_dart true</code> / <code>enable_mix_build true</code> /{" "}
-        <code>enable_vcpkg true</code> / <code>enable_cmake_build true</code>{" "}
-        turns them on, and their candidates wait
+        <code>enable_vcpkg true</code> / <code>enable_cmake_build true</code> /{" "}
+        <code>enable_dotnet_build true</code> turns them on, and their candidates wait
         for <code>build_idle_days</code> (45 by default), applied as the{" "}
         <em>maximum</em> of it and <code>idle_days</code> — the build-tool gate
         can only ever make pruning later, never earlier. One adapter can be made
@@ -1095,7 +1120,7 @@ Notes you should rely on, not work around:
                 touched in a while and deletes what their package managers can
                 rebuild — <code>node_modules</code>, <code>.venv</code>,{" "}
                 <code>target</code>, <code>vendor</code> and the rest, across
-                twenty-four managers from npm and pip to Composer, Bundler,
+                twenty-five managers from npm and pip to Composer, Bundler,
                 Mix, CocoaPods and Terraform. Nothing is deleted until the
                 package manager itself confirms a lockfile can restore it.
                 Verification is not a flag you can turn off.
@@ -1844,8 +1869,8 @@ Notes you should rely on, not work around:
 
             <div className="info-card eco-contribute">
               <h3>
-                <Puzzle size={18} /> Twenty-five would be better than
-                twenty-four
+                <Puzzle size={18} /> Twenty-six would be better than
+                twenty-five
               </h3>
               <p>
                 Adding a manager is deliberately small: implement one{" "}
@@ -2754,7 +2779,7 @@ Notes you should rely on, not work around:
                 the exclusion still wins and the declaration then never runs
                 — <code>devp doctor</code> says so rather than letting it pass
                 quietly. The
-                eight exceptions are opt-in and say so —{" "}
+                nine exceptions are opt-in and say so —{" "}
                 <code>devp config set enable_cargo true</code> (
                 <code>target/</code>), <code>enable_gradle</code> (
                 <code>build/</code>, <code>.gradle/</code>),{" "}
@@ -2762,10 +2787,12 @@ Notes you should rely on, not work around:
                 <code>enable_swift</code> (<code>.build/</code>),{" "}
                 <code>enable_dart</code> (<code>.dart_tool/</code>),{" "}
                 <code>enable_mix_build</code> (<code>_build/</code>),{" "}
-                <code>enable_vcpkg</code> (<code>vcpkg_installed/</code>) and{" "}
+                <code>enable_vcpkg</code> (<code>vcpkg_installed/</code>),{" "}
                 <code>enable_cmake_build</code> (a tree holding a{" "}
                 <code>CMakeCache.txt</code> that names sources in this
-                repository) — whose
+                repository) and <code>enable_dotnet_build</code> (
+                <code>bin/</code>+<code>obj/</code>, proven by{" "}
+                <code>project.assets.json</code>) — whose
                 claim is rebuild-from-source rather than
                 reinstall-from-lockfile, which is why they ship off and wait an
                 extra <code>build_idle_days</code> (45) before they touch

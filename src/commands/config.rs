@@ -287,6 +287,16 @@ const RECOMMENDED: &[Recommendation] = &[
         taken: None,
     },
     Recommendation {
+        key: "enable_dotnet_build",
+        label: ".NET bin/ and obj/ output",
+        why: "NuGet's restore writes `obj/project.assets.json` naming the project it \
+              restored, so only output `dotnet build` wrote is claimed — a committed \
+              `bin/` holding anything of yours is left alone.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
         key: "cache_max_gb",
         label: "Cache size ceilings",
         why: "Every other suggestion here is about one project's folders. This one is about the \
@@ -701,6 +711,20 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "enable_dotnet_build",
+        category: Category::BuildTrees,
+        since: "1.18.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in .NET adapter (bin/ and obj/ proven by NuGet's project.assets.json).",
+        plain: "Clean .NET bin/ and obj/ folders MSBuild wrote. A `bin/` holding anything of \
+                yours is never touched.",
+        get: |s| s.enable_dotnet_build.to_string(),
+        set: |s, v| {
+            s.enable_dotnet_build = parse_bool("enable_dotnet_build", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "build_idle_days",
         category: Category::BuildTrees,
         since: "1.3.0",
@@ -821,7 +845,7 @@ const SETTINGS: &[Setting] = &[
 ///
 /// [`constants::CACHE_CAP_DEFAULT_KEY`] is accepted alongside the manager names and
 /// covers every manager that is not named separately, so a ceiling can be set without
-/// first learning which twenty-nine caches exist.
+/// first learning which thirty-one caches exist.
 ///
 /// Validated against the cache manager names `devp caches clear` takes, not the adapter
 /// names [`parse_adapter_days`] uses. The two lists overlap but neither contains the
