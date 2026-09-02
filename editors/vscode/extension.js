@@ -23,8 +23,10 @@ const SCHEMA_URL = 'https://devprune.vkrishna04.me/schemas/v1/devprune.schema.js
 
 const BIN = process.platform === 'win32' ? 'devp.exe' : 'devp';
 // cwd is pinned outside the workspace so the lookup can never resolve
-// through workspace content on platforms that search cwd first.
-const EXEC_OPTS = { cwd: os.homedir(), timeout: 15000 };
+// through workspace content on platforms that search cwd first. The timeout
+// budgets for `devp status` walking every registered repository: ~8s measured
+// over 47 of them, times whatever an antivirus scan or a cold disk cache adds.
+const EXEC_OPTS = { cwd: os.homedir(), timeout: 60000 };
 
 // Where `devp setup` puts its managed copy, per platform. VS Code keeps the
 // PATH it was launched with, so a CLI installed a minute ago is invisible to
@@ -324,6 +326,20 @@ function refreshStatus(context, onStillMissing) {
 			if (onStillMissing) onStillMissing();
 			return;
 		}
+		if (error && error.killed) {
+			// The call hit the timeout and was killed mid-answer. That is a
+			// slow machine, not a missing CLI: "not found" would be wrong and
+			// hiding would be silent, so say what happened and stay clickable
+			// (the QuickPick's Refresh retries).
+			currentState = 'status-timeout';
+			currentEntry = undefined;
+			statusItem.text = '$(devprune-logo) devp: not responding';
+			statusItem.tooltip =
+				'devp status --json did not answer within 60 seconds. Click for actions — Refresh tries again.';
+			statusItem.backgroundColor = undefined;
+			statusItem.show();
+			return;
+		}
 		let doc;
 		try {
 			doc = JSON.parse(stdout);
@@ -448,7 +464,14 @@ function registerCommands(context) {
 		vscode.commands.registerCommand('devprune.showStatus', () => {
 			if (!requireTrust()) return;
 			if (currentState === 'cli-missing') {
-				vscode.env.openExternal(vscode.Uri.parse(INSTALL_URL));
+				// The verdict may be stale: it was computed at startup, and the
+				// CLI may have been installed (or restored from an antivirus
+				// quarantine) since. Re-probe, and only send the user to the
+				// install page when devp is still really missing.
+				statusItem.text = '$(devprune-logo) devp: checking…';
+				refreshStatus(context, () => {
+					vscode.env.openExternal(vscode.Uri.parse(INSTALL_URL));
+				});
 				return;
 			}
 			statusQuickPick(context);
@@ -542,6 +565,18 @@ function activate(context) {
 	context.subscriptions.push(statusItem);
 
 	registerCommands(context);
+
+	// A cli-missing verdict is otherwise computed once per window. The install
+	// happens in a terminal outside VS Code and the user comes back by
+	// focusing the window, so recheck then — and only then: with a healthy
+	// status bar a focus change spawns nothing.
+	context.subscriptions.push(
+		vscode.window.onDidChangeWindowState((state) => {
+			if (state.focused && currentState === 'cli-missing' && vscode.workspace.isTrusted) {
+				refreshStatus(context);
+			}
+		}),
+	);
 
 	if (vscode.workspace.isTrusted) {
 		refreshStatus(context);

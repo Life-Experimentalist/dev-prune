@@ -2,7 +2,7 @@
 	"name": "dev-prune",
 	"displayName": "dev-prune",
 	"description": "Validation, autocomplete and hover docs for .devprune.json, plus a status bar showing reclaimable disk space — for dev-prune (devp), the lockfile-verified cleaner that reclaims disk space from node_modules, .venv, target, vendor and other rebuildable dependency folders in idle Git repositories.",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"publisher": "VKrishna04",
 	"license": "Apache-2.0",
 	"icon": "icons/devprune-128.png",
