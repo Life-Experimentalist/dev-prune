@@ -61,6 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The check is also the same on every platform now; macOS ships a `/usr/bin/cd` shim
   that used to let such a declaration through there while Windows refused it.
 
+### For contributors
+
+- **The release build now fails if a shipping binary contains dropper-bait strings** —
+  the PowerShell obfuscation flags, Defender-exclusion cmdlets and injection API names
+  that the 1.15.0 hardening removed by hand. `scripts/check-binary-hygiene.sh` holds
+  the list and runs over every staged executable (the Windows zips unpacked,
+  `devpw.exe` included) before anything is published, so a dependency that smuggles
+  one back in fails in CI instead of in front of seventy antivirus engines.
+
 ## [1.17.0] - 2026-09-02
 
 ### Added
