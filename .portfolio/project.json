@@ -1,0 +1,52 @@
+{
+	"$schema": "https://vkrishna04.me/schemas/project-manifest.schema.json",
+	"manifestVersion": 2,
+	"tagline": "Gigabytes back. Nothing you can't rebuild.",
+	"summary": "A Rust CLI that reclaims the disk space idle repositories are holding in node_modules, .venv, target and vendor directories. It deletes one only after verifying read-only that the project's lockfile can rebuild it, and the same binary restores what it removed.",
+	"status": "active",
+	"icon": "SiRust",
+	"readme": true,
+	"technologies": [
+		"Rust",
+		"Cargo",
+		"CLI",
+		"Cross-platform"
+	],
+	"tags": [
+		"disk-space",
+		"developer-tools",
+		"rust",
+		"cli",
+		"package-managers"
+	],
+	"highlights": [
+		"Nothing is deleted until dev-prune has verified, read-only, that the lockfile can rebuild it — there is no flag that skips the check.",
+		"Knows 25 package managers rather than the obvious four: Composer, Bundler, Mix, CocoaPods and Terraform are as first-class as npm and pip.",
+		"Restores what it removed (devp restore, devp undo) instead of leaving recovery to the user.",
+		"Sizes and clears the caches package managers keep outside project directories, and reports what Docker is holding.",
+		"Ships as a single binary answering to both dev-prune and devp, on Windows, macOS and Linux.",
+		"Its .devprune.json config schema is published in the official SchemaStore catalogue, so any editor validates it."
+	],
+	"links": {
+		"repo": "https://github.com/Life-Experimentalist/dev-prune",
+		"live": "https://devprune.vkrishna04.me/"
+	},
+	"sections": [
+		{
+			"type": "prose",
+			"heading": "Why the obvious approach does not work",
+			"body": "The naive version of this tool is a find command that deletes every node_modules it sees. That is exactly the version nobody trusts, because the one directory it should not have touched is indistinguishable from the rest without reading the project around it. dev-prune inverts the order of operations: it first proves the rebuild command exists and would succeed, and only then deletes. Safety is a precondition rather than a warning in the README."
+		},
+		{
+			"type": "list",
+			"heading": "The parts that took the work",
+			"items": [
+				"A per-ecosystem probe for 25 package managers, each of which reports whether a lockfile is present and complete enough to rebuild.",
+				"An idle-day gate so an actively used project is skipped; --ignore-idle lifts that wait and nothing else.",
+				"An undo log that makes restore a first-class command rather than a manual reinstall.",
+				"Cache and container reporting, which covers the space that lives outside the repositories themselves.",
+				"A published JSON Schema so .devprune.json is validated in the editor rather than at runtime."
+			]
+		}
+	]
+}
