@@ -238,6 +238,10 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
         // dev build) does not reinstall, on its very next command, everything this
         // command was run to remove.
         setup::suppress_next_auto_setup();
+        // And put the first-run question back the way a fresh machine has it: a
+        // "granted" that outlives the things it granted would make the first upgrade
+        // after this quietly reinstall all of them.
+        setup::clear_setup_consent();
     }
 
     // 8. Everything above that Windows refused because this very process holds the file

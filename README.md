@@ -91,6 +91,11 @@ All three download the prebuilt binary for your platform, verify its published S
 put it on `PATH`, and run `dev-prune setup`. Pass `--no-auto-setup` / `-NoAutoSetup` to
 skip that last step.
 
+A binary you download and run by hand asks first instead: the first attended run opens
+the settings walkthrough before anything is installed, finishing it is the yes, and
+quitting it means nothing is installed — durably, until you say otherwise with
+`devp setup`.
+
 Re-run any of them whenever you like. An install that is already current, complete and on
 `PATH` is left exactly as it is and exits `0` without downloading; an older one is updated
 in place; a newer one is not downgraded. `--force` / `-Force` writes it again regardless.
@@ -593,7 +598,7 @@ process that leaves a dirty working tree is a surprise.
 | 🐳 **Container report**                        | `devp caches docker` (also `podman`, `nerdctl`, `finch`, Apple's `container`, or `containers` for all of them plus local Kubernetes clusters) breaks a container engine's disk into images, containers, local volumes and build cache, each with what the engine itself calls reclaimable, and prints the prune commands narrowest first with what each takes with it. `devp caches clear docker` then runs the narrow ones for you, after asking, and counts them in `devp stats` — **never a volume**, and never from a scheduler or a hook. `devp caches` carries a one-line summary per engine, outside its own total |
 | 📊 **Cache report**                            | `devp caches` sizes every package manager cache and store on the machine — npm to cargo to conda, Maven, Gradle, NuGet, vcpkg, Conan, Composer, CocoaPods, Hex, Bundler, pub, SwiftPM, Terraform, Poetry, PDM and Deno — and prints the command that clears each. It also finds the stores that belong to no package manager at all and are routinely the largest things in the list: the Playwright and Puppeteer browser bundles, the Cypress binary cache, the Electron and electron-builder download caches, and the HuggingFace hub — a whole browser or model per version, and nothing ever removes the old one. The report is read-only; `devp caches clear <manager>` runs that command for you, after asking. `devp config set cache_max_gb default=10` says how big is too big — for every manager at once, or per manager with `default=10,npm=4` — and marks the ones past it — `devp caches clear --over-cap all` then empties exactly those, still only when you type it. Each manager also says how many of your registered repositories use it and what that works out to per repository, and `devp caches clear --unused all` empties the ones nothing uses at all. pnpm is reported once per filesystem, because a store it hardlinks into `node_modules` cannot cross one and projects kept off the system disk get a store of their own. Nothing on a schedule ever touches a cache, and Maven's `~/.m2/repository` is never cleared at all — it holds artifacts `mvn install:install-file` put there that no remote can hand back |
 | 🩺 **`devp doctor`**                           | One read-only pass that ends by naming the *single* reason a repository would or would not be pruned. Runs no package manager, repairs nothing, safe to run twice. `devp doctor --fix` then mends what it found — installed-but-broken only                                                                                                                 |
-| 🤖 **Self-installing automation**              | OS-native scheduler (Task Scheduler, LaunchAgent, systemd user timer) and non-blocking Git hooks, installed at install time and restored after an upgrade. `auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1` turn it off                                                                                                             |
+| 🤖 **Self-installing automation**              | OS-native scheduler (Task Scheduler, LaunchAgent, systemd user timer) and non-blocking Git hooks, installed once the first run’s walkthrough is accepted (quitting it installs nothing) and restored after an upgrade. `auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1` turn it off                                                                                                             |
 | ⚡ **0ms opt-out**                             | An `ignore.devprune.json` in a repository root is honoured by file presence alone — no read, no parse. It applies at registration as well: a bulk scan (`devp init`, and the scheduled pass's own discovery) will not register a repository that holds it, so a repository can decline before it ever reaches `devp status`. `devp link <path>` still registers one, because naming a single repository is not a bulk scan                                                                                                                                                                                                                                                       |
 | 🔌 **`--json` on every reporting command**     | `run`, `status`, `stats`, `trust` and `caches` each emit one versioned document on stdout, diagnostics on stderr. Built for scripts and agents                                                                                                                                                                                                              |
 | 🧠 **AI agent skill**                          | A token-lean `SKILL.md` embedded in the binary; `devp skill` exports it and prints onboarding prompts for Claude Code, Gemini Antigravity, Cursor, Windsurf, Copilot and OpenClaw, and the repository doubles as a Claude Code plugin marketplace                                                                                                                                                                           |
@@ -977,6 +982,11 @@ LaunchAgent, or a systemd user timer — that runs a pass every `check_interval_
 non-blocking `post-commit`, `post-checkout` and `post-merge` Git hooks that register new
 repositories as you visit them. Both are reinstated after an upgrade if anything went
 missing.
+
+None of it arrives unasked. A machine that has never agreed opens the settings
+walkthrough on its first attended run, before anything is installed: finishing the
+walkthrough is the yes, quitting it is a durable no, and `devp setup` changes the
+answer whenever you like.
 
 ```bash
 devp setup --status              # what is installed, what is not, and why

@@ -1026,6 +1026,7 @@ pub fn run_cli() {
             Some(ConfigAction::Icon) => commands::icon::run_install(),
             Some(ConfigAction::Wizard { no_tui }) => {
                 commands::config::run_wizard(no_tui, commands::config::Opened::ByRequest)
+                    .map(|_| ())
             }
         },
         Commands::Restore { path, last_run } => {

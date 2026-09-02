@@ -39,7 +39,8 @@ fails, times out, or would need to rewrite the lockfile is a refusal.
   JavaScript project can hold 0.2–2 GB of `node_modules`, each Rust project multiple GB
   of `target`. Most are idle. dev-prune reclaims that space without deleting anything
   unrecoverable and without the user remembering which projects are safe.
-- It runs unattended (OS scheduler + Git hooks that auto-register new clones), so the
+- It runs unattended (OS scheduler + Git hooks that auto-register new clones — both
+  installed only once the first run’s consent walkthrough is accepted), so the
   reclaiming keeps happening after the first run.
 - Use `devp run --dry-run` to see what a pass would free; `devp status` for the
   interactive dashboard; `devp stats` for what has already been reclaimed over time;
@@ -646,7 +647,8 @@ recompiling rather than downloading: `enable_cargo` (false), `enable_gradle` (fa
 **Running without being asked** — what may be installed on the machine, and how
 often it may act alone: `auto_setup` (true), `auto_config` (false),
 `auto_daemon` (true), `auto_discover` (true), `check_interval_days` (2),
-`auto_hooks` (true), `auto_hooks_chain` (false).
+`auto_hooks` (true), `auto_hooks_chain` (false). Even with `auto_setup` on, a fresh
+machine installs nothing until its first-run walkthrough is accepted.
 
 **Keeping dev-prune current**: `update_check` (true),
 `update_check_interval_days` (7), `update_check_timeout_secs` (5),
@@ -810,8 +812,12 @@ on Windows, `~/.local/bin` symlinks elsewhere — this is what keeps a pip-in-ve
 install working after the venv is gone), the exported `SKILL.md`, the skill installed
 into any detected agent skills directory, global Git auto-registration hooks,
 the OS scheduler and the file-manager icons install themselves at install time, and
-again on `devp init` or after an upgrade if any of them is missing. `devp setup` runs
-the same pass by hand and `devp setup --status` only reports. Hooks are skipped when
+again on `devp init` or after an upgrade if any of them is missing — but never
+before the machine has said yes. The first attended run opens the settings walkthrough
+before installing anything: finishing it is the recorded yes, quitting it is a
+recorded no that no later upgrade overrides, and an unattended run (CI, containers,
+captured output) neither installs nor asks. `devp setup` runs
+the same pass by hand — which also records the yes — and `devp setup --status` only reports. Hooks are skipped when
 `git` is not on `PATH`. When the global `core.hooksPath` already belongs to husky,
 pre-commit or lefthook, the pass skips the hooks and says so; `devp hook install --chain`
 takes the slot and writes shims that `exec` the displaced directory's same-named hook,

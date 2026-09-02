@@ -1,6 +1,6 @@
 # 🤖 Background Automation & Subsystems in `dev-prune`
 
-`dev-prune` (`devp`) ships native background automation subsystems for Windows, macOS, and Linux. **They install themselves.** A pruner you have to remember to run is a pruner that never runs, so the parts that make dev-prune work unattended are put in place for you — once, at install time, and again after an upgrade if anything went missing.
+`dev-prune` (`devp`) ships native background automation subsystems for Windows, macOS, and Linux. **They install themselves — once you have said yes.** A pruner you have to remember to run is a pruner that never runs, so the parts that make dev-prune work unattended are put in place for you — at install time, and again after an upgrade if anything went missing. What they never do is arrive unannounced: a machine that has never agreed to any of this is asked first, before anything is installed, and a no is honoured for good.
 
 ---
 
@@ -51,13 +51,26 @@ It installs five things:
 
 One thing is deliberately **not** in the pass: repository registration. Which directories to track is your decision, and no install should guess at it.
 
-On a genuinely fresh install the pass is followed once by the configuration walkthrough — every setting, its current value and its default, Enter to keep it — so the defaults are something you agreed to. It runs only when there is a terminal to ask on, and only once: it is keyed to the config directory, not to the version stamp, because being asked to reconfirm `idle_days` after every upgrade would be a nuisance.
+### The first run asks first
+
+On a machine that has never said yes, the pass does not run — the configuration walkthrough opens instead, *before* anything is installed, and its opening screen ends with a declaration of exactly what finishing it will install: the managed copy on `PATH`, the agent skills, the Git hooks, and the schedule that runs `devp run --yes` unattended. Finish the walkthrough (accepting the recommended setup is still one key — `a`, or `Enter` held down) and the pass runs, honouring whatever you switched off on the way; quit it (`q`) and nothing is installed, now or on any later upgrade — `devp setup` remains the standing way to change your mind. In a terminal that cannot draw the full-screen view, the same question is one printed list and a `[y/N]` line.
+
+The answer is recorded durably in the config directory (the `setup-consent` file), separately from the version stamp, so an upgrade re-checks the integrations you agreed to without ever asking the question again. Typing `devp setup` records a yes — asking for the pass by name is the answer — and `devp uninstall` clears it, so the next install asks again rather than putting back what you just removed. Machines that installed a version before 1.18.0 are not re-asked: the old flow only ever stamped after installing, so a pre-1.18 stamp is the machine having kept the integrations — consent in deed if not in word.
+
+The question is also why an unattended run installs nothing. A CI job, a container, an invocation with its output captured — anything without a person at a terminal — gets no pass, no prompt and no stamp; the first run a person can actually see is the one that asks. That is deliberate beyond politeness: a binary that copies itself into a managed `bin` and registers a scheduled task on its first bare run is indistinguishable, from the outside, from malware establishing persistence — it is the behaviour ML malware classifiers key on, and the 1.17.0 release executable was flagged by two engines for exactly that. Asked first, the same installs become the answer to a question, and a sandbox that runs the binary bare sits at a prompt instead of recording a dropper.
+
+The settings review half — every setting, its current value and its default, `Enter` to keep it — still happens exactly once per machine, and again only when an upgrade adds a setting you have never been shown: it is keyed to the config directory, not to the version stamp, because being asked to reconfirm `idle_days` after every upgrade would be a nuisance.
 
 ```mermaid
 flowchart TD
     Trigger["install script · post-upgrade command · devp setup"] --> Gate{"DEV_PRUNE_NO_AUTO_SETUP set<br/>or auto_setup = false?"}
     Gate -->|Yes| Nothing["Do nothing"]
-    Gate -->|No| Alias["devp binary<br/>missing or stale?"]
+    Gate -->|No| Consent{"Has this machine ever said yes?<br/>setup-consent file, or a pre-1.18 stamp"}
+    Consent -->|"Declined earlier"| Nothing
+    Consent -->|"Never asked"| Ask["First-run walkthrough opens,<br/>before anything is installed"]
+    Ask -->|"Quit q — recorded, honoured for good"| Nothing
+    Ask -->|"Finished — recorded"| Alias["devp binary<br/>missing or stale?"]
+    Consent -->|"Yes — typing devp setup counts"| Alias
     Alias --> Skill["SKILL.md<br/>missing or outdated?"]
     Skill --> Icons["File icons<br/>registered?"]
     Icons --> HooksEnabled{"auto_hooks = true?"}
@@ -152,7 +165,7 @@ wrong guess can do is add a row to `devp status`.
 
 ### Turning it off
 
-Five switches, from narrowest to widest:
+On a machine that never accepted the first-run walkthrough there is nothing to turn off — nothing was installed. For one that did, five switches, from narrowest to widest:
 
 ```bash
 devp config set auto_hooks_chain false   # never displace another tool's hooks (already the default)
@@ -172,7 +185,7 @@ To skip the pass at install time, the installers take a flag — `--no-auto-setu
 
 Being honest about the environment variable: by the time you can type `DEV_PRUNE_NO_AUTO_SETUP=1 devp …`, dev-prune is already installed, so as a way of avoiding the first pass it is redundant with the flag. It stays because its real job is the *steady state*: a Dockerfile or CI image that has the variable in its environment gets no scheduler, no hooks and no writes outside the config directory on any later command, without needing a config file baked in. dev-prune also detects CI and container environments by itself (`CI`, `GITHUB_ACTIONS`, `/.dockerenv`, `container`, and friends) and treats them as unattended without being told, so in practice the variable is for the cases that detection misses.
 
-`devp uninstall` removes the scheduler, the hooks and the `devp` copy, and stamps the current version so the next command does not put them straight back. The next *upgrade* will, unless you also set `auto_setup false`.
+`devp uninstall` removes the scheduler, the hooks and the `devp` copy, stamps the current version so the next command does not put them straight back, and clears the recorded first-run answer — a yes should not outlive the things it agreed to. The next *upgrade* therefore asks the first-run question again instead of quietly reinstalling what you removed.
 
 The variable is symmetric: with `DEV_PRUNE_NO_AUTO_SETUP=1` set, `devp uninstall` is hands-off about the same integrations it never would have installed — it leaves the scheduler and the agent skills alone (saying so in its output), and its stray-copy sweep searches only the directories on `PATH` rather than guessing extra install locations from the home folder. Managing the integrations by hand includes removing them by hand.
 

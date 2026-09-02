@@ -487,6 +487,13 @@ pub const CONFIG_DIR_NAME: &str = "dev-prune";
 /// Global environment variable name to override config directory location.
 pub const ENV_CONFIG_DIR_OVERRIDE: &str = "DEV_PRUNE_CONFIG_DIR";
 
+/// File in the config directory recording the first-run answer to "may dev-prune set
+/// itself up?" — `granted` or `declined`. Its absence means the question has never been
+/// asked, or that `devp uninstall` put it back that way. Separate from the version
+/// stamp on purpose: the stamp is rewritten on every upgrade, and an answer somebody
+/// gave once must survive all of them.
+pub const SETUP_CONSENT_FILE: &str = "setup-consent";
+
 /// Environment variable that suppresses the automatic setup pass entirely.
 ///
 /// For images, CI and anyone who wants the binary and nothing else. `devp setup` still

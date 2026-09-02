@@ -27,6 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `devp caches clear sccache` deletes the directory — after `sccache --stop-server`
   if the daemon is holding it open, which the report says on the row.
 
+### Changed
+
+- **The first run now asks before installing anything.** dev-prune used to put its
+  integrations in place on the first command — a managed copy of the binary on
+  `PATH`, Git hooks, and a scheduled task running `devp run --yes` — and open the
+  settings walkthrough afterwards. Installing first and asking second is, from the
+  outside, the exact shape of malware establishing persistence, and anti-virus
+  classifiers flagged the 1.17.0 release executable for that behaviour. Now the
+  walkthrough opens first, its opening screen lists exactly what finishing it will
+  install, and nothing is installed until you finish it: accepting the recommended
+  setup is still one key (`a`), everything it enables can still be switched off
+  individually on the settings list, and quitting (`q`) installs nothing — durably,
+  so no later upgrade installs it either. `devp setup` remains the standing way to say
+  yes later, `devp uninstall` now clears the answer so a reinstall asks again, and
+  machines upgrading from 1.17.0 or earlier are not re-asked — keeping the
+  integrations the old flow installed already answered the question.
+
 ### Fixed
 
 - **`devp config project <PATH> --team` now writes the public schema URL** into the

@@ -1169,6 +1169,80 @@ fn setup_is_due_in(config_dir: &std::path::Path) -> bool {
         .is_ok_and(|stamp| stamp.trim() == constants::VERSION)
 }
 
+/// What this machine has said about dev-prune installing things for itself.
+///
+/// Three answers, not two: "never asked" is the state a question can still be put in,
+/// and collapsing it into either answer is how tools end up installing on a silence or
+/// nagging on a refusal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SetupConsent {
+    Granted,
+    Declined,
+    NeverAsked,
+}
+
+const CONSENT_GRANTED: &str = "granted";
+const CONSENT_DECLINED: &str = "declined";
+
+/// The release that introduced the consent question. A stamp older than this could
+/// only have been written by a pass that had already installed the integrations; a
+/// newer one is also written by the opted-out path, and so proves nothing.
+const FIRST_CONSENT_VERSION: &str = "1.18.0";
+
+fn consent_state_in(config_dir: &std::path::Path) -> SetupConsent {
+    match fs::read_to_string(config_dir.join(constants::SETUP_CONSENT_FILE)) {
+        Ok(answer) if answer.trim() == CONSENT_GRANTED => return SetupConsent::Granted,
+        Ok(answer) if answer.trim() == CONSENT_DECLINED => return SetupConsent::Declined,
+        _ => {}
+    }
+    // A pre-1.18 stamp means the old flow already installed the integrations and the
+    // person kept them — consent in deed if not in word, and re-asking would prompt
+    // every existing user once for something they already have.
+    match fs::read_to_string(config_dir.join(STAMP_FILE)) {
+        Ok(stamp)
+            if crate::commands::update::compare_versions(stamp.trim(), FIRST_CONSENT_VERSION)
+                == Some(std::cmp::Ordering::Less) =>
+        {
+            SetupConsent::Granted
+        }
+        _ => SetupConsent::NeverAsked,
+    }
+}
+
+pub fn consent_state() -> SetupConsent {
+    Registry::config_dir()
+        .map(|dir| consent_state_in(&dir))
+        .unwrap_or(SetupConsent::NeverAsked)
+}
+
+fn record_consent_in(config_dir: &std::path::Path, answer: &str) {
+    let _ = fs::create_dir_all(config_dir);
+    let _ = fs::write(config_dir.join(constants::SETUP_CONSENT_FILE), answer);
+}
+
+/// `devp setup` records this too: asking for the pass in so many words is also the
+/// durable answer to the question the first run would otherwise ask.
+pub fn record_consent_granted() {
+    if let Ok(dir) = Registry::config_dir() {
+        record_consent_in(&dir, CONSENT_GRANTED);
+    }
+}
+
+fn record_consent_declined() {
+    if let Ok(dir) = Registry::config_dir() {
+        record_consent_in(&dir, CONSENT_DECLINED);
+    }
+}
+
+/// Put the question back the way a fresh machine has it. `devp uninstall` calls this:
+/// keeping a "granted" that outlives the things it granted would make the next upgrade
+/// reinstall everything the uninstall just removed.
+pub fn clear_setup_consent() {
+    if let Ok(dir) = Registry::config_dir() {
+        let _ = fs::remove_file(dir.join(constants::SETUP_CONSENT_FILE));
+    }
+}
+
 /// Whether the unattended pass is due: a fresh install, or the first run after an upgrade.
 pub fn setup_is_due() -> bool {
     Registry::config_dir()
@@ -1189,7 +1263,7 @@ fn a_person_is_present() -> bool {
         && std::io::stdout().is_terminal()
 }
 
-/// The unattended pass, run at most once per installed version.
+/// The per-version pass — and, since 1.18.0, never before this machine has said yes.
 ///
 /// Called at the top of every command that a human typed. It is deliberately not called
 /// for the Git hook's `link --quiet` or the scheduler's `run --daemon`: those run without
@@ -1214,7 +1288,47 @@ pub fn auto_setup_if_due() {
     let Ok(registry) = Registry::load() else {
         return;
     };
-    let Some(report) = ensure_integrations_if_enabled(&registry) else {
+    match consent_state() {
+        SetupConsent::Granted => {
+            // Made durable even when it was inferred from a pre-1.18 stamp, so the
+            // inference runs once rather than on every later upgrade.
+            record_consent_granted();
+            run_consented_pass(&registry);
+            first_run_config_review();
+        }
+        SetupConsent::Declined => {
+            // The answer was no, and staying no costs nothing to honour: stamp so this
+            // version's pass is settled, install nothing, and leave `devp setup` as
+            // the standing way to change the answer. The settings review is still owed
+            // when an upgrade adds a setting — declining the integrations was never a
+            // vote on config defaults.
+            write_stamp();
+            first_run_config_review();
+        }
+        SetupConsent::NeverAsked => {
+            if !auto_setup_enabled(&registry) {
+                // Suppressed. Stamp anyway, so a machine that opted out does not
+                // re-decide this on every single command; the consent marker stays
+                // unwritten, so lifting the opt-out later asks rather than installs.
+                //
+                // The one thing opting out must not do is freeze the instructions AI
+                // agents read at whichever version installed them, so any existing
+                // copies are still brought up to date. See `run_consented_pass` for
+                // the fuller reasoning.
+                refresh_stale(stale_skill_copies());
+                write_stamp();
+                crate::commands::config::skip_config_review();
+                return;
+            }
+            ask_first_run_consent();
+        }
+    }
+}
+
+/// One integration pass for a machine that has already said yes, reported if it did
+/// anything.
+fn run_consented_pass(registry: &Registry) {
+    let Some(report) = ensure_integrations_if_enabled(registry) else {
         // Suppressed. Stamp anyway, so a machine that opted out does not re-decide
         // this on every single command.
         //
@@ -1240,7 +1354,51 @@ pub fn auto_setup_if_due() {
         println!();
     }
     write_stamp();
-    first_run_config_review();
+}
+
+/// Ask, on the first attended run, before installing anything at all.
+///
+/// The old order — install, then open the walkthrough — put this binary's fingerprint
+/// (an unasked self-copy into a managed `bin`, plus a scheduled task, on the first run
+/// of an unsigned download) squarely on the behaviour ML malware classifiers key on;
+/// the 1.17.0 release exe was flagged as Trojan:Win32/Wacatac.B!ml for exactly that.
+/// Asked first, the same installs are the answer to a question — and a sandbox that
+/// runs the binary bare now sits at a prompt instead of recording persistence.
+fn ask_first_run_consent() {
+    use crate::commands::config::FirstRunDecision;
+    match crate::commands::config::first_run_wizard() {
+        Err(e) => {
+            // The wizard's own failure must not decide the question either way:
+            // nothing recorded, nothing stamped, asked again on the next command.
+            output::print_warning(&format!("Could not run the first-run setup ({e:#})."));
+        }
+        Ok(FirstRunDecision::Accepted) => {
+            record_consent_granted();
+            // Reloaded, not reused: the walkthrough that just closed may have flipped
+            // `auto_daemon` or `auto_hooks`, and this pass exists to honour that.
+            let Ok(registry) = Registry::load() else {
+                return;
+            };
+            run_consented_pass(&registry);
+            crate::commands::config::skip_config_review();
+            offer_vscode_extension();
+            println!();
+        }
+        Ok(FirstRunDecision::Declined) => {
+            record_consent_declined();
+            write_stamp();
+            crate::commands::config::skip_config_review();
+            output::print_info(
+                "Nothing was installed. `devp setup` installs the integrations whenever \
+                 you want them; `devp config wizard` reopens the settings.",
+            );
+            println!();
+        }
+        Ok(FirstRunDecision::NoAnswer) => {
+            // EOF is not an answer — it is nobody there after all. Every marker stays
+            // unwritten, so the first run with a person on the other end is asked.
+        }
+    }
 }
 
 /// Put the defaults in front of the user on a fresh install, and any setting an upgrade
@@ -1742,5 +1900,70 @@ dev-prune (devp) v{v}
             "SKILL.md is written to every user's machine — it must not contain \
              absolute paths from the author's checkout"
         );
+    }
+
+    #[test]
+    fn a_fresh_machine_has_never_been_asked() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert_eq!(consent_state_in(dir.path()), SetupConsent::NeverAsked);
+    }
+
+    #[test]
+    fn a_recorded_answer_is_read_back() {
+        let dir = tempfile::TempDir::new().unwrap();
+        record_consent_in(dir.path(), CONSENT_GRANTED);
+        assert_eq!(consent_state_in(dir.path()), SetupConsent::Granted);
+        record_consent_in(dir.path(), CONSENT_DECLINED);
+        assert_eq!(consent_state_in(dir.path()), SetupConsent::Declined);
+    }
+
+    #[test]
+    fn a_garbled_marker_means_the_question_is_still_open() {
+        // Better to ask twice than to install on the strength of a corrupt file.
+        let dir = tempfile::TempDir::new().unwrap();
+        record_consent_in(dir.path(), "maybe?");
+        assert_eq!(consent_state_in(dir.path()), SetupConsent::NeverAsked);
+    }
+
+    #[test]
+    fn a_pre_consent_stamp_counts_as_granted() {
+        // The old flow only ever stamped after installing, so a 1.17 stamp is proof
+        // the integrations are already on this machine.
+        let dir = tempfile::TempDir::new().unwrap();
+        fs::write(dir.path().join(STAMP_FILE), "1.17.0\n").unwrap();
+        assert_eq!(consent_state_in(dir.path()), SetupConsent::Granted);
+    }
+
+    #[test]
+    fn a_post_consent_stamp_proves_nothing() {
+        // From 1.18.0 on, the opted-out path writes the stamp too — treating it as a
+        // yes would silently grant consent on the exact machines that withheld it.
+        let dir = tempfile::TempDir::new().unwrap();
+        // Not `constants::VERSION`: until the release that ships this bumps it past
+        // FIRST_CONSENT_VERSION, the current version is itself a pre-consent one.
+        for stamp in [FIRST_CONSENT_VERSION, "1.18.1", "2.0.0", "garbage"] {
+            fs::write(dir.path().join(STAMP_FILE), stamp).unwrap();
+            assert_eq!(
+                consent_state_in(dir.path()),
+                SetupConsent::NeverAsked,
+                "stamp {stamp:?} must not imply consent"
+            );
+        }
+    }
+
+    #[test]
+    fn an_explicit_answer_outranks_the_stamp() {
+        let dir = tempfile::TempDir::new().unwrap();
+        fs::write(dir.path().join(STAMP_FILE), "1.17.0").unwrap();
+        record_consent_in(dir.path(), CONSENT_DECLINED);
+        assert_eq!(consent_state_in(dir.path()), SetupConsent::Declined);
+    }
+
+    #[test]
+    fn clearing_consent_reopens_the_question() {
+        let dir = tempfile::TempDir::new().unwrap();
+        record_consent_in(dir.path(), CONSENT_GRANTED);
+        fs::remove_file(dir.path().join(constants::SETUP_CONSENT_FILE)).unwrap();
+        assert_eq!(consent_state_in(dir.path()), SetupConsent::NeverAsked);
     }
 }
