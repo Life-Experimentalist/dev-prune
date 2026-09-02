@@ -108,16 +108,22 @@ problem.
 ### From a package manager
 
 ```bash
-npm install -g dev-prune      # or: npx dev-prune status
-bun add -g dev-prune          # same package, through bun
-pnpm add -g dev-prune
-yarn global add dev-prune     # Yarn 1.x
-uv tool install dev-prune     # or: uvx dev-prune status
-pipx install dev-prune
-pip install dev-prune
-cargo binstall dev-prune      # fetches the prebuilt release archive
-cargo install dev-prune       # builds from source, needs Rust 1.88+
+npm install -g dev-prune@latest    # or: npx dev-prune status
+bun add -g dev-prune@latest        # same package, through bun
+pnpm add -g dev-prune@latest
+yarn global add dev-prune@latest   # Yarn 1.x
+uv tool install dev-prune@latest   # or: uvx dev-prune status
+pipx install --force dev-prune
+pip install --upgrade dev-prune
+cargo binstall dev-prune           # fetches the prebuilt release archive
+cargo install dev-prune            # builds from source, needs Rust 1.88+
 ```
+
+Each command installs the latest version *and* updates an existing copy — the same
+line works for both. That is what the `@latest`, `--force` and `--upgrade` spellings
+are for: the bare forms report "already installed" and change nothing, which looks
+like an update and isn't. (`cargo install` rebuilds on its own whenever a newer
+version exists.)
 
 The [npm](https://www.npmjs.com/package/dev-prune) and
 [PyPI](https://pypi.org/project/dev-prune/) packages **contain the binary** — there is no

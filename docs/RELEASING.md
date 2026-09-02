@@ -720,7 +720,7 @@ musllinux case. One build serves Debian and Alpine users alike.
 What this buys, concretely:
 
 ```bash
-uv tool install dev-prune     # persistent install, no Python project needed
+uv tool install dev-prune@latest   # installs or updates, no Python project needed
 uvx dev-prune status          # run once, nothing left behind
 pipx run dev-prune status     # same, via pipx
 npx dev-prune status          # same, via npm

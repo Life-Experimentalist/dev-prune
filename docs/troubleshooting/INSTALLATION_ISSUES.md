@@ -418,7 +418,7 @@ project's problem, and every other repository on the machine gets it too:
 
 ```powershell
 pip uninstall dev-prune
-uv tool install dev-prune     # or: pipx install dev-prune
+uv tool install dev-prune@latest   # or: pipx install --force dev-prune
 ```
 
 If a copy already exists outside the project, the message names its path, so you can see

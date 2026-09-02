@@ -102,11 +102,11 @@ gh attestation verify dev-prune-v1.18.0-linux-x64.tar.gz --repo Life-Experimenta
 
 ### 4. npm (`npm install -g` / `npx` / bun / pnpm / Yarn)
 ```bash
-npm install -g dev-prune   # persistent
-npx dev-prune status       # run once, nothing installed
-bun add -g dev-prune       # same package, through bun
-pnpm add -g dev-prune
-yarn global add dev-prune  # Yarn 1.x
+npm install -g dev-prune@latest   # installs, and updates an existing copy
+npx dev-prune status              # run once, nothing installed
+bun add -g dev-prune@latest       # same package, through bun
+pnpm add -g dev-prune@latest
+yarn global add dev-prune@latest  # Yarn 1.x
 ```
 Every release publishes here. The channel was completed in 1.8.0, when the last three of
 the eight package names were claimed; 1.6.0 and 1.7.0 published a Linux and macOS half.
@@ -121,10 +121,10 @@ the eight package names were claimed; 1.6.0 and 1.7.0 published a Linux and macO
 
 ### 5. PyPI (`uv tool install` / `uvx` / `pipx` / `pip`)
 ```bash
-uv tool install dev-prune     # persistent
-uvx dev-prune status          # run once, nothing left behind
+uv tool install dev-prune@latest   # installs, and updates an existing copy
+uvx dev-prune status               # run once, nothing left behind
 pipx run dev-prune status
-pip install dev-prune
+pip install --upgrade dev-prune
 ```
 - Six platform wheels, each a zip holding the prebuilt executable under `dev_prune-<version>.data/scripts/`. No Python runs, no compiler is invoked, and no build backend is involved — installers unpack the binaries straight into the environment's `bin`/`Scripts` directory.
 - The Linux wheels carry both `manylinux` and `musllinux` tags from the same static binary, so Debian and Alpine users are both served.

@@ -66,22 +66,27 @@ volume, which is the one thing here that nothing can hand back.
 
 ## Install
 
+Every package-manager command below installs the latest version and also updates an
+existing copy — the same line serves both, which is why the `@latest`, `--force` and
+`--upgrade` spellings are used instead of the bare ones (those report "already
+installed" and change nothing).
+
 - Linux, macOS, and Windows under Git Bash/MSYS2/Cygwin:
   `curl -fsSL https://devprune.vkrishna04.me/install.sh | sh`
 - Windows PowerShell: `iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex`
 - Windows Command Prompt: `powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"`
   (same install; `devp` resolves in the next Command Prompt, not the current one)
-- npm: `npm install -g dev-prune`, or `npx dev-prune status` to run it once without
+- npm: `npm install -g dev-prune@latest`, or `npx dev-prune status` to run it once without
   installing. Works on Windows from 1.8.0 onwards; `dev-prune@1.7.0` and earlier
   installed on Windows and then reported no binary to run, and a published manifest
   cannot be edited, so those machines need `npm install -g dev-prune@latest`
-- bun, pnpm and Yarn: `bun add -g dev-prune`, `pnpm add -g dev-prune`, `yarn global add
-  dev-prune` (Yarn 1.x) — the same npm package. dev-prune treats each as a channel of
+- bun, pnpm and Yarn: `bun add -g dev-prune@latest`, `pnpm add -g dev-prune@latest`,
+  `yarn global add dev-prune@latest` (Yarn 1.x) — the same npm package. dev-prune treats each as a channel of
   its own, not as npm: a copy bun installed is upgraded with `bun add -g
   dev-prune@latest` and removed with `bun remove -g dev-prune`, and running npm against
   it would add a second copy under npm's prefix while bun's stayed stale on PATH
-- Python tooling: `uv tool install dev-prune`, `uvx dev-prune status`,
-  `pipx install dev-prune`, `pip install dev-prune`
+- Python tooling: `uv tool install dev-prune@latest`, `uvx dev-prune status`,
+  `pipx install --force dev-prune`, `pip install --upgrade dev-prune`
 - Cargo, prebuilt: `cargo binstall dev-prune`
 - Cargo, from source: `cargo install dev-prune` (Rust 1.88+)
 - Homebrew (macOS and Linux): `brew install Life-Experimentalist/tap/dev-prune`
