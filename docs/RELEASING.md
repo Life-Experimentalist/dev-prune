@@ -513,7 +513,8 @@ flowchart TD
     compile --> static["Linux binaries proven statically linked"]
     static --> pack["Archive + .sha256 sidecar per target"]
 
-    pack --> publish["publish: GitHub Release"]
+    pack --> hygiene["hygiene: bait-string sweep of every executable"]
+    hygiene --> publish["publish: GitHub Release"]
     publish --> npm["publish-npm: 7 packages"]
     publish --> pypi["publish-pypi: 6 wheels"]
     publish --> crate["publish-crate: cargo publish"]
@@ -570,6 +571,14 @@ not run on Alpine at all. A static binary has neither problem, so one asset per
 architecture covers every distribution. The workflow proves the result is actually
 static with `file` before packaging it, because a silently-dynamic binary would work on
 the runner and fail only for users.
+
+**`hygiene`** — greps every executable that will ship — the raw binaries, plus
+everything unpacked from the Windows zips, `devpw.exe` included — for the strings an
+antivirus reads as dropper tooling: PowerShell obfuscation flags, Defender-exclusion
+cmdlets, process-injection API names. The list and the rule for changing it live in
+`scripts/check-binary-hygiene.sh`. Unlike the VirusTotal submission later in the
+workflow, this job gates the release, because a bait string in a shipping binary is a
+build defect to fix, not a reputation problem to wait out.
 
 **`publish`** — attaches every asset to a GitHub Release whose body is the changelog
 section for that version, with the auto-generated commit list appended below it.

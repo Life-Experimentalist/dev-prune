@@ -254,9 +254,52 @@ jobs:
             dev-prune-v*
           if-no-files-found: error
 
+  # Every staged executable is grepped for the strings an antivirus reads as
+  # dropper tooling — the PowerShell obfuscation flags, the Defender-exclusion
+  # cmdlets, the injection API names. The list, and the rule for changing it, live
+  # in scripts/check-binary-hygiene.sh. Unlike the VirusTotal job below, this one
+  # gates the release: a bait string in a shipping binary is a build defect to fix,
+  # not a reputation problem to wait out.
+  hygiene:
+    name: Binary hygiene
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Sweep every executable that will ship
+        run: |
+          set -eu
+          mkdir -p sweep
+          # The raw binaries ship as-is. The Windows zips also carry devpw.exe,
+          # which has no uncompressed twin, so every executable inside them gets
+          # unpacked too. The tarballs hold the same binary as their raw twin, and
+          # grep cannot see through compression anyway, so they are dropped along
+          # with the checksum sidecars.
+          cp dist/dev-prune-v*-linux-* dist/dev-prune-v*-darwin-* sweep/ 2>/dev/null || true
+          cp dist/dev-prune-v*-windows-*.exe sweep/ 2>/dev/null || true
+          rm -f sweep/*.sha256 sweep/*.tar.gz
+          for zip in dist/*-windows-*.zip; do
+            [ -f "$zip" ] || continue
+            arch=$(basename "$zip" .zip | sed 's/.*-windows-//')
+            mkdir -p sweep-tmp
+            unzip -o -j "$zip" '*.exe' -d sweep-tmp >/dev/null
+            for exe in sweep-tmp/*.exe; do
+              mv "$exe" "sweep/${arch}-$(basename "$exe")"
+            done
+          done
+          rm -rf sweep-tmp
+          ls -lh sweep
+          sh scripts/check-binary-hygiene.sh sweep/*
+
   publish:
     name: Publish release
-    needs: [build]
+    needs: [build, hygiene]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
