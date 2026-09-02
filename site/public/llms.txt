@@ -752,7 +752,9 @@ writes — `--update`, the workspace toggles, `i` in the dashboard — only ever
 Either file may also carry `"prunable": {"directories": [...]}`, naming directories no
 adapter can recognise — each an object with `path` (repository-relative), a required
 `rebuild` command, and an optional `why`. Use `"rebuild": "echo not needed"` when nothing
-has to rebuild it. These are pruned by the ordinary pass under the adapter name
+has to rebuild it. The command must start with the tool itself (`npm --prefix docs run
+build`, not `cd docs && npm run build`): the first word is checked against this machine,
+and a shell builtin like `cd` is refused everywhere. These are pruned by the ordinary pass under the adapter name
 `declared`, so they obey `--dry-run`, `--min-size`, `--only` and the schedule. Unlike
 every other key the two files' lists add up rather than one winning.
 `"prunable": {"exclude": [...]}` names declared paths to leave alone on this machine,

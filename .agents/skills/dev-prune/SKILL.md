@@ -475,7 +475,10 @@ anything, which is why `--team` creates it holding only its `$schema` line.
 
 That is how a repository names a tree no adapter can recognise. `rebuild` is required; if
 nothing has to rebuild the directory, write `"rebuild": "echo not needed"`, which works on
-every platform. dev-prune prints the command and never runs it. These are pruned by the
+every platform. dev-prune prints the command and never runs it. Start the command with
+the tool itself — `npm --prefix docs run build`, never `cd docs && npm run build`: the
+first word is checked against the machine, and a shell builtin like `cd` is refused
+everywhere. These are pruned by the
 ordinary pass under the adapter name `declared`, so they obey `--dry-run`, `--min-size`,
 `--only` and the schedule. This is the one section where the two files' lists **add up**
 rather than one winning.

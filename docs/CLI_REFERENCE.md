@@ -760,7 +760,10 @@ reads unambiguously:
     ```
 
     `rebuild` is required. If nothing has to rebuild the directory, say that —
-    `"rebuild": "echo not needed"` is a legal answer and works on every platform. These
+    `"rebuild": "echo not needed"` is a legal answer and works on every platform. The
+    command must start with the tool that does the work — `npm --prefix docs run build`,
+    not `cd docs && npm run build` — because the first word is what gets checked against
+    this machine, and a shell builtin like `cd` is refused everywhere. These
     are pruned by the ordinary pass under the adapter name `declared`, so they appear in
     `devp status`, obey `--dry-run`, `--min-size` and `--only`, and go with the scheduled
     run.

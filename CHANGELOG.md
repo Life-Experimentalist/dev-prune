@@ -5,6 +5,25 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.1] - 2026-09-02
+
+### Fixed
+
+- **`devp config project <PATH> --team` now writes the public schema URL** into the
+  committed `project.devprune.json`. It used to inherit the personal file's preference
+  for the locally installed schema copy, which put a `file:///C:/Users/<name>/...` path
+  — username included — into a file whose whole purpose is to be committed, and broke
+  IntelliSense on every clone but the author's. If you created one before this release,
+  replace its `$schema` value with
+  `https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json`.
+
+- **A declared `rebuild` that starts with a shell builtin now says what to write
+  instead.** `"rebuild": "cd docs && npm run build"` was refused with "Install `cd`
+  first" — advice that cannot be followed, because `cd` is not a program. The refusal
+  now names the actual fix: put the tool first, as in `npm --prefix docs run build`.
+  The check is also the same on every platform now; macOS ships a `/usr/bin/cd` shim
+  that used to let such a declaration through there while Windows refused it.
+
 ## [1.17.0] - 2026-09-02
 
 ### Added

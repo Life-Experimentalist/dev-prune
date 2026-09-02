@@ -851,7 +851,12 @@ impl PerRepoConfig {
 pub fn write_project_starter(repo_path: &Path) -> Result<()> {
     let file = repo_path.join(constants::PROJECT_REPO_CONFIG_FILE);
     let starter = serde_json::json!({
-        "$schema": default_schema_url(),
+        // Deliberately not `default_schema_url()`: that prefers the locally installed
+        // schema copy, and this file is committed — the absolute path would be broken
+        // on every other clone and would publish the author's username with it.
+        // `effective()` already refuses to *read* a project-file `$schema` for the
+        // same reason; this stops one being written in the first place.
+        "$schema": constants::JSON_SCHEMA_URL,
         "prunable": { "directories": [] },
     });
     fs::write(&file, serde_json::to_string_pretty(&starter)?)?;
@@ -2282,6 +2287,22 @@ mod tests {
         // The empty section is written so it can be seen and filled in, which means it
         // has to be inert until somebody fills it in.
         assert!(cfg.prunable.is_none(), "an empty list declares nothing");
+    }
+
+    #[test]
+    fn the_starter_schema_is_the_public_url_never_a_machine_path() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path();
+        fs::create_dir_all(repo.join(".git").join("info")).unwrap();
+
+        write_project_starter(repo).unwrap();
+
+        let written = fs::read_to_string(repo.join(constants::PROJECT_REPO_CONFIG_FILE)).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&written).unwrap();
+        // The personal file prefers the locally installed schema copy — right for a
+        // git-excluded file, and a username leak in a committed one.
+        assert_eq!(parsed["$schema"], constants::JSON_SCHEMA_URL);
+        assert!(!written.contains("file://"), "{written}");
     }
 
     #[test]
