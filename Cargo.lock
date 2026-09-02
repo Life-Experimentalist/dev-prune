@@ -544,7 +544,7 @@ dependencies = [
 
 [[package]]
 name = "dev-prune"
-version = "1.17.0"
+version = "1.18.0"
 dependencies = [
  "anyhow",
  "assert_cmd",

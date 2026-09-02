@@ -134,8 +134,8 @@ Unblock-File "$env:APPDATA\dev-prune\bin\dev-prune.exe","$env:APPDATA\dev-prune\
 listed here for the hand-downloaded path — where unblocking the **archive before
 extracting** means nothing inside it is ever marked:
 ```powershell
-Unblock-File .\dev-prune-v1.17.0-windows-x64.zip
-Expand-Archive .\dev-prune-v1.17.0-windows-x64.zip -DestinationPath .
+Unblock-File .\dev-prune-v1.18.0-windows-x64.zip
+Expand-Archive .\dev-prune-v1.18.0-windows-x64.zip -DestinationPath .
 ```
 
 If you are standing in front of the dialog right now, you do not need any of the above:
@@ -682,7 +682,7 @@ treats it as one.
 beside each asset. If this does not match, stop — the file was altered in transit, and
 your scanner is right.
 ```powershell
-$asset = "dev-prune-v1.17.0-windows-x64.zip"
+$asset = "dev-prune-v1.18.0-windows-x64.zip"
 (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
 Get-Content "$asset.sha256"
 ```
@@ -694,7 +694,7 @@ installed copies, each with a VirusTotal lookup URL for that exact digest. The f
 from Git Bash — `sha256sum` ships with Git for Windows, and is what reads this format:
 
 ```bash
-sha256sum -c dev-prune-v1.17.0-windows-x64.zip.contents.sha256
+sha256sum -c dev-prune-v1.18.0-windows-x64.zip.contents.sha256
 ```
 
 ```powershell

@@ -7,7 +7,7 @@ the latest one.
 
 | Version        | Supported                        |
 | -------------- | -------------------------------- |
-| 1.17.x         | ✓                                |
+| 1.18.x         | ✓                                |
 | Anything older | ✗ — upgrade with `devp update`   |
 
 ## Reporting a Vulnerability
@@ -36,11 +36,11 @@ which the checksum cannot, because the same hand that swaps an archive swaps its
 sidecar.
 
 ```powershell
-gh attestation verify dev-prune-v1.17.0-windows-x64.zip --repo Life-Experimentalist/dev-prune
+gh attestation verify dev-prune-v1.18.0-windows-x64.zip --repo Life-Experimentalist/dev-prune
 ```
 
 ```bash
-gh attestation verify dev-prune-v1.17.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
+gh attestation verify dev-prune-v1.18.0-linux-x64.tar.gz --repo Life-Experimentalist/dev-prune
 ```
 
 The npm package carries npm provenance (`--provenance`) and the PyPI package is
