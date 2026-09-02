@@ -8,16 +8,14 @@
 // run` / `devp status` repeat that quietly at most once a week. Both are switched off by
 // `devp config set update_check false`, and `devp update --offline` skips a single run.
 //
-// What leaves the machine is one unauthenticated GET to the public releases endpoint. It
+// What leaves the machine is one unauthenticated GET to the public releases page. It
 // carries no identifier, no configuration, no repository paths and no usage data — the
 // only thing the server learns is that some copy of dev-prune asked what the latest
 // version is. Nothing else in the binary opens a socket. See `docs/PRIVACY.md`.
 //
-// By default the command does not download or install anything: replacing a binary is
-// the package manager's job, and doing it ourselves would mean writing to a PATH
-// directory with whatever privileges the user happened to have. `--install` keeps that
-// division of labour — it works out which package manager owns the running binary and
-// runs *that manager's* own upgrade command, rather than writing files itself. The
+// Nothing is downloaded until someone says so: `devp update` asks `[y/N]` at a terminal
+// when a newer release exists, `--install` (or `-y`) is the same answer given up front,
+// and a copy run from a script gets the printed upgrade command and nothing else. The
 // scheduled pass is never interrupted by an upgrade: it runs the managed copy under
 // `<config>/bin`, which is replaced by atomic rename and refreshed from the new binary
 // on the next healthy run (`setup::stable_exe_path`), so a pass already in flight keeps
@@ -37,7 +35,7 @@ use crate::config::Registry;
 use crate::constants;
 use crate::output;
 
-pub fn run(offline: bool, install: bool, channels: bool) -> Result<()> {
+pub fn run(offline: bool, install: bool, channels: bool, yes: bool) -> Result<()> {
     if install {
         return run_install();
     }
@@ -49,6 +47,7 @@ pub fn run(offline: bool, install: bool, channels: bool) -> Result<()> {
     output::print_info(&format!("Installed version: v{}", constants::VERSION));
 
     let mut registry = Registry::load().ok();
+    let mut newer = None;
 
     if offline {
         output::print_info("Skipping the release check because `--offline` was passed.");
@@ -57,11 +56,18 @@ pub fn run(offline: bool, install: bool, channels: bool) -> Result<()> {
             // An explicit `devp update` always asks, regardless of when the last
             // automatic check ran — the user is standing there waiting for the answer.
             match refresh_latest(reg) {
-                Ok(latest) => report_comparison(&latest),
+                Ok(latest) => {
+                    report_comparison(&latest);
+                    if compare_versions(constants::VERSION, &latest) == Some(Ordering::Less) {
+                        newer = Some(latest);
+                    }
+                }
                 // A failed check is not a failed command. Someone offline, behind a
                 // proxy, or hitting a rate limit still wants the upgrade instructions.
+                // `:#` so the cause is printed under the label: "request failed" alone
+                // once hid an HTTP 403 and sent a user looking at their network.
                 Err(e) => output::print_warning(&format!(
-                    "Could not reach the release API ({e}). The upgrade commands below still apply."
+                    "Could not check the latest release ({e:#}). The upgrade commands below still apply."
                 )),
             }
             let _ = reg.save();
@@ -81,11 +87,45 @@ pub fn run(offline: bool, install: bool, channels: bool) -> Result<()> {
     // what the section says instead.
     if registry.is_some_and(|r| r.settings.version_lock) {
         output::print_info(&locked_notice(None));
-    } else {
-        print_upgrade_commands();
+        return Ok(());
+    }
+    print_upgrade_commands();
+
+    // The command already knows a newer release exists and how to fetch it, so making
+    // the user retype it with `--install` was one round trip too many. The default is
+    // still "no": Enter, a pipe, or a script leaves the binary exactly as it was.
+    if let Some(latest) = newer
+        && confirm_install(&latest, yes)
+    {
+        println!();
+        return install_latest(&latest);
     }
 
     Ok(())
+}
+
+/// Ask whether to install `latest` right now. `yes` answers without asking.
+///
+/// Without a terminal on stdin the answer is silently "no": the upgrade command was
+/// just printed, and a prompt nobody can answer would hang whatever called us.
+fn confirm_install(latest: &str, yes: bool) -> bool {
+    use std::io::{IsTerminal, Write};
+
+    if yes {
+        return true;
+    }
+    if !std::io::stdin().is_terminal() {
+        return false;
+    }
+    eprint!("Install v{latest} now? [y/N]: ");
+    if std::io::stderr().flush().is_err() {
+        return false;
+    }
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 /// The one sentence every refusal prints, so the pin and the way out of it always
@@ -129,7 +169,7 @@ pub fn check_now(registry: &mut Registry) -> bool {
             }
         }
         // Not being able to reach GitHub is not a failed `init`.
-        Err(e) => output::print_info(&format!("Could not check for a newer release ({e}).")),
+        Err(e) => output::print_info(&format!("Could not check for a newer release ({e:#}).")),
     }
     true
 }
@@ -267,13 +307,21 @@ fn run_install() -> Result<()> {
         ));
         return Ok(());
     }
+    install_latest(&latest)
+}
+
+/// Replace the running binary with release `latest`, already known to be newer.
+///
+/// Shared by `--install` and by the `[y/N]` prompt at the end of plain `devp update`,
+/// which has already fetched `latest` and checked the pin — this does not ask again.
+fn install_latest(latest: &str) -> Result<()> {
     output::print_info(&format!("Upgrading v{} -> v{latest} …", constants::VERSION));
 
     let exe = std::env::current_exe().context("could not locate the running binary")?;
     let managed = crate::setup::managed_exe_path().ok();
     let channel = Channel::detect_at(&exe, managed.as_deref());
 
-    match install_directly(&latest, &exe, managed.as_deref(), channel) {
+    match install_directly(latest, &exe, managed.as_deref(), channel) {
         Ok(()) => {
             output::print_success(&format!("dev-prune v{latest} installed."));
             report_channel_bookkeeping(channel);
@@ -824,30 +872,47 @@ fn report_comparison(latest: &str) {
 ///
 /// Returns the version without any leading `v`, so it can be compared to
 /// `CARGO_PKG_VERSION` directly.
+///
+/// The tag comes from the `Location` of the redirect GitHub answers with, not from a
+/// page body: `max_redirects(0)` hands the `302` back as an ordinary response, so the
+/// release page itself is never downloaded and no API quota is spent (see
+/// [`constants::LATEST_RELEASE_URL`]).
 fn latest_release(timeout_secs: u64) -> Result<String> {
     if crate::setup::offline_requested() {
         anyhow::bail!("{} is set", constants::ENV_OFFLINE);
     }
-    let body = ureq::get(constants::LATEST_RELEASE_API_URL)
+    let response = ureq::get(constants::LATEST_RELEASE_URL)
         .header("User-Agent", &format!("dev-prune/{}", constants::VERSION))
-        .header("Accept", "application/vnd.github+json")
         .config()
         .timeout_global(Some(Duration::from_secs(timeout_secs.max(1))))
+        .max_redirects(0)
         .build()
         .call()
-        .context("request failed")?
-        .body_mut()
-        .read_to_string()
-        .context("could not read the response")?;
+        .context("request failed")?;
 
-    let json: serde_json::Value =
-        serde_json::from_str(&body).context("the response was not JSON")?;
-    let tag = json
-        .get("tag_name")
-        .and_then(|v| v.as_str())
-        .context("the response carried no tag_name")?;
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|v| v.to_str().ok())
+        .context("GitHub did not answer with a redirect")?;
 
-    Ok(tag.trim_start_matches('v').to_string())
+    version_from_release_location(location).context("GitHub did not redirect to a release tag")
+}
+
+/// Read the version out of the URL GitHub redirects `releases/latest` to.
+///
+/// A repository with no releases answers with the releases page itself, and a renamed
+/// repository answers with the new repository's `releases/latest`; neither carries a tag
+/// and neither must be mistaken for one.
+fn version_from_release_location(location: &str) -> Option<String> {
+    let tag = location
+        .split_once("/releases/tag/")?
+        .1
+        .trim_end_matches('/');
+    if tag.is_empty() || tag.contains('/') {
+        return None;
+    }
+    Some(tag.trim_start_matches('v').to_string())
 }
 
 /// Compare two dotted numeric versions, ignoring any pre-release suffix.
@@ -877,6 +942,46 @@ pub(crate) fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
 mod tests {
     use super::*;
     use chrono::Duration as ChronoDuration;
+
+    #[test]
+    fn the_tag_is_read_out_of_the_redirect_and_its_v_is_dropped() {
+        assert_eq!(
+            version_from_release_location(
+                "https://github.com/Life-Experimentalist/dev-prune/releases/tag/v1.18.0"
+            )
+            .as_deref(),
+            Some("1.18.0")
+        );
+        assert_eq!(
+            version_from_release_location("/Life-Experimentalist/dev-prune/releases/tag/1.2.3/")
+                .as_deref(),
+            Some("1.2.3")
+        );
+    }
+
+    #[test]
+    fn a_redirect_that_is_not_a_release_tag_is_not_a_version() {
+        // No releases yet: GitHub sends the releases page itself.
+        assert_eq!(
+            version_from_release_location(
+                "https://github.com/Life-Experimentalist/dev-prune/releases"
+            ),
+            None
+        );
+        // A renamed repository redirects to the new name's `releases/latest`.
+        assert_eq!(
+            version_from_release_location("https://github.com/other/name/releases/latest"),
+            None
+        );
+        assert_eq!(
+            version_from_release_location("https://github.com/o/r/releases/tag/"),
+            None
+        );
+        assert_eq!(
+            version_from_release_location("https://github.com/o/r/releases/tag/v1/extra"),
+            None
+        );
+    }
 
     #[test]
     fn orders_by_component_not_lexically() {

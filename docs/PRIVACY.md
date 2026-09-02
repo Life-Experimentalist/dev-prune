@@ -6,9 +6,9 @@ there is nothing to opt out of.
 
 It does make exactly one network request on its own initiative: asking GitHub what the
 latest release is. Two others exist and neither happens unless you ask for it —
-downloading a release binary when you run `devp update --install`, and downloading the
-VS Code extension's `.vsix` after you say yes to the one-time editor-extension offer.
-All three are described below.
+downloading a release binary when you answer yes to `devp update` or run
+`devp update --install`, and downloading the VS Code extension's `.vsix` after you say
+yes to the one-time editor-extension offer. All three are described below.
 
 ---
 
@@ -22,10 +22,11 @@ All three are described below.
 
 | | |
 |---|---|
-| **Endpoint** | `https://api.github.com/repos/Life-Experimentalist/dev-prune/releases/latest` |
+| **Endpoint** | `https://github.com/Life-Experimentalist/dev-prune/releases/latest` |
 | **Method** | `GET`, unauthenticated |
-| **Headers sent** | `User-Agent: dev-prune/<version>`, `Accept: application/vnd.github+json` |
+| **Headers sent** | `User-Agent: dev-prune/<version>` |
 | **Body sent** | none |
+| **What is read** | only the `Location` header of GitHub's redirect, which names the latest tag. The redirect is not followed and no page is downloaded |
 | **Timeout** | 5 seconds |
 | **Frequency** | on `devp update`; at most once every 7 days from `devp run` and `devp status` |
 | **Turn it off** | `devp config set update_check false` |
@@ -35,6 +36,11 @@ asked what the newest release is. No repository paths, no repository names, no d
 listings, no machine identifier, no configuration, no counters, and no persistent ID are
 sent — the request has no body and no cookie to carry them in. As with any HTTP request,
 GitHub sees the connecting IP address; dev-prune neither adds to that nor can prevent it.
+
+It is the release *page*, not `api.github.com`, on purpose: the API allows an
+unauthenticated address sixty requests an hour across every tool on the machine that
+uses it, and once that was spent the check failed with `403` and dev-prune could not say
+whether a newer version existed. The page has no such quota.
 
 The answer is cached in the registry (`last_update_check`, `latest_known_version`) so the
 reminder survives without going back to the network.
@@ -53,20 +59,23 @@ devp config set update_check false
 setting the environment variable `DEV_PRUNE_OFFLINE=1` keeps the process off the network
 entirely — this check and the `.vsix` fallback below alike — regardless of any setting.
 
-### Why there is no auto-update
+### When a binary is downloaded
 
-dev-prune tells you a newer version exists and prints the upgrade command for your
-install channel. It does not download or replace its own binary. Doing that would mean
-writing to a directory on `PATH` with whatever privileges the user happened to have, and
-fetching an executable over a channel with no signature verification of its own. Your
-package manager already does this correctly; dev-prune defers to it.
+The check itself never downloads anything. When it finds a newer release, `devp update`
+prints the upgrade command for your install channel and — at a terminal — asks
+`Install vX.Y.Z now? [y/N]`; Enter leaves the binary alone. `devp update --install` and
+`devp update -y` are that answer given up front, and `auto_update` (on by default) is the
+same verified download run at the end of a prune pass once a newer release is known.
+Every one of those paths is the download described next, and `devp config set
+version_lock true` stops all of them.
 
 ---
 
-## The download, if you run `devp update --install`
+## The download, if you say yes
 
-`devp update --install` fetches the release binary for this platform, and the SHA-256
-sidecar published beside it, from GitHub's release-download host.
+`devp update` (after a `y`), `devp update --install` and `auto_update` fetch the release
+binary for this platform, and the SHA-256 sidecar published beside it, from GitHub's
+release-download host.
 
 | | |
 |---|---|
@@ -75,7 +84,7 @@ sidecar published beside it, from GitHub's release-download host.
 | **Headers sent** | `User-Agent: dev-prune/<version>` |
 | **Body sent** | none |
 | **Timeout** | 300 seconds |
-| **Frequency** | when you run `devp update --install`, and — because `auto_update` is on by default — at the end of a prune pass that already knows a newer release exists. `devp config set auto_update false` leaves the download to you |
+| **Frequency** | when you answer yes to `devp update` or run `devp update --install`, and — because `auto_update` is on by default — at the end of a prune pass that already knows a newer release exists. `devp config set auto_update false` leaves the download to you |
 | **Turn it off** | don't run it; `DEV_PRUNE_OFFLINE=1` refuses it outright |
 
 The asset name encodes the operating system and CPU architecture, because that is which

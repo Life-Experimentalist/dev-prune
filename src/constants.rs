@@ -367,29 +367,36 @@ pub const INSTALL_SH_URL: &str = "https://devprune.vkrishna04.me/install.sh";
 /// The PowerShell installer — same two callers as [`INSTALL_SH_URL`].
 pub const INSTALL_PS1_URL: &str = "https://devprune.vkrishna04.me/install.ps1";
 
-/// GitHub API endpoint for the latest published release.
+/// The release page for the latest published release.
 ///
 /// Contacted by `devp update` and by the interval-gated check behind
 /// `run`/`status`/`init` (off via `update_check false` or `DEV_PRUNE_OFFLINE`). See the
 /// network policy in `docs/PRIVACY.md`.
 ///
-/// This answers with the newest release GitHub has marked *latest*, which is the newest
-/// binary release and nothing else: the extension's releases are published with
-/// `make_latest: false` precisely so they never surface here. They must not. This URL's
-/// answer is fed to [`compare_versions`](crate::commands::update::compare_versions)
+/// Deliberately the website, not `api.github.com`. GitHub redirects this page to
+/// `releases/tag/<tag>`, and the tag is read out of that `Location` header without
+/// following it — nothing else about the page is needed. The API endpoint that used to
+/// answer the same question allows an unauthenticated address sixty requests an hour
+/// and answered `403` once a busy laptop had spent them, which made `devp update` say
+/// the network was down when it was not. The website has no per-address quota.
+///
+/// Both resolve the release GitHub has marked *latest*, which is the newest binary
+/// release and nothing else: the extension's releases are published with
+/// `make_latest: false` precisely so they never surface here. They must not. The tag
+/// read from here is fed to [`compare_versions`](crate::commands::update::compare_versions)
 /// after a leading `v` is stripped, and a `vscode-v0.4.0` tag arriving here would leave
 /// every installed copy unable to compare its own version for as long as that release
 /// stayed newest.
-pub const LATEST_RELEASE_API_URL: &str =
-    "https://api.github.com/repos/Life-Experimentalist/dev-prune/releases/latest";
+pub const LATEST_RELEASE_URL: &str =
+    "https://github.com/Life-Experimentalist/dev-prune/releases/latest";
 
 /// GitHub API endpoint listing releases newest-first, for the extension `.vsix`.
 ///
 /// The extension ships on its own tags (`vscode-v*`) and its own release page, because
 /// its version is its own and it changes on its own schedule — see
 /// `.github/workflows/release-extension.yml`. That is also why this is a listing rather
-/// than [`LATEST_RELEASE_API_URL`]: there is no "latest release whose tag starts with"
-/// endpoint, so the caller walks the page and takes the first match.
+/// than the redirect behind [`LATEST_RELEASE_URL`]: there is no "latest release whose tag
+/// starts with" endpoint, so the caller walks the page and takes the first match.
 ///
 /// One page is enough by a wide margin. The extension would have to go a hundred binary
 /// releases without a single release of its own before its newest fell off the end, and

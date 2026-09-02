@@ -1357,6 +1357,23 @@ fn update_offline_still_prints_the_upgrade_commands() {
 }
 
 #[test]
+fn update_with_yes_and_nothing_newer_only_prints_the_report() {
+    // The harness sets DEV_PRUNE_OFFLINE, so the check fails and no newer release can be
+    // known. `-y` then has nothing to answer: exit 0, the report, no prompt, no install.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).args(["update", "-y"]).output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+
+    let text = combined(&out);
+    assert!(text.contains("Installed version"));
+    assert!(text.contains("cargo install dev-prune"));
+    assert!(!text.contains("[y/N]"), "asked anyway:\n{text}");
+    assert!(!text.contains("Upgrading"), "installed anyway:\n{text}");
+}
+
+#[test]
 fn a_pinned_copy_is_told_it_is_pinned_instead_of_how_to_upgrade() {
     let tmp = TempDir::new().unwrap();
     let config = tmp.path().join("config");

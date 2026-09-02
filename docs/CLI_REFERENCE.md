@@ -1465,11 +1465,12 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 ---
 
 ### 10. `devp update [--offline | --install | --channels]`
-- **Description**: Prints the installed version, asks GitHub's public API for the latest release, and shows the upgrade command for how you installed it. By default it never downloads or replaces its own binary — upgrade with `cargo binstall dev-prune --force`, `cargo install dev-prune --force`, or by re-running the installer script.
+- **Description**: Prints the installed version, asks GitHub for the latest release, and shows the upgrade command for how you installed it. When a newer release exists and stdin is a terminal it then asks `Install vX.Y.Z now? [y/N]` — Enter leaves the binary alone, `y` runs the same download-verify-replace that `--install` does. Run from a script or a pipe it never asks and only prints the command. The release check reads the `Location` header of `https://github.com/Life-Experimentalist/dev-prune/releases/latest` and follows nothing; it deliberately avoids `api.github.com`, whose sixty-requests-an-hour limit per unauthenticated address once turned the check into a `403`.
 - **Flags**:
   - `--offline` — skip the release check for this run without changing the setting.
+  - `-y`, `--yes` — answer the install prompt with yes. `devp update -y` is the version report followed by the upgrade when there is one, and just the report when there is not.
   - `--channels` — print the upgrade command for every channel dev-prune ships through, not only the one that owns this copy. Reads nothing, writes nothing, opens no connection, and cannot be combined with `--offline` or `--install`. It is the answer to "how do I upgrade the copy on the *other* machine", which the default output deliberately does not try to guess.
-  - `--install` — actually perform the upgrade. It downloads the release binary for this platform straight from GitHub Releases, verifies it against the SHA-256 sidecar published beside it, and writes it to every copy this installation runs: the managed binary under the config `bin` directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary if that is a different file — unless that file lives in a directory WinGet, Scoop or Homebrew owns, which each replace wholesale on upgrade, so writing into one produces a copy the next upgrade throws away. **Nothing is installed if the checksum does not match.** The managed copy is the one whose failure aborts the upgrade — it is what the git hooks and the scheduler invoke — and a copy in a directory this process cannot write is reported rather than fatal.
+  - `--install` — perform the upgrade without the report or the prompt. It downloads the release binary for this platform straight from GitHub Releases, verifies it against the SHA-256 sidecar published beside it, and writes it to every copy this installation runs: the managed binary under the config `bin` directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary if that is a different file — unless that file lives in a directory WinGet, Scoop or Homebrew owns, which each replace wholesale on upgrade, so writing into one produces a copy the next upgrade throws away. **Nothing is installed if the checksum does not match.** The managed copy is the one whose failure aborts the upgrade — it is what the git hooks and the scheduler invoke — and a copy in a directory this process cannot write is reported rather than fatal.
 
     The package manager that delivered the first copy is deliberately *not* run. Its record of the installed version therefore goes stale, and the one command that resyncs it (`cargo install dev-prune --force`, `npm install -g dev-prune@latest`, `bun add -g dev-prune@latest`, `pnpm add -g dev-prune@latest`, `yarn global upgrade dev-prune`, `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`, `brew upgrade dev-prune`) is printed after a successful install. Run it or don't — the binaries are already current either way. `devp update --channels` prints the same table without checking anything.
 
@@ -1483,6 +1484,7 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 - **Examples**:
   ```bash
   devp update
+  devp update -y
   devp update --install
   devp update --channels
   devp update --offline

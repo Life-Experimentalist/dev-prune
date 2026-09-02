@@ -150,4 +150,4 @@ sequenceDiagram
 > **Any Number of Ecosystems per Repository**: A registered repository may hold any number of projects, in any combination — three managers side by side in the root, one per subtree, or both at once. Each is detected, verified, pruned and restored independently. The discovery walk never leaves the repository, never enters a dependency tree, and never crosses into a nested `.git`.
 
 > [!TIP]
-> **Privacy**: `dev-prune` collects no analytics, diagnostics or usage data. The only network request it makes is a release check against GitHub's public API — no body, no identifier, at most weekly, and switched off by `devp config set update_check false`. See [PRIVACY.md](../PRIVACY.md).
+> **Privacy**: `dev-prune` collects no analytics, diagnostics or usage data. The only network request it makes is a release check against GitHub's public releases page — no body, no identifier, at most weekly, and switched off by `devp config set update_check false`. See [PRIVACY.md](../PRIVACY.md).

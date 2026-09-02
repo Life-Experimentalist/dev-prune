@@ -438,9 +438,10 @@ pub enum Commands {
         #[arg(long)]
         offline: bool,
 
-        /// Download and install the newer release, through whichever package manager
-        /// installed this copy (cargo, npm, bun, pnpm, yarn, uv, pipx, or the installer
-        /// script). Needs the network, so it cannot be combined with `--offline`.
+        /// Download and install the newer release without asking. Plain `devp update`
+        /// offers the same install with a `[y/N]` prompt when a newer release exists
+        /// and stdin is a terminal; `-y` answers that prompt. Needs the network, so it
+        /// cannot be combined with `--offline`.
         #[arg(long, conflicts_with = "offline")]
         install: bool,
 
@@ -1040,7 +1041,7 @@ pub fn run_cli() {
             offline,
             install,
             channels,
-        } => commands::update::run(offline, install, channels),
+        } => commands::update::run(offline, install, channels, cli.yes),
         Commands::Skill { agent } => commands::skill::run(agent),
         Commands::Setup { status } => commands::setup::run(status),
         Commands::Doctor { path, fix } => {

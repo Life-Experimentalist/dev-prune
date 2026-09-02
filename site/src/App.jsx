@@ -2274,13 +2274,14 @@ Notes you should rely on, not work around:
                   </tr>
                   <tr>
                     <td className="td-name">
-                      <code>devp update [--install]</code>
+                      <code>devp update [-y | --install]</code>
                     </td>
                     <td>
-                      Print the installed version and the upgrade command;{" "}
-                      <code>--install</code> downloads the release binary,
-                      verifies its checksum and replaces every copy this install
-                      runs
+                      Print the installed version and the upgrade command, then
+                      ask <code>[y/N]</code> when a newer release exists;{" "}
+                      <code>-y</code> or <code>--install</code> skips the
+                      question. A yes downloads the release binary, verifies its
+                      checksum and replaces every copy this install runs
                     </td>
                   </tr>
                   <tr>
@@ -2748,7 +2749,7 @@ Notes you should rely on, not work around:
               <Faq q="Does it send anything over the network?">
                 No analytics, no diagnostics, no usage data — none collected,
                 none sent. There is exactly one request: an unauthenticated{" "}
-                <code>GET</code> to GitHub's public releases endpoint, so it can
+                <code>GET</code> to GitHub's public releases page, so it can
                 tell you when a newer version is out. It has no body, carries no
                 identifier, and runs at most once a week. It is opt-out rather
                 than opt-in, because a tool that deletes directories is one

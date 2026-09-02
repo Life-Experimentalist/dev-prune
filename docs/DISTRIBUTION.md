@@ -12,7 +12,7 @@ Every way to install **`dev-prune`** (`devp`), what each channel actually ships,
 
 ## 🔒 Security Audit & Privacy Guarantees
 
-- **No analytics or diagnostics**: `dev-prune` never transmits workspace directory structures, repository names, user file paths, or usage data. Its single network request is a release check against GitHub's public API — see [PRIVACY.md](PRIVACY.md).
+- **No analytics or diagnostics**: `dev-prune` never transmits workspace directory structures, repository names, user file paths, or usage data. Its single network request is a release check against GitHub's public releases page — see [PRIVACY.md](PRIVACY.md).
 - **Subprocess Command Injection Prevention**: All lockfile verification commands (`npm`, `pnpm`, `yarn`, `bun`, `uv`, `cargo`, `go`) execute binary targets directly via `std::process::Command` without shell expansion.
 - **Atomic State Storage**: `registry.json` is never written in place. Each update is written in full to a `.tmp` file and then renamed over the target, so an interrupted or failed write leaves the previous registry intact rather than a half-written one.
 - **Sandboxed Scope**: File operations are strictly bounded to verified Git workspaces (`.git` presence) and to the directories an adapter names by hand — `node_modules`, `.venv`, `vendor`, `Pods` and the rest. The set is fixed in the source, one entry per package manager; nothing is deleted because it matched a pattern or a `.gitignore` rule.

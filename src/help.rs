@@ -659,11 +659,15 @@ EXAMPLES:
   devp restore --last-run         Undo the last prune pass, everywhere it acted";
 
 pub const UPDATE_LONG: &str = "\
-Print the installed version, ask GitHub's public API for the latest release, and \
-show the upgrade command for how this copy was installed. `--install` runs the upgrade through the \
-package manager that owns this copy (cargo, npm, bun, pnpm, yarn, uv, pipx, or the \
-installer script). `--channels` prints the command for every channel instead of only \
-this one, and touches nothing. `auto_update` is on by default and does the verified-download half by \
+Print the installed version, ask GitHub for the latest release, and show the upgrade \
+command for how this copy was installed. When a newer release exists and stdin is a \
+terminal it then asks `Install vX.Y.Z now? [y/N]`; Enter leaves the binary alone, `y` \
+downloads the release, verifies its checksum and replaces every copy this install \
+runs, falling back to the package manager that owns this copy (cargo, npm, bun, pnpm, \
+yarn, uv, pipx, or the installer script) when there is no published binary for the \
+platform. `--install` or `-y` gives that answer up front; a copy run from a script or a \
+pipe is never asked and only prints the command. `--channels` prints the command for \
+every channel instead of only this one, and touches nothing. `auto_update` is on by default and does the verified-download half by \
 itself at the end of a prune pass when a newer release is known — never the \
 package-manager half, and nothing at all on WinGet, Scoop and Homebrew, where the \
 manager owns the upgrade; `devp config set auto_update false` stops it. An upgrade never interrupts the \
@@ -685,8 +689,9 @@ setting.";
 
 pub const UPDATE_EXAMPLES: &str = "\
 EXAMPLES:
-  devp update                     Version, latest release, upgrade command
-  devp update --install           Upgrade now, through the owning channel
+  devp update                     Version, latest release, upgrade command, then [y/N]
+  devp update -y                  The same, answering the prompt with yes
+  devp update --install           Upgrade now, without the version report
   devp update --channels          Every channel's upgrade command, no network
   devp update --offline           No network this run";
 
