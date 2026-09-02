@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0] - 2026-09-02
+
+- **A stale “devp not found” now heals itself.** The verdict was computed once,
+  when the window opened — install the CLI a minute later (or have an antivirus
+  quarantine give it back) and the warning stayed for the life of the window,
+  and clicking it sent you to the install page for a CLI you already had. The
+  extension now re-checks whenever the window regains focus while that warning
+  is up, and a click re-probes first: the install page only opens when devp is
+  still really missing.
+- **A slow `devp status` no longer looks like a missing one.** The status call
+  walks every registered repository, and on a machine mid antivirus-scan it
+  could outlive the old 15-second limit — the extension then hid its status bar
+  item without a word. The limit is now 60 seconds, and reaching it shows
+  “devp: not responding” with Refresh one click away, instead of nothing.
+
 ## [0.4.0] - 2026-09-01
 
 - **`project.devprune.json` gets the same validation as `.devprune.json`.** The
