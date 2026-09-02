@@ -182,7 +182,7 @@ As with Homebrew, the URL form installs but never upgrades — `scoop update dev
 
 The manifest also carries `checkver` and `autoupdate`, so any other bucket that adopts it can bump itself from the release tag and the published `.sha256` sidecars without waiting for anyone.
 
-### 9. WinGet — submitted, awaiting review
+### 9. WinGet — not yet available
 
 ```powershell
 winget install VKrishna04.dev-prune
@@ -190,7 +190,7 @@ winget install VKrishna04.dev-prune
 
 `winget-pkgs` has no popularity requirement, but every version is a pull request reviewed by a person, so it is not something a release job can do unattended. What the release *does* do is render the three manifests it needs — version, installer and locale — against the assets it just published, into [`packaging/winget/`](../packaging/winget/). Submitting them is a maintainer step documented in [RELEASING.md](RELEASING.md).
 
-1.6.0 is the submission under review: [microsoft/winget-pkgs#422809](https://github.com/microsoft/winget-pkgs/pull/422809). **The command above resolves only once that pull request is merged**; until then, use Scoop or the install script.
+dev-prune is not currently in `winget-pkgs`, so **the command above does not resolve**; until a submission is merged, use Scoop or the install script.
 
 One detail worth knowing if you install this way. A portable WinGet install cannot publish two command names from one file — a repeated `RelativeFilePath` is a manifest error — so the Windows archive carries `dev-prune.exe` and `devp.exe` as two real files, and WinGet puts both on your PATH at install time. Nothing is created on first run, which matters here: WinGet versions its package directory and replaces it wholesale on upgrade, so anything written beside the binary there would be orphaned by the next upgrade while still sitting on your PATH. The managed pair described in [Background Automation](BACKGROUND_AUTOMATION.md) lives in the config directory instead, where an upgrade cannot reach it.
 

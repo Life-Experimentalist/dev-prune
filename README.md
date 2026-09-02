@@ -172,8 +172,8 @@ brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/ma
 scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json
 ```
 
-WinGet is [submitted and in review](https://github.com/microsoft/winget-pkgs/pull/422809);
-`winget install VKrishna04.dev-prune` starts resolving when that pull request merges.
+dev-prune is not in WinGet yet — `winget install VKrishna04.dev-prune` does not
+resolve. On Windows, use Scoop or the install script instead.
 
 The two Python entry points differ in where they land. `pip install` follows whichever
 environment is active, so inside a virtualenv `devp` lives in that venv's `Scripts`/`bin`
@@ -307,8 +307,8 @@ so they are worth copying rather than typing.
 | [Open VSX](https://open-vsx.org/extension/VKrishna04/dev-prune) | **`VKrishna04.dev-prune`** | The same extension, for VSCodium, Cursor, Windsurf, Positron and Kiro. |
 | [SchemaStore](https://www.schemastore.org/) | **`.devprune.json`** | The config schema, by filename. No extension and no `$schema` key needed. |
 
-[WinGet](https://github.com/microsoft/winget-pkgs/pull/422809) is submitted and in
-review. It is not in the table because it does not resolve yet.
+WinGet is not in the table because dev-prune is not in `winget-pkgs` yet, so
+`winget install VKrishna04.dev-prune` does not resolve.
 
 Two of those rows are not installs of dev-prune at all. SchemaStore is why JetBrains
 IDEs, Visual Studio, Neovim and Zed validate `.devprune.json` with nothing installed —
