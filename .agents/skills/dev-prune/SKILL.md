@@ -428,7 +428,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 
 | Key | Default | Meaning |
 | :--- | :---: | :--- |
-| `auto_setup` | `true` | Whether the integration pass may run unattended |
+| `auto_setup` | `true` | Whether the integration pass may run unattended. A fresh machine is also asked once, before anything installs; `devp setup` records the yes |
 | `auto_config` | `false` | Whether `link`/`init` write a default `.devprune.json` into repositories they register |
 | `auto_daemon` | `true` | Whether that pass may register the OS scheduler |
 | `auto_discover` | `true` | Whether the scheduled background pass (`devp run --daemon`) looks for unregistered repositories by itself, using the same roots as `devp init --auto`, and registers what it finds. A manual `devp run` never does. Registering is not pruning — a discovered repository still waits for `idle_days` and still needs a lockfile to prove every candidate directory rebuildable — and a repository holding an `ignore.devprune.json` is never registered. `devp config set auto_discover false` turns it off |
@@ -581,7 +581,8 @@ same safety invariants pass — so the worst a wrong guess costs is an extra row
 > thing instead: `devp config set auto_hooks false` and `devp config hook disable`.
 
 Off switches, narrowest first: `auto_hooks_chain`, `auto_discover`, `auto_daemon`,
-`auto_hooks`, `auto_setup`. For containers
+`auto_hooks`, `auto_setup`. None of it installs until the machine’s first attended
+run accepts the setup walkthrough — quitting that installs nothing, durably. For containers
 and CI, `DEV_PRUNE_NO_AUTO_SETUP=1` overrides all five with no config file — the same
 variable the install scripts read, so setting it once covers install time and every run
 after it.
@@ -669,7 +670,7 @@ specific symptom the report named.
 | Verification times out | A slow registry or a very large project | `devp config set command_timeout_secs 1800` |
 | Hooks not installed | `git` absent from `PATH`, or another tool owns `core.hooksPath` | `devp setup --status` says which. Install git, or `devp hook install --chain` to sit in front of the other tool and forward to it |
 | Scheduler not running | `auto_daemon false`, or the pass was declined | `devp setup --status`, then `devp daemon install` |
-| Automation came back after uninstall | An upgrade re-ran the pass | `devp config set auto_setup false` |
+| Automation came back after uninstall | The first-run question was answered yes again — uninstalling clears the recorded answer, so nothing reinstalls without a new one | Decline the walkthrough when asked, or `devp config set auto_setup false` |
 | A bloat directory was skipped silently | It is a symlink or junction | Expected and deliberate — it points at storage the repository does not own |
 
 ## 🧭 Recipes

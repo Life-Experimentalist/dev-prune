@@ -754,7 +754,9 @@ cache it came from disappears), the exported SKILL.md and its agent-directory \
 install, the file-manager icon registration, the global Git hooks, and the OS \
 scheduler. Safe to run repeatedly: it is the same pass the install scripts run, the \
 same one `devp init` runs, and the same one that runs by itself on the first command \
-after an upgrade.
+after an upgrade. Typing it is also the durable yes to the first-run question: a \
+machine where the setup walkthrough was quit -- or never shown -- treats `devp setup` \
+as the answer, and upgrades maintain what it installed from then on.
 
 It skips rather than forces: Git hooks when `git` is missing or another tool holds \
 `core.hooksPath` (take the slot with `devp hook install --chain`), the alias when \

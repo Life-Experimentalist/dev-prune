@@ -2739,9 +2739,12 @@ Notes you should rely on, not work around:
                 pass notices the drift and rebuilds the shims.
               </Faq>
               <Faq q="How do I stop it installing background things?">
-                It already stops itself in the places that would be wrong: a CI
-                runner, a container, or any non-interactive session is detected
-                and the pass is skipped without being asked. Otherwise{" "}
+                On a fresh machine it never starts by itself: the first run
+                opens the settings walkthrough before anything is installed, and
+                quitting it installs nothing — durably. It also stops itself
+                in the places that would be wrong: a CI runner, a container, or
+                any non-interactive session is detected and the pass is skipped
+                without being asked. Otherwise{" "}
                 <code>devp config set auto_setup false</code> turns off the
                 whole pass, <code>auto_hooks</code>, <code>auto_daemon</code> and{" "}
                 <code>auto_discover</code> turn off one part each, and{" "}
