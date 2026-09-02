@@ -213,7 +213,7 @@
                 "name": "Does dev-prune send anything over the network?",
                 "acceptedAnswer": {
                   "@type": "Answer",
-                  "text": "There is no telemetry, no diagnostics and no usage data of any kind. dev-prune makes exactly one request: an unauthenticated GET to GitHub's public releases endpoint so it can tell you when a newer version exists. It has no body and carries no identifier, it runs at most once a week, and devp config set update_check false switches it off. Everything else on the wire is your own package manager during lockfile verification or restore."
+                  "text": "There is no telemetry, no diagnostics and no usage data of any kind. dev-prune makes exactly one request: an unauthenticated GET to GitHub's public releases page so it can tell you when a newer version exists. It has no body and carries no identifier, it runs at most once a week, and devp config set update_check false switches it off. Everything else on the wire is your own package manager during lockfile verification or restore."
                 }
               },
               {

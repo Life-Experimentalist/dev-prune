@@ -103,7 +103,7 @@ traffic against its own marketplace, not dev-prune's. If the editor's registry c
 resolve the extension (some forks' registries do not carry it), dev-prune itself
 downloads the `.vsix` from the newest extension release — two requests to
 `api.github.com/...releases`, one to list the releases and one for the file, with the
-same headers as the update check and no body — and hands that file to the editor. This never happens without the explicit confirmation,
+a `User-Agent` and an `Accept: application/vnd.github+json` header and no body — and hands that file to the editor. This never happens without the explicit confirmation,
 and a "no" is remembered: nothing asks twice.
 
 ---
