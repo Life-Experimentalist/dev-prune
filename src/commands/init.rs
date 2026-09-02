@@ -159,14 +159,19 @@ pub fn run(paths: &[String], dry_run: bool, auto: bool) -> Result<()> {
 
     if !dry_run {
         // Install anything missing. Idempotent, and identical to what `devp setup` and
-        // the post-upgrade pass do, so there is one code path and one set of rules.
-        if let Some(report) = crate::setup::ensure_integrations_if_enabled(&registry)
-            && (report.changed_anything() || report.needs_attention())
-        {
-            output::print_header("Integrations");
-            report.print(false);
+        // the post-upgrade pass do, so there is one code path and one set of rules —
+        // but only on a machine that has said yes to it. `devp init` was typed to
+        // register repositories, which is not yet a yes to a scheduled task, and
+        // stamping while the question is open would swallow the question itself.
+        if crate::setup::consent_state() == crate::setup::SetupConsent::Granted {
+            if let Some(report) = crate::setup::ensure_integrations_if_enabled(&registry)
+                && (report.changed_anything() || report.needs_attention())
+            {
+                output::print_header("Integrations");
+                report.print(false);
+            }
+            crate::setup::suppress_next_auto_setup();
         }
-        crate::setup::suppress_next_auto_setup();
 
         if registry.settings.auto_config {
             for repo in &newly_added_repos {

@@ -25,6 +25,10 @@ pub fn run(status_only: bool) -> Result<()> {
     let report = setup::ensure_integrations(&registry, setup::Consent::Explicit);
     report.print(true);
     setup::suppress_next_auto_setup();
+    // Asking for the pass by name settles the first-run question too — without this, a
+    // machine that started with `devp setup` would still be asked "may dev-prune set
+    // itself up?" on the next upgrade, about integrations it already has.
+    setup::record_consent_granted();
 
     println!();
     if report.needs_attention() {

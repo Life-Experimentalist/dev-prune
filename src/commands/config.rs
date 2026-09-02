@@ -1173,6 +1173,9 @@ pub enum Opened {
     /// the two times this takes a terminal in the middle of a command that asked for
     /// something else.
     OnItsOwn,
+    /// The consent walkthrough on a machine that has never been asked: finishing it is
+    /// what authorises the integration pass, and quitting it installs nothing.
+    FirstRun,
 }
 
 /// What to tell someone who did not ask to be here, or `None` when they did ask.
@@ -1184,6 +1187,17 @@ pub enum Opened {
 fn why_this_opened(opened: Opened) -> Option<String> {
     if opened == Opened::ByRequest {
         return None;
+    }
+    if opened == Opened::FirstRun {
+        return Some(
+            "You did not ask for this screen. dev-prune opens it once, before it \
+             installs anything, so that saying yes is something you do rather than \
+             something that happens to you. Finish the walkthrough and the items under \
+             \"What finishing this walkthrough installs\" are set up, honouring \
+             whatever you switch off on the way; quit (q) and nothing is installed. \
+             Whatever you typed runs as soon as you leave."
+                .to_string(),
+        );
     }
     let new = settings_added_since_review().len();
     Some(if reviewed_version().is_none() || new == 0 {
@@ -1212,7 +1226,7 @@ fn why_this_opened(opened: Opened) -> Option<String> {
 /// Two implementations, one meaning. [`run_wizard_tui`] is the full-screen one; the
 /// line-by-line [`run_wizard_prompts`] runs wherever that cannot, which is less a
 /// degraded mode than the only honest option on a pipe.
-pub fn run_wizard(no_tui: bool, opened: Opened) -> Result<()> {
+pub fn run_wizard(no_tui: bool, opened: Opened) -> Result<WizardEnd> {
     if !no_tui && full_screen_is_usable() {
         return run_wizard_tui(opened);
     }
@@ -1234,8 +1248,18 @@ fn full_screen_is_usable() -> bool {
     std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
+/// How the wizard ended. The first-run consent flow reads this as its answer, which is
+/// the only reason the ending is reported at all.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum WizardEnd {
+    /// Reached the summary and left through it — saved changes, or kept everything.
+    Completed,
+    /// Quit without finishing.
+    Cancelled,
+}
+
 /// The full-screen configurator: declaration, then every setting, then the summary.
-fn run_wizard_tui(opened: Opened) -> Result<()> {
+fn run_wizard_tui(opened: Opened) -> Result<WizardEnd> {
     use crate::tui::config_view::{ConfigRow, ConfigSession, Control, Outcome};
 
     let registry = Registry::load()?;
@@ -1298,8 +1322,31 @@ fn run_wizard_tui(opened: Opened) -> Result<()> {
         .collect();
 
     let why = why_this_opened(opened);
+    let mut declaration = declaration_lines(&report);
+    if opened == Opened::FirstRun {
+        use crate::tui::config_view::DeclarationLine;
+        let line = |mark: char, subject: &str, state: String| DeclarationLine {
+            mark,
+            subject: subject.to_string(),
+            state,
+        };
+        declaration.push(line('#', "", String::new()));
+        declaration.push(line(
+            '#',
+            "What finishing this walkthrough installs",
+            String::new(),
+        ));
+        for (subject, state) in setup_preview_lines() {
+            declaration.push(line('!', subject, state));
+        }
+        declaration.push(line(
+            ' ',
+            "Quit instead (q)",
+            "and none of it is installed — `devp setup` installs it later".to_string(),
+        ));
+    }
     let outcome = crate::tui::config_view::run(ConfigSession {
-        declaration: declaration_lines(&report),
+        declaration,
         standing: NOTHING_DELETED_YET.to_string(),
         suggestions: first_run_suggestions(),
         rows,
@@ -1318,14 +1365,14 @@ fn run_wizard_tui(opened: Opened) -> Result<()> {
         // once and walking away; `devp config wizard` typed by hand changes nothing.
         Outcome::Cancelled => {
             output::print_info("Cancelled — nothing was changed.");
-            Ok(())
+            Ok(WizardEnd::Cancelled)
         }
         Outcome::KeepAll => {
             mark_reviewed();
             output::print_success(
                 "Keeping the current values. `devp config set <key> <value>` changes any.",
             );
-            Ok(())
+            Ok(WizardEnd::Completed)
         }
         Outcome::Save(changed) => {
             save_settings_edits(changed.iter().map(|row| (row.key, row.value.as_str())))?;
@@ -1348,9 +1395,92 @@ fn run_wizard_tui(opened: Opened) -> Result<()> {
                 changed.len(),
                 output::plural(changed.len(), "change", "changes")
             ));
-            Ok(())
+            Ok(WizardEnd::Completed)
         }
     }
+}
+
+/// What saying yes to the first-run setup actually installs, one line per artefact.
+///
+/// One list feeding both the declaration screen and the line-mode prompt, because two
+/// spellings of "what you are consenting to" is one too many. The scheduler line names
+/// `run --yes` in so many words: an unattended deletion pass is the most consequential
+/// item here, and the one a reader most needs to have seen before agreeing.
+fn setup_preview_lines() -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "Command on PATH",
+            "a managed copy of the binary, as both `dev-prune` and `devp`".to_string(),
+        ),
+        (
+            "AI agent skills",
+            "SKILL.md instructions and file icons, in dev-prune's own config directory".to_string(),
+        ),
+        (
+            "Git hooks",
+            "a hook that registers repositories as you work in them (while `auto_hooks` is on)"
+                .to_string(),
+        ),
+        (
+            "Background schedule",
+            format!(
+                "runs `devp run --yes` every {} days — pruning without asking (while \
+                 `auto_daemon` is on)",
+                Settings::default().check_interval_days
+            ),
+        ),
+        (
+            "Removed again by",
+            "`devp uninstall`, which takes all of it back out".to_string(),
+        ),
+    ]
+}
+
+/// The one question a fresh machine gets before dev-prune installs anything.
+pub enum FirstRunDecision {
+    /// Finished the walkthrough, or answered yes: install, honouring what it chose.
+    Accepted,
+    /// Quit it, or answered no: install nothing, now or on any later pass.
+    Declined,
+    /// EOF — nobody answered. Ask again on the next attended run.
+    NoAnswer,
+}
+
+/// The first-run consent flow: the full-screen walkthrough where one can be drawn, a
+/// single yes/no line first where it cannot.
+///
+/// In the walkthrough, the recommended setup is one gesture — `a` on the suggestions
+/// screen, or Shift+Enter anywhere — and everything it turns on is still individually
+/// on the settings list two screens later. "Enable the lot, then switch off the two you
+/// don't want" is the intended path, not a workaround.
+pub fn first_run_wizard() -> Result<FirstRunDecision> {
+    if full_screen_is_usable() {
+        return Ok(match run_wizard_tui(Opened::FirstRun)? {
+            WizardEnd::Completed => FirstRunDecision::Accepted,
+            WizardEnd::Cancelled => FirstRunDecision::Declined,
+        });
+    }
+
+    use std::io::Write;
+    output::print_header("dev-prune setup");
+    output::print_info("dev-prune is installed but not set up. Saying yes installs:");
+    for (subject, state) in setup_preview_lines() {
+        println!("    {}  {state}", output::pad_display(subject, 22));
+    }
+    println!();
+    print!("Set up now, starting with the settings walkthrough? [y/N] ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    if std::io::stdin().read_line(&mut line)? == 0 {
+        println!();
+        return Ok(FirstRunDecision::NoAnswer);
+    }
+    let answer = line.trim();
+    if answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes") {
+        run_wizard_prompts(Opened::FirstRun)?;
+        return Ok(FirstRunDecision::Accepted);
+    }
+    Ok(FirstRunDecision::Declined)
 }
 
 /// The suggestions screen's contents — empty on every run but the first.
@@ -1649,7 +1779,7 @@ fn declaration_lines(
 /// Walk the global settings one line at a time, offering each current value.
 ///
 /// Refuses without a terminal instead of hanging on a read that will never return.
-fn run_wizard_prompts(opened: Opened) -> Result<()> {
+fn run_wizard_prompts(opened: Opened) -> Result<WizardEnd> {
     use std::io::{self, IsTerminal, Write};
 
     if !io::stdin().is_terminal() {
@@ -1737,7 +1867,7 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
     {
         mark_reviewed();
         output::print_success("Keeping the defaults. `devp config set <key> <value>` changes any.");
-        return Ok(());
+        return Ok(WizardEnd::Completed);
     }
 
     println!();
@@ -1791,11 +1921,11 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
         // the marker, so closing the input counted as having read every setting.
         if input_ended {
             output::print_info("Input ended — nothing was changed.");
-            return Ok(());
+            return Ok(WizardEnd::Cancelled);
         }
         mark_reviewed();
         output::print_success("Nothing changed — the defaults are in place.");
-        return Ok(());
+        return Ok(WizardEnd::Completed);
     }
 
     // The last screen of the full-screen configurator, on one line per change: what is
@@ -1807,7 +1937,7 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
     println!();
     if !confirmed_twice("Press Enter twice to save, or type anything to abandon: ")? {
         output::print_info("Nothing was written.");
-        return Ok(());
+        return Ok(WizardEnd::Cancelled);
     }
 
     save_settings_edits(edits.iter().map(|(key, _, to)| (*key, to.as_str())))?;
@@ -1818,7 +1948,7 @@ fn run_wizard_prompts(opened: Opened) -> Result<()> {
         "Saved {changed} {}. `devp config show` lists them all.",
         output::plural(changed, "change", "changes")
     ));
-    Ok(())
+    Ok(WizardEnd::Completed)
 }
 
 /// Two empty lines to say yes: in line mode a single Enter is what people press to
