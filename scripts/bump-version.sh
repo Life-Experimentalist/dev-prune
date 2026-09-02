@@ -62,9 +62,17 @@ rewrite .claude-plugin/plugin.json "s/^  \"version\": \"[^\"]*\",/  \"version\":
 # Whole asset filenames, quoted so a reader can copy them. The version sits in the
 # middle of the name, so these are matched on the surrounding `dev-prune-v...-` shape.
 for doc in docs/DISTRIBUTION.md docs/RELEASES_AND_MANUAL_INSTALL.md \
-    docs/troubleshooting/INSTALLATION_ISSUES.md; do
+    docs/troubleshooting/INSTALLATION_ISSUES.md SECURITY.md; do
     rewrite "$doc" "s/dev-prune-v[0-9][0-9A-Za-z.+-]*-\(linux\|darwin\|windows\)/dev-prune-v$version-\1/g"
 done
+
+# The supported-series row of SECURITY.md's table. Anchored to the row shape -- a line
+# that is nothing but `| X.Y.x |` -- because the prose below the table also names
+# versions ("through 1.14.x") and those date history, not the current release. The
+# cell is padded to the table's column width so the source stays aligned; Markdown
+# would render an unpadded row the same, but nobody would find it when reading the file.
+rewrite SECURITY.md \
+    "s/^| [0-9][0-9]*\\.[0-9][0-9]*\\.x *|/| $(printf '%-14s' "${version%.*}.x") |/"
 
 # Cargo.lock records dev-prune's own version, and a bump without this leaves the lockfile
 # one version behind until the next build writes it — which on CI is after the check.
