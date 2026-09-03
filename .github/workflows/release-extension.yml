@@ -121,12 +121,13 @@ jobs:
           EOF
 
       # `make_latest: false`, and this is load-bearing rather than cosmetic. Every
-      # installed copy of dev-prune asks the API for `releases/latest` to decide whether
-      # it is out of date, and it reads the version out of the tag name. An extension
-      # release allowed to become "latest" would answer that question with
-      # `vscode-v0.4.0`, which is not a version any copy can compare against — so every
-      # `devp update` in the world would report that it could not check, for as long as
-      # this release stayed newest.
+      # installed copy of dev-prune resolves `releases/latest` to decide whether it is
+      # out of date — copies from 1.19.0 on read the redirect `Location` of the releases
+      # page, older ones asked the API — and either way the version comes out of the tag
+      # name. An extension release allowed to become "latest" would answer that question
+      # with `vscode-v0.4.0`, which is not a version any copy can compare against — so
+      # every `devp update` in the world would report that it could not check, for as
+      # long as this release stayed newest.
       #
       # Deliberately not `prerelease: true`, which would achieve the same thing by
       # telling a lie: a released extension is not a pre-release, and the badge would say

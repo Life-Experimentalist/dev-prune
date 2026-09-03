@@ -5,6 +5,39 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.19.0] - 2026-09-03
+
+### Added
+
+- **`devp update` now asks before installing.** When a newer release exists and you are
+  at a terminal, the report ends with `Install vX.Y.Z now? [y/N]` — Enter leaves the
+  binary alone, `y` runs the same download-verify-replace that `--install` always did.
+  The global `-y` flag answers yes up front, and `devp update --install` still skips
+  the report entirely. Run from a script or a pipe, nothing changes: the check never
+  asks and never installs.
+
+### Fixed
+
+- The release check no longer reads `api.github.com`, whose sixty-requests-an-hour
+  limit per unauthenticated address could turn `devp update` (and the passive
+  update check) into a `403` that surfaced as "Could not reach the release API".
+  The version now comes from the redirect `Location` of the release page at
+  `github.com/Life-Experimentalist/dev-prune/releases/latest`, which has no such
+  quota — and when the check does fail, the error now prints its full cause chain
+  instead of a one-line summary.
+- The install pages taught commands that quietly did nothing on a machine that already
+  had dev-prune — `uv tool install dev-prune` reports "already installed" and exits
+  successfully having changed nothing, and npm, bun, pnpm and yarn share the trap. The
+  README, the site and the docs now quote the spelling that both installs and updates:
+  `@latest` where the manager re-resolves it, `--force` for pipx, `--upgrade` for pip.
+
+### For contributors
+
+- `scripts/bump-version.sh` now rewrites the three version strings in `SECURITY.md`
+  (the supported-series table row and the two `gh attestation verify` example
+  filenames), so a version bump no longer fails `check-version.sh` until SECURITY.md
+  is edited by hand.
+
 ## [1.18.0] - 2026-09-02
 
 ### Added
