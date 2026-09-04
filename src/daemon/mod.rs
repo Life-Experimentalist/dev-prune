@@ -129,6 +129,34 @@ pub fn wants_windowless_upgrade() -> bool {
     }
 }
 
+/// Whether the installed scheduler entry still carries the power gates Windows puts on
+/// a bare `schtasks /Create` registration — refuse to start on battery, die on unplug,
+/// never catch up a missed trigger. Only Windows has them; launchd and systemd user
+/// timers run on battery without being asked.
+pub fn wants_power_upgrade() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows::wants_power_upgrade()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+/// Lift those power gates off the installed task, keeping its trigger time, logon type
+/// and binary as they are. No-op on the other platforms.
+pub fn apply_power_settings() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::apply_power_settings()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(())
+    }
+}
+
 /// Replace the windowless scheduler binary after an upgrade, when one is in use.
 ///
 /// Windows-only: the twin (`devpw.exe`) is a separate build target shipped beside the

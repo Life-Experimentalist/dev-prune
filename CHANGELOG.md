@@ -5,6 +5,45 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.20.0] - 2026-09-04
+
+### Added
+
+- **Adapter idle windows now show up in the report.** A repository idle past
+  `idle_days` whose `target/` still waits on `build_idle_days` (or an
+  `adapter_idle_days` entry) used to hold that adapter in silence — the `node_modules`
+  row appeared, the `target/` row simply didn't, and nothing said why. Now `devp run`
+  prints one `Not examined (adapter idle window: N days)` line per held adapter,
+  `devp run --explain` and `devp doctor <repo>` name the window and the
+  `devp --ignore-idle run` override, and `--json` carries it as a new
+  `skipped_adapter_window` status. One reading note for scripts: in
+  `devp status --json`, a repository held only by such windows now reports the lowest
+  unmet window as its `idle_days` — the threshold it is actually held to — rather
+  than the configured setting.
+
+### Changed
+
+- **A registered folder that lost its `.git` no longer fails every scheduled pass.**
+  Delete and re-clone a repository by hand, or `git worktree prune` a registered
+  worktree, and the leftover entry used to count as a blocking error — exit `1` on
+  every `devp run` until you went looking for why. It is now reported as what it is, a
+  stale registry entry: the pass names the path, hints `devp unlink <path>`, exits
+  `0`, and `--json` tags the row `not_a_repo`. If your automation alerts on `devp run`'s
+  exit code, note the change: this situation was exit `1` before 1.20.0 and is exit `0`
+  now. (`devp unlink --missing` deliberately does not clear these — the directory still
+  exists; only its `.git` is gone.)
+- **The scheduled prune no longer skips laptops on battery.** The Windows task is now
+  registered to start on battery power, keep running if the charger is pulled, and
+  fire as soon as the machine wakes if it slept through the scheduled time
+  (`StartWhenAvailable`). Existing installations are repaired in place: the next run
+  of any `devp` command that checks the daemon rewrites the task's power settings
+  without moving its schedule. A task dev-prune cannot rewrite is reported by
+  `devp doctor` instead of silently left strict.
+- **A failed update check retries the next day, not next week.** When the release
+  check cannot reach GitHub — captive portal, proxy, flaky hotel Wi-Fi — the failure
+  used to consume the whole `update_check_interval`, so one bad morning meant a week
+  of not hearing about a new release. A failed check is now retried after a day.
+
 ## [1.19.0] - 2026-09-03
 
 ### Added

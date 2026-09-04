@@ -45,6 +45,27 @@ pub enum PruneStatus {
     ActivityCheckError(String),
     /// The registered path no longer exists on disk.
     PathMissing,
+    /// The registered path still exists on disk but no longer holds a `.git`.
+    ///
+    /// A standing state, not an error: the clone was deleted and recreated by hand, or
+    /// it was a worktree `git worktree prune` has since removed — and reporting it as
+    /// a failure made every scheduled pass exit non-zero forever, for a directory
+    /// nothing could ever have been touched in. Same reasoning as
+    /// [`Self::PathMissing`], but its own variant because the fix is different:
+    /// `devp unlink --missing` only clears entries whose directory has gone, and this
+    /// one is still there.
+    NotARepo,
+    /// An adapter that waits for a longer idle window than the repository's own
+    /// threshold was not examined, because the repository has not been idle that long
+    /// yet. Carries the window, in days.
+    ///
+    /// This was a bare `continue` with no row behind it, and every surface downstream
+    /// then disagreed about the repository: `--explain` said "idle, but no known bloat
+    /// directories were found", `status` said Candidate, `doctor` said Yes — and a run
+    /// touched nothing. Worded as "not examined" rather than "skipped bloat"
+    /// deliberately: the gate fires before the adapter is asked for its directories,
+    /// so there may be nothing behind it at all.
+    SkippedAdapterWindow(u64),
     /// Skipped because the bloat directory doesn't exist.
     NoBloat,
     /// Repo is disabled in the registry.
@@ -90,6 +111,15 @@ impl std::fmt::Display for PruneStatus {
                     f,
                     "Path no longer exists (`devp unlink --missing` clears it)"
                 )
+            }
+            PruneStatus::NotARepo => {
+                write!(
+                    f,
+                    "No longer a git repository (`devp unlink` removes the entry)"
+                )
+            }
+            PruneStatus::SkippedAdapterWindow(days) => {
+                write!(f, "Not examined (adapter idle window: {days} days)")
             }
             PruneStatus::NoBloat => write!(f, "No bloat found"),
             PruneStatus::Disabled => write!(f, "Disabled"),
@@ -288,14 +318,13 @@ impl PruneOptions {
     /// adapter that could lower it would be a bypass of that gate wearing a
     /// preference's clothes, so a smaller number is accepted and does nothing.
     fn idle_threshold_for(&self, name: &str, opt_in: bool, base: u64) -> u64 {
-        let mut days = base;
-        if opt_in {
-            days = days.max(self.build_idle_days);
-        }
-        if let Some(&explicit) = self.adapter_idle_days.get(name) {
-            days = days.max(explicit);
-        }
-        days
+        adapter_idle_threshold(
+            name,
+            opt_in,
+            base,
+            self.build_idle_days,
+            &self.adapter_idle_days,
+        )
     }
 
     /// The common case: prune everything eligible in this repository.
@@ -307,6 +336,30 @@ impl PruneOptions {
             ..Self::default()
         }
     }
+}
+
+/// The idle threshold one adapter is held to, in days.
+///
+/// The one place the merge lives: the prune gate, `status_for_repo` and `devp doctor`
+/// all answer "how long must this repository be idle before this adapter is touched?"
+/// through this function. Each used to compute its own answer — the gate correctly,
+/// the other two not at all — which is how a window-held repository was a Candidate
+/// on the dashboard and a "Yes" in doctor while every pass left it alone.
+pub(crate) fn adapter_idle_threshold(
+    name: &str,
+    opt_in: bool,
+    base: u64,
+    build_idle_days: u64,
+    adapter_idle_days: &BTreeMap<String, u64>,
+) -> u64 {
+    let mut days = base;
+    if opt_in {
+        days = days.max(build_idle_days);
+    }
+    if let Some(&explicit) = adapter_idle_days.get(name) {
+        days = days.max(explicit);
+    }
+    days
 }
 
 /// Result of pruning a single bloat directory in a single repo.
@@ -416,7 +469,10 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
 
     // A registered path whose `.git` has gone (deleted by hand, or a worktree pruned
     // by `git worktree prune`) must not vanish from the report the way it once did —
-    // same reasoning as the PathMissing line above: silence reads as "handled".
+    // same reasoning as the PathMissing line above: silence reads as "handled". It was
+    // an `ActivityCheckError` for a while, which read fine but counted as a blocking
+    // failure — so one dead registry entry turned every scheduled pass red until the
+    // user happened to look at why.
     if !scanner::is_git_repo(repo_path) {
         results.push(PruneResult {
             repo_path: repo_path.to_path_buf(),
@@ -425,11 +481,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             size_freed: 0,
             shared_bytes: 0,
             runtime: None,
-            status: PruneStatus::ActivityCheckError(format!(
-                "`{}` is no longer a git repository — nothing was touched. \
-                 `devp unlink` removes it from the registry.",
-                crate::output::clean_path(repo_path)
-            )),
+            status: PruneStatus::NotARepo,
         });
         return results;
     }
@@ -547,6 +599,10 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
     // the walk is the expensive part of a pass that finds nothing.
     let mut idle_at: BTreeMap<u64, bool> = BTreeMap::new();
 
+    // One row per held adapter, not one per project: a monorepo with thirty cargo
+    // members would otherwise report the same window thirty times.
+    let mut window_reported: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
     for project in &projects {
         for adapter in &project.adapters {
             if !opts.adapters.allows(adapter.name()) {
@@ -563,6 +619,20 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
                     .entry(threshold)
                     .or_insert_with(|| git::is_repo_idle(repo_path, threshold).unwrap_or(false));
                 if !idle_enough {
+                    // Held, not silent. This `continue` used to be the whole story,
+                    // and nothing downstream could say why the pass left the
+                    // repository alone.
+                    if window_reported.insert(adapter.name().to_string()) {
+                        results.push(PruneResult {
+                            repo_path: repo_path.to_path_buf(),
+                            adapter_name: adapter.name().to_string(),
+                            bloat_dir: "-".to_string(),
+                            size_freed: 0,
+                            shared_bytes: 0,
+                            runtime: None,
+                            status: PruneStatus::SkippedAdapterWindow(threshold),
+                        });
+                    }
                     continue;
                 }
             }
@@ -1398,7 +1468,35 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
     let (adapter_names, all_bloat, by_adapter) = collect_bloat(path, min_size_bytes, depth);
     let reclaimable: u64 = all_bloat.iter().map(|b| b.size_bytes).sum();
 
-    let reason = if !is_idle {
+    // A repository idle past its own threshold can still be entirely held back by
+    // adapter windows — `build_idle_days` for the opt-in build adapters, or an
+    // `adapter_idle_days` entry. The dashboard used to call that a Candidate while a
+    // run touched nothing. No new SkipReason: being held by a longer window *is*
+    // being active, just against a higher bar — so the entry reports Active with
+    // `idle_days` raised to the lowest window still unmet, which is the threshold
+    // that actually decides this repository. A partial hold stays Candidate, because
+    // a run would still prune the adapters whose window is met.
+    let opt_in_names = crate::adapters::opt_in_adapter_names();
+    let lowest_unmet_window = (is_idle && !by_adapter.is_empty())
+        .then(|| {
+            by_adapter
+                .iter()
+                .map(|(name, _)| {
+                    let threshold = adapter_idle_threshold(
+                        name,
+                        opt_in_names.contains(&name.as_str()),
+                        idle_days,
+                        registry.settings.build_idle_days,
+                        &registry.settings.adapter_idle_days,
+                    );
+                    (!git::is_idle_at(activity, threshold)).then_some(threshold)
+                })
+                .collect::<Option<Vec<u64>>>()
+                .and_then(|unmet| unmet.into_iter().min())
+        })
+        .flatten();
+
+    let reason = if !is_idle || lowest_unmet_window.is_some() {
         SkipReason::Active
     } else if all_bloat.is_empty() {
         SkipReason::NoBloat
@@ -1415,7 +1513,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
         reclaimable_bytes: reclaimable,
         reclaimable_by_adapter: by_adapter,
         last_activity: activity_time,
-        idle_days,
+        idle_days: lowest_unmet_window.unwrap_or(idle_days),
     }
 }
 
@@ -1753,6 +1851,10 @@ mod tests {
         assert_eq!(PruneStatus::Pruned.to_string(), "Pruned");
         assert_eq!(PruneStatus::SkippedActive.to_string(), "Skipped (active)");
         assert_eq!(PruneStatus::SkippedDryRun.to_string(), "Skipped (dry run)");
+        assert_eq!(
+            PruneStatus::SkippedAdapterWindow(45).to_string(),
+            "Not examined (adapter idle window: 45 days)"
+        );
     }
 
     #[test]
@@ -1762,10 +1864,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let results = prune_repo(tmp.path(), 15, false, false);
         assert_eq!(results.len(), 1);
-        assert!(matches!(
-            results[0].status,
-            PruneStatus::ActivityCheckError(_)
-        ));
+        assert!(matches!(results[0].status, PruneStatus::NotARepo));
     }
 
     #[test]
@@ -1850,6 +1949,41 @@ mod tests {
         assert!(!dry_run_results.is_empty());
         // vendor should still exist
         assert!(repo.join("vendor").exists());
+    }
+
+    #[test]
+    fn an_unmet_adapter_window_reports_one_row_per_adapter_not_one_per_project() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        create_git_repo_with_commit(&repo);
+        // Two go projects, one window: the gate fires per project, the report must
+        // not repeat itself.
+        create_go_project(&repo);
+        create_go_project(&repo.join("sub"));
+
+        // Base threshold 0: a just-committed repository already counts as idle, so
+        // the pass reaches the per-adapter gate — where go's pinned 10 000-day window
+        // is unmet and nothing behind it may even be looked at.
+        let mut opts = PruneOptions::new(0, true, false);
+        opts.adapter_idle_days.insert("go".to_string(), 10_000);
+        let results = prune_repo_with(&repo, &opts);
+
+        let windows: Vec<_> = results
+            .iter()
+            .filter(|r| matches!(r.status, PruneStatus::SkippedAdapterWindow(_)))
+            .collect();
+        assert_eq!(windows.len(), 1, "{results:?}");
+        assert_eq!(windows[0].adapter_name, "go");
+        assert!(matches!(
+            windows[0].status,
+            PruneStatus::SkippedAdapterWindow(10_000)
+        ));
+        assert!(
+            !results
+                .iter()
+                .any(|r| matches!(r.status, PruneStatus::SkippedDryRun)),
+            "a held adapter must not also report candidates: {results:?}"
+        );
     }
 
     /// A Python project with a populated `requirements.txt` and a virtual environment.

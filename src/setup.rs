@@ -718,6 +718,17 @@ pub fn ensure_daemon(interval_days: u64) -> Outcome {
                 Err(e) => Outcome::Failed(format!("{e:#}")),
             }
         }
+        // A task registered by a version that took Windows' power defaults never runs
+        // on a laptop that lives on battery, and a missed trigger is skipped rather
+        // than caught up. Patch the settings in place — an XML round-trip, not a
+        // reinstall, so the trigger time the user already has stays put. A scheduler
+        // that refuses remembers the refusal and is not asked again.
+        Ok(daemon::DaemonStatus::Installed) if daemon::wants_power_upgrade() => {
+            match daemon::apply_power_settings() {
+                Ok(()) => Outcome::Installed,
+                Err(e) => Outcome::Failed(format!("{e:#}")),
+            }
+        }
         // A settled task still needs its windowless twin kept current: the twin
         // is a copy of the binary, so an upgrade that replaced the binary would otherwise
         // leave the daemon firing the previous release. No-op on the other platforms, and

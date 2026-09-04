@@ -1287,6 +1287,11 @@ struct RepoContext {
     /// directories. Without it, a repository that relies entirely on declarations is
     /// told there is nothing here — the opposite of what `devp run` would do.
     declared: Option<Prunable>,
+    /// Global `build_idle_days`, so the project pass can hold each adapter to the
+    /// same window the prune gate does.
+    build_idle_days: u64,
+    /// Global `adapter_idle_days`, same purpose.
+    adapter_idle_days: std::collections::BTreeMap<String, u64>,
 }
 
 fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> RepoContext {
@@ -1491,6 +1496,8 @@ fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> Repo
         min_size_bytes: min_size_mb.saturating_mul(BYTES_PER_MIB),
         depth,
         declared: per_repo.as_ref().and_then(|c| c.prunable.clone()),
+        build_idle_days: registry.settings.build_idle_days,
+        adapter_idle_days: registry.settings.adapter_idle_days.clone(),
     }
 }
 
@@ -1500,6 +1507,9 @@ struct ProjectReport {
     prunable: bool,
     /// Whether anything was found at all.
     has_bloat: bool,
+    /// Set when this project's bloat sits behind an adapter idle window the
+    /// repository has not reached yet: the window, in days.
+    held_days: Option<u64>,
 }
 
 fn check_repo_projects(f: &mut Findings, path: &Path, ctx: &RepoContext) -> Vec<ProjectReport> {
@@ -1578,12 +1588,44 @@ fn check_repo_projects(f: &mut Findings, path: &Path, ctx: &RepoContext) -> Vec<
                 ),
             }
 
+            // The same merge the prune gate applies, read through the same
+            // function: a pass holds this adapter to max(idle_days, build_idle_days
+            // if opt-in, adapter_idle_days[name]), and a doctor that ignored it
+            // answered "Yes" for repositories every pass then left alone.
+            let window = engine::adapter_idle_threshold(
+                adapter.name(),
+                adapter.opt_in(),
+                ctx.idle_days,
+                ctx.build_idle_days,
+                &ctx.adapter_idle_days,
+            );
+            let held = if ctx.idle
+                && window > ctx.idle_days
+                && !git::is_repo_idle(&ctx.path, window).unwrap_or(false)
+            {
+                Some(window)
+            } else {
+                None
+            };
+            if let Some(days) = held {
+                f.warn(
+                    "    Idle window",
+                    &format!(
+                        "{} waits for {days} idle days (`build_idle_days` / \
+                         `adapter_idle_days`) and the repository is not idle that \
+                         long yet — a pass leaves this project alone for now",
+                        adapter.name()
+                    ),
+                );
+            }
+
             let bloat = adapter.bloat_dirs(&project.path);
             if bloat.is_empty() {
                 f.note("    Bloat", "nothing installed — nothing to reclaim");
                 reports.push(ProjectReport {
                     prunable: false,
                     has_bloat: false,
+                    held_days: None,
                 });
                 continue;
             }
@@ -1615,8 +1657,9 @@ fn check_repo_projects(f: &mut Findings, path: &Path, ctx: &RepoContext) -> Vec<
                 }
             }
             reports.push(ProjectReport {
-                prunable,
+                prunable: prunable && held.is_none(),
                 has_bloat: true,
+                held_days: held,
             });
         }
     }
@@ -1647,6 +1690,7 @@ fn check_repo_projects(f: &mut Findings, path: &Path, ctx: &RepoContext) -> Vec<
                     reports.push(ProjectReport {
                         prunable: false,
                         has_bloat: true,
+                        held_days: None,
                     });
                 } else if t.size_bytes < ctx.min_size_bytes {
                     f.warn(
@@ -1656,12 +1700,14 @@ fn check_repo_projects(f: &mut Findings, path: &Path, ctx: &RepoContext) -> Vec<
                     reports.push(ProjectReport {
                         prunable: false,
                         has_bloat: true,
+                        held_days: None,
                     });
                 } else {
                     f.ok("    Bloat", &format!("{} ({size})", t.label));
                     reports.push(ProjectReport {
                         prunable: true,
                         has_bloat: true,
+                        held_days: None,
                     });
                 }
             }
@@ -1673,6 +1719,7 @@ fn check_repo_projects(f: &mut Findings, path: &Path, ctx: &RepoContext) -> Vec<
                 reports.push(ProjectReport {
                     prunable: false,
                     has_bloat: false,
+                    held_days: None,
                 });
             }
         }
@@ -1716,7 +1763,18 @@ fn repo_verdict(ctx: &RepoContext, projects: &[ProjectReport]) -> String {
     } else if !projects.iter().any(|p| p.has_bloat) {
         no("No — every project here is already clean.".to_string())
     } else if !projects.iter().any(|p| p.prunable) {
-        no("No — everything found is symlinked or below the size floor. See above.".to_string())
+        match projects.iter().filter_map(|p| p.held_days).min() {
+            Some(days) => no(format!(
+                "No — held by an adapter idle window: what was found waits for {days} \
+                 idle days (`build_idle_days` / `adapter_idle_days`), and the \
+                 repository is not idle that long yet. `devp --ignore-idle run \
+                 {clean}` overrides."
+            )),
+            None => no(
+                "No — everything found is symlinked or below the size floor. See above."
+                    .to_string(),
+            ),
+        }
     } else {
         format!(
             "{} Would `devp run` prune this? Yes — subject to each lockfile verifying. \
@@ -1968,6 +2026,8 @@ mod tests {
                 }],
                 exclude: Vec::new(),
             }),
+            build_idle_days: 45,
+            adapter_idle_days: std::collections::BTreeMap::new(),
         };
         let mut f = Findings::default();
         let reports = check_repo_projects(&mut f, dir.path(), &ctx);
@@ -1989,11 +2049,52 @@ mod tests {
             min_size_bytes: 0,
             depth: 6,
             declared: None,
+            build_idle_days: 45,
+            adapter_idle_days: std::collections::BTreeMap::new(),
         };
         // Three reasons are true at once; the verdict names the one the prune pass would
         // hit first, which is the one the user has to fix before any other matters.
         let line = repo_verdict(&ctx, &[]);
         assert!(line.contains("not a Git repository"), "{line}");
+    }
+
+    #[test]
+    fn a_window_held_repository_names_the_window_not_the_size_floor() {
+        let dir = TempDir::new().unwrap();
+        let ctx = RepoContext {
+            path: dir.path().to_path_buf(),
+            is_git: true,
+            registered: true,
+            opted_out: None,
+            config_broken: false,
+            idle: true,
+            idle_days: 15,
+            min_size_bytes: 0,
+            depth: 6,
+            declared: None,
+            build_idle_days: 45,
+            adapter_idle_days: std::collections::BTreeMap::new(),
+        };
+        let line = repo_verdict(
+            &ctx,
+            &[ProjectReport {
+                prunable: false,
+                has_bloat: true,
+                held_days: Some(45),
+            }],
+        );
+        assert!(line.contains("45 idle days"), "{line}");
+
+        // Without a window, the same shape keeps the size-floor explanation.
+        let line = repo_verdict(
+            &ctx,
+            &[ProjectReport {
+                prunable: false,
+                has_bloat: true,
+                held_days: None,
+            }],
+        );
+        assert!(line.contains("size floor"), "{line}");
     }
 
     #[test]

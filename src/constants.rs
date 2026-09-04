@@ -742,6 +742,16 @@ pub const WINDOWS_WINDOWLESS_BIN: &str = "devpw.exe";
 /// an empty file in the config directory — so the vocabulary must not imply otherwise.
 pub const SCHEDULER_WINDOWLESS_REFUSED_MARKER: &str = "scheduler-windowless-refused";
 
+/// Marker recording that this machine's scheduler refused the re-registration that
+/// lifts the power gates off the task (see `windows::apply_power_settings`). Same
+/// contract as the windowless marker above: written on refusal so settled passes stop
+/// retrying, swept by the next explicit install.
+pub const SCHEDULER_POWER_REFUSED_MARKER: &str = "scheduler-power-refused";
+
+/// Scratch file the power-settings re-registration writes the patched task XML to,
+/// inside the config directory. `schtasks /Create /XML` only reads from a file.
+pub const SCHEDULER_POWER_PATCH_FILE: &str = "task-power-patch.xml";
+
 /// Label of the macOS LaunchAgent the daemon registers (also names its plist file).
 pub const MACOS_LAUNCHD_LABEL: &str = "com.devprune.daemon";
 

@@ -799,10 +799,7 @@ pub fn notify_if_outdated(registry: &mut Registry) -> bool {
         return false;
     }
 
-    let interval = registry.settings.update_check_interval_days;
-    let due = registry
-        .last_update_check
-        .is_none_or(|last| Utc::now().signed_duration_since(last).num_days() >= interval);
+    let due = check_due(registry);
 
     if due {
         // The result is deliberately ignored: `refresh_latest` moves the timestamp even
@@ -828,6 +825,23 @@ pub fn notify_if_outdated(registry: &mut Registry) -> bool {
     due
 }
 
+/// Whether the periodic release check should run now.
+///
+/// A check that failed gets one day, not the whole interval: the timestamp still
+/// advances on failure (so an offline machine is not stalled on every command), but the
+/// version it froze is stale, and `maybe_auto_update` trusts nothing else — one
+/// timed-out request otherwise silences the auto-update for a week.
+fn check_due(registry: &Registry) -> bool {
+    let interval = if registry.last_update_check_failed {
+        registry.settings.update_check_interval_days.min(1)
+    } else {
+        registry.settings.update_check_interval_days
+    };
+    registry
+        .last_update_check
+        .is_none_or(|last| Utc::now().signed_duration_since(last).num_days() >= interval)
+}
+
 /// Ask GitHub for the latest release and record the answer on the registry.
 ///
 /// The caller is responsible for saving; that keeps this usable from both the
@@ -835,6 +849,7 @@ pub fn notify_if_outdated(registry: &mut Registry) -> bool {
 fn refresh_latest(registry: &mut Registry) -> Result<String> {
     let result = latest_release(registry.settings.update_check_timeout_secs);
     registry.last_update_check = Some(Utc::now());
+    registry.last_update_check_failed = result.is_err();
     let latest = result?;
     registry.latest_known_version = Some(latest.clone());
     Ok(latest)
@@ -1176,6 +1191,37 @@ mod tests {
         let notice = locked_notice(Some("2.0.0"));
         assert!(notice.contains("v2.0.0 is out"), "{notice}");
         assert!(notice.contains(constants::VERSION), "{notice}");
+    }
+
+    #[test]
+    fn a_failed_check_is_retried_after_a_day_not_a_whole_interval() {
+        let mut registry = Registry {
+            last_update_check: Some(Utc::now() - ChronoDuration::days(2)),
+            last_update_check_failed: true,
+            ..Default::default()
+        };
+        // Two days since a *failed* check: due again, well inside the ordinary
+        // interval. This is the incident: a timed-out check froze the known version at
+        // 1.14.0, and the next scheduled pass — a day and a half later — trusted it.
+        assert!(check_due(&registry));
+        registry.last_update_check_failed = false;
+        assert!(
+            !check_due(&registry),
+            "a successful check keeps the interval"
+        );
+    }
+
+    #[test]
+    fn even_a_failed_check_is_not_retried_within_the_day() {
+        // The failure backoff must not reintroduce the per-command stall it was
+        // written around: offline for an afternoon means one timeout, not one per
+        // command.
+        let registry = Registry {
+            last_update_check: Some(Utc::now() - ChronoDuration::hours(2)),
+            last_update_check_failed: true,
+            ..Default::default()
+        };
+        assert!(!check_due(&registry));
     }
 
     #[test]

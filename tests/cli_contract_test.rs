@@ -1085,6 +1085,49 @@ fn doctor_collapses_dead_registry_entries_into_one_actionable_warning() {
     );
 }
 
+/// A registered directory that lost its `.git` — a clone deleted and recreated by
+/// hand, or a worktree `git worktree prune` removed — is a standing fact of the
+/// registry, not a failure of this pass. It used to count as a blocking error, which
+/// turned every scheduled pass red until the user happened to go looking for why.
+#[test]
+fn run_reports_a_registered_non_repo_without_failing_the_pass() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("was-a-repo");
+    git_repo(&repo);
+    devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(repo.join(".git")).unwrap();
+
+    let out = devp(&config).args(["run", "--yes"]).output().unwrap();
+    let text = combined(&out);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a dead registry entry is not a failed pass\n{text}"
+    );
+    assert!(
+        text.contains("not a git repository any more"),
+        "the entry must be reported, not silently skipped\n{text}"
+    );
+    assert!(
+        text.contains("devp unlink") && !text.contains("unlink --missing"),
+        "the fix is `devp unlink <path>` — `--missing` would remove nothing here\n{text}"
+    );
+
+    let out = devp(&config)
+        .args(["run", "--dry-run", "--json", "--yes"])
+        .output()
+        .unwrap();
+    assert!(
+        combined(&out).contains("\"not_a_repo\""),
+        "{}",
+        combined(&out)
+    );
+}
+
 #[test]
 fn unlink_missing_removes_every_dead_entry_and_leaves_the_live_ones() {
     let tmp = TempDir::new().unwrap();

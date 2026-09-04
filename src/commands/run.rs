@@ -315,6 +315,14 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
                     "{clean} is currently active (not idle). Use `devp --ignore-idle run` to override."
                 ));
             }
+            PruneStatus::SkippedAdapterWindow(days) => {
+                output::print_info(&format!(
+                    "  • {} was not examined — it waits for {days} idle days \
+                     (`build_idle_days` / `adapter_idle_days`), longer than this \
+                     repository has been idle. `--ignore-idle` overrides.",
+                    result.adapter_name
+                ));
+            }
             PruneStatus::LockfileError(e) => report_lockfile_failure(&result, e),
             PruneStatus::ActivityCheckError(e) => {
                 output::print_error(&format!(
@@ -643,6 +651,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     let mut blocked: Vec<PruneResult> = Vec::new();
     let mut left_alone: Vec<PruneResult> = Vec::new();
     let mut missing: Vec<PruneResult> = Vec::new();
+    let mut orphaned: Vec<PruneResult> = Vec::new();
     for result in engine::prune_all_with(&mut registry, &analysis) {
         // An excepted repository leaves the pass entirely — including its failures. The
         // user said not to touch it, so a broken config in there is not this run's
@@ -669,6 +678,10 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             // Same reasoning: a deleted clone stays deleted, and failing on it would
             // keep every scheduled pass red until the entry is unlinked.
             PruneStatus::PathMissing => missing.push(result),
+            // The directory is still there but its `.git` is not — a standing state of
+            // the registry, exactly as permanent as a missing path, and it kept every
+            // scheduled pass red the same way back when it counted as blocked.
+            PruneStatus::NotARepo => orphaned.push(result),
             _ => {}
         }
     }
@@ -701,7 +714,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if args.dry_run {
         if args.json {
             json::emit(&json::run_document(
-                &[candidates, blocked, left_alone, missing].concat(),
+                &[candidates, blocked, left_alone, missing, orphaned].concat(),
                 true,
             ))?;
             return Ok(());
@@ -710,6 +723,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             && blocked.is_empty()
             && left_alone.is_empty()
             && missing.is_empty()
+            && orphaned.is_empty()
         {
             output::print_info(i18n::t("run.nothing"));
             return Ok(());
@@ -731,18 +745,20 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         report_blocked(&blocked);
         report_left_alone(&left_alone);
         report_missing(&missing);
+        report_orphaned(&orphaned);
         return Ok(());
     }
 
     if candidates.is_empty() {
         if args.json {
             json::emit(&json::run_document(
-                &[blocked.clone(), left_alone, missing].concat(),
+                &[blocked.clone(), left_alone, missing, orphaned].concat(),
                 false,
             ))?;
             return fail_if_blocked(&blocked);
         }
-        if blocked.is_empty() && left_alone.is_empty() && missing.is_empty() {
+        if blocked.is_empty() && left_alone.is_empty() && missing.is_empty() && orphaned.is_empty()
+        {
             output::print_info(i18n::t("run.nothing"));
             return Ok(());
         }
@@ -750,6 +766,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         report_blocked(&blocked);
         report_left_alone(&left_alone);
         report_missing(&missing);
+        report_orphaned(&orphaned);
         return fail_if_blocked(&blocked);
     }
 
@@ -765,6 +782,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         report_blocked(&blocked);
         report_left_alone(&left_alone);
         report_missing(&missing);
+        report_orphaned(&orphaned);
     }
 
     // Determine target candidates to prune (either interactive TUI selection or all).
@@ -860,6 +878,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     let mut all_results: Vec<PruneResult> = blocked;
     all_results.extend(left_alone);
     all_results.extend(missing);
+    all_results.extend(orphaned);
     let mut total_freed: u64 = 0;
     let mut pruned_count = 0;
     let mut pruned_dirs: Vec<crate::config::PrunedDir> = Vec::new();
@@ -985,6 +1004,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                 // `only` selection (deliberately, so a refusal is never silent).
                 // Keeping this copy too listed the same refusal twice in `--json`.
                 PruneStatus::SkippedDeclaration(_) => continue,
+                // A window hold is a standing state, not something this pass did: the
+                // analysis partition already drops it (exactly as it drops
+                // `SkippedActive`), and keeping this execution-pass copy would put it
+                // in `--json` only for repositories that also had a candidate.
+                // `--explain`, `status` and `doctor` are where the window is named.
+                PruneStatus::SkippedAdapterWindow(_) => continue,
                 _ => {}
             }
             all_results.push(result);
@@ -1295,6 +1320,44 @@ fn report_missing(missing: &[PruneResult]) {
     ));
 }
 
+/// Report registered paths that still exist but no longer hold a git repository.
+///
+/// Informational only, never part of the exit code — same reasoning as
+/// [`report_missing`]: the state does not fix itself, and while it counted as blocked
+/// it kept every scheduled pass red until the user noticed. The hint is deliberately
+/// different, though: `devp unlink --missing` clears entries whose *directory* has
+/// gone, and these directories are still on disk — naming it here would have the user
+/// run a command that reports it removed nothing.
+fn report_orphaned(orphaned: &[PruneResult]) {
+    if orphaned.is_empty() {
+        return;
+    }
+    println!();
+    let n = orphaned.len();
+    output::print_warning(&format!(
+        "{n} registered {} not {} git {} any more.",
+        output::plural(n, "path is", "paths are"),
+        output::plural(n, "a", ""),
+        output::plural(n, "repository", "repositories")
+    ));
+    for result in orphaned.iter().take(GROUPED_PATHS_SHOWN) {
+        println!("    {}", output::styled_path(&result.repo_path));
+    }
+    if let Some(rest) = orphaned
+        .len()
+        .checked_sub(GROUPED_PATHS_SHOWN)
+        .filter(|n| *n > 0)
+    {
+        output::print_dimmed(&format!(
+            "    … and {rest} more — `devp run --dry-run --json` lists every one."
+        ));
+    }
+    output::print_info(&format!(
+        "  Drop {} from the registry:  devp unlink <path>",
+        output::plural(n, "it", "them")
+    ));
+}
+
 /// Turn a non-empty blocked list into the process's failure exit.
 ///
 /// A pass that skipped a repository the user asked it to handle has not succeeded, and a
@@ -1544,6 +1607,12 @@ fn explain_repo(path: &Path, results: &[&PruneResult], floor: u64, idle_days: u6
                     ),
                 }
             }
+            PruneStatus::SkippedAdapterWindow(days) => println!(
+                "  • {}: not examined — this adapter waits for {days} idle days \
+                 (`build_idle_days` / `adapter_idle_days`), and the repository is not \
+                 idle that long yet. `--ignore-idle` overrides.",
+                r.adapter_name
+            ),
             other => println!("  • {other}"),
         }
     }

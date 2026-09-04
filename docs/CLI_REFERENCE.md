@@ -908,7 +908,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -940,6 +940,7 @@ silently when none is available.
 | `pruned` | The directory was deleted. |
 | `skipped_dry_run` | A candidate, left in place because this was a dry run. |
 | `skipped_active` | The repository has been touched inside its idle window. |
+| `skipped_adapter_window` | The repository is idle past `idle_days`, but this adapter waits longer — `build_idle_days` for the opt-in build adapters, or its `adapter_idle_days` entry — and that window is not met yet. One row per held adapter, with `-` for the directory: nothing under it was examined. `--ignore-idle` overrides. |
 | `skipped_symlink` | The directory is (or contains) a symlink, so deleting it could reach outside the project. Left in place; `message` names the link. |
 | `skipped_declaration` | A directory named in `prunable.directories` did not pass its checks — it leaves the repository, holds Git-tracked files, or its `rebuild` command names a tool this machine does not have. Left in place; `message` says which. Not counted in `summary.errors`: nothing was attempted. |
 | `skipped_nested_repo` | The directory holds a git repository of its own — a vendored checkout, a pip `-e git+…` install under `.venv/src/` — so deleting it could destroy work no lockfile rebuilds. Left in place; `message` names the nested repository. Not counted in `summary.errors`: it is a permanent fact of the repository, not a failure of the pass. |
@@ -947,6 +948,7 @@ silently when none is available.
 | `no_bloat` | Nothing to delete. |
 | `disabled` | The registry entry is disabled. |
 | `path_missing` | The registered repository path no longer exists on disk. If the repository was moved rather than deleted, `devp link` at its new location adopts this entry and the row goes away; `devp unlink --missing` clears the ones that are genuinely gone. |
+| `not_a_repo` | The registered path still exists on disk but no longer holds a `.git` — the clone was deleted and recreated by hand, or a worktree `git worktree prune` removed. Informational, never counted in `summary.errors`: `devp unlink <path>` drops the entry. (`--missing` would not — the directory is still there.) |
 | `lockfile_error` | The lockfile could not be verified, so nothing was deleted. |
 | `activity_check_error` | The idle check itself failed, so idleness could not be proven and nothing was deleted. Counts as an error. |
 | `delete_error` | Deletion was attempted and failed. |
@@ -957,7 +959,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -979,6 +981,10 @@ silently when none is available.
       "path": "~/Code/api",
       "state": "candidate",
       "enabled": true,
+      // The idle threshold this repository is held to. Usually the configured
+      // setting; when every bloat-bearing adapter waits behind a longer unmet
+      // window (`build_idle_days` / `adapter_idle_days`), it is the lowest of
+      // those windows instead — compare against it, not against the config.
       "idle_days": 15,
       "last_activity": "2026-05-02T09:14:00+00:00",  // null if none could be determined
       "last_pruned_at": null,
@@ -1002,7 +1008,7 @@ mtime — the same value the idle decision uses, so the two can never disagree.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "status --drift",
   "drift": [
     {
@@ -1030,7 +1036,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "detail_starts_at": "1.17.0",  // the version that began recording by_manager and by_trigger
@@ -1094,7 +1100,7 @@ them again.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "history",
   "detail_starts_at": "1.17.0",  // the version that began recording `removed` below
   "passes": [                    // newest first; `pass` is stable under --pass N
@@ -1151,7 +1157,7 @@ to a file.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "caches",
   "caches": [
     {
@@ -1231,7 +1237,7 @@ narrowed by which engines it was asked about.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "caches containers",
   "engines": [
     {
@@ -1296,7 +1302,7 @@ see [below](#devp-caches-clear-engine---json).
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -1344,7 +1350,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "caches clear",
   "dry_run": false,
   "engine": "docker",
@@ -1380,7 +1386,7 @@ it is from a version that could not make the promise.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.19.0",
+  "version": "1.20.0",
   "command": "trust",
   "guarantees": [
     {
@@ -1405,7 +1411,7 @@ it is from a version that could not make the promise.
       "path": "%APPDATA%/dev-prune/bin/dev-prune.exe",
       "channel": "install script",
       "sha256": "78feef18a95fa15c7a8c3288f220055fcfa0f75d1635f5370697c8878ffdbc1a",
-      "version": "1.19.0",
+      "version": "1.20.0",
       "marker": "latest release",
       "running": true,
       "scan_report": "https://www.virustotal.com/gui/file/78feef18a95fa15c7a8c3288f220055fcfa0f75d1635f5370697c8878ffdbc1a",
@@ -1684,7 +1690,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```json
   {
     "schema": 1,
-    "version": "1.19.0",
+    "version": "1.20.0",
     "channel": "installer",
     "installed_by": "install.sh",
     "installed_at": "2026-08-25T09:14:02Z",
@@ -1747,11 +1753,11 @@ Executing `devp -V` prints detailed diagnostic information:
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
 |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|
-                                                  v1.19.0 · install script
+                                                  v1.20.0 · install script
 Every dependency directory on this machine, in one command.
 Only what a lockfile can rebuild — and `devp restore --last-run` puts it back.
 
-dev-prune (devp) v1.19.0
+dev-prune (devp) v1.20.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune

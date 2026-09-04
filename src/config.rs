@@ -1246,6 +1246,15 @@ pub struct Registry {
     /// user actually upgrades without needing the network again.
     #[serde(default)]
     pub latest_known_version: Option<String>,
+    /// Whether that last check failed to get an answer.
+    ///
+    /// A failed check still advances `last_update_check` — retrying on every command
+    /// while offline would stall everyday work — but it must not freeze
+    /// `latest_known_version` for the whole interval: one timed-out request on this
+    /// laptop left `auto_update` believing 1.14.0 was current for a week after 1.19.0
+    /// shipped. With this recorded, the next check is due after a day instead.
+    #[serde(default)]
+    pub last_update_check_failed: bool,
     /// How fast each adapter has actually restored on this machine.
     ///
     /// Measured by `devp restore --last-run`, which is the one command that knows both
@@ -1294,6 +1303,7 @@ impl Default for Registry {
             prune_history: Vec::new(),
             last_update_check: None,
             latest_known_version: None,
+            last_update_check_failed: false,
             restore_rates: BTreeMap::new(),
         }
     }

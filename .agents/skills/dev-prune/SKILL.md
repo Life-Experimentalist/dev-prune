@@ -14,7 +14,7 @@ name, and either works everywhere.
 run it, and explain the result. Everything you need is below; the docs map at the end is
 for anything that isn't.
 
-**Skill version: 1.19.0.** This file describes that release of `devp` and no other, and
+**Skill version: 1.20.0.** This file describes that release of `devp` and no other, and
 it is rewritten from the binary rather than maintained by hand. Before you rely on
 anything below, run `devp --version`. If it prints a different number, you are reading
 another release's instructions — its flags, JSON statuses and exit codes may not be
@@ -39,7 +39,7 @@ replaces it.
    actively working in be pruned. Ask first. It does not bypass lockfile verification.
    The flag was `--force` before 1.0.0; that spelling still works and prints a note.
    When a user reaches for it, they are usually stuck on something else entirely — the
-   seven reasons a directory is skipped are in the troubleshooting table at the bottom
+   eight reasons a directory is skipped are in the troubleshooting table at the bottom
    of this file, and `devp run --dry-run` names the actual one per repository.
 4. **`--deep` on uninstall wipes configuration.** Confirm with the user before using it.
 5. **dev-prune never upgrades itself unasked.** Its one background network request is a
@@ -267,7 +267,7 @@ The fields worth reading first:
 | Path | Use it for |
 | :--- | :--- |
 | `summary.errors` (run) | "did anything go wrong" — the whole answer, in one integer (counts `lockfile_error`, `activity_check_error`, `delete_error` and `config_error`) |
-| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_symlink`, `skipped_declaration`, `skipped_nested_repo`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
+| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_adapter_window`, `skipped_symlink`, `skipped_declaration`, `skipped_nested_repo`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `not_a_repo`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
 | `results[].message` | the failure detail — present on the four error statuses, on `skipped_symlink`, where it names the link, on `skipped_declaration`, where it says why the declaration was refused, and on `skipped_nested_repo`, where it names the git repository found inside the directory |
 | `results[].fix_command` | present only on `lockfile_error`, and only when the fix is one mechanical command you may run unattended |
 | `repositories[].state` (status) | `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, `config_error` |
@@ -659,10 +659,12 @@ specific symptom the report named.
 | Command works as `dev-prune` but not `devp` | The second executable is missing — `devp` is a real binary next to `dev-prune`, not a shell alias | `dev-prune setup` |
 | "not a git repository" | dev-prune only operates inside a `.git` root | `git init`, or point at the real repository root |
 | Repository shows as **Active**, nothing pruned | Committed or modified inside `idle_days` | Expected. `devp config set idle_days N`, or `--ignore-idle` for one run (ask first) |
+| A directory is **Not examined (adapter idle window)** | That adapter waits longer than the repository has been idle — `build_idle_days` (45) for the opt-in build adapters, or its `adapter_idle_days` entry | Expected. Wait it out, lower the window, or `--ignore-idle` for one run (ask first) |
 | Repository shows **Ignored** | `ignore.devprune.json` exists, or `"ignore": true` | Delete the file, or press `i` in `devp status` |
 | A project in the repository is never listed | It sits deeper than `scan_depth` (6 levels) | `devp config set scan_depth N`, or set `"scan_depth"` in that repository's `.devprune.json` |
 | A small bloat directory is never offered | It is under `min_size_mb` | `devp run --min-size 0` for one pass, or `devp config set min_size_mb 0` |
 | A repository is not in `devp status` at all | It was never registered, or it holds an `ignore.devprune.json`, which a bulk scan declines to register | `devp link .` in it, `devp init <parent dir>`, or `devp init --auto` to work the roots out. `devp link` registers an opted-out repository too; deleting the file is the other way |
+| **No longer a git repository** | The directory is still on disk but its `.git` is gone — the clone was recreated by hand, or `git worktree prune` removed a worktree | `devp unlink <path>` drops the entry (`--missing` will not — it only clears paths that are gone). Reported, never an error: the pass still exits `0` |
 | **Path Missing** | The directory was moved or deleted | If moved: `devp link <new path>` alone — the matching root commit adopts the old entry, history and all, and the dead row goes. If deleted: `devp unlink <old path>`, or `devp unlink --missing` for a registry full of them |
 | Lockfile verification fails | The lockfile has drifted from the manifest, and verification is read-only so it refuses rather than repairing | Run the exact command dev-prune printed (it is the writing form for that ecosystem), in that project. Or `devp config set allow_manifest_rewrite true` to let dev-prune run it during the pass. Never delete the lockfile |
 | "holds package(s) that the lockfile does not record" | Something was installed without recording it — `npm install --no-save`, a bare `pip install` into a pinned venv, an ad-hoc `uv pip install` | `devp status --drift` lists every such environment with the exact record command (`npm install <pkg>`, `uv add <package>`, `pip freeze > requirements.txt`). Run it, or uninstall the extras. Never delete the directory manually |

@@ -86,6 +86,146 @@ fn sweep_refusal_markers(dir: &Path) {
     }
 }
 
+/// Marker recording that this machine's scheduler refused the power-settings
+/// re-registration. Same contract as the windowless marker: without it, every settled
+/// setup pass would retry the XML round-trip against a scheduler that has already said
+/// no, churning the task on every single `devp` invocation.
+fn power_refused_marker() -> Option<PathBuf> {
+    crate::config::Registry::config_dir()
+        .ok()
+        .map(|dir| dir.join(crate::constants::SCHEDULER_POWER_REFUSED_MARKER))
+}
+
+/// Rewrite a task definition so a laptop actually runs it, or `None` if it already
+/// would.
+///
+/// A task registered through `schtasks /Create` flags gets Windows' power defaults,
+/// and all three of them are wrong for a background pruner on a laptop: the task
+/// refuses to start on battery (every attempt ends 0x800710E0 and nothing is logged
+/// anywhere the user looks), a pass already running is killed the moment the charger
+/// is pulled, and a trigger that fires while the lid is closed is skipped for the
+/// whole interval rather than caught up on wake. `schtasks` has no flag for any of
+/// the three, so the only route is this XML round-trip. `WakeToRun` is deliberately
+/// left alone: catching up on wake is helpful, waking the machine to prune is not.
+///
+/// `StartWhenAvailable` is absent from a default registration (absent means false),
+/// so it is inserted rather than flipped when missing.
+fn patch_power_settings_xml(xml: &str) -> Option<String> {
+    let mut patched = xml.to_string();
+    let mut changed = false;
+    for (gated, lifted) in [
+        (
+            "<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>",
+            "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+        ),
+        (
+            "<StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>",
+            "<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>",
+        ),
+        (
+            "<StartWhenAvailable>false</StartWhenAvailable>",
+            "<StartWhenAvailable>true</StartWhenAvailable>",
+        ),
+    ] {
+        if patched.contains(gated) {
+            patched = patched.replace(gated, lifted);
+            changed = true;
+        }
+    }
+    if !patched.contains("<StartWhenAvailable>")
+        && let Some(pos) = patched.find("<Settings>")
+    {
+        patched.insert_str(
+            pos + "<Settings>".len(),
+            "\n    <StartWhenAvailable>true</StartWhenAvailable>",
+        );
+        changed = true;
+    }
+    changed.then_some(patched)
+}
+
+/// Encode a document the way `schtasks /Create /XML` expects to read it back.
+///
+/// The export declares `encoding="UTF-16"` in its first line, so the import refuses a
+/// UTF-8 body under that declaration. Mirror of [`decode_schtasks_xml`].
+fn encode_schtasks_xml(xml: &str) -> Vec<u8> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for unit in xml.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    bytes
+}
+
+/// Re-register the task with the power gates lifted, keeping everything else —
+/// trigger time, logon type, binary — exactly as it is.
+///
+/// Export, patch, re-import: the exported XML carries the `<StartBoundary>`, so unlike
+/// a fresh `/SC DAILY` registration this never moves the task's time-of-day. A task
+/// that already has the right settings, or no task at all, is left untouched. A
+/// scheduler that refuses the re-import keeps the working (if gated) task and writes
+/// the refusal marker so settled passes stop asking.
+pub fn apply_power_settings() -> Result<()> {
+    let Some(xml) = task_xml() else {
+        return Ok(());
+    };
+    let Some(patched) = patch_power_settings_xml(&xml) else {
+        if let Some(marker) = power_refused_marker() {
+            let _ = std::fs::remove_file(marker);
+        }
+        return Ok(());
+    };
+    let dir = crate::config::Registry::config_dir()?;
+    let patch_file = dir.join(crate::constants::SCHEDULER_POWER_PATCH_FILE);
+    std::fs::write(&patch_file, encode_schtasks_xml(&patched))
+        .context("Failed to write the patched task definition")?;
+    let output = spawn::command("schtasks")
+        .args([
+            "/Create",
+            "/TN",
+            TASK_NAME,
+            "/XML",
+            &patch_file.to_string_lossy(),
+            "/F",
+        ])
+        .output();
+    let _ = std::fs::remove_file(&patch_file);
+    match output {
+        Ok(out) if out.status.success() => {
+            if let Some(marker) = power_refused_marker() {
+                let _ = std::fs::remove_file(marker);
+            }
+            Ok(())
+        }
+        Ok(out) => {
+            if let Some(marker) = power_refused_marker() {
+                let _ = std::fs::write(marker, "");
+            }
+            anyhow::bail!(
+                "The scheduler refused the power-settings update: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            )
+        }
+        Err(e) => {
+            if let Some(marker) = power_refused_marker() {
+                let _ = std::fs::write(marker, "");
+            }
+            Err(e).context("Failed to execute schtasks")
+        }
+    }
+}
+
+/// True when the installed task still carries the power gates and this machine has not
+/// already refused the re-registration that lifts them. `ensure_daemon` uses this to
+/// fix tasks registered by versions that did not know the defaults were hostile to
+/// laptops — which is every version before the one that added this.
+pub fn wants_power_upgrade() -> bool {
+    if power_refused_marker().is_some_and(|m| m.exists()) {
+        return false;
+    }
+    // No readable definition means nothing to patch — and never a reason to guess.
+    task_xml().is_some_and(|xml| patch_power_settings_xml(&xml).is_some())
+}
+
 /// The windowless twin's path, beside the binary the scheduler would otherwise run.
 fn windowless_twin_path(exe_path: &Path) -> PathBuf {
     exe_path.with_file_name(WINDOWS_WINDOWLESS_BIN)
@@ -220,6 +360,9 @@ pub fn install(interval_days: u64) -> Result<()> {
             if let Some(marker) = windowless_refused_marker() {
                 let _ = std::fs::remove_file(marker);
             }
+            // Registration worked; the gates are a should-fix, not a must. A refusal
+            // here is remembered and reported by the next setup pass, never fatal.
+            let _ = apply_power_settings();
             return Ok(());
         }
     }
@@ -236,6 +379,7 @@ pub fn install(interval_days: u64) -> Result<()> {
             if let Some(marker) = windowless_refused_marker() {
                 let _ = std::fs::write(marker, "");
             }
+            let _ = apply_power_settings();
             return Ok(());
         }
     }
@@ -250,6 +394,7 @@ pub fn install(interval_days: u64) -> Result<()> {
         .context("Failed to execute schtasks")?;
 
     if output.status.success() {
+        let _ = apply_power_settings();
         Ok(())
     } else {
         anyhow::bail!(
@@ -703,6 +848,91 @@ mod tests {
         std::fs::write(&twin, b"the one and only").unwrap();
         assert_eq!(place_windowless_twin(&twin, &twin).unwrap(), twin);
         assert_eq!(std::fs::read(&twin).unwrap(), b"the one and only");
+    }
+
+    /// A default registration as `schtasks /Query /XML ONE` exports it, verbatim from a
+    /// real machine: both battery gates present and true, `StartWhenAvailable` absent.
+    const GATED_TASK_XML: &str = r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+    </Principal>
+  </Principals>
+  <Settings>
+    <DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>true</StopIfGoingOnBatteries>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+  </Settings>
+  <Triggers>
+    <CalendarTrigger>
+      <StartBoundary>2026-08-22T09:44:00</StartBoundary>
+      <ScheduleByDay>
+        <DaysInterval>2</DaysInterval>
+      </ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Actions Context="Author">
+    <Exec>
+      <Command>"C:\Users\a\AppData\Roaming\dev-prune\bin\devpw.exe"</Command>
+      <Arguments>run --yes --daemon</Arguments>
+    </Exec>
+  </Actions>
+</Task>"#;
+
+    #[test]
+    fn a_default_registration_gets_all_three_power_gates_lifted() {
+        let patched = patch_power_settings_xml(GATED_TASK_XML).unwrap();
+        assert!(patched.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"));
+        assert!(patched.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"));
+        // Absent means false, so the element has to be *inserted*, not flipped.
+        assert!(patched.contains("<StartWhenAvailable>true</StartWhenAvailable>"));
+        assert!(!patched.contains(">true</DisallowStartIfOnBatteries>"));
+        assert!(!patched.contains(">true</StopIfGoingOnBatteries>"));
+    }
+
+    #[test]
+    fn the_patch_touches_nothing_but_the_power_settings() {
+        let patched = patch_power_settings_xml(GATED_TASK_XML).unwrap();
+        // The trigger time is the whole reason this is a patch and not a fresh
+        // `/SC DAILY` registration, which would move it to "now".
+        assert!(patched.contains("<StartBoundary>2026-08-22T09:44:00</StartBoundary>"));
+        assert!(patched.contains("<DaysInterval>2</DaysInterval>"));
+        assert!(patched.contains("<LogonType>InteractiveToken</LogonType>"));
+        assert!(patched.contains("devpw.exe"));
+        assert!(patched.contains("run --yes --daemon"));
+    }
+
+    #[test]
+    fn an_already_lifted_task_is_left_alone() {
+        let patched = patch_power_settings_xml(GATED_TASK_XML).unwrap();
+        // Re-running the patch over its own output must answer "nothing to do", or
+        // every settled setup pass would re-register the task forever.
+        assert!(patch_power_settings_xml(&patched).is_none());
+    }
+
+    #[test]
+    fn an_explicit_false_start_when_available_is_flipped_not_duplicated() {
+        let xml = "<Settings><StartWhenAvailable>false</StartWhenAvailable></Settings>";
+        let patched = patch_power_settings_xml(xml).unwrap();
+        assert_eq!(patched.matches("<StartWhenAvailable>").count(), 1);
+        assert!(patched.contains("<StartWhenAvailable>true</StartWhenAvailable>"));
+    }
+
+    #[test]
+    fn a_definition_without_a_settings_block_is_not_guessed_at() {
+        // Nothing to flip and nowhere to insert: the answer is "no change", not a
+        // mangled document handed to `schtasks /Create`.
+        assert!(patch_power_settings_xml(TASK_XML).is_none());
+    }
+
+    #[test]
+    fn the_encoder_round_trips_through_the_decoder() {
+        // What `apply_power_settings` writes must be exactly what a later
+        // `task_xml()` reads back, BOM included.
+        let bytes = encode_schtasks_xml(GATED_TASK_XML);
+        assert!(bytes.starts_with(&[0xFF, 0xFE]));
+        assert_eq!(decode_schtasks_xml(&bytes), GATED_TASK_XML);
     }
 
     #[test]
