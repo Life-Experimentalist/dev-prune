@@ -807,6 +807,38 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
     None
 }
 
+/// Walk a tree clearing the Windows read-only attribute so `remove_dir_all` can finish.
+///
+/// Never steps through a symlink or junction: the storage behind one belongs to
+/// something else, and clearing attributes across it would touch files this prune has
+/// no claim on. Errors are ignored on purpose — the retry that follows reports honestly
+/// whatever still cannot be deleted.
+#[cfg(windows)]
+fn clear_readonly_attributes(path: &Path) {
+    let Ok(meta) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if meta.file_type().is_symlink() {
+        return;
+    }
+    if meta.permissions().readonly() {
+        let mut perms = meta.permissions();
+        // This flips FILE_ATTRIBUTE_READONLY and nothing else; the world-writable
+        // hazard the lint warns about is Unix behaviour, and this function does not
+        // compile there.
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        let _ = fs::set_permissions(path, perms);
+    }
+    if meta.is_dir()
+        && let Ok(entries) = fs::read_dir(path)
+    {
+        for entry in entries.flatten() {
+            clear_readonly_attributes(&entry.path());
+        }
+    }
+}
+
 /// Delete one directory and report what happened, with one retry.
 fn delete_bloat(
     repo_path: &Path,
@@ -824,6 +856,19 @@ fn delete_bloat(
     let delete = fs::remove_dir_all(&bd.path).or_else(|_| {
         std::thread::sleep(std::time::Duration::from_millis(250));
         fs::remove_dir_all(&bd.path)
+    });
+    // On Windows a single read-only file vetoes the whole delete — `go mod` writes
+    // module directories read-only on purpose, and the odd npm package ships one.
+    // Strip the attribute the way rimraf does and try once more; anything still
+    // failing after that is a real error and falls through to the honest report.
+    #[cfg(windows)]
+    let delete = delete.or_else(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            clear_readonly_attributes(&bd.path);
+            fs::remove_dir_all(&bd.path)
+        } else {
+            Err(e)
+        }
     });
     // "Not found" after a failed first attempt means the delete *did* complete — treat
     // both the same.
@@ -1759,6 +1804,37 @@ mod tests {
         // answer "no" rather than panic on the `None`.
         let root = Path::new(std::path::MAIN_SEPARATOR_STR);
         assert!(!is_mount_point(root));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_read_only_file_does_not_stop_the_delete() {
+        // `go mod` writes module directories read-only on purpose, and the odd npm
+        // package ships a read-only file. `remove_dir_all` refuses those with Access
+        // Denied, so before the attribute-clearing fallback one such file failed the
+        // whole prune.
+        let tmp = TempDir::new().unwrap();
+        let bloat = tmp.path().join("node_modules");
+        fs::create_dir_all(bloat.join("pkg")).unwrap();
+        let file = bloat.join("pkg").join("locked.js");
+        fs::write(&file, "x").unwrap();
+        let mut perms = fs::metadata(&file).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&file, perms).unwrap();
+
+        let bd = BloatDir {
+            name: "node_modules".into(),
+            path: bloat.clone(),
+            size_bytes: 1,
+            shared_bytes: 0,
+        };
+        let result = delete_bloat(tmp.path(), "npm", "node_modules".into(), &bd, None);
+        assert!(
+            matches!(result.status, PruneStatus::Pruned),
+            "expected Pruned, got {:?}",
+            result.status
+        );
+        assert!(!bloat.exists(), "the directory must be gone");
     }
 
     fn create_git_repo_with_commit(path: &Path) {
