@@ -170,7 +170,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "give my editor's agent the rules" | `devp skill --agent <editor>` — writes the per-repository rules file that editor reads. Own file: `cursor`, `windsurf`, `antigravity`, `cline`, `roo`, `kilocode`, `continue`, `amazon-q`, `kiro`, `trae`. Marked block inside a shared file: `agents-md` (`AGENTS.md` — Codex, Jules, Amp, OpenCode), `copilot`, `gemini`, `junie`, `zed`, `aider` (`CONVENTIONS.md`, which Aider reads only once `read: CONVENTIONS.md` is in `.aider.conf.yml` or `--read CONVENTIONS.md` is passed — the command says so after writing it). `devp skill --help` lists the exact paths |
 | "man pages" / "show me the manual" / "what commands are there?" | `devp man` — the contents page, every command grouped by what it is for. `devp man <command>` for one page (the same text as `devp <command> --help`). Roff only where something formats it: a redirect or a pipe gets roff, `devp man \| man -l -` reads it formatted, `devp man --dir ./man` writes the full set |
 | "what version?" | `devp -V` (also prints OS, arch, config path, PATH audit) |
-| you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats`, `trust` or `caches` — see below |
+| you need to *read* the answer rather than show it | add `--json` to `run`, `status`, `stats`, `history`, `trust` or `caches` — see below |
 
 Global flags, valid on any subcommand: `--dry-run`, `--ignore-idle` (`--force` is the
 deprecated alias), `--yes` / `-y`. A deleting `devp run` — registry-wide or targeted —

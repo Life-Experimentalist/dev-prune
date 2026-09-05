@@ -22,9 +22,9 @@
 	"highlights": [
 		"Nothing is deleted until dev-prune has verified, read-only, that the lockfile can rebuild it — there is no flag that skips the check.",
 		"Knows 25 package managers rather than the obvious four: Composer, Bundler, Mix, CocoaPods and Terraform are as first-class as npm and pip.",
-		"Restores what it removed (devp restore, devp undo) instead of leaving recovery to the user.",
+		"Restores what it removed: every deletion is recorded before it happens, and devp restore --last-run puts back the whole of the most recent prune pass.",
 		"Sizes and clears the caches package managers keep outside project directories, and reports what Docker is holding.",
-		"Ships as a single binary answering to both dev-prune and devp, on Windows, macOS and Linux.",
+		"Ships as one program answering to both dev-prune and devp, on Windows, macOS and Linux, plus a windowless third build the Windows scheduled task runs.",
 		"Its .devprune.json config schema is published in the official SchemaStore catalogue, so any editor validates it."
 	],
 	"links": {

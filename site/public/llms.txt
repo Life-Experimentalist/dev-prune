@@ -22,7 +22,7 @@ verify its lockfile, and only then deletes. `devp restore` puts everything back.
 
 It covers the whole disk side of dependencies, not deletion alone: `devp run` prunes,
 `devp restore` and `devp undo` reverse it, `devp caches` sizes and clears the caches
-package managers keep outside projects, `devp containers` reports Docker's, `devp status`
+package managers keep outside projects, `devp caches docker` reports Docker's, `devp status`
 and `devp stats` show where the space went and is going (filterable by drive), and
 `devp doctor` and `devp trust` audit the installation itself. One tool for every
 dependency directory on the machine rather than one per ecosystem.
@@ -452,7 +452,7 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
 - `devp -V` — version plus an environment audit
 
 Global flags: `--dry-run`, `--ignore-idle` (`--force` is the deprecated alias),
-`-y`/`--yes`, `--json` on the reporting commands (`run`, `status`, `stats`, `trust`, `caches`).
+`-y`/`--yes`, `--json` on the reporting commands (`run`, `status`, `stats`, `history`, `trust`, `caches`).
 Piped `--json` output is one document on stdout and nothing else; only when stdout is
 an actual terminal is the document also copied to the human's clipboard (stderr note).
 `devp run --except <name>` prunes everything *but* the named repositories, which is the
@@ -623,7 +623,7 @@ directory; hardlink awareness changes accounting, never what is deleted.
 
 Global settings live in `%APPDATA%\dev-prune` (Windows),
 `~/Library/Application Support/dev-prune` (macOS), `$XDG_CONFIG_HOME/dev-prune` (Linux).
-Thirty-one keys, all readable with `devp config get <key>` and writable with
+Thirty-two keys, all readable with `devp config get <key>` and writable with
 `devp config set <key> <value>`. They fall into seven groups, and `devp config wizard`
 walks them in this order:
 
@@ -791,7 +791,7 @@ checks is a read: dev-prune prints the rebuild command and never runs it.
 
 ## Machine-readable output (for tools and AI agents)
 
-Add `--json` to `run`, `status`, `stats`, `trust` or `caches` for a versioned JSON document
+Add `--json` to `run`, `status`, `stats`, `history`, `trust` or `caches` for a versioned JSON document
 (`schema` 1, additive changes only within a major version). Highlights:
 
 - `devp status --json` — per-repository totals, per-directory sizes, and status
