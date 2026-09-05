@@ -21,7 +21,7 @@ commit timestamps *and* source file modification times, asks each package manage
 verify its lockfile, and only then deletes. `devp restore` puts everything back.
 
 It covers the whole disk side of dependencies, not deletion alone: `devp run` prunes,
-`devp restore` and `devp undo` reverse it, `devp caches` sizes and clears the caches
+`devp restore --last-run` reverses it, `devp caches` sizes and clears the caches
 package managers keep outside projects, `devp caches docker` reports Docker's, `devp status`
 and `devp stats` show where the space went and is going (filterable by drive), and
 `devp doctor` and `devp trust` audit the installation itself. One tool for every

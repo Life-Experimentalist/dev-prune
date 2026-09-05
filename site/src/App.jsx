@@ -1595,7 +1595,7 @@ Notes you should rely on, not work around:
 
             <div className="hero-stats">
               <div>
-                <strong>23</strong>
+                <strong>25</strong>
                 <span>package managers</span>
               </div>
               <div>
@@ -2356,8 +2356,8 @@ Notes you should rely on, not work around:
                   it would or would not be pruned (read-only), and{" "}
                   <code>--json</code> emits one machine-readable document
                   instead of the report, on <code>run</code>,{" "}
-                  <code>status</code>, <code>stats</code>, <code>caches</code>{" "}
-                  and <code>trust</code>.
+                  <code>status</code>, <code>stats</code>, <code>history</code>,{" "}
+                  <code>trust</code> and <code>caches</code>.
                 </p>
               </div>
               <div className="info-card">

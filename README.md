@@ -34,8 +34,8 @@ installs its own background schedule, and answers to two names you type — `dev
 `devp` — alongside a third, windowless build, `devpw`, that exists only so the Windows
 scheduled task runs without flashing up a console.
 
-Deleting is only half of it. The same binary puts everything back (`devp restore`,
-`devp undo`), sizes and clears the caches those package managers keep *outside* your
+Deleting is only half of it. The same binary puts everything back (`devp restore
+--last-run`), sizes and clears the caches those package managers keep *outside* your
 projects (`devp caches`), reports what Docker is holding (`devp caches docker`), and shows
 where the disk actually went, drive by drive (`devp status`, `devp stats`). One tool for
 every dependency directory on the machine, instead of one command per ecosystem and a
@@ -363,7 +363,7 @@ devp -V                     # version, OS, architecture, config path, PATH audit
 stops without touching anything. Each candidate is one line: the repository, the
 directory as a path relative to that repository's root, the directory's size, and in
 brackets the adapter that claimed it — `[pnpm]`, `[uv]`, `[cargo]`, `[go]`. A repository
-that is being skipped says so on its own line, in the same words `devp doctor` would use.
+that is being skipped says so on its own line, with the reason it was skipped.
 The summary at the end is the total those lines add up to and the number of directories
 behind it.
 
@@ -382,7 +382,7 @@ many repositories are tracked, and the lifetime total already reclaimed together
 number of prune passes that produced it.
 
 Below it, one row per repository — an index, its name, its status and, when it is being
-skipped, the reason in the same words `devp doctor` would use; the adapters that detected
+skipped, the reason for that; the adapters that detected
 it; the size of the bloat it is holding; the date of its last activity; and when it was
 last pruned. The footer totals the repositories, how many of them are candidates, and how
 much is reclaimable right now.
