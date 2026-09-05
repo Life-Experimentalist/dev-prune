@@ -781,8 +781,13 @@ warns about without moving it. Because the
 committed file arrives in a clone, each declaration is checked before anything is
 deleted: relative path with no `..`, resolving inside the repository even through a
 symlinked parent, holding no Git-tracked file, and a `rebuild` whose first word is a
-program on this machine. A declaration that fails is reported as `skipped_declaration`
-and nothing is deleted. dev-prune prints the rebuild command and never runs it.
+program on this machine. Where a manifest already in the tree can say what that program
+was asked to do — an npm, pnpm or yarn script in `package.json`, a `make` target, a
+`uv run` entry point in `pyproject.toml`, a `cargo` subcommand — that manifest is read
+too, and a declaration naming a target it does not define is refused; a command shape
+none of them can resolve is allowed through rather than guessed at. A declaration that
+fails is reported as `skipped_declaration` and nothing is deleted. Every one of those
+checks is a read: dev-prune prints the rebuild command and never runs it.
 
 ## Machine-readable output (for tools and AI agents)
 

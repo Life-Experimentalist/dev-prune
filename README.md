@@ -947,7 +947,18 @@ scheduler with nobody watching. Before deleting one, dev-prune requires that:
 - it resolves to somewhere inside the repository, even through a symlinked parent;
 - Git is tracking nothing inside it — a lockfile cannot rebuild a file that is in the
   repository itself;
-- the first word of `rebuild` is a program this machine actually has.
+- the first word of `rebuild` is a program this machine actually has;
+- and the target that program was given is one it could actually find, wherever a
+  manifest already in the tree can answer for it — an `npm`, `pnpm` or `yarn` script in
+  `package.json` (honouring `--prefix`), a `make` target, a `uv run` entry point in
+  `[project.scripts]`, a `cargo` subcommand. `npm run build` against a `package.json`
+  with no `build` script is refused, because installing node proves nothing about
+  whether that command would put the directory back.
+
+Every one of those is a read of a file. The `rebuild` command is printed, never run —
+not even a dry run of it. A command shape no manifest can resolve, such as a shell
+pipeline or a target held in a variable, is allowed through on the checks above rather
+than guessed at: a false refusal blocks a prune that was safe.
 
 A claim that fails any of those is printed with the reason, and nothing is deleted.
 

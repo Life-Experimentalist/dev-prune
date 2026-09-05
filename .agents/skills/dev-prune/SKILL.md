@@ -519,8 +519,13 @@ When you fill this in for a user, name only directories you have confirmed are
 regenerated — and give a `rebuild` you have actually seen work in that repository, not
 a plausible-looking one. dev-prune will refuse a declaration whose path leaves the
 repository, holds Git-tracked files, or whose `rebuild` names a tool the machine does not
-have, and report it as `skipped_declaration`; that refusal is a backstop, not a substitute
-for checking.
+have, and report it as `skipped_declaration`. It also reads the manifest the tool would
+read, where there is one, and refuses `npm run build` against a `package.json` with no
+`build` script, `make vendor` against a `Makefile` with no `vendor` target, or `uv run x`
+against a `pyproject.toml` whose `[project.scripts]` has no `x` — note that
+`[tool.uv.scripts]` is not a table uv reads, so a script declared only there does not
+count. Those are reads, never runs, and a command shape they cannot resolve is allowed
+through. That refusal is a backstop, not a substitute for checking.
 
 `devp config project <PATH>` prints an **Effective values** table naming the file each
 value in force came from, whenever both files exist. Prefer reading that over inferring

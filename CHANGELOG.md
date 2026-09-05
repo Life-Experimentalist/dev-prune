@@ -5,6 +5,40 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **A `prunable` declaration is now checked against the manifest its `rebuild` command
+  would read, not just against your `PATH`.** `"rebuild": "npm run build"` used to pass
+  the moment npm was installed — even in a project whose `package.json` has no `build`
+  script. dev-prune would call the directory recoverable, delete it, and the command
+  meant to put it back would fail. It now reads the manifest and refuses instead:
+
+  ```
+  ! `site/dist` is declared prunable, rebuilt by `npm run build`, but `package.json`
+    defines no `build` script — refusing to delete something that command cannot put
+    back. Add a `build` script to `package.json`, or fix the command.
+  ```
+
+  Covered where a manifest in the tree can answer: `npm`/`pnpm`/`yarn` `run <script>`
+  and the bare `pnpm <script>` / `yarn <script>` forms, honouring `--prefix`, `-C`,
+  `--dir` and `--cwd` so `npm --prefix docs run build` reads `docs/package.json`;
+  `make <target>` against the `Makefile`, honouring `-C` and `-f`; `uv run <script>`
+  against `[project.scripts]` in `pyproject.toml`; and `cargo <subcommand>` for names
+  that are neither cargo's own nor any installed `cargo-<name>` plugin.
+
+  Two things this deliberately does not do. It never runs the rebuild command, or any
+  part of it — every check is a read of a file already in the tree. And a command shape
+  it cannot resolve is allowed through rather than guessed at: a shell pipeline, a
+  target held in a variable, a tool with no manifest behind it, or a manifest that is
+  absent or unparseable all fall back to the tool check alone, because a false refusal
+  blocks a prune that was safe.
+
+  One gotcha worth naming: `[tool.uv.scripts]` is not a table uv reads. A script
+  declared only there does nothing, so `uv run <that script>` is refused, and the
+  message says to move it to `[project.scripts]`.
+
 ## [1.20.0] - 2026-09-04
 
 ### Added

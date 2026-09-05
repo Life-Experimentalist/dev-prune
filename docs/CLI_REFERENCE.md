@@ -771,7 +771,13 @@ reads unambiguously:
     `"rebuild": "echo not needed"` is a legal answer and works on every platform. The
     command must start with the tool that does the work — `npm --prefix docs run build`,
     not `cd docs && npm run build` — because the first word is what gets checked against
-    this machine, and a shell builtin like `cd` is refused everywhere. These
+    this machine, and a shell builtin like `cd` is refused everywhere. The rest of the
+    command is checked too, wherever a manifest already in the tree can answer for it:
+    `npm run build` is refused when `package.json` has no `build` script, `make vendor`
+    when the `Makefile` has no `vendor` target, `uv run regen` when `pyproject.toml`
+    lists no such entry point. Those are reads of the manifest, never a run of the
+    command. A shape they cannot resolve — a pipeline, a variable, a tool with no
+    manifest behind it — is allowed through on the tool check alone. These
     are pruned by the ordinary pass under the adapter name `declared`, so they appear in
     `devp status`, obey `--dry-run`, `--min-size` and `--only`, and go with the scheduled
     run.
@@ -824,9 +830,10 @@ reads unambiguously:
     be checked rather than an instruction to be followed. Before deleting one, dev-prune
     requires that the path is relative with no `..`, that it resolves to somewhere inside
     the repository even through a symlinked parent, that Git is tracking nothing inside
-    it, and that the first word of `rebuild` is a program on this machine. A claim that
-    fails any of those is reported as `skipped_declaration` with the reason, and nothing
-    is deleted.
+    it, that the first word of `rebuild` is a program on this machine, and — where a
+    manifest in the tree can say — that the target that program was given is one the
+    manifest defines. A claim that fails any of those is reported as
+    `skipped_declaration` with the reason, and nothing is deleted.
 
     Neither file can widen what dev-prune is allowed to do. Both deserialize into the
     same seven keys, so a repository still cannot grant itself `allow_manifest_rewrite`
@@ -942,7 +949,7 @@ silently when none is available.
 | `skipped_active` | The repository has been touched inside its idle window. |
 | `skipped_adapter_window` | The repository is idle past `idle_days`, but this adapter waits longer — `build_idle_days` for the opt-in build adapters, or its `adapter_idle_days` entry — and that window is not met yet. One row per held adapter, with `-` for the directory: nothing under it was examined. `--ignore-idle` overrides. |
 | `skipped_symlink` | The directory is (or contains) a symlink, so deleting it could reach outside the project. Left in place; `message` names the link. |
-| `skipped_declaration` | A directory named in `prunable.directories` did not pass its checks — it leaves the repository, holds Git-tracked files, or its `rebuild` command names a tool this machine does not have. Left in place; `message` says which. Not counted in `summary.errors`: nothing was attempted. |
+| `skipped_declaration` | A directory named in `prunable.directories` did not pass its checks — it leaves the repository, holds Git-tracked files, or its `rebuild` command names a tool this machine does not have or a target the tool's own manifest does not define. Left in place; `message` says which. Not counted in `summary.errors`: nothing was attempted. |
 | `skipped_nested_repo` | The directory holds a git repository of its own — a vendored checkout, a pip `-e git+…` install under `.venv/src/` — so deleting it could destroy work no lockfile rebuilds. Left in place; `message` names the nested repository. Not counted in `summary.errors`: it is a permanent fact of the repository, not a failure of the pass. |
 | `ignored` | The repository sets `"ignore": true`, or has an `ignore.devprune.json`. |
 | `no_bloat` | Nothing to delete. |

@@ -50,7 +50,7 @@
       "properties": {
         "directories": {
           "type": "array",
-          "description": "Directories no lockfile describes, each with the command that puts it back. Every entry is checked before anything is deleted: it must stay inside the repository, hold no Git-tracked files, and name a rebuild command whose tool is installed on this machine.",
+          "description": "Directories no lockfile describes, each with the command that puts it back. Every entry is checked before anything is deleted: it must stay inside the repository, hold no Git-tracked files, and name a rebuild command whose tool is installed on this machine and whose target that tool could actually find.",
           "items": {
             "type": "object",
             "properties": {
@@ -60,7 +60,7 @@
               },
               "rebuild": {
                 "type": "string",
-                "description": "The command that rebuilds the directory. Shown to the user, never run by dev-prune. Required. Use \"echo not needed\" when nothing has to rebuild it."
+                "description": "The command that rebuilds the directory. Shown to the user, never run by dev-prune. Required. Where a manifest already in the tree can answer (an npm, pnpm or yarn script in package.json, a make target, a uv run entry point in pyproject.toml, a cargo subcommand), dev-prune reads it and refuses the declaration if the named target is not there. A command shape it cannot read is allowed through. Use \"echo not needed\" when nothing has to rebuild it."
               },
               "why": {
                 "type": "string",
