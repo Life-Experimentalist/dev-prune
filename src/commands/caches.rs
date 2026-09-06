@@ -2248,6 +2248,16 @@ fn record_cache_clear(bytes: u64) {
 }
 
 /// What actually went.
+/// These caches are the ones the next `npm install` does not quietly refill: the
+/// binaries only come back when their own installer runs, and someone who
+/// clears them mid-project hits a broken test run before they hit anything else. Say
+/// the command while the person who just cleared it is still looking.
+const REINSTALL_HINTS: &[(&str, &str)] = &[
+    ("playwright", "npx playwright install"),
+    ("puppeteer", "npx puppeteer browsers install"),
+    ("cypress", "npx cypress install"),
+];
+
 fn print_clear_result(outcomes: &[ClearOutcome]) {
     println!();
     for o in outcomes {
@@ -2270,6 +2280,15 @@ fn print_clear_result(outcomes: &[ClearOutcome]) {
     println!();
     let freed: u64 = outcomes.iter().map(ClearOutcome::freed).sum();
     output::print_success(&format!("Freed {}.", output::format_bytes(freed)));
+
+    for (manager, command) in REINSTALL_HINTS {
+        if outcomes
+            .iter()
+            .any(|o| o.manager == *manager && o.problem.is_none())
+        {
+            output::print_info(&format!("{manager} comes back with `{command}`."));
+        }
+    }
 }
 
 /// Ask before anything is emptied. `--yes` answers for the user; a pipe or a script
@@ -2311,6 +2330,18 @@ mod tests {
                 "{} {} has no conventional location",
                 probe.manager,
                 probe.kind
+            );
+        }
+    }
+
+    #[test]
+    fn every_reinstall_hint_names_a_probed_manager() {
+        // A hint for a manager no probe reports can never print, and a renamed probe
+        // would orphan its hint silently. Tie the two tables together here.
+        for (manager, command) in REINSTALL_HINTS {
+            assert!(
+                PROBES.iter().any(|p| p.manager == *manager),
+                "reinstall hint for {manager} ({command}) matches no probe"
             );
         }
     }
