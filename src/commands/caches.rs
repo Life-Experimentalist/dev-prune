@@ -1825,19 +1825,62 @@ impl ClearOutcome {
 
 /// Run `dev-prune caches clear <target>`.
 ///
-/// `target` is a manager name or `all`. Everything about to be emptied is named and
-/// sized first, and unless `--yes` answers for the user, it asks. `over_cap` narrows the
-/// selection to managers that have outgrown their `cache_max_gb` entry, and `unused` to
-/// managers no registered repository uses at all.
+/// `target` is a manager name, a comma-separated list of them, or `all`. Everything
+/// about to be emptied is named and sized first, and unless `--yes` answers for the
+/// user, it asks. `over_cap` narrows the selection to managers that have outgrown their
+/// `cache_max_gb` entry, and `unused` to managers no registered repository uses at all.
+/// `except` names managers `all` must leave alone — the one-time blacklist to the
+/// list's whitelist.
 pub fn run_clear(
     target: &str,
+    except: Option<&str>,
     over_cap: bool,
     unused: bool,
     yes: bool,
     dry_run: bool,
     json_output: bool,
 ) -> Result<()> {
-    let all = target.eq_ignore_ascii_case("all");
+    let targets: Vec<&str> = target
+        .split(',')
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if targets.is_empty() {
+        return Err(anyhow::Error::new(crate::UsageError(format!(
+            "`{target}` names no cache. Name a manager, a comma-separated list of them, \
+             or `all`."
+        ))));
+    }
+    let all = targets.len() == 1 && targets[0].eq_ignore_ascii_case("all");
+    // `npm,all` reads as a contradiction, so it is one: either the list decides, or
+    // `all` does — with `--except` to carve pieces out of it.
+    if !all && targets.iter().any(|t| t.eq_ignore_ascii_case("all")) {
+        return Err(anyhow::Error::new(crate::UsageError(
+            "`all` already includes every manager, so a list containing it decides \
+             nothing. Name just the managers to clear, or run `devp caches clear all \
+             --except <managers>` to leave some out."
+                .to_string(),
+        )));
+    }
+    let excepts: Vec<&str> = match except {
+        // `--except` composes with `all`; a named list already says exactly what to
+        // clear, so pairing the two would mean subtracting from a list the user just
+        // wrote — dropping the name from the list is the honest spelling.
+        Some(_) if !all => {
+            return Err(anyhow::Error::new(crate::UsageError(
+                "`--except` leaves managers out of `all`. You already named exactly \
+                 what to clear — drop the unwanted names from the list instead."
+                    .to_string(),
+            )));
+        }
+        Some(e) => e
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .collect(),
+        None => Vec::new(),
+    };
+    let target = targets[0];
     // An engine is cleared by the module that knows how to ask it questions; the dispatch
     // is here because `caches clear docker` is where a person looks for it.
     //
@@ -1845,7 +1888,7 @@ pub fn run_clear(
     // disk and the slowest to put back, and "clear all the caches" typed in a hurry
     // should not also mean re-pulling every base image tomorrow morning. Naming the
     // engine is the consent.
-    if !all && crate::commands::containers::is_engine(target) {
+    if !all && targets.len() == 1 && crate::commands::containers::is_engine(target) {
         if over_cap || unused {
             return Err(anyhow::Error::new(crate::UsageError(format!(
                 "`--over-cap` and `--unused` pick package manager caches by size cap and by \
@@ -1856,28 +1899,59 @@ pub fn run_clear(
         }
         return crate::commands::containers::run_clear(target, yes, dry_run, json_output);
     }
-    if !all
-        && !PROBES
+    // An engine elsewhere in a list would otherwise fall into the unknown-manager
+    // error below, which is the wrong answer: `clear docker` works, it just has to be
+    // named alone — that naming is the consent, and a list dilutes it.
+    if targets.len() > 1
+        && let Some(engine) = targets
             .iter()
-            .any(|p| p.manager.eq_ignore_ascii_case(target))
+            .find(|t| crate::commands::containers::is_engine(t))
     {
         return Err(anyhow::Error::new(crate::UsageError(format!(
-            "`{target}` is not a manager dev-prune knows a cache for. Try one of: {}, or `all`.",
-            known_managers().join(", ")
+            "`{engine}` is a container engine, and an engine is cleared by naming it \
+             alone: `devp caches clear {engine}`. Run that separately from the \
+             package-manager list."
         ))));
+    }
+    for t in &targets {
+        if !all && !PROBES.iter().any(|p| p.manager.eq_ignore_ascii_case(t)) {
+            return Err(anyhow::Error::new(crate::UsageError(format!(
+                "`{t}` is not a manager dev-prune knows a cache for. Try one of: {}, or `all`.",
+                known_managers().join(", ")
+            ))));
+        }
+    }
+    for e in &excepts {
+        if crate::commands::containers::is_engine(e) {
+            return Err(anyhow::Error::new(crate::UsageError(format!(
+                "`all` never reaches a container engine, so there is no `{e}` to leave \
+                 out. Drop it from `--except`."
+            ))));
+        }
+        if !PROBES.iter().any(|p| p.manager.eq_ignore_ascii_case(e)) {
+            return Err(anyhow::Error::new(crate::UsageError(format!(
+                "`{e}` is not a manager dev-prune knows a cache for, so `--except` has \
+                 nothing to leave out. Known managers: {}.",
+                known_managers().join(", ")
+            ))));
+        }
     }
     // Naming a manager dev-prune only ever reports is asking for the one thing this
     // command does not do, so the reason is the answer — and it is the same answer
     // whether or not the store is on this machine, which is why it comes from the table
-    // rather than from a size walk that would end in "nothing to clear".
-    if !all
-        && let Some(probe) = manual_only(target)
-        && let Clear::Manual { why } = probe.clear
-    {
-        return Err(anyhow::Error::new(crate::UsageError(format!(
-            "{why} The command is: {}",
-            probe.clear_command
-        ))));
+    // rather than from a size walk that would end in "nothing to clear". A list gets
+    // the same refusal: putting maven *in writing* is not quieter consent than naming
+    // it alone.
+    for t in &targets {
+        if !all
+            && let Some(probe) = manual_only(t)
+            && let Clear::Manual { why } = probe.clear
+        {
+            return Err(anyhow::Error::new(crate::UsageError(format!(
+                "{why} The command is: {}",
+                probe.clear_command
+            ))));
+        }
     }
 
     // A prompt nobody can answer is a hang, and the "pass --yes" line printed in its
@@ -1920,7 +1994,13 @@ pub fn run_clear(
     // carry the same lie.
     let (reports, kept): (Vec<CacheReport>, Vec<CacheReport>) = measured
         .into_iter()
-        .filter(|r| all || r.manager.eq_ignore_ascii_case(target))
+        .filter(|r| {
+            if all {
+                !excepts.iter().any(|e| r.manager.eq_ignore_ascii_case(e))
+            } else {
+                targets.iter().any(|t| r.manager.eq_ignore_ascii_case(t))
+            }
+        })
         .filter(|r| !over_cap || r.over_cap)
         .filter(|r| !unused || r.dependents == Some(0))
         .partition(|r| !matches!(r.clear, Clear::Manual { .. }));
@@ -1951,7 +2031,11 @@ pub fn run_clear(
         }
         output::print_info(&format!(
             "No {} cache on this machine — nothing to clear.",
-            if all { "package manager" } else { target }
+            if all {
+                "package manager".to_string()
+            } else {
+                targets.join(", ")
+            }
         ));
         return Ok(());
     }
@@ -2526,7 +2610,7 @@ mod tests {
     fn clearing_a_manual_only_manager_explains_itself_instead_of_reporting_nothing() {
         // The unhelpful failure this guards against is "No maven cache on this machine",
         // which is both untrue and no help at all.
-        let err = run_clear("maven", false, false, true, true, false).unwrap_err();
+        let err = run_clear("maven", None, false, false, true, true, false).unwrap_err();
         assert!(
             err.downcast_ref::<crate::UsageError>().is_some(),
             "expected a usage error, got: {err:#}"
@@ -2560,13 +2644,74 @@ mod tests {
     #[test]
     fn an_unknown_manager_is_a_usage_error() {
         // Returns before anything is measured, so this touches nothing.
-        let err = run_clear("nonesuch", false, false, true, true, false).unwrap_err();
+        let err = run_clear("nonesuch", None, false, false, true, true, false).unwrap_err();
+        assert!(err.downcast_ref::<crate::UsageError>().is_some());
+    }
+
+    #[test]
+    fn a_manual_only_manager_in_a_list_gets_the_same_refusal_as_alone() {
+        // Writing `npm,maven` is not quieter consent than `maven`; the refusal must
+        // stay loud and still name the command the user can run themselves.
+        let err = run_clear("npm,maven", None, false, false, true, true, false).unwrap_err();
+        assert!(err.downcast_ref::<crate::UsageError>().is_some());
+        let text = format!("{err}");
+        assert!(
+            text.contains(MAVEN_REPO_CLEAR),
+            "the refusal does not name the command: {text}"
+        );
+    }
+
+    #[test]
+    fn all_inside_a_list_is_a_usage_error() {
+        let err = run_clear("npm,all", None, false, false, true, true, false).unwrap_err();
+        assert!(err.downcast_ref::<crate::UsageError>().is_some());
+        let text = format!("{err}");
+        assert!(
+            text.contains("--except"),
+            "the error should point at the fix: {text}"
+        );
+    }
+
+    #[test]
+    fn except_with_a_named_target_is_a_usage_error() {
+        let err = run_clear("npm", Some("uv"), false, false, true, true, false).unwrap_err();
+        assert!(err.downcast_ref::<crate::UsageError>().is_some());
+    }
+
+    #[test]
+    fn an_unknown_name_in_except_is_a_usage_error() {
+        let err = run_clear("all", Some("nonesuch"), false, false, true, true, false).unwrap_err();
+        assert!(err.downcast_ref::<crate::UsageError>().is_some());
+    }
+
+    #[test]
+    fn an_engine_in_a_list_is_refused_with_the_standalone_command() {
+        let err = run_clear("npm,docker", None, false, false, true, true, false).unwrap_err();
+        assert!(err.downcast_ref::<crate::UsageError>().is_some());
+        let text = format!("{err}");
+        assert!(
+            text.contains("devp caches clear docker"),
+            "the error should name the command that does work: {text}"
+        );
+    }
+
+    #[test]
+    fn an_engine_in_except_is_a_usage_error() {
+        // `all` never reaches an engine, so excepting one means the user misread what
+        // `all` covers — worth saying rather than silently accepting a no-op.
+        let err = run_clear("all", Some("docker"), false, false, true, true, false).unwrap_err();
+        assert!(err.downcast_ref::<crate::UsageError>().is_some());
+    }
+
+    #[test]
+    fn a_target_of_only_commas_names_nothing() {
+        let err = run_clear(",", None, false, false, true, true, false).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
     }
 
     #[test]
     fn json_without_yes_is_a_usage_error_rather_than_a_prompt() {
-        let err = run_clear("npm", false, false, false, false, true).unwrap_err();
+        let err = run_clear("npm", None, false, false, false, false, true).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
     }
 

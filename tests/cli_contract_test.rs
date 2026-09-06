@@ -1661,6 +1661,46 @@ fn clearing_a_container_engine_refuses_the_selections_that_cannot_apply() {
     }
 }
 
+/// The clear target takes a comma list (`npm,uv`) and `all` takes `--except` — a
+/// one-time whitelist and blacklist. Every way of holding that pair wrong is exit `2`
+/// with a message that names the fix, and every case below returns before a single
+/// cache is measured, which is what makes them safe to run end to end.
+#[test]
+fn a_clear_list_held_wrong_is_a_usage_error_before_anything_is_measured() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    for args in [
+        // `--except` subtracts from `all`; a named list already says what to clear.
+        vec!["caches", "clear", "npm", "--except", "uv"],
+        // `all` inside a list decides nothing.
+        vec!["caches", "clear", "npm,all"],
+        // Unknown names are refused in the list and in `--except` alike.
+        vec!["caches", "clear", "npm,nonesuch"],
+        vec!["caches", "clear", "all", "--except", "nonesuch"],
+        // An engine is cleared by naming it alone; `all` never reaches one.
+        vec!["caches", "clear", "npm,docker"],
+        vec!["caches", "clear", "all", "--except", "docker"],
+        // maven in writing is not quieter consent than maven alone.
+        vec!["caches", "clear", "npm,maven"],
+        // A target of separators names nothing.
+        vec!["caches", "clear", ","],
+    ] {
+        let out = devp(&config)
+            .args(&args)
+            .args(["--yes", "--dry-run"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`devp {}` was not a usage error:\n{}",
+            args.join(" "),
+            combined(&out)
+        );
+    }
+}
+
 #[test]
 fn clearing_a_container_engine_as_json_still_demands_an_answer() {
     let tmp = TempDir::new().unwrap();

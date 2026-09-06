@@ -344,6 +344,13 @@ well as a download cache — `mvn install:install-file` puts artifacts there tha
 remote can hand back — so dev-prune sizes it and prints `rm -rf ~/.m2/repository` \
 for you to run. `clear maven` says so and stops; `clear all` skips it.
 
+The target takes a list: `devp caches clear npm,uv,pip` empties exactly those three \
+and nothing else — a one-time whitelist, no configuration involved. The mirror image \
+is `devp caches clear all --except npm,uv`: everything goes except the names given, \
+for the day one cache is the only one worth keeping warm. `--except` only makes sense \
+with `all` — a list already says exactly what to clear — and a container engine never \
+appears in either: naming an engine alone is the consent to touch it.
+
 Two flags narrow what `all` means, so you do not have to pick the caches by hand. \
 `--over-cap` keeps only the managers that have outgrown the ceiling you set in \
 `cache_max_gb`; with no cap set anywhere it clears nothing and says so. `--unused` keeps \
@@ -361,6 +368,9 @@ pub const CACHES_CLEAR_EXAMPLES: &str = "\
 EXAMPLES:
   devp caches clear npm           One manager, after confirming
   devp caches clear cargo         Both cargo rows: the registry cache and its sources
+  devp caches clear npm,uv,pip    Just these three — a one-time whitelist
+  devp caches clear all --except npm,uv
+                                  Everything but these — a one-time blacklist
   devp caches clear all --dry-run Everything that would go, and nothing touched
   devp caches clear all --over-cap
                                   Only the ones past their cache_max_gb

@@ -550,9 +550,15 @@ pub enum CachesAction {
     /// Empty one manager's cache, or every one of them, after showing what goes and asking.
     #[command(long_about = help::CACHES_CLEAR_LONG, after_long_help = help::CACHES_CLEAR_EXAMPLES)]
     Clear {
-        /// Which cache to empty: a manager name (npm, go, cargo, gradle, …) or `all`.
+        /// Which cache to empty: a manager name (npm, go, cargo, gradle, …), a
+        /// comma-separated list of them (`npm,uv,pip`), or `all`.
         #[arg(value_name = "MANAGER")]
         target: String,
+
+        /// With `all`: empty every cache except these (comma-separated manager
+        /// names). A one-time blacklist, the counterpart of naming a list.
+        #[arg(long, value_name = "MANAGERS")]
+        except: Option<String>,
 
         /// Only empty caches that are over the size cap set for them in
         /// `cache_max_gb`. Without a cap set for anything, this clears nothing.
@@ -971,11 +977,18 @@ pub fn run_cli() {
             ))),
             Some(CachesAction::Clear {
                 target,
+                except,
                 over_cap,
                 unused,
-            }) => {
-                commands::caches::run_clear(&target, over_cap, unused, cli.yes, cli.dry_run, json)
-            }
+            }) => commands::caches::run_clear(
+                &target,
+                except.as_deref(),
+                over_cap,
+                unused,
+                cli.yes,
+                cli.dry_run,
+                json,
+            ),
             Some(CachesAction::Docker) => commands::containers::run(Some("docker"), json),
             Some(CachesAction::Podman) => commands::containers::run(Some("podman"), json),
             Some(CachesAction::Containers { engine }) => {

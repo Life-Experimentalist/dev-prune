@@ -340,8 +340,12 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   consent. An engine that is not installed, or whose daemon is stopped, is exit 2 quoting
   the engine's own words rather than a guess. `--over-cap` and `--unused` with an engine
   name are exit 2: an image belongs to no repository and `cache_max_gb` does not cover one
-- `devp caches clear <manager|all> [--over-cap] [--unused] [--dry-run] [--yes] [--json]` — empty one manager's
-  cache, or every one of them, after listing and sizing what goes and asking. A
+- `devp caches clear <manager|list|all> [--except <managers>] [--over-cap] [--unused] [--dry-run] [--yes] [--json]` — empty one manager's
+  cache, a comma-separated list of them (`npm,uv,pip` — a one-time whitelist), or every
+  one of them, after listing and sizing what goes and asking. `all --except npm,uv` is
+  the one-time blacklist: everything goes except the names given. `--except` only pairs
+  with `all`, `all` inside a list is exit 2, and an engine or `maven` inside a list is
+  exit 2 — an engine's consent is naming it alone, and maven is never cleared. A
   convenience, never automation: only this command clears a cache, and only when you
   type it. It runs the manager's own subcommand wherever one exists (`npm cache clean
   --force`, `pnpm store prune`, `go clean -modcache`) because the manager knows what is

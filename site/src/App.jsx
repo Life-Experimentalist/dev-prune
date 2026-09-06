@@ -2176,11 +2176,13 @@ Notes you should rely on, not work around:
                       <code>devp caches clear &lt;manager&gt;</code>
                     </td>
                     <td>
-                      Empty one cache, or <code>all</code> of them, after
-                      listing and sizing what goes. Runs the manager's own clear
-                      command and measures what was actually freed.{" "}
-                      <code>--over-cap</code> narrows it to the managers that
-                      have outgrown their <code>cache_max_gb</code>;{" "}
+                      Empty one cache, a comma list of them
+                      (<code>npm,uv,pip</code>), or <code>all</code> of them,
+                      after listing and sizing what goes. Runs the manager's own
+                      clear command and measures what was actually freed.{" "}
+                      <code>all --except npm,uv</code> leaves the named ones
+                      alone; <code>--over-cap</code> narrows it to the managers
+                      that have outgrown their <code>cache_max_gb</code>;{" "}
                       <code>--unused</code> to the ones no registered repository
                       uses. Only ever
                       when you type it — no pass, schedule or hook clears a
