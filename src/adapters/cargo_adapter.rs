@@ -12,7 +12,9 @@
 // nobody finds it deleted without having asked.
 
 use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier};
+use crate::declared::{Gap, RebuildCheck, on_path};
 use anyhow::Result;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Adapter for Cargo-based Rust projects.
@@ -105,6 +107,127 @@ impl PackageManager for Cargo {
     fn opt_in(&self) -> bool {
         true
     }
+}
+
+/// The rebuild check for `cargo` declarations.
+pub(crate) struct CargoSubcommands;
+
+impl RebuildCheck for CargoSubcommands {
+    fn tools(&self) -> &'static [&'static str] {
+        &["cargo"]
+    }
+
+    fn gap(&self, repo_path: &Path, _tool: &str, args: &[&str]) -> Option<Gap> {
+        cargo_subcommand_gap(repo_path, args)
+    }
+}
+
+/// Cargo's own subcommands, which never need a plugin behind them.
+///
+/// Only used to *stop* asking: a name on this list is accepted immediately. A name that
+/// is not on it goes on to the `PATH` and alias checks rather than being refused, so a
+/// list that falls behind cargo makes this slower, never wrong.
+const CARGO_BUILTINS: &[&str] = &[
+    "add",
+    "b",
+    "bench",
+    "build",
+    "c",
+    "check",
+    "clean",
+    "clippy",
+    "config",
+    "d",
+    "doc",
+    "fetch",
+    "fix",
+    "fmt",
+    "generate-lockfile",
+    "help",
+    "info",
+    "init",
+    "install",
+    "locate-project",
+    "login",
+    "logout",
+    "metadata",
+    "miri",
+    "new",
+    "owner",
+    "package",
+    "pkgid",
+    "publish",
+    "r",
+    "read-manifest",
+    "remove",
+    "report",
+    "run",
+    "rustc",
+    "rustdoc",
+    "search",
+    "t",
+    "test",
+    "tree",
+    "uninstall",
+    "unpublish",
+    "update",
+    "vendor",
+    "verify-project",
+    "version",
+    "yank",
+];
+
+/// A `cargo` subcommand nothing on this machine provides.
+///
+/// Deliberately not an attempt to enumerate cargo plugins — there is no list of those.
+/// It only rules out the names that are definitively absent: not one of cargo's own, no
+/// `cargo-<name>` program on `PATH`, and no `[alias]` table anywhere cargo reads one.
+fn cargo_subcommand_gap(repo_path: &Path, args: &[&str]) -> Option<Gap> {
+    let mut i = 0;
+    // `cargo +nightly build` picks a toolchain before naming the subcommand.
+    while args.get(i).is_some_and(|arg| arg.starts_with('+')) {
+        i += 1;
+    }
+    let sub = *args.get(i)?;
+    if sub.starts_with('-') || CARGO_BUILTINS.contains(&sub) {
+        return None;
+    }
+    // Asking `PATH` the same question cargo itself asks when it meets a name it does not
+    // know. An installed plugin is found here.
+    if on_path(&format!("cargo-{sub}")) {
+        return None;
+    }
+    if cargo_aliases_exist(repo_path) {
+        return None;
+    }
+    Some(Gap {
+        what: format!("`{sub}` is not a cargo subcommand and no `cargo-{sub}` is on this machine"),
+        fix: format!("Install whatever provides `cargo {sub}`, or fix the command."),
+    })
+}
+
+/// Whether any config cargo would read declares an `[alias]` table.
+///
+/// Its mere presence is enough to stop asking. An alias can name anything, and reading
+/// one machine's table to decide whether a committed declaration is honoured is exactly
+/// the kind of answer this module would rather not give.
+fn cargo_aliases_exist(repo_path: &Path) -> bool {
+    let mut candidates = vec![
+        repo_path.join(".cargo").join("config.toml"),
+        repo_path.join(".cargo").join("config"),
+    ];
+    let home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|dir| dir.join(".cargo")));
+    if let Some(home) = home {
+        candidates.push(home.join("config.toml"));
+        candidates.push(home.join("config"));
+    }
+    candidates.iter().any(|path| {
+        fs::read_to_string(path)
+            .map(|text| text.lines().any(|l| l.trim_start().starts_with("[alias")))
+            .unwrap_or(false)
+    })
 }
 
 #[cfg(test)]

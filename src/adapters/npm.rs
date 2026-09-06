@@ -6,6 +6,7 @@
 use super::{
     BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command_with_timeout,
 };
+use crate::declared::{Gap, RebuildCheck, label_of, path_of, relative_parts};
 use anyhow::Result;
 use std::fs;
 use std::path::Path;
@@ -186,6 +187,157 @@ impl PackageManager for Npm {
             record_command: "npm install <pkg> (or `npm install` to sync the lockfile)",
         }]
     }
+}
+
+/// The rebuild check for `npm`, `pnpm` and `yarn` declarations.
+///
+/// One check for three tools because all three resolve a script the same way, against
+/// the same manifest: `package.json` in the directory the command names. The check
+/// lives here rather than in `crate::declared` so everything this crate knows about
+/// node package managers stays in one file.
+pub(crate) struct NodeScripts;
+
+impl RebuildCheck for NodeScripts {
+    fn tools(&self) -> &'static [&'static str] {
+        &["npm", "pnpm", "yarn"]
+    }
+
+    fn gap(&self, repo_path: &Path, tool: &str, args: &[&str]) -> Option<Gap> {
+        node_script_gap(repo_path, tool, args)
+    }
+}
+
+/// Subcommands of `pnpm` and `yarn`, which both also run a script from a bare word.
+///
+/// `pnpm build` runs the `build` script, but `pnpm install` does not — so the bare form
+/// can only be resolved against a list of the tool's own verbs. Deliberately generous,
+/// and shared between the two tools: a word wrongly on this list is a script this
+/// check declines to look up, which is the failure this file prefers.
+const NODE_SUBCOMMANDS: &[&str] = &[
+    "add",
+    "audit",
+    "bin",
+    "cache",
+    "config",
+    "create",
+    "dedupe",
+    "deploy",
+    "dlx",
+    "doctor",
+    "env",
+    "exec",
+    "fetch",
+    "get",
+    "global",
+    "help",
+    "i",
+    "import",
+    "info",
+    "init",
+    "install",
+    "licenses",
+    "link",
+    "list",
+    "login",
+    "logout",
+    "ls",
+    "node",
+    "outdated",
+    "pack",
+    "patch",
+    "policies",
+    "prune",
+    "publish",
+    "rebuild",
+    "remove",
+    "restart",
+    "rm",
+    "root",
+    "server",
+    "set",
+    "setup",
+    "start",
+    "stop",
+    "store",
+    "test",
+    "un",
+    "uninstall",
+    "unlink",
+    "up",
+    "update",
+    "upgrade",
+    "version",
+    "whoami",
+    "why",
+    "workspace",
+    "workspaces",
+];
+
+/// A `package.json` script the command names and the file does not define.
+fn node_script_gap(repo_path: &Path, tool: &str, args: &[&str]) -> Option<Gap> {
+    let (script, prefix) = node_script_and_prefix(tool, args)?;
+    let parts = relative_parts(prefix.as_deref())?;
+    let manifest = label_of(&parts, "package.json");
+    let content = fs::read_to_string(path_of(repo_path, &parts, "package.json")).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let defined = match json.get("scripts") {
+        // No `scripts` table at all: there is nothing `run` could resolve against.
+        None => false,
+        // Present but not a table — a shape this cannot read.
+        Some(value) => value.as_object()?.contains_key(script.as_str()),
+    };
+    if defined {
+        return None;
+    }
+    Some(Gap {
+        what: format!("`{manifest}` defines no `{script}` script"),
+        fix: format!("Add a `{script}` script to `{manifest}`, or fix the command."),
+    })
+}
+
+/// The script an `npm`/`pnpm`/`yarn` command runs, and the directory it runs it in.
+///
+/// The prefix flags matter because `crate::declared`'s shell-builtin refusal actively
+/// recommends `npm --prefix docs run build`: following that advice must not then land
+/// on the wrong `package.json`. Resolution stops at the named directory rather than
+/// walking upward the way npm does — a parent manifest could be outside the repository,
+/// and "somewhere above here" is not an answer this check is willing to refuse on.
+fn node_script_and_prefix(tool: &str, args: &[&str]) -> Option<(String, Option<String>)> {
+    let mut prefix = None;
+    let mut saw_run = false;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i];
+        if arg == "--" {
+            return None;
+        }
+        if let Some(value) = arg
+            .strip_prefix("--prefix=")
+            .or_else(|| arg.strip_prefix("--dir="))
+            .or_else(|| arg.strip_prefix("--cwd="))
+        {
+            prefix = Some(value.to_string());
+        } else if matches!(arg, "--prefix" | "--dir" | "-C" | "--cwd") {
+            prefix = Some((*args.get(i + 1)?).to_string());
+            i += 1;
+        } else if arg == "run" || arg == "run-script" {
+            saw_run = true;
+        } else if arg.starts_with('-') {
+            // A flag this does not model. Whatever follows it might be its argument, and
+            // reading that as the script name is exactly the guess to avoid.
+            return None;
+        } else if saw_run {
+            return Some((arg.to_string(), prefix));
+        } else if tool == "npm" || NODE_SUBCOMMANDS.contains(&arg) {
+            // npm has no bare-script shorthand, and the pnpm/yarn one does not apply to
+            // the tool's own verbs.
+            return None;
+        } else {
+            return Some((arg.to_string(), prefix));
+        }
+        i += 1;
+    }
+    None
 }
 
 #[cfg(test)]

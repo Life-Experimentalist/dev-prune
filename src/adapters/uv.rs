@@ -7,6 +7,7 @@ use super::venv::{BASELINE_DISTRIBUTIONS, installed_distributions, normalize_pac
 use super::{
     BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier, run_command_with_timeout,
 };
+use crate::declared::{Gap, RebuildCheck, label_of, on_path, path_of, relative_parts};
 use anyhow::{Result, anyhow};
 use std::collections::HashSet;
 use std::fs;
@@ -221,6 +222,177 @@ impl PackageManager for Uv {
             record_command: "uv add <package>",
         }]
     }
+}
+
+/// The rebuild check for `uv` declarations.
+pub(crate) struct UvScripts;
+
+impl RebuildCheck for UvScripts {
+    fn tools(&self) -> &'static [&'static str] {
+        &["uv"]
+    }
+
+    fn gap(&self, repo_path: &Path, _tool: &str, args: &[&str]) -> Option<Gap> {
+        uv_script_gap(repo_path, args)
+    }
+}
+
+/// What `pyproject.toml` had to say about the name `uv run` was given.
+struct PyprojectLookup {
+    /// `[project.scripts]` — the one table uv resolves entry points from.
+    defined: bool,
+    /// The name appears as a requirement, so a dependency's console script provides it.
+    from_dependency: bool,
+    /// `[tool.uv.scripts]` names it. That table is not one uv reads.
+    in_tool_uv_scripts: bool,
+}
+
+/// A `uv run` target that `pyproject.toml` does not provide.
+fn uv_script_gap(repo_path: &Path, args: &[&str]) -> Option<Gap> {
+    let mut dir = None;
+    let mut saw_run = false;
+    let mut script = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i];
+        if arg == "--" {
+            return None;
+        }
+        if let Some(value) = arg
+            .strip_prefix("--directory=")
+            .or_else(|| arg.strip_prefix("--project="))
+        {
+            dir = Some(value.to_string());
+        } else if arg == "--directory" || arg == "--project" {
+            dir = Some((*args.get(i + 1)?).to_string());
+            i += 1;
+        } else if arg == "run" {
+            saw_run = true;
+        } else if arg.starts_with('-') {
+            return None;
+        } else if saw_run {
+            script = Some(arg.to_string());
+            break;
+        } else {
+            // `uv sync`, `uv pip install …` — not a script invocation at all.
+            return None;
+        }
+        i += 1;
+    }
+    let script = script?;
+    // `uv run ./tools/gen.py` runs a file. Whether that file is there is not a question
+    // `pyproject.toml` answers.
+    if script.contains(['/', '\\']) || script.ends_with(".py") {
+        return None;
+    }
+    // `uv run` also falls back to anything already on `PATH`.
+    if on_path(&script) {
+        return None;
+    }
+    let parts = relative_parts(dir.as_deref())?;
+    let manifest = label_of(&parts, "pyproject.toml");
+    let content = fs::read_to_string(path_of(repo_path, &parts, "pyproject.toml")).ok()?;
+    let found = pyproject_lookup(&content, &script)?;
+    if found.defined || found.from_dependency {
+        return None;
+    }
+    // A dependency's console script is not named in `pyproject.toml` at all when the
+    // requirement is only pinned in the lockfile.
+    if lockfile_records(&path_of(repo_path, &parts, "uv.lock"), &script) {
+        return None;
+    }
+    let fix = if found.in_tool_uv_scripts {
+        format!(
+            "`[tool.uv.scripts]` is not a table uv reads — it is silently ignored. Move \
+             `{script}` to `[project.scripts]` in `{manifest}`, or fix the command."
+        )
+    } else {
+        format!("Add `{script}` to `[project.scripts]` in `{manifest}`, or fix the command.")
+    };
+    Some(Gap {
+        what: format!("`{manifest}` defines no `{script}` entry point"),
+        fix,
+    })
+}
+
+/// Where `pyproject.toml` does and does not mention one name.
+///
+/// Line-based for the same reason the poetry adapter's read of this file is: there is no
+/// TOML dependency in this crate, and table headers only ever start a line. Any shape
+/// the scan cannot see through returns `None`, which allows the prune.
+fn pyproject_lookup(content: &str, wanted: &str) -> Option<PyprojectLookup> {
+    let mut found = PyprojectLookup {
+        defined: false,
+        from_dependency: false,
+        in_tool_uv_scripts: false,
+    };
+    let mut table = "";
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            table = line;
+            continue;
+        }
+        // A dotted key puts entry points somewhere this scan does not look.
+        if line.starts_with("project.scripts") {
+            return None;
+        }
+        // Any quoted requirement anywhere in the file — `"pytest>=8"` in a dependency
+        // array, wherever that array happens to be written. `uv run pytest` runs a
+        // console script that a dependency installed, and no table here lists it.
+        if quoted_strings(line).any(|value| same_name(requirement_head(value), wanted)) {
+            found.from_dependency = true;
+        }
+        let Some((key, _)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim().trim_matches(['"', '\'']);
+        match table {
+            // An inline `scripts = { regen = "…" }` is a shape this cannot read.
+            "[project]" if key == "scripts" => return None,
+            "[project.scripts]" | "[project.gui-scripts]" if same_name(key, wanted) => {
+                found.defined = true;
+            }
+            "[tool.uv.scripts]" if same_name(key, wanted) => found.in_tool_uv_scripts = true,
+            _ => {}
+        }
+    }
+    Some(found)
+}
+
+/// The double-quoted runs of a line.
+fn quoted_strings(line: &str) -> impl Iterator<Item = &str> {
+    line.split('"').skip(1).step_by(2)
+}
+
+/// The distribution name at the front of a requirement string like `pytest>=8,<9`.
+fn requirement_head(raw: &str) -> &str {
+    raw.trim()
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+        .next()
+        .unwrap_or("")
+}
+
+/// Python treats `-` and `_` in a distribution or entry-point name as the same character.
+fn same_name(a: &str, b: &str) -> bool {
+    a.replace('_', "-")
+        .eq_ignore_ascii_case(&b.replace('_', "-"))
+}
+
+/// Does a `uv.lock` record a package under this name?
+fn lockfile_records(lockfile: &Path, wanted: &str) -> bool {
+    let Ok(content) = fs::read_to_string(lockfile) else {
+        return false;
+    };
+    content.lines().any(|raw| {
+        raw.trim()
+            .strip_prefix("name")
+            .and_then(|rest| rest.trim_start().strip_prefix('='))
+            .is_some_and(|value| same_name(value.trim().trim_matches('"'), wanted))
+    })
 }
 
 #[cfg(test)]

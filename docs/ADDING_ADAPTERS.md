@@ -9,6 +9,7 @@ There are three things you can add, and all three are one table entry:
 | **An adapter** — a per-repository ecosystem | `src/adapters/` | `devp run` deletes that ecosystem's directories and can prove the lockfile rebuilds them. [Steps 1–7 below.](#step-1-create-a-new-module-file) |
 | **A cache probe** — a machine-wide store | `src/commands/caches.rs` | A row in `devp caches` and a working `devp caches clear <name>`. [How to add one.](#-adding-a-cache-probe) |
 | **A container engine** | `src/commands/containers.rs` | A report in `devp caches containers` and a working `devp caches clear <engine>`. [How to add one.](#-adding-a-container-engine) |
+| **A rebuild check** — for declared directories | beside the adapter, in `src/adapters/` | A declared `rebuild` command using your tool is verified against the manifest it would read, instead of only against `PATH`. [How to add one.](#-adding-a-rebuild-check) |
 
 They are independent. An ecosystem can have an adapter and no probe (its cache is
 per-project, or it has none), a probe and no adapter (`pip`, `playwright`,
@@ -349,6 +350,56 @@ cargo test --all
 cargo clippy -- -D warnings
 cargo fmt -- --check
 ```
+
+---
+
+## 🔎 Adding a Rebuild Check
+
+`project.devprune.json` lets a repository declare extra directories with the command
+that rebuilds them. Before honouring one, `src/declared/` checks that the command's
+tool is on `PATH`, and then, for tools it has a check for, that the *target* the
+command names actually exists in the manifest the tool would read: `npm run build`
+against the `scripts` table of `package.json`, `make generate` against the makefile's
+targets, and so on. That second half is a rebuild check.
+
+A check is one implementation of the `RebuildCheck` trait (in `src/declared/mod.rs`),
+written beside your adapter so all of one tool's knowledge stays in one file, plus one
+line in the `REBUILD_CHECKS` registry:
+
+```rust
+pub(crate) struct GradleTasks;
+
+impl RebuildCheck for GradleTasks {
+    fn tools(&self) -> &'static [&'static str] {
+        &["gradle", "gradlew"]
+    }
+
+    fn gap(&self, repo_path: &Path, tool: &str, args: &[&str]) -> Option<Gap> {
+        // Read the manifest. Never run anything.
+    }
+}
+```
+
+The contract is asymmetric on purpose, and it is the part to get right:
+
+- Return `Some(Gap)` **only on positive proof**: the manifest is present, readable,
+  and definitively does not provide what the command names.
+- Everything unanswerable returns `None`, which **allows** the prune. A flag your
+  check does not model, a manifest that is absent or unparseable, a shape you cannot
+  read: all of those are "cannot tell", never "refuse". A false refusal blocks a safe
+  prune on a committed file the user cannot easily debug, which is a worse bug than
+  the one you are closing.
+- Never execute the rebuild command or any part of it. Every check is a read.
+
+Two registry tests in `src/declared/mod.rs` enforce the mechanical half of that
+contract on every registered check automatically (no tool claimed twice; empty and
+unmodelled arguments never refuse). Add your own tests beside them for the refusals
+your check does make, pinning the exact wording.
+
+Rebuild checks are optional and independent of the adapter itself: a tool with no
+check simply stops at the `PATH` test, which is safe. `make` has a check and no
+adapter at all; it lives in `src/declared/make.rs` because there is no adapter file to
+sit beside.
 
 ---
 

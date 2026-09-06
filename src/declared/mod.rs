@@ -23,11 +23,12 @@
 //! None of those checks runs the rebuild command, or any part of it. Every one is a
 //! read.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::{DeclaredDir, Prunable};
 use crate::scanner::git;
+
+mod make;
 
 /// A declared directory that passed every check, ready to be treated as bloat.
 #[derive(Debug, Clone)]
@@ -201,7 +202,7 @@ fn check(repo_path: &Path, entry: &DeclaredDir) -> Result<Option<Target>, String
 /// what `C:\x` and `a\b` even are. Splitting on both separators by hand means a
 /// declaration that is refused on Windows is refused on Linux too, which is the whole
 /// value of the file being committed.
-fn split_relative(raw: &str) -> Result<Vec<String>, String> {
+pub(crate) fn split_relative(raw: &str) -> Result<Vec<String>, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return Err("An entry in `prunable.directories` has an empty `path`.".to_string());
@@ -292,7 +293,7 @@ fn first_word(command: &str) -> &str {
 /// Presence on `PATH`, not a `--version` probe. A rebuild command can start with
 /// anything — `make`, `./scripts/gen.sh`, a project's own tool — and most of those have
 /// no version flag, so probing would refuse commands that work perfectly well.
-fn on_path(program: &str) -> bool {
+pub(crate) fn on_path(program: &str) -> bool {
     let named = Path::new(program);
     if named.components().count() > 1 {
         return named.is_file();
@@ -319,12 +320,12 @@ fn on_path(program: &str) -> bool {
 }
 
 /// Something a rebuild command names that the manifest it would read does not define.
-struct Gap {
+pub(crate) struct Gap {
     /// What was looked for and where, as a clause: "`package.json` defines no `build`
     /// script".
-    what: String,
+    pub(crate) what: String,
     /// What to do about it.
-    fix: String,
+    pub(crate) fix: String,
 }
 
 /// Characters that make a rebuild command a shell script rather than one invocation.
@@ -334,125 +335,42 @@ const SHELL_METACHARACTERS: &[char] = &[
     '&', '|', ';', '$', '`', '>', '<', '(', ')', '*', '?', '%', '{', '}', '#',
 ];
 
-/// Cargo's own subcommands, which never need a plugin behind them.
+/// One tool family's check of a declared rebuild command against the manifest that
+/// command would read.
 ///
-/// Only used to *stop* asking: a name on this list is accepted immediately. A name that
-/// is not on it goes on to the `PATH` and alias checks rather than being refused, so a
-/// list that falls behind cargo makes this slower, never wrong.
-const CARGO_BUILTINS: &[&str] = &[
-    "add",
-    "b",
-    "bench",
-    "build",
-    "c",
-    "check",
-    "clean",
-    "clippy",
-    "config",
-    "d",
-    "doc",
-    "fetch",
-    "fix",
-    "fmt",
-    "generate-lockfile",
-    "help",
-    "info",
-    "init",
-    "install",
-    "locate-project",
-    "login",
-    "logout",
-    "metadata",
-    "miri",
-    "new",
-    "owner",
-    "package",
-    "pkgid",
-    "publish",
-    "r",
-    "read-manifest",
-    "remove",
-    "report",
-    "run",
-    "rustc",
-    "rustdoc",
-    "search",
-    "t",
-    "test",
-    "tree",
-    "uninstall",
-    "unpublish",
-    "update",
-    "vendor",
-    "verify-project",
-    "version",
-    "yank",
-];
+/// The contract every implementation inherits, the same one spelled out on
+/// [`rebuild_gap`]:
+///
+/// - Return `Some` only on positive proof: a manifest that is present, readable, and
+///   definitively does not provide what the command names.
+/// - Anything unanswerable returns `None`, which allows the prune. An argument shape
+///   the check does not model, and a manifest that is absent or unparseable, are both
+///   "cannot tell", never "refuse".
+/// - Never execute the rebuild command, or any part of it. Every check is a read.
+///
+/// A package manager's check lives beside its adapter in `crate::adapters`, so one
+/// tool's knowledge stays in one file. `make` is a build tool with no adapter, so its
+/// check lives in this module instead, in [`make`]. Adding a tool means one
+/// implementation of this trait, one line in [`REBUILD_CHECKS`], and tests pinning its
+/// refusals and its pass-throughs.
+pub(crate) trait RebuildCheck: Sync {
+    /// The tool names this check answers for, as [`tool_name`] spells them.
+    fn tools(&self) -> &'static [&'static str];
 
-/// Subcommands of `pnpm` and `yarn`, which both also run a script from a bare word.
+    /// The gap between what `tool args` was asked to do and what the manifest in the
+    /// tree defines, when there provably is one.
+    fn gap(&self, repo_path: &Path, tool: &str, args: &[&str]) -> Option<Gap>;
+}
+
+/// Every rebuild check, one entry per tool family.
 ///
-/// `pnpm build` runs the `build` script, but `pnpm install` does not — so the bare form
-/// can only be resolved against a list of the tool's own verbs. Deliberately generous,
-/// and shared between the two tools: a word wrongly on this list is a script this
-/// module declines to check, which is the failure this file prefers.
-const NODE_SUBCOMMANDS: &[&str] = &[
-    "add",
-    "audit",
-    "bin",
-    "cache",
-    "config",
-    "create",
-    "dedupe",
-    "deploy",
-    "dlx",
-    "doctor",
-    "env",
-    "exec",
-    "fetch",
-    "get",
-    "global",
-    "help",
-    "i",
-    "import",
-    "info",
-    "init",
-    "install",
-    "licenses",
-    "link",
-    "list",
-    "login",
-    "logout",
-    "ls",
-    "node",
-    "outdated",
-    "pack",
-    "patch",
-    "policies",
-    "prune",
-    "publish",
-    "rebuild",
-    "remove",
-    "restart",
-    "rm",
-    "root",
-    "server",
-    "set",
-    "setup",
-    "start",
-    "stop",
-    "store",
-    "test",
-    "un",
-    "uninstall",
-    "unlink",
-    "up",
-    "update",
-    "upgrade",
-    "version",
-    "whoami",
-    "why",
-    "workspace",
-    "workspaces",
+/// [`rebuild_gap`] resolves a command's first word against this table. Order does not
+/// matter: a test refuses to let two entries claim the same tool name.
+static REBUILD_CHECKS: &[&dyn RebuildCheck] = &[
+    &crate::adapters::npm::NodeScripts,
+    &crate::adapters::uv::UvScripts,
+    &crate::adapters::cargo_adapter::CargoSubcommands,
+    &make::MakeTargets,
 ];
 
 /// What the rebuild command's target is missing, when a manifest in the tree can say.
@@ -477,13 +395,11 @@ fn rebuild_gap(repo_path: &Path, rebuild: &str) -> Option<Gap> {
     let words = command_words(rebuild)?;
     let (tool, rest) = words.split_first()?;
     let args: Vec<&str> = rest.iter().map(String::as_str).collect();
-    match tool_name(tool) {
-        node @ ("npm" | "pnpm" | "yarn") => node_script_gap(repo_path, node, &args),
-        "make" | "gmake" | "mingw32-make" => make_target_gap(repo_path, &args),
-        "uv" => uv_script_gap(repo_path, &args),
-        "cargo" => cargo_subcommand_gap(repo_path, &args),
-        _ => None,
-    }
+    let tool = tool_name(tool);
+    REBUILD_CHECKS
+        .iter()
+        .find(|check| check.tools().contains(&tool))
+        .and_then(|check| check.gap(repo_path, tool, &args))
 }
 
 /// The words of a rebuild command, or `None` when it is not a single invocation.
@@ -518,7 +434,7 @@ fn tool_name(word: &str) -> &str {
 ///
 /// Run through the same splitter declarations are. This only ever reads a manifest, but
 /// it should only ever read one out of the tree it was asked about.
-fn relative_parts(dir: Option<&str>) -> Option<Vec<String>> {
+pub(crate) fn relative_parts(dir: Option<&str>) -> Option<Vec<String>> {
     match dir.map(str::trim) {
         None | Some("") | Some(".") => Some(Vec::new()),
         Some(raw) => split_relative(raw).ok(),
@@ -526,7 +442,7 @@ fn relative_parts(dir: Option<&str>) -> Option<Vec<String>> {
 }
 
 /// Where a manifest sits on disk, given repository-relative components.
-fn path_of(repo_path: &Path, parts: &[String], file: &str) -> PathBuf {
+pub(crate) fn path_of(repo_path: &Path, parts: &[String], file: &str) -> PathBuf {
     parts
         .iter()
         .fold(repo_path.to_path_buf(), |acc, part| acc.join(part))
@@ -534,406 +450,12 @@ fn path_of(repo_path: &Path, parts: &[String], file: &str) -> PathBuf {
 }
 
 /// How that manifest is named back to the user: repository-relative, `/`-separated.
-fn label_of(parts: &[String], file: &str) -> String {
+pub(crate) fn label_of(parts: &[String], file: &str) -> String {
     if parts.is_empty() {
         file.to_string()
     } else {
         format!("{}/{file}", parts.join("/"))
     }
-}
-
-/// A `package.json` script the command names and the file does not define.
-fn node_script_gap(repo_path: &Path, tool: &str, args: &[&str]) -> Option<Gap> {
-    let (script, prefix) = node_script_and_prefix(tool, args)?;
-    let parts = relative_parts(prefix.as_deref())?;
-    let manifest = label_of(&parts, "package.json");
-    let content = fs::read_to_string(path_of(repo_path, &parts, "package.json")).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let defined = match json.get("scripts") {
-        // No `scripts` table at all: there is nothing `run` could resolve against.
-        None => false,
-        // Present but not a table — a shape this cannot read.
-        Some(value) => value.as_object()?.contains_key(script.as_str()),
-    };
-    if defined {
-        return None;
-    }
-    Some(Gap {
-        what: format!("`{manifest}` defines no `{script}` script"),
-        fix: format!("Add a `{script}` script to `{manifest}`, or fix the command."),
-    })
-}
-
-/// The script an `npm`/`pnpm`/`yarn` command runs, and the directory it runs it in.
-///
-/// The prefix flags matter because the refusal one check above actively recommends
-/// `npm --prefix docs run build`: following that advice must not then land on the wrong
-/// `package.json`. Resolution stops at the named directory rather than walking upward
-/// the way npm does — a parent manifest could be outside the repository, and "somewhere
-/// above here" is not an answer this module is willing to refuse on.
-fn node_script_and_prefix(tool: &str, args: &[&str]) -> Option<(String, Option<String>)> {
-    let mut prefix = None;
-    let mut saw_run = false;
-    let mut i = 0;
-    while i < args.len() {
-        let arg = args[i];
-        if arg == "--" {
-            return None;
-        }
-        if let Some(value) = arg
-            .strip_prefix("--prefix=")
-            .or_else(|| arg.strip_prefix("--dir="))
-            .or_else(|| arg.strip_prefix("--cwd="))
-        {
-            prefix = Some(value.to_string());
-        } else if matches!(arg, "--prefix" | "--dir" | "-C" | "--cwd") {
-            prefix = Some((*args.get(i + 1)?).to_string());
-            i += 1;
-        } else if arg == "run" || arg == "run-script" {
-            saw_run = true;
-        } else if arg.starts_with('-') {
-            // A flag this does not model. Whatever follows it might be its argument, and
-            // reading that as the script name is exactly the guess to avoid.
-            return None;
-        } else if saw_run {
-            return Some((arg.to_string(), prefix));
-        } else if tool == "npm" || NODE_SUBCOMMANDS.contains(&arg) {
-            // npm has no bare-script shorthand, and the pnpm/yarn one does not apply to
-            // the tool's own verbs.
-            return None;
-        } else {
-            return Some((arg.to_string(), prefix));
-        }
-        i += 1;
-    }
-    None
-}
-
-/// A `make` target the makefile does not define.
-fn make_target_gap(repo_path: &Path, args: &[&str]) -> Option<Gap> {
-    let mut dir = None;
-    let mut file = None;
-    let mut target = None;
-    let mut i = 0;
-    while i < args.len() {
-        let arg = args[i];
-        if arg == "--" {
-            return None;
-        }
-        if let Some(value) = arg.strip_prefix("--directory=") {
-            dir = Some(value.to_string());
-        } else if let Some(value) = arg
-            .strip_prefix("--file=")
-            .or_else(|| arg.strip_prefix("--makefile="))
-        {
-            file = Some(value.to_string());
-        } else if arg == "-C" || arg == "--directory" {
-            dir = Some((*args.get(i + 1)?).to_string());
-            i += 1;
-        } else if arg == "-f" || arg == "--file" || arg == "--makefile" {
-            file = Some((*args.get(i + 1)?).to_string());
-            i += 1;
-        } else if let Some(value) = arg.strip_prefix("-C").filter(|v| !v.is_empty()) {
-            dir = Some(value.to_string());
-        } else if let Some(value) = arg.strip_prefix("-f").filter(|v| !v.is_empty()) {
-            file = Some(value.to_string());
-        } else if arg.starts_with('-') {
-            return None;
-        } else if !arg.contains('=') {
-            // `VAR=value` is an override, not a goal; the first word that is not one is.
-            target = Some(arg.to_string());
-            break;
-        }
-        i += 1;
-    }
-    // Bare `make` builds the default goal — whichever rule comes first, which is not a
-    // name to look up.
-    let target = target?;
-    let base = relative_parts(dir.as_deref())?;
-    let candidates: Vec<Vec<String>> = match &file {
-        Some(name) => vec![split_relative(name).ok()?],
-        None => ["Makefile", "makefile", "GNUmakefile"]
-            .iter()
-            .map(|name| vec![(*name).to_string()])
-            .collect(),
-    };
-    let (parts, content) = candidates.into_iter().find_map(|name| {
-        let mut parts = base.clone();
-        parts.extend(name);
-        let full = parts
-            .iter()
-            .fold(repo_path.to_path_buf(), |acc, part| acc.join(part));
-        fs::read_to_string(full).ok().map(|text| (parts, text))
-    })?;
-    if make_targets(&content)?.contains(&target) {
-        return None;
-    }
-    let manifest = parts.join("/");
-    Some(Gap {
-        what: format!("`{manifest}` defines no `{target}` target"),
-        fix: format!("Add a `{target}` target to `{manifest}`, or fix the command."),
-    })
-}
-
-/// Every target name a makefile states outright, or `None` when some are not in the text.
-///
-/// Line-based, the way the poetry adapter reads `pyproject.toml`: this crate has no
-/// makefile parser and the question is a membership test. An `include`, a pattern rule
-/// or a target built out of a variable each mean the file names targets this cannot see,
-/// so those give up entirely rather than answer from a partial list.
-fn make_targets(content: &str) -> Option<Vec<String>> {
-    let mut targets = Vec::new();
-    for raw in content.lines() {
-        if raw.starts_with('\t') {
-            continue;
-        }
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with("include")
-            || line.starts_with("-include")
-            || line.starts_with("sinclude")
-        {
-            return None;
-        }
-        let Some(colon) = line.find(':') else {
-            continue;
-        };
-        let rest = &line[colon..];
-        if rest.starts_with(":=") || rest.starts_with("::=") {
-            continue;
-        }
-        let head = &line[..colon];
-        if head.contains('=') {
-            continue;
-        }
-        if head.contains('%') || head.contains("$(") || head.contains("${") {
-            return None;
-        }
-        targets.extend(head.split_whitespace().map(str::to_string));
-        // `.PHONY: build test` names targets on the right of the colon, and a phony
-        // target with no recipe of its own is still one `make` accepts.
-        if head.split_whitespace().any(|word| word == ".PHONY") {
-            targets.extend(rest[1..].split_whitespace().map(str::to_string));
-        }
-    }
-    if targets.is_empty() {
-        None
-    } else {
-        Some(targets)
-    }
-}
-
-/// What `pyproject.toml` had to say about the name `uv run` was given.
-struct PyprojectLookup {
-    /// `[project.scripts]` — the one table uv resolves entry points from.
-    defined: bool,
-    /// The name appears as a requirement, so a dependency's console script provides it.
-    from_dependency: bool,
-    /// `[tool.uv.scripts]` names it. That table is not one uv reads.
-    in_tool_uv_scripts: bool,
-}
-
-/// A `uv run` target that `pyproject.toml` does not provide.
-fn uv_script_gap(repo_path: &Path, args: &[&str]) -> Option<Gap> {
-    let mut dir = None;
-    let mut saw_run = false;
-    let mut script = None;
-    let mut i = 0;
-    while i < args.len() {
-        let arg = args[i];
-        if arg == "--" {
-            return None;
-        }
-        if let Some(value) = arg
-            .strip_prefix("--directory=")
-            .or_else(|| arg.strip_prefix("--project="))
-        {
-            dir = Some(value.to_string());
-        } else if arg == "--directory" || arg == "--project" {
-            dir = Some((*args.get(i + 1)?).to_string());
-            i += 1;
-        } else if arg == "run" {
-            saw_run = true;
-        } else if arg.starts_with('-') {
-            return None;
-        } else if saw_run {
-            script = Some(arg.to_string());
-            break;
-        } else {
-            // `uv sync`, `uv pip install …` — not a script invocation at all.
-            return None;
-        }
-        i += 1;
-    }
-    let script = script?;
-    // `uv run ./tools/gen.py` runs a file. Whether that file is there is not a question
-    // `pyproject.toml` answers.
-    if script.contains(['/', '\\']) || script.ends_with(".py") {
-        return None;
-    }
-    // `uv run` also falls back to anything already on `PATH`.
-    if on_path(&script) {
-        return None;
-    }
-    let parts = relative_parts(dir.as_deref())?;
-    let manifest = label_of(&parts, "pyproject.toml");
-    let content = fs::read_to_string(path_of(repo_path, &parts, "pyproject.toml")).ok()?;
-    let found = pyproject_lookup(&content, &script)?;
-    if found.defined || found.from_dependency {
-        return None;
-    }
-    // A dependency's console script is not named in `pyproject.toml` at all when the
-    // requirement is only pinned in the lockfile.
-    if lockfile_records(&path_of(repo_path, &parts, "uv.lock"), &script) {
-        return None;
-    }
-    let fix = if found.in_tool_uv_scripts {
-        format!(
-            "`[tool.uv.scripts]` is not a table uv reads — it is silently ignored. Move \
-             `{script}` to `[project.scripts]` in `{manifest}`, or fix the command."
-        )
-    } else {
-        format!("Add `{script}` to `[project.scripts]` in `{manifest}`, or fix the command.")
-    };
-    Some(Gap {
-        what: format!("`{manifest}` defines no `{script}` entry point"),
-        fix,
-    })
-}
-
-/// Where `pyproject.toml` does and does not mention one name.
-///
-/// Line-based for the same reason the poetry adapter's read of this file is: there is no
-/// TOML dependency in this crate, and table headers only ever start a line. Any shape
-/// the scan cannot see through returns `None`, which allows the prune.
-fn pyproject_lookup(content: &str, wanted: &str) -> Option<PyprojectLookup> {
-    let mut found = PyprojectLookup {
-        defined: false,
-        from_dependency: false,
-        in_tool_uv_scripts: false,
-    };
-    let mut table = "";
-    for raw in content.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if line.starts_with('[') {
-            table = line;
-            continue;
-        }
-        // A dotted key puts entry points somewhere this scan does not look.
-        if line.starts_with("project.scripts") {
-            return None;
-        }
-        // Any quoted requirement anywhere in the file — `"pytest>=8"` in a dependency
-        // array, wherever that array happens to be written. `uv run pytest` runs a
-        // console script that a dependency installed, and no table here lists it.
-        if quoted_strings(line).any(|value| same_name(requirement_head(value), wanted)) {
-            found.from_dependency = true;
-        }
-        let Some((key, _)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim().trim_matches(['"', '\'']);
-        match table {
-            // An inline `scripts = { regen = "…" }` is a shape this cannot read.
-            "[project]" if key == "scripts" => return None,
-            "[project.scripts]" | "[project.gui-scripts]" if same_name(key, wanted) => {
-                found.defined = true;
-            }
-            "[tool.uv.scripts]" if same_name(key, wanted) => found.in_tool_uv_scripts = true,
-            _ => {}
-        }
-    }
-    Some(found)
-}
-
-/// The double-quoted runs of a line.
-fn quoted_strings(line: &str) -> impl Iterator<Item = &str> {
-    line.split('"').skip(1).step_by(2)
-}
-
-/// The distribution name at the front of a requirement string like `pytest>=8,<9`.
-fn requirement_head(raw: &str) -> &str {
-    raw.trim()
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
-        .next()
-        .unwrap_or("")
-}
-
-/// Python treats `-` and `_` in a distribution or entry-point name as the same character.
-fn same_name(a: &str, b: &str) -> bool {
-    a.replace('_', "-")
-        .eq_ignore_ascii_case(&b.replace('_', "-"))
-}
-
-/// Does a `uv.lock` record a package under this name?
-fn lockfile_records(lockfile: &Path, wanted: &str) -> bool {
-    let Ok(content) = fs::read_to_string(lockfile) else {
-        return false;
-    };
-    content.lines().any(|raw| {
-        raw.trim()
-            .strip_prefix("name")
-            .and_then(|rest| rest.trim_start().strip_prefix('='))
-            .is_some_and(|value| same_name(value.trim().trim_matches('"'), wanted))
-    })
-}
-
-/// A `cargo` subcommand nothing on this machine provides.
-///
-/// Deliberately not an attempt to enumerate cargo plugins — there is no list of those.
-/// It only rules out the names that are definitively absent: not one of cargo's own, no
-/// `cargo-<name>` program on `PATH`, and no `[alias]` table anywhere cargo reads one.
-fn cargo_subcommand_gap(repo_path: &Path, args: &[&str]) -> Option<Gap> {
-    let mut i = 0;
-    // `cargo +nightly build` picks a toolchain before naming the subcommand.
-    while args.get(i).is_some_and(|arg| arg.starts_with('+')) {
-        i += 1;
-    }
-    let sub = *args.get(i)?;
-    if sub.starts_with('-') || CARGO_BUILTINS.contains(&sub) {
-        return None;
-    }
-    // Asking `PATH` the same question cargo itself asks when it meets a name it does not
-    // know. An installed plugin is found here.
-    if on_path(&format!("cargo-{sub}")) {
-        return None;
-    }
-    if cargo_aliases_exist(repo_path) {
-        return None;
-    }
-    Some(Gap {
-        what: format!("`{sub}` is not a cargo subcommand and no `cargo-{sub}` is on this machine"),
-        fix: format!("Install whatever provides `cargo {sub}`, or fix the command."),
-    })
-}
-
-/// Whether any config cargo would read declares an `[alias]` table.
-///
-/// Its mere presence is enough to stop asking. An alias can name anything, and reading
-/// one machine's table to decide whether a committed declaration is honoured is exactly
-/// the kind of answer this module would rather not give.
-fn cargo_aliases_exist(repo_path: &Path) -> bool {
-    let mut candidates = vec![
-        repo_path.join(".cargo").join("config.toml"),
-        repo_path.join(".cargo").join("config"),
-    ];
-    let home = std::env::var_os("CARGO_HOME")
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|dir| dir.join(".cargo")));
-    if let Some(home) = home {
-        candidates.push(home.join("config.toml"));
-        candidates.push(home.join("config"));
-    }
-    candidates.iter().any(|path| {
-        fs::read_to_string(path)
-            .map(|text| text.lines().any(|l| l.trim_start().starts_with("[alias")))
-            .unwrap_or(false)
-    })
 }
 
 #[cfg(test)]
@@ -1394,5 +916,40 @@ mod tests {
         assert!(reason.contains("defines no `build` script"), "{reason}");
         assert!(reason.contains("cannot put back"), "{reason}");
         assert!(path.join("site/dist").exists());
+    }
+
+    #[test]
+    fn no_tool_name_is_claimed_by_two_rebuild_checks() {
+        let mut seen = std::collections::HashSet::new();
+        for check in REBUILD_CHECKS {
+            for tool in check.tools() {
+                assert!(
+                    seen.insert(*tool),
+                    "`{tool}` is claimed by more than one rebuild check"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_rebuild_check_allows_what_it_cannot_parse() {
+        // The contract every future check inherits, exercised against the registry
+        // itself so a check added in another file cannot opt out: no arguments and an
+        // unmodelled flag are both "cannot tell", and "cannot tell" allows the prune.
+        let tmp = TempDir::new().unwrap();
+        for check in REBUILD_CHECKS {
+            for tool in check.tools() {
+                assert!(
+                    check.gap(tmp.path(), tool, &[]).is_none(),
+                    "`{tool}` with no arguments must not refuse"
+                );
+                assert!(
+                    check
+                        .gap(tmp.path(), tool, &["--a-flag-this-does-not-model"])
+                        .is_none(),
+                    "`{tool}` with an unmodelled flag must not refuse"
+                );
+            }
+        }
     }
 }
