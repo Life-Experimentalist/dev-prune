@@ -19,52 +19,53 @@ import { Check, X } from "lucide-react";
  * "GB". The number is not the argument — anything can delete a folder and
  * report a total. The argument is the second column: for each directory,
  * the artefact that proves it can be rebuilt. So the hero is a receipt,
- * two columns and a balance, and the row that is refused is on it too,
- * because a ledger that only records the wins is not a ledger.
+ * two columns and a balance.
  *
- * The figures are one `devp run --dry-run` pass over the same tree the
- * terminal below it is showing, and they add up.
+ * The rows are real: `devp history --pass 1` on the author's machine —
+ * the scheduled pass of 2026-09-04, 1.91 GiB from four directories in
+ * three repositories. Update them by running that command again, never
+ * by hand.
  * ------------------------------------------------------------------ */
 
 const ROWS = [
   {
-    path: "frontend/node_modules",
-    tool: "pnpm",
+    path: "LoginLens/node_modules",
+    tool: "npm",
     eco: "js",
-    mb: 412.7,
-    proof: "pnpm-lock.yaml",
+    mb: 1331.2,
+    proof: "package-lock.json",
     verified: true,
   },
   {
-    path: "services/api/.venv",
+    path: "LoginLens/website/node_modules",
+    tool: "npm",
+    eco: "js",
+    mb: 284.97,
+    proof: "package-lock.json",
+    verified: true,
+  },
+  {
+    path: "Vectra-180/.venv",
     tool: "uv",
     eco: "py",
-    mb: 188.2,
+    mb: 273.31,
     proof: "uv.lock",
     verified: true,
   },
   {
-    path: "tools/cli/target",
-    tool: "cargo",
-    eco: "rust",
-    mb: 1447.1,
-    proof: "Cargo.lock",
+    path: "portfolio-creator/node_modules",
+    tool: "npm",
+    eco: "js",
+    mb: 64.78,
+    proof: "package-lock.json",
     verified: true,
-  },
-  {
-    path: "vendor/legacy-php",
-    tool: "composer",
-    eco: "php",
-    mb: 96.4,
-    proof: "no composer.lock",
-    verified: false,
   },
 ];
 
 const TOTAL_MB = ROWS.filter((r) => r.verified).reduce((a, r) => a + r.mb, 0);
 
 function fmt(mb) {
-  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
+  return mb >= 1024 ? `${(mb / 1024).toFixed(2)} GiB` : `${mb.toFixed(2)} MiB`;
 }
 
 /* The bar is a share of the largest row, not of the total: at these sizes a
@@ -126,11 +127,11 @@ export default function ReclaimLedger() {
       <figure className="ledger" ref={ref}>
         <figcaption className="ledger-head">
           <span className="ledger-title">The reclaim ledger</span>
-          <span className="ledger-src">devp run --dry-run</span>
+          <span className="ledger-src">devp history --pass 1</span>
         </figcaption>
 
         <div className="ledger-cols" aria-hidden="true">
-          <span>On disk</span>
+          <span>Freed</span>
           <span>Rebuilt by</span>
         </div>
 
@@ -169,10 +170,11 @@ export default function ReclaimLedger() {
         </ol>
 
         <div className="ledger-total">
-          <span className="ledger-total-label">Reclaimable</span>
+          <span className="ledger-total-label">Reclaimed</span>
           <Total />
           <span className="ledger-total-note">
-            3 of 4 directories · nothing deleted
+            one scheduled pass, 2026-09-04 · devp restore --last-run puts it
+            back
           </span>
         </div>
       </figure>
