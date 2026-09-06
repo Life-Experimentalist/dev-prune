@@ -48,6 +48,7 @@ const EXCLUDED_DIRS: &[&str] = &[
 const EXCLUDED_FILES: &[&str] = &[
     crate::constants::PER_REPO_CONFIG_FILE,
     crate::constants::PROJECT_REPO_CONFIG_FILE,
+    crate::constants::DEVPRUNE_IGNORE_FILE,
 ];
 
 /// Depth ceiling for the mtime fallback walk, matching the repo-discovery scan.
@@ -327,6 +328,12 @@ mod tests {
         assert!(
             get_mtime_activity(tmp.path()).unwrap().is_none(),
             "`.devprune.json` must not count as user activity"
+        );
+
+        fs::write(tmp.path().join(crate::constants::DEVPRUNE_IGNORE_FILE), "").unwrap();
+        assert!(
+            get_mtime_activity(tmp.path()).unwrap().is_none(),
+            "`ignore.devprune.json` must not count as user activity"
         );
 
         fs::write(tmp.path().join("main.rs"), "fn main() {}").unwrap();
