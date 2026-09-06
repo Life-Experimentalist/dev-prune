@@ -1,6 +1,6 @@
 {
   "name": "dev-prune",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "description": "Universal, lockfile-safe workspace pruner. Reclaims disk space from idle Git repositories by deleting only dependency and build directories a lockfile can rebuild.",
   "bin": {
     "dev-prune": "./bin/dev-prune.js",
@@ -12,13 +12,13 @@
     "LICENSE.md"
   ],
   "optionalDependencies": {
-    "dev-prune-darwin-arm64": "1.20.0",
-    "dev-prune-darwin-x64": "1.20.0",
-    "dev-prune-linux-arm64": "1.20.0",
-    "dev-prune-linux-x64": "1.20.0",
-    "dev-prune-windows-arm64": "1.20.0",
-    "dev-prune-windows-x64": "1.20.0",
-    "dev-prune-windows-x86": "1.20.0"
+    "dev-prune-darwin-arm64": "1.21.0",
+    "dev-prune-darwin-x64": "1.21.0",
+    "dev-prune-linux-arm64": "1.21.0",
+    "dev-prune-linux-x64": "1.21.0",
+    "dev-prune-windows-arm64": "1.21.0",
+    "dev-prune-windows-x64": "1.21.0",
+    "dev-prune-windows-x86": "1.21.0"
   },
   "engines": {
     "node": ">=20"

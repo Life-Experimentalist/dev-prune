@@ -5,7 +5,18 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.21.0] - 2026-09-07
+
+### Added
+
+- **`devp caches clear npm,uv,pip`** empties exactly the caches you name. The target
+  now takes a comma-separated list, a one-time whitelist with no configuration
+  involved. The mirror image is **`devp caches clear all --except npm,uv`**: everything
+  goes except the names given, for the day one cache is the only one worth keeping
+  warm. `--except` only pairs with `all` (a list already says exactly what to clear),
+  and a container engine never appears in either form: naming an engine alone remains
+  the consent to touch it. Flags, exit codes and the maven rule are in
+  [the CLI reference](docs/CLI_REFERENCE.md#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json).
 
 ### Changed
 
@@ -38,6 +49,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   One gotcha worth naming: `[tool.uv.scripts]` is not a table uv reads. A script
   declared only there does nothing, so `uv run <that script>` is refused, and the
   message says to move it to `[project.scripts]`.
+
+- **`devp caches clear` now ends with the reinstall command for browser bundles.**
+  Playwright, Puppeteer and Cypress binaries do not come back with the next
+  `npm install`; they only return when their own installer runs. Clearing one of those
+  caches now prints the command that brings it back (`npx playwright install`,
+  `npx puppeteer browsers install`, `npx cypress install`) right where you cleared it,
+  instead of leaving the next broken test run to say it later.
+
+### Fixed
+
+- **A read-only file no longer stops the whole delete on Windows.** `go mod` writes
+  module directories read-only on purpose, and the odd npm package ships a read-only
+  file too; a single one used to fail the prune with Access Denied partway through.
+  dev-prune now clears the attribute the way rimraf does and retries. A delete that
+  still fails after that is reported honestly, as before.
+- **Dropping an `ignore.devprune.json` marker no longer resets the idle clock.**
+  Creating the marker is bookkeeping, not work, but its timestamp used to count as
+  project activity: un-ignore a repository later and it looked freshly touched, waiting
+  out `idle_days` all over again. The marker now sits beside `.devprune.json` and
+  `project.devprune.json` in the activity walk's exclusion list.
 
 ## [1.20.0] - 2026-09-04
 
