@@ -1,0 +1,27 @@
+/* Copyright 2026 VKrishna04 */
+/* SPDX-License-Identifier: Apache-2.0 */
+
+/* The reclaim field sits behind everything in the hero. The hero is
+   already position: relative; the field takes the full section and the
+   content stacks above it. */
+
+.hero {
+  overflow: hidden;
+}
+
+.hero-field {
+  position: absolute;
+  inset: 0;
+  /* A canvas is a replaced element: absolutely positioning it with
+     inset alone leaves it at its intrinsic 300x150, so the size has to
+     be explicit. */
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.hero > .container {
+  position: relative;
+  z-index: 1;
+}
