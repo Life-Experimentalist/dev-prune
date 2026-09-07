@@ -462,8 +462,8 @@ pub enum Commands {
     #[command(long_about = help::SKILL_LONG, after_long_help = help::SKILL_EXAMPLES)]
     Skill {
         /// Write rules for one editor's agent into the current repository instead.
-        /// Each value below names the exact file it writes. Five of them —
-        /// `agents-md`, `copilot`, `gemini`, `junie`, `zed` — share a file with
+        /// Each value below names the exact file it writes. Six of them —
+        /// `agents-md`, `aider`, `copilot`, `gemini`, `junie`, `zed` — share a file with
         /// other tools, so dev-prune owns a marked block inside it and leaves every
         /// byte outside the markers as found. Claude Code needs no per-repo file:
         /// plain `devp skill` installs its skill globally.

@@ -121,11 +121,11 @@ deleted before anything is; a targeted `devp run <path>` lists every directory w
 its size and the total, notes that `devp restore` brings it back, and asks. Either \
 way `-y` skips the confirmation, `--dry-run` reports what a pass would do without \
 deleting anything at all, and without a terminal the run exits with an error naming \
-`--yes` rather than waiting on a prompt. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
+`--yes` rather than waiting on a prompt. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, deno, uv, \
 poetry, pdm, pipenv, venv, cargo, go, composer, bundler, cocoapods, mix, mix_build, \
-gradle, maven, swift, terraform, dart, vcpkg, cmake_build — an unknown name is an \
+gradle, maven, swift, terraform, dart, vcpkg, cmake_build, dotnet_build — an unknown name is an \
 error listing the valid ones, not a silently empty pass. cargo, gradle, maven, \
-swift, dart, mix_build, vcpkg and cmake_build are opt-in (`devp config set \
+swift, dart, mix_build, vcpkg, cmake_build and dotnet_build are opt-in (`devp config set \
 enable_cargo true`) and idle-gated separately by `build_idle_days`, because a \
 build directory takes far longer to get back than a dependency directory. \
 `devp config wizard` switches them on by language, and can give any one adapter \
@@ -282,7 +282,9 @@ whose projects live on a second disk, 22 GiB of caches is not the figure that \
 decides anything — the two gigabytes on the drive that is full is.
 
 Covered: npm, pnpm, yarn, bun, uv, pip, conda, cargo, go, maven, gradle, nuget, vcpkg, \
-conan, composer, cocoapods and hex. Each manager is asked where its cache is (`npm \
+conan, ccache, sccache, composer, cocoapods, hex, bundler, dart, swift, terraform, \
+poetry, pdm, playwright, puppeteer, huggingface, cypress, electron and deno. \
+Each manager is asked where its cache is (`npm \
 config get cache`, `go env GOMODCACHE`, …) rather than assumed, with read-only queries \
 run from your home directory; a manager that is not installed falls back to the \
 conventional location, because a cache left behind by an uninstalled manager is \
