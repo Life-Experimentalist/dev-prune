@@ -358,7 +358,12 @@ pub enum Commands {
         fix_ownership: bool,
 
         /// Answer yes to the confirmation `--fix-ownership` asks.
-        #[arg(long, requires = "fix_ownership")]
+        ///
+        /// Declared here rather than inherited: this subcommand's `yes` carries the
+        /// `requires` guard the global one cannot, and having a local `yes` stops clap
+        /// propagating the global `-y` in — so without a short spelling of its own,
+        /// `devp trust --fix-ownership -y` was a usage error.
+        #[arg(long, short = 'y', requires = "fix_ownership")]
         yes: bool,
     },
 
@@ -964,7 +969,10 @@ pub fn run_cli() {
             yes,
         } => {
             if fix_ownership {
-                commands::trust::fix_ownership(yes)
+                // The global `-y` and the subcommand's own `--yes` are the same promise;
+                // honouring only one of them made `devp -y trust --fix-ownership` stop
+                // and ask anyway.
+                commands::trust::fix_ownership(yes || cli.yes)
             } else {
                 commands::trust::run(json)
             }
