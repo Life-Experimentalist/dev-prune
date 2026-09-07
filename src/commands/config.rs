@@ -1454,25 +1454,10 @@ fn why_this_opened(opened: Opened) -> Option<String> {
 /// line-by-line [`run_wizard_prompts`] runs wherever that cannot, which is less a
 /// degraded mode than the only honest option on a pipe.
 pub fn run_wizard(no_tui: bool, opened: Opened) -> Result<WizardEnd> {
-    if !no_tui && full_screen_is_usable() {
+    if !no_tui && crate::tui::full_screen_is_usable() {
         return run_wizard_tui(opened);
     }
     run_wizard_prompts(opened)
-}
-
-/// Whether a full-screen view can be opened, and should be.
-///
-/// The terminal test answers "is there a screen to draw on". `DEV_PRUNE_NO_TUI` answers
-/// the one it cannot: whether the thing holding that terminal is a person. An agent
-/// driving `devp` through a pty passes every terminal check and will never press a key,
-/// so it sets the variable and gets the prompts — or, better, skips this command
-/// altogether for `devp config set`, which needs no interaction at all.
-fn full_screen_is_usable() -> bool {
-    use std::io::IsTerminal;
-    if std::env::var_os(crate::constants::ENV_NO_TUI).is_some() {
-        return false;
-    }
-    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
 }
 
 /// How the wizard ended. The first-run consent flow reads this as its answer, which is
@@ -1681,7 +1666,7 @@ pub enum FirstRunDecision {
 /// on the settings list two screens later. "Enable the lot, then switch off the two you
 /// don't want" is the intended path, not a workaround.
 pub fn first_run_wizard() -> Result<FirstRunDecision> {
-    if full_screen_is_usable() {
+    if crate::tui::full_screen_is_usable() {
         return Ok(match run_wizard_tui(Opened::FirstRun)? {
             WizardEnd::Completed => FirstRunDecision::Accepted,
             WizardEnd::Cancelled => FirstRunDecision::Declined,
