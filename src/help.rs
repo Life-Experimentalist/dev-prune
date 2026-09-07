@@ -284,7 +284,9 @@ whose projects live on a second disk, 22 GiB of caches is not the figure that \
 decides anything — the two gigabytes on the drive that is full is.
 
 Covered: npm, pnpm, yarn, bun, uv, pip, conda, cargo, go, maven, gradle, nuget, vcpkg, \
-conan, composer, cocoapods and hex. Each manager is asked where its cache is (`npm \
+conan, ccache, sccache, composer, cocoapods, hex, bundler, dart, swift, terraform, \
+poetry, pdm, playwright, puppeteer, huggingface, cypress, electron and deno. \
+Each manager is asked where its cache is (`npm \
 config get cache`, `go env GOMODCACHE`, …) rather than assumed, with read-only queries \
 run from your home directory; a manager that is not installed falls back to the \
 conventional location, because a cache left behind by an uninstalled manager is \

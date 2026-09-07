@@ -452,7 +452,9 @@ pub fn plural<'a>(count: usize, one: &'a str, many: &'a str) -> &'a str {
     if count == 1 { one } else { many }
 }
 
-/// Format bytes into human-readable string (e.g., "1.2 GB", "450 MB")
+/// Format bytes into human-readable string (e.g., "1.20 GiB", "450 MiB").
+/// Binary units, because that is what `humansize::BINARY` produces — every doc
+/// example quoting sizes should say MiB/GiB, not MB/GB.
 pub fn format_bytes(bytes: u64) -> String {
     use humansize::{BINARY, format_size};
     format_size(bytes, BINARY)
