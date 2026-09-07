@@ -113,6 +113,8 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 - **Description**: Crawls the provided directory trees (defaults to current directory `.`, max depth 8) for valid Git repositories and registers them in `~/.config/dev-prune/registry.json` (`%APPDATA%\dev-prune\` on Windows, `~/Library/Application Support/dev-prune/` on macOS). It then runs the same integration pass as [`devp setup`](#11-devp-setup---status) — though only on a machine that has said yes to the first-run setup: `devp init` was typed to register repositories, not to install a scheduler, so before that yes it registers and installs nothing else — installing anything missing and reporting anything it skipped, and checks for a newer release the same way [`devp update`](#10-devp-update---offline----install----channels) does.
 
   A bulk scan skips any repository holding an `ignore.devprune.json`, so a repository can decline before it is ever registered rather than only at prune time. [`devp link`](#2-devp-link-path) still registers such a repository, because naming one repository is not a bulk scan.
+- **Environment**:
+  - `DEV_PRUNE_CONFIG_DIR` — relocates the whole config directory (settings, `registry.json`, undo and prune history) for that invocation. Every command honours it; it exists for test suites and sandboxes that must not read or write the real one.
 - **Flags**:
   - `--auto` — work the paths out instead of being told them, and register everything found. `PATHS` is ignored. Three sources: the parent directory of every repository already registered (which is how registering one project finds the rest of the workspace around it), the workspace you are standing in, and the conventional code directories under your home directory (`~/Code`, `~/Projects`, `~/Documents/GitHub`, `~/source/repos`, `~/go/src` and similar). Roots contained in another root are dropped, so a tree is walked once; the home directory itself is never a root, because scanning it means walking every cache on the machine. This is the form to use when nobody has said where the code is — an AI assistant setting the tool up, or a machine whose repositories you would rather not list by hand. The scheduled background pass does the same thing on its own while `auto_discover` is on.
 - **Examples**:
@@ -341,9 +343,9 @@ Directories are reported by their path relative to the repository root, so a mon
 reads unambiguously:
 
 ```
-  • MyMonorepo → frontend/node_modules (412.7 MB) [pnpm]
-  • MyMonorepo → services/api/.venv (188.2 MB) [uv]
-  • MyMonorepo → tools/cli/target (1.4 GB) [cargo]
+  • MyMonorepo → frontend/node_modules (412.7 MiB) [pnpm]
+  • MyMonorepo → services/api/.venv (188.2 MiB) [uv]
+  • MyMonorepo → tools/cli/target (1.4 GiB) [cargo]
 ```
 
 ---

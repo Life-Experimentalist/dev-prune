@@ -32,7 +32,7 @@ const ROWS = [
     path: "LoginLens/node_modules",
     tool: "npm",
     eco: "js",
-    mb: 1331.2,
+    mb: 1334.66,
     proof: "package-lock.json",
     verified: true,
   },

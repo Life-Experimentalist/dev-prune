@@ -86,8 +86,9 @@ pub struct CacheReport {
     /// cannot say.
     ///
     /// `None` is not zero. It is the honest answer for the caches no adapter is named
-    /// after — `pip`, `conda`, `nuget`, `conan`, `hex`, `playwright`, `puppeteer`,
-    /// `huggingface`, `cypress` and `electron` — where deciding which projects feed them
+    /// after — `pip`, `conda`, `nuget`, `conan`, `ccache`, `sccache`, `hex`,
+    /// `playwright`, `puppeteer`, `huggingface`, `cypress` and `electron` — where
+    /// deciding which projects feed them
     /// would mean inventing a mapping dev-prune has never verified, and it is the answer
     /// again when there is no registry to compare against. Only
     /// `Some(0)` means "nothing registered on this machine needs this", and that is the
@@ -1027,9 +1028,10 @@ fn dependents(reg: &Registered, spinner: bool) -> Dependents {
     let pb = spinner.then(|| output::create_spinner("Checking which caches are still in use..."));
 
     // Seeded at zero for every cache an adapter is named after, so a manager nothing uses
-    // is a counted zero rather than a missing key. The ten that are absent — `pip`,
-    // `conda`, `nuget`, `conan`, `hex`, `playwright`, `puppeteer`, `huggingface`,
-    // `cypress` and `electron` — stay absent: dev-prune ships no adapter of those names,
+    // is a counted zero rather than a missing key. The twelve that are absent — `pip`,
+    // `conda`, `nuget`, `conan`, `ccache`, `sccache`, `hex`, `playwright`, `puppeteer`,
+    // `huggingface`, `cypress` and `electron` — stay absent: dev-prune ships no adapter
+    // of those names,
     // and deciding that `venv` feeds `pip`, or that every `node_modules` on the disk
     // feeds the Playwright browser cache, would be a guess standing in for a
     // measurement.

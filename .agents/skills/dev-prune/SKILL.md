@@ -329,9 +329,9 @@ on its own terms — uv, npm and cargo in one root, or spread across `frontend/`
 `services/api/` and `tools/cli/`. Output is by repository-relative path:
 
 ```
-  • MyMonorepo → frontend/node_modules (412.7 MB) [pnpm]
-  • MyMonorepo → services/api/.venv (188.2 MB) [uv]
-  • MyMonorepo → tools/cli/target (1.4 GB) [cargo]
+  • MyMonorepo → frontend/node_modules (412.7 MiB) [pnpm]
+  • MyMonorepo → services/api/.venv (188.2 MiB) [uv]
+  • MyMonorepo → tools/cli/target (1.4 GiB) [cargo]
 ```
 
 Discovery never enters a dependency tree, a virtual environment, a hidden directory, or

@@ -1455,15 +1455,15 @@ Notes you should rely on, not work around:
                       <div className="term-line">&nbsp;</div>
                       <div className="term-line">
                         <span className="c-yellow">•</span> MyMonorepo →
-                        frontend/node_modules (412.7 MB) [pnpm]
+                        frontend/node_modules (412.7 MiB) [pnpm]
                       </div>
                       <div className="term-line">
                         <span className="c-yellow">•</span> MyMonorepo →
-                        services/api/.venv (188.2 MB) [uv]
+                        services/api/.venv (188.2 MiB) [uv]
                       </div>
                       <div className="term-line">
                         <span className="c-yellow">•</span> MyMonorepo →
-                        tools/cli/target (1.41 GB) [cargo]
+                        tools/cli/target (1.41 GiB) [cargo]
                       </div>
                       <div className="term-line">
                         <span className="c-dim">•</span>{" "}
@@ -1473,7 +1473,7 @@ Notes you should rely on, not work around:
                       </div>
                       <div className="term-line">&nbsp;</div>
                       <div className="term-line c-bold">
-                        Total reclaimable: 2.00 GB across 3 directories
+                        Total reclaimable: 2.00 GiB across 3 directories
                       </div>
                       <div className="term-line c-dim">
                         Dry run — nothing was deleted.
@@ -1495,19 +1495,19 @@ Notes you should rely on, not work around:
                       </div>
                       <div className="term-line">
                         <span className="c-green"> ▸ MyMonorepo</span> Candidate
-                        2.00 GB 41 days ago
+                        2.00 GiB 41 days ago
                       </div>
                       <div className="term-line">
                         {" "}
-                        PyDataLab Candidate 850.0 MB 66 days ago
+                        PyDataLab Candidate 850.0 MiB 66 days ago
                       </div>
                       <div className="term-line c-dim">
                         {" "}
-                        ArchivedApp Ignored 320.0 MB —
+                        ArchivedApp Ignored 320.0 MiB —
                       </div>
                       <div className="term-line c-cyan">
                         {" "}
-                        ActiveService Active 3.10 GB 2 days ago
+                        ActiveService Active 3.10 GiB 2 days ago
                       </div>
                       <div className="term-line c-dim">
                         ──────────────────────────────────────────────────────────
@@ -1536,11 +1536,11 @@ Notes you should rely on, not work around:
                       <div className="term-line c-bold">Lifetime</div>
                       <div className="term-line">
                         <span className="c-blue">→</span> Space reclaimed:
-                        {"   "}12.41 GB
+                        {"   "}12.41 GiB
                       </div>
                       <div className="term-line">
                         <span className="c-blue">→</span> Caches emptied:
-                        {"    "}6.30 GB
+                        {"    "}6.30 GiB
                       </div>
                       <div className="term-line">
                         <span className="c-blue">→</span> Prune passes:
@@ -1554,7 +1554,7 @@ Notes you should rely on, not work around:
                       <div className="term-line c-bold">Most recent pass</div>
                       <div className="term-line">
                         <span className="c-blue">→</span> 2026-08-11 06:00 UTC
-                        (2 days ago) — 2.00 GB from 3 directories
+                        (2 days ago) — 2.00 GiB from 3 directories
                       </div>
                       <div className="term-line">
                         <span className="c-blue">→</span> Put it back with: devp
@@ -1563,19 +1563,19 @@ Notes you should rely on, not work around:
                       <div className="term-line">&nbsp;</div>
                       <div className="term-line c-bold">Biggest reclaims</div>
                       <div className="term-line">
-                        {"     "}4.20 GB ~/Code/MyMonorepo
+                        {"     "}4.20 GiB ~/Code/MyMonorepo
                         <span className="c-dim">
                           {"   "}(last pruned 2 days ago)
                         </span>
                       </div>
                       <div className="term-line">
-                        {"     "}2.90 GB ~/Code/PyDataLab
+                        {"     "}2.90 GiB ~/Code/PyDataLab
                         <span className="c-dim">
                           {"   "}(last pruned 12 days ago)
                         </span>
                       </div>
                       <div className="term-line">
-                        {"    "}850.0 MB ~/Code/ArchivedApp
+                        {"    "}850.0 MiB ~/Code/ArchivedApp
                         <span className="c-dim">
                           {"   "}(last pruned 30 days ago)
                         </span>
@@ -1583,21 +1583,21 @@ Notes you should rely on, not work around:
                       <div className="term-line">&nbsp;</div>
                       <div className="term-line c-bold">By package manager</div>
                       <div className="term-line">
-                        {"     "}6.80 GB npm{"     "}11 directories
+                        {"     "}6.80 GiB npm{"     "}11 directories
                       </div>
                       <div className="term-line">
-                        {"     "}4.10 GB cargo{"   "}3 directories
+                        {"     "}4.10 GiB cargo{"   "}3 directories
                       </div>
                       <div className="term-line">
-                        {"     "}1.51 GB uv{"      "}6 directories
+                        {"     "}1.51 GiB uv{"      "}6 directories
                       </div>
                       <div className="term-line">&nbsp;</div>
                       <div className="term-line c-bold">How passes start</div>
                       <div className="term-line">
-                        {"     "}9.90 GB scheduled{"   "}7 passes{"   "}(79%)
+                        {"     "}9.90 GiB scheduled{"   "}7 passes{"   "}(79%)
                       </div>
                       <div className="term-line">
-                        {"     "}2.51 GB manual{"      "}2 passes{"   "}(21%)
+                        {"     "}2.51 GiB manual{"      "}2 passes{"   "}(21%)
                       </div>
                       <div className="term-line">
                         {"        "}0 B dashboard{"   "}0 passes{"    "}(0%)
