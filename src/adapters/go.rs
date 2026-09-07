@@ -39,6 +39,20 @@ fn vendor_has_uncommitted_changes(path: &Path) -> Result<bool> {
         .any(|line| !line.trim().is_empty() && !line.starts_with("??")))
 }
 
+/// The rebuild command for one recorded directory name.
+///
+/// Pure, so the choice is testable without a `go` binary. Only `vendor` is ever claimed
+/// by [`Go::bloat_dirs`], so anything else in a record is treated as a plain module
+/// refill rather than a reason to *create* a vendor tree in a repository that may never
+/// have had one.
+fn restore_args(dir_name: &str) -> &'static [&'static str] {
+    if dir_name == "vendor" {
+        &["mod", "vendor"]
+    } else {
+        &["mod", "download"]
+    }
+}
+
 impl PackageManager for Go {
     fn name(&self) -> &'static str {
         "go"
@@ -91,12 +105,41 @@ impl PackageManager for Go {
         )
     }
 
+    /// The no-record path (`devp restore <path>`), where whether this repository
+    /// vendored is a guess: `vendor/` on disk means regenerate it, otherwise refill the
+    /// module cache. After a prune the guess is always wrong for a vendored repository —
+    /// the prune is what removed `vendor/` — which is why `restore --last-run` goes
+    /// through [`Self::restore_named`] with the recorded name instead of through here.
     fn restore(&self, path: &Path, timeout: std::time::Duration) -> Result<()> {
         if path.join("vendor").exists() {
             run_command_with_timeout("go", &["mod", "vendor"], path, timeout)
         } else {
             run_command_with_timeout("go", &["mod", "download"], path, timeout)
         }
+    }
+
+    /// Rebuild the directory the prune recorded, not the one a guess suggests.
+    ///
+    /// The default `restore_named` fell through to [`Self::restore`], whose
+    /// vendor-exists check runs *after* the prune deleted `vendor/` — so it always chose
+    /// `go mod download`, which exits 0 without recreating the tree, and the pass
+    /// printed "restored" over a directory that was still gone.
+    fn restore_named(
+        &self,
+        path: &Path,
+        dir_name: &str,
+        _runtime: Option<&str>,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        run_command_with_timeout("go", restore_args(dir_name), path, timeout)?;
+        // "Restored" is a claim about the directory, not about the command's exit code —
+        // the bug above was an exit 0 with nothing on disk.
+        if dir_name == "vendor" && !path.join(dir_name).exists() {
+            return Err(anyhow!(
+                "`go mod vendor` reported success but `vendor/` was not recreated"
+            ));
+        }
+        Ok(())
     }
 
     fn lockfiles(&self) -> &'static [&'static str] {
@@ -179,6 +222,23 @@ mod tests {
         assert!(git(&["init", "-q"]).status.success());
         git(&["add", "vendor"]);
         assert!(vendor_has_uncommitted_changes(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn a_recorded_vendor_restore_never_falls_back_to_download() {
+        // `restore` guessed from `vendor/` existing on disk, but a restore runs after
+        // the prune deleted it — so the guess was always `go mod download`, which exits
+        // 0 without recreating the tree, and `restore --last-run` printed "restored"
+        // over a directory that was still gone.
+        assert_eq!(restore_args("vendor"), ["mod", "vendor"]);
+    }
+
+    #[test]
+    fn an_unrecognised_record_refills_the_cache_rather_than_creating_vendor() {
+        // A record naming anything else never reaches this adapter today, but if a
+        // mangled one did, `go mod vendor` would *create* a vendor tree in a repository
+        // that may never have vendored — silently switching it to vendored builds.
+        assert_eq!(restore_args("modules"), ["mod", "download"]);
     }
 
     #[test]
