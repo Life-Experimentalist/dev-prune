@@ -23,13 +23,25 @@
 		"Nothing is deleted until dev-prune has verified, read-only, that the lockfile can rebuild it — there is no flag that skips the check.",
 		"Knows 35 package managers rather than the obvious four: Composer, Bundler, Mix, CocoaPods and Terraform are as first-class as npm and pip.",
 		"Restores what it removed: each prune records what it removed (a dry run records nothing), and devp restore --last-run puts back the whole of the most recent prune pass.",
-		"Sizes and clears the caches package managers keep outside project directories, and reports what Docker is holding.",
+		"Sizes and clears the caches package managers keep outside project directories, and reports what docker, podman, nerdctl, finch and Apple's container are holding.",
 		"Ships as one program answering to both dev-prune and devp, on Windows, macOS and Linux, plus a windowless third build the Windows scheduled task runs.",
-		"Its .devprune.json config schema is published in the official SchemaStore catalogue, so any editor validates it."
+		"Its .devprune.json config schema is published in the official SchemaStore catalogue, so any editor validates it.",
+		"Full-screen terminal dashboards for status, prune selection and configuration, each with a plain-text fallback and a DEV_PRUNE_NO_TUI switch for agents driving a terminal.",
+		"Schedules its own passes natively on each platform: Windows Task Scheduler, launchd on macOS, systemd user timers on Linux.",
+		"Teaches AI assistants to drive it: devp skill exports a Claude skill and writes the matching rules file for 16 editors and agents, Cursor, Copilot, Zed and Gemini CLI included.",
+		"Speaks 12 languages end to end, from the confirmation prompts to the size report."
+	],
+	"metrics": [
+		{ "label": "Package managers", "value": "35", "detail": "Each with a read-only rebuild proof; the eighteen build and engine adapters are opt-in." },
+		{ "label": "Cache managers", "value": "31", "detail": "Global caches sized and cleared by devp caches." },
+		{ "label": "Interface languages", "value": "12", "detail": "Prompts, reports and help, end to end." },
+		{ "label": "Editor skill targets", "value": "16", "detail": "devp skill --agent writes the right rules file for each editor." },
+		{ "label": "Container engines", "value": "5", "detail": "docker, podman, nerdctl, finch and Apple's container, report-only." }
 	],
 	"links": {
 		"repo": "https://github.com/Life-Experimentalist/dev-prune",
-		"live": "https://devprune.vkrishna04.me/"
+		"live": "https://devprune.vkrishna04.me/",
+		"package": "https://crates.io/crates/dev-prune"
 	},
 	"sections": [
 		{
