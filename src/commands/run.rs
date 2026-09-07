@@ -806,7 +806,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         || !registry.settings.require_confirmation
     {
         candidates
-    } else if io::stdout().is_terminal() && io::stdin().is_terminal() {
+    } else if tui::full_screen_is_usable() {
         eprintln!();
         eprintln!(
             "  Loading interactive selector... (↑↓ navigate, Space toggle, Enter confirm, q cancel)"
@@ -819,9 +819,10 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         }
         selected
     } else {
-        // Reaching here means stdout is piped. If stdin is too, there is nobody to
-        // answer: the read hits EOF at once, and the old code then reported "aborted by
-        // user" about a user who was never asked. Failing with the fix beats that.
+        // Reaching here means stdout is piped or `DEV_PRUNE_NO_TUI` is set. If stdin
+        // is gone too, there is nobody to answer: the read hits EOF at once, and the
+        // old code then reported "aborted by user" about a user who was never asked.
+        // Failing with the fix beats that.
         if !io::stdin().is_terminal() {
             anyhow::bail!(
                 "Deleting {} directories ({}) needs confirmation, and there is no \
@@ -836,8 +837,8 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         output::print_info(
             "Note: You can re-install missing dependencies anytime using `dev-prune restore`.",
         );
-        // The question goes to stderr: stdout is a pipe here, and a prompt written into
-        // it is invisible on the terminal — the command just appears to hang.
+        // The question goes to stderr: stdout can be a pipe here, and a prompt written
+        // into a pipe is invisible on the terminal, so the command just appears to hang.
         eprint!(
             "Proceed with deletion of {} directories ({})? [y/N]: ",
             candidates.len(),
