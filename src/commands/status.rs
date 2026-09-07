@@ -8,7 +8,6 @@
 // Also allows launching a prune pass directly from the status view.
 
 use anyhow::Result;
-use std::io::{self, IsTerminal};
 
 use crate::adapters::DriftReport;
 use crate::commands::hook::HookState;
@@ -180,9 +179,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
         println!();
     }
 
-    // Both ends: the dashboard draws on stdout but reads keys from stdin, and with
-    // stdin redirected it would open on a screen no keypress can ever leave.
-    if io::stdout().is_terminal() && io::stdin().is_terminal() {
+    if crate::tui::full_screen_is_usable() {
         // Interactive TUI — pass a loader closure so the TUI can reload after
         // the user toggles ignore config in .devprune.json or presence of ignore.devprune.json on any repo.
         // It applies the same trim, so the indices it hands back still address `repos`.

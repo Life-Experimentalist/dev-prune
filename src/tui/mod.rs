@@ -22,6 +22,27 @@ pub mod config_view;
 pub mod selection_view;
 pub mod status_view;
 
+/// Whether a full-screen view can be opened, and should be.
+///
+/// Both ends of the terminal test matter: every view here draws on stdout but reads
+/// keys from stdin, and with either end redirected it would open on a screen no
+/// keypress can ever leave. `DEV_PRUNE_NO_TUI` answers the question that test cannot:
+/// whether the thing holding the terminal is a person. An agent driving `devp` through
+/// a pty passes every terminal check and will never press a key, so it sets the
+/// variable and gets the line-by-line fallbacks instead.
+///
+/// Every full-screen entry point comes through here. The variable used to be honored
+/// only by the config wizard, while `status` and `run` opened their views on the
+/// terminal test alone, which is exactly the keypress trap the variable promises to
+/// prevent.
+pub fn full_screen_is_usable() -> bool {
+    use std::io::IsTerminal;
+    if std::env::var_os(crate::constants::ENV_NO_TUI).is_some() {
+        return false;
+    }
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
 /// Put the terminal back the way it was found.
 ///
 /// Every step is best-effort and independent: if leaving the alternate screen fails there
