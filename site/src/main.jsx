@@ -10,6 +10,8 @@ import "./theme.css";
 import "./motion.css";
 import "./ledger.css";
 import "./languages.css";
+import "./livenumbers.css";
+import "./herofield.css";
 import "./blog.css";
 
 const root = document.getElementById("root");

@@ -27,6 +27,8 @@ import {
 
 import ReclaimLedger from "./ledger.jsx";
 import Languages from "./languages.jsx";
+import LiveNumbers from "./livenumbers.jsx";
+import HeroField from "./herofield.jsx";
 
 const REPO = "https://github.com/Life-Experimentalist/dev-prune";
 const PORTFOLIO = "https://vkrishna04.me";
@@ -1289,6 +1291,7 @@ Notes you should rely on, not work around:
       <main id="main">
         {/* ------------------------------ hero ------------------------------ */}
         <section className="hero" id="top">
+          <HeroField />
           <div className="container hero-grid">
             <div className="hero-text">
               <div className="pill-badge glow-pulse">
@@ -1445,8 +1448,8 @@ Notes you should rely on, not work around:
                       <div className="term-line">$ devp run --dry-run</div>
                       <div className="term-line">&nbsp;</div>
                       <div className="term-line">
-                        <span className="c-blue">→</span> Required package
-                        managers:
+                        <span className="c-blue">→</span> Required Ecosystem
+                        Binaries Pre-Check
                       </div>
                       <div className="term-line c-green">
                         {" "}
@@ -1473,10 +1476,10 @@ Notes you should rely on, not work around:
                       </div>
                       <div className="term-line">&nbsp;</div>
                       <div className="term-line c-bold">
-                        Total reclaimable: 2.00 GiB across 3 directories
+                        Total Reclaimable Space: 2.00 GiB
                       </div>
                       <div className="term-line c-dim">
-                        Dry run — nothing was deleted.
+                        Would free 2.00 GiB across 3 bloat directories.
                       </div>
                     </div>
                   )}
@@ -3272,8 +3275,10 @@ Notes you should rely on, not work around:
               </div>
             </div>
             <p className="muted">
-              Apache-2.0 · no analytics · Windows, macOS and Linux · Rust 1.88
+              Apache-2.0 · no telemetry in the CLI · Windows, macOS and Linux ·
+              Rust 1.88
             </p>
+            <LiveNumbers />
           </div>
         </Reveal>
       </main>

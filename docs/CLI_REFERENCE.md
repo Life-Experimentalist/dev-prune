@@ -345,7 +345,7 @@ reads unambiguously:
 ```
   • MyMonorepo → frontend/node_modules (412.7 MiB) [pnpm]
   • MyMonorepo → services/api/.venv (188.2 MiB) [uv]
-  • MyMonorepo → tools/cli/target (1.4 GiB) [cargo]
+  • MyMonorepo → tools/cli/target (1.41 GiB) [cargo]
 ```
 
 ---

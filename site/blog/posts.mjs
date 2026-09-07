@@ -222,8 +222,8 @@ hand-rolled script never has:</p>
 
 <p>And it is not only Node: the same pass handles <code>.venv</code> for uv, Poetry, PDM,
 Pipenv and plain venv, <code>vendor/</code> for Go, Composer and Bundler,
-<code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods — twenty-three package
-managers in total, fifteen of them on by default.</p>
+<code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods: twenty-five package
+managers in total, sixteen of them on by default.</p>
 
 <h2>Which to use</h2>
 
@@ -241,7 +241,7 @@ comparison, including <code>cargo-sweep</code>, <code>rimraf</code> and the rest
       },
       {
         q: 'What is the difference between npkill and dev-prune?',
-        a: 'npkill scans for node_modules directories and lets you delete them interactively, sorted by size and last-modified date. dev-prune runs the package manager dry-run that matches each lockfile and deletes only when it exits zero, across twenty-three package managers rather than Node alone, and skips repositories that are not idle.',
+        a: 'npkill scans for node_modules directories and lets you delete them interactively, sorted by size and last-modified date. dev-prune runs the package manager dry-run that matches each lockfile and deletes only when it exits zero, across twenty-five package managers rather than Node alone, and skips repositories that are not idle.',
       },
       {
         q: 'Is there a way to delete node_modules automatically?',
@@ -729,11 +729,11 @@ you would rather be told "no" than be surprised.</strong> The differences that m
     package installed into <code>.venv</code> that <code>uv.lock</code> did not mention.
     Both would have been silently lost by any tool that deletes on a last-modified
     heuristic.</li>
-  <li><strong>Twenty-three package managers, not one.</strong> npm, pnpm, yarn, bun; uv,
-    Poetry, PDM, Pipenv, venv; Go, Composer, Bundler, Mix, CocoaPods, Terraform — on by
-    default. Cargo, Gradle, Maven, SwiftPM, Dart, <code>_build</code> for Mix, vcpkg and
-    CMake ship disabled, because their output is a compile rather than a download and
-    that is a different price.</li>
+  <li><strong>Twenty-five package managers, not one.</strong> npm, pnpm, yarn, bun, Deno;
+    uv, Poetry, PDM, Pipenv, venv; Go, Composer, Bundler, Mix, CocoaPods, Terraform, all
+    on by default. Cargo, Gradle, Maven, SwiftPM, Dart, .NET, <code>_build</code> for Mix,
+    vcpkg and CMake ship disabled, because their output is a compile rather than a
+    download and that is a different price.</li>
   <li><strong>Idle-gated.</strong> Nothing is a candidate until its repository has gone
     without a commit or a working-tree change for a threshold you set.</li>
   <li><strong>Hard safety rules with no override flag.</strong> It never crosses a
@@ -772,7 +772,279 @@ devp run --dry-run</code></pre>
         a: 'You can, and for a machine whose layout never changes it is fine. The difference is that find deletes unconditionally: it will delete a node_modules whose lockfile no longer resolves, and the project you are debugging right now, because those checks are not something a find expression can express.',
       },
     ],
-    related: ['delete-node-modules-all-projects', 'cargo-target-directory-size'],
+    related: ['npkill-alternative', 'kondo-alternative', 'cargo-target-directory-size'],
+  },
+
+  {
+    slug: 'npkill-alternative',
+    title: 'npkill alternatives: beyond the supervised sweep',
+    description:
+      'npkill is good at what it does. What to reach for when you need more than node_modules, a pass that runs itself, or a check stronger than last-modified.',
+    keywords:
+      'npkill alternative, npkill alternatives, npkill vs kondo, npkill vs dev-prune, delete node_modules tool',
+    body: `
+<p><strong>If npkill is working for you, keep it.</strong> For a one-off, supervised sweep
+of <code>node_modules</code> it is hard to beat: run <code>npx npkill</code>, watch it find
+every install tree under the current directory, sort by size, check the last-modified
+column, and delete with a keypress. Nothing below improves on that workflow for that job.</p>
+
+<p>People search for an alternative when the job changes. It usually changes in one of
+three ways, and each one points at a different tool.</p>
+
+<h2>"My disk is not just node_modules"</h2>
+
+<p>npkill is built around one directory name. There is a flag to point it at another
+(<code>--target</code>), but the workflow stays one name at a time, and a Python
+<code>.venv</code>, a Go <code>vendor/</code>, a Composer <code>vendor/</code> and an
+Elixir <code>deps/</code> are four more scans you will not run.</p>
+
+<p>Two tools cover the multi-ecosystem case. <a href="https://github.com/tbillington/kondo">kondo</a>
+keeps npkill's interactive shape: it recognises twenty-odd project types in one binary,
+shows what each costs, and deletes what you confirm. <a href="/">dev-prune</a> covers
+twenty-five package managers, but changes the shape instead: it is built to run without
+you, which is the next section.</p>
+
+<h2>"I want this to stop being a chore"</h2>
+
+<p>npkill is interactive by design, which means it runs exactly as often as you remember
+to run it. If the real problem is that the machine fills up again every couple of months,
+the fix is not a better interactive tool, it is a pass that runs on a schedule and can be
+trusted to run unattended.</p>
+
+<p>Unattended is the case dev-prune was written for, and it is why the safety model is
+different: a background pass cannot ask you to eyeball a row, so every deletion is
+preceded by the package manager's own check. <code>devp setup</code> registers the pass
+with Task Scheduler, launchd or systemd; <code>devp run</code> only considers repositories
+with no commit or working-tree change past your idle threshold; and every directory is
+verified against its lockfile before it goes.</p>
+
+<h2>"Last week I deleted something that did not come back"</h2>
+
+<p>npkill's safety signal is the last-modified date, and the honest thing to say about
+last-modified is that it measures when a file changed, not whether the directory can be
+rebuilt. A <code>node_modules</code> holding a package that was installed without being
+recorded in the lockfile looks identical to one that reinstalls cleanly, right up until
+you delete it.</p>
+
+<p>dev-prune runs <code>npm ci --dry-run --ignore-scripts</code> (or the pnpm, yarn or bun
+equivalent) before touching anything, keeps the directory when that exits non-zero, and
+records what it removed so <code>devp restore --last-run</code> can put the whole pass
+back. <a href="/stress-testing-dev-prune/">Stress-testing dev-prune</a> shows the
+round-trip on real installs, byte for byte.</p>
+
+<h2>Trying it takes one dry run</h2>
+
+<pre><code>curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
+devp init ~/Code
+devp run --dry-run</code></pre>
+
+<p>The dry run deletes nothing and prints every candidate with the lockfile that proves it
+rebuildable. The fuller comparison, including <code>cargo-sweep</code>,
+<code>rimraf</code> and a cron job, is at
+<a href="/vs/">dev-prune vs the alternatives</a>.</p>
+`,
+    faq: [
+      {
+        q: 'What is the best alternative to npkill?',
+        a: 'It depends which limit you hit. For interactive cleanup across more ecosystems than Node, kondo. For an unattended, scheduled pass that verifies each directory against its lockfile before deleting and can restore what it removed, dev-prune. For one directory in front of you, rm -rf remains faster than any tool.',
+      },
+      {
+        q: 'Can npkill run automatically on a schedule?',
+        a: 'Not usefully: it is an interactive terminal UI by design, and that is a strength for the supervised case rather than a flaw. If you want scheduled cleanup, use a tool built for it. dev-prune registers a pass with Task Scheduler, launchd or systemd, gates on repository idleness, and verifies lockfiles before every deletion.',
+      },
+      {
+        q: 'Does npkill handle Python virtualenvs or Rust target directories?',
+        a: 'Its scan is built around node_modules, with a --target flag that can point it at one other directory name at a time. For .venv, vendor/, deps/ and Pods/ in one pass you want kondo (interactive) or dev-prune (unattended), both of which recognise those project types natively.',
+      },
+    ],
+    related: ['vs', 'kondo-alternative', 'delete-node-modules-all-projects'],
+  },
+
+  {
+    slug: 'kondo-alternative',
+    title: 'kondo alternatives: when a prompt is not enough',
+    description:
+      'kondo is the broadest interactive project cleaner there is. What to use when you want the cleanup unattended, verified against lockfiles, or reversible.',
+    keywords:
+      'kondo alternative, kondo alternatives, kondo vs dev-prune, clean dev directories, project cleaner cli',
+    body: `
+<p><strong>Start by being fair to kondo:</strong> it is the broadest tool of its kind, it
+is older and more widely packaged than anything below (winget, Homebrew, MacPorts, the
+Arch repositories, plus a GUI in <code>kondo-ui</code>), and for "walk my disk, show me
+every heavy project directory, delete what I confirm" it is genuinely good.
+<code>kondo --older 30d</code> covers the common case in one line.</p>
+
+<p>Its README describes the design honestly: "essentially rm -rf with a prompt". You are
+the safety check. That is a reasonable contract, and every reason to want an alternative
+is some version of wanting a different one.</p>
+
+<h2>"I want it to run without me"</h2>
+
+<p>A prompt only protects a deletion somebody is watching. Put kondo in a scheduled task
+and you have removed the one safety mechanism it has, which its authors would be the
+first to tell you not to do.</p>
+
+<p><a href="/">dev-prune</a> is built for exactly this case, so the checks a human would
+do at the prompt are done by the tool instead. It reads <code>git log</code> rather than
+file timestamps, so a repository you committed to this morning is not a candidate however
+old its files look. It runs the package manager's own verification, such as
+<code>npm ci --dry-run</code> or <code>uv lock --locked</code> or
+<code>cargo metadata --locked</code>, and a non-zero exit keeps the directory. And it
+schedules itself: <code>devp setup</code> registers the pass with Task Scheduler, launchd
+or systemd user timers.</p>
+
+<h2>"I deleted something a lockfile never recorded"</h2>
+
+<p>Age-based selection has one blind spot, and it is the expensive one: a directory
+holding packages that were installed but never written to the lockfile is
+indistinguishable from a clean one until it is gone. dev-prune treats the lockfile check
+as the deletion criterion rather than a warning, and it refuses rather than guessing. In
+<a href="/stress-testing-dev-prune/">a logged stress pass</a>, the verification and the
+undo log round-tripped half a gigabyte of real installs: pruned, then restored with
+<code>devp restore --last-run</code>, including a uv environment rebuilt on the recorded
+Python version.</p>
+
+<h2>"My problem is one big Rust repository"</h2>
+
+<p>Neither kondo nor dev-prune is the best answer there.
+<code>cargo sweep --time 30</code> removes stale artefacts from <code>target/</code>
+while keeping the current build, which is more surgical than deleting the directory
+whole. <a href="/cargo-target-directory-size/">Why target/ gets so big</a> has the
+detail.</p>
+
+<h2>"I just want to look and decide"</h2>
+
+<p>Then you do not want an alternative: that is kondo's home ground, and for the
+Node-only version of it, <a href="/npkill-alternative/">npkill</a> is also excellent.
+Interactive tools are the right answer whenever you are present. The line to hold is
+that a tool whose safety is a prompt should never run where nobody sees the prompt.</p>
+
+<h2>Trying it takes one dry run</h2>
+
+<pre><code>curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
+devp init ~/Code
+devp run --dry-run</code></pre>
+
+<p>Nothing is deleted; every candidate is listed with the lockfile that proves it
+rebuildable. The full comparison, including <code>rimraf</code> and a cron job, is at
+<a href="/vs/">dev-prune vs the alternatives</a>.</p>
+`,
+    faq: [
+      {
+        q: 'What is the best alternative to kondo?',
+        a: 'For unattended, recurring cleanup: dev-prune, which verifies each directory against its lockfile before deleting, gates on git activity rather than file age, records an undo log, and schedules itself. For supervised Node-only sweeps: npkill. For surgical Rust target/ cleanup: cargo-sweep. If you are present and deciding case by case, kondo itself remains the right tool.',
+      },
+      {
+        q: 'Is kondo safe to use?',
+        a: 'Yes, in the way its own README states: it is essentially rm -rf with a prompt, so you are the check. That is fine when you are watching. It is the wrong contract for a scheduled or scripted run, where nothing stands between an age heuristic and a deletion.',
+      },
+      {
+        q: 'Can dev-prune replace kondo completely?',
+        a: 'No. kondo covers interactive, decide-per-row cleanup across more project types than dev-prune prunes, and it has a GUI. dev-prune covers the unattended case kondo is explicitly not built for. Many machines reasonably have both installed.',
+      },
+    ],
+    related: ['vs', 'npkill-alternative', 'reclaim-disk-space-developer-machine'],
+  },
+
+  {
+    slug: 'stress-testing-dev-prune',
+    title: 'Stress-testing dev-prune: every byte accounted for',
+    description:
+      'Six disposable repositories, real installs, one accident. What a logged prune pass deleted, what it refused, and what devp restore put back, byte for byte.',
+    keywords:
+      'dev-prune stress test, devp restore, lockfile verification, node_modules cleanup test, pnpm hardlinks',
+    body: `
+<p>Claims about deletion tools are cheap, so this is a receipt instead. We scaffolded six
+disposable Git repositories on a scratch drive, gave each a real dependency install
+(npm, pnpm with its store, bun, uv, Go modules with a vendor tree, cargo), registered
+them, and let an AI agent drive <code>devp</code> end to end through the skill file that
+<code>devp skill</code> exports. Every command was logged. The numbers below are from
+those logs, not from memory.</p>
+
+<h2>Day one: it refused to touch anything</h2>
+
+<p>The first finding was a pass that did nothing, which is correct behaviour. Every
+repository in the corpus was created that day, and <code>devp run --explain</code> gave
+the same verdict for each: active, with activity today against a 15-day idle threshold.
+A tool for idle repositories should treat a brand-new repository as the opposite of a
+candidate. To test deletion at all we had to say so explicitly, with
+<code>--ignore-idle</code>.</p>
+
+<h2>The pass, byte for byte</h2>
+
+<p>With the idle gate lifted, the pass verified each directory against its lockfile and
+pruned six:</p>
+
+<pre><code>  • api-server → node_modules (95.2 MiB) [npm]
+  • data-pipeline → .venv (229.9 MiB) [uv]
+  • go-worker → vendor (34.2 MiB) [go]
+  • job-queue → node_modules (41.9 MiB) [bun]
+  • web-app → node_modules (0.5 MiB) [pnpm]
+  • dev-prune → site/node_modules (93.2 MiB) [npm]
+
+  Freed: 494.99 MiB across 6 directories</code></pre>
+
+<p>Two of those rows deserve a closer look.</p>
+
+<p><strong>The pnpm row is small on purpose.</strong> The install was 80.9 MiB on disk,
+but 80.4 MiB of it was hardlinked into the pnpm store, and deleting a hardlink does not
+free the store's copy. dev-prune counts the 0.5 MiB that actually came back and reports
+the hardlinked share separately, rather than taking credit for space that was never going
+to be freed.</p>
+
+<p><strong>The last row was an accident.</strong> The corpus registration swept in the
+working copy of dev-prune itself, and with the idle gate explicitly lifted, the pass
+verified our own site's <code>node_modules</code> against its lockfile and deleted it,
+93.2 MiB, exactly as instructed. No flag saved us and none should have:
+<code>--ignore-idle</code> means what it says. What made the mistake free is the next
+section.</p>
+
+<h2>The restore, byte for byte</h2>
+
+<p><code>devp restore --last-run</code> read the undo log and reinstalled all six
+directories, 494.99 MiB, from the same lockfiles the pass had verified, including
+rebuilding the uv environment on the Python version the log had recorded. Our own
+<code>node_modules</code> came back with everything else. A second pass over the corpus
+afterwards freed 367.5 MiB across four directories, which is the first pass minus the
+accident and minus the Go vendor tree, and confirmed the numbers reproduce.</p>
+
+<h2>What it would not do</h2>
+
+<p>The corpus included a Rust service with a 186.97 MiB <code>target/</code> directory,
+and the pass left it alone. That is the opt-in policy, not a gap: <code>target/</code>
+comes back by recompiling rather than downloading, which costs minutes rather than
+seconds, so the cargo adapter (like Gradle, Maven, SwiftPM, .NET and the other build-tree
+adapters) does nothing until you set <code>enable_cargo</code> in the config. With the
+adapter enabled, the same pass claimed all 186.97 MiB.</p>
+
+<h2>What a real machine looks like</h2>
+
+<p>A synthetic corpus proves behaviour, not typical yield, so the number on the
+<a href="/">front page</a> is a different kind: the scheduled pass of 2026-09-04 on the
+author's own machine, which freed 1.91 GiB from four directories across three
+repositories, each row listed with the lockfile that proved it rebuildable. Your figure
+is neither of these numbers: it is what <code>devp run --dry-run</code> prints on your
+disk, and that command deletes nothing.</p>
+
+<pre><code>curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
+devp init ~/Code
+devp run --dry-run</code></pre>
+`,
+    faq: [
+      {
+        q: 'Does devp restore actually work?',
+        a: 'In this logged pass, yes, completely: six pruned directories, 494.99 MiB, all reinstalled by devp restore --last-run from the same lockfiles the prune had verified, including a uv virtualenv rebuilt on the Python version the undo log recorded. Restore is a reinstall, so it needs network access and works precisely because nothing is pruned without a verified lockfile.',
+      },
+      {
+        q: 'Why did dev-prune skip the Rust target directory?',
+        a: 'Because build trees are opt-in. A node_modules comes back by downloading; a target/ comes back by recompiling, which is a much more expensive rebuild. The cargo, Gradle, Maven, SwiftPM and .NET adapters therefore do nothing until you enable them in the config. Once enable_cargo was set, the same pass reclaimed the full 186.97 MiB.',
+      },
+      {
+        q: 'Are these numbers what I should expect on my machine?',
+        a: 'No. The corpus was built to exercise adapters, not to look like your disk. The honest way to get your number is devp run --dry-run, which walks your registered repositories, verifies every candidate against its lockfile, prints the total, and deletes nothing.',
+      },
+    ],
+    related: ['vs', 'safe-to-delete-node-modules', 'reclaim-disk-space-developer-machine'],
   },
 
   {
