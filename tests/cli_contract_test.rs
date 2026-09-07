@@ -1896,6 +1896,29 @@ fn trust_fix_ownership_is_clean_on_an_empty_registry() {
     assert!(text.contains("Nothing to fix"), "unexpected output: {text}");
 }
 
+/// The global `-y` is the same promise as the repair's own `--yes`, and it must be
+/// accepted wherever a user plausibly puts it. It used to parse before the subcommand
+/// and then be ignored by the dispatch, so `devp -y trust --fix-ownership` stopped and
+/// asked anyway.
+#[test]
+fn trust_fix_ownership_accepts_the_global_yes_in_either_position() {
+    for args in [
+        ["-y", "trust", "--fix-ownership"],
+        ["trust", "--fix-ownership", "-y"],
+    ] {
+        let dir = TempDir::new().unwrap();
+        let out = devp(dir.path()).args(args).output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "devp {args:?}: {}",
+            combined(&out)
+        );
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("Nothing to fix"), "devp {args:?}: {text}");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Discovery: `devp init --auto`, and the opt-out honoured at registration.
 // ---------------------------------------------------------------------------
