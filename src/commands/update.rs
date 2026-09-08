@@ -305,6 +305,16 @@ fn run_install() -> Result<()> {
             "v{} is already the latest release — nothing to install.",
             constants::VERSION
         ));
+        // "Nothing to install" is about the console binaries. The scheduler twin can
+        // still be behind them (the incident: consoles on the current release, devpw
+        // three releases back, every scheduled pass silently running old code), so it
+        // is reconciled even when there is nothing else to do.
+        #[cfg(windows)]
+        {
+            let dirs = default_twin_dirs();
+            let refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
+            reconcile_windowless_twins(constants::VERSION, &refs);
+        }
         return Ok(());
     }
     install_latest(&latest)
@@ -415,8 +425,26 @@ fn install_directly(
         }
     }
 
-    // The windowless scheduler twin is a *patched* copy, not a plain one, so it is
-    // rebuilt rather than written — from the managed binary that was just replaced.
+    // The console binaries are now on `latest`; the scheduler twin must not be left
+    // behind them. It is a separate `[[bin]]` image, so it cannot be written from the
+    // bytes above: it gets its own verified download, and only where a twin already
+    // exists.
+    #[cfg(windows)]
+    {
+        let mut dirs: Vec<&Path> = Vec::new();
+        if let Some(dir) = primary.parent() {
+            dirs.push(dir);
+        }
+        if replace_exe_dir && let Some(dir) = exe.parent() {
+            dirs.push(dir);
+        }
+        reconcile_windowless_twins(latest, &dirs);
+    }
+
+    // Still worth running for the copy `get_exe_path` resolves when that is neither
+    // the managed directory nor the running one. `place_windowless_twin` never
+    // regresses a twin past what sits beside the running binary, so after the
+    // reconcile above this can only move a stale copy forward.
     crate::daemon::refresh_windowless_twin();
 
     // The receipt beside the managed copy now names the version that was there a minute
@@ -550,6 +578,29 @@ fn fetch_release_binary(version: &str) -> Result<Vec<u8>> {
             std::env::consts::ARCH
         )
     })?;
+    fetch_verified_asset(version, &asset)
+}
+
+/// Download release `version`'s windowless scheduler binary, verified the same way.
+///
+/// Separate from [`fetch_release_binary`] because it is a different asset with its own
+/// sidecar, not a different verification story: the scheduled task runs these bytes
+/// unattended, which is exactly why they get the same checksum gate as the console
+/// binary.
+#[cfg(windows)]
+fn fetch_windowless_binary(version: &str) -> Result<Vec<u8>> {
+    let asset = constants::windowless_release_asset_name(version).with_context(|| {
+        format!(
+            "no published windowless binary for windows-{}",
+            std::env::consts::ARCH
+        )
+    })?;
+    fetch_verified_asset(version, &asset)
+}
+
+/// The shared tail of every asset download: fetch the `.sha256` sidecar, fetch the
+/// bytes, and refuse them unless the digests match.
+fn fetch_verified_asset(version: &str, asset: &str) -> Result<Vec<u8>> {
     let base = format!("{}/v{version}/{asset}", constants::RELEASE_DOWNLOAD_BASE);
 
     let expected = fetch_expected_hash(&format!("{base}.sha256"))?;
@@ -576,6 +627,149 @@ fn fetch_release_binary(version: &str) -> Result<Vec<u8>> {
     }
 
     Ok(bytes)
+}
+
+/// What one reconcile pass over the windowless twins amounted to.
+#[cfg(windows)]
+enum TwinReconcile {
+    /// Every twin that exists is already on `version`, or none exists at all.
+    UpToDate,
+    /// At least one stale twin was replaced and none failed.
+    Updated,
+    /// The download or a write failed; the message has already been printed.
+    Failed(String),
+}
+
+/// Bring every existing `devpw.exe` in `dirs` up to release `version`.
+///
+/// The upgrade path used to refresh the twin from the devpw *beside* the running
+/// binary, but that copy is the previous delivery's: the console binaries moved forward
+/// and the scheduled task kept running the old release, silently, every night. So the
+/// twin is reconciled against the release itself: any copy whose build stamp is older
+/// than `version`, or missing entirely (built before 1.17.0), is replaced from a
+/// checksum-verified download of the published `devpw` asset.
+///
+/// Only existing files are touched. An installation that never had a windowless twin
+/// does not grow one here; `devp daemon install` is what creates one, and the npm
+/// family ships its own under a different mechanism.
+#[cfg(windows)]
+fn reconcile_windowless_twins(version: &str, dirs: &[&Path]) -> TwinReconcile {
+    let mut stale: Vec<PathBuf> = Vec::new();
+    for dir in dirs {
+        let twin = dir.join(constants::WINDOWS_WINDOWLESS_BIN);
+        if stale.contains(&twin) || !twin.is_file() {
+            continue;
+        }
+        let stamped = fs::read(&twin)
+            .ok()
+            .and_then(|b| crate::commands::trust::version_from_stamp(&b));
+        // Equal or newer is left alone; the twin never regresses. A copy with no
+        // readable stamp predates stamping and is by definition behind.
+        let up_to_date = stamped
+            .as_deref()
+            .and_then(|v| compare_versions(v, version))
+            .is_some_and(|o| o != Ordering::Less);
+        if !up_to_date {
+            stale.push(twin);
+        }
+    }
+    if stale.is_empty() {
+        return TwinReconcile::UpToDate;
+    }
+
+    let bytes = match fetch_windowless_binary(version) {
+        Ok(b) => b,
+        Err(e) => {
+            let why = format!(
+                "The scheduler binary {} could not be downloaded ({e:#}). The scheduled \
+                 pass keeps running the version it has until `devp update --install` or \
+                 `devp doctor --fix` succeeds.",
+                constants::WINDOWS_WINDOWLESS_BIN
+            );
+            output::print_warning(&why);
+            return TwinReconcile::Failed(why);
+        }
+    };
+
+    let mut failed = None;
+    for twin in &stale {
+        if let Err(e) = install_bytes_at(&bytes, twin) {
+            let why = format!(
+                "{} could not be replaced ({e:#}); the scheduled pass keeps running the \
+                 previous version from that copy.",
+                twin.display()
+            );
+            output::print_warning(&why);
+            failed = Some(why);
+        }
+    }
+    match failed {
+        Some(why) => TwinReconcile::Failed(why),
+        None => {
+            output::print_success(&format!(
+                "Scheduler binary {} updated to v{version}.",
+                constants::WINDOWS_WINDOWLESS_BIN
+            ));
+            TwinReconcile::Updated
+        }
+    }
+}
+
+/// The directories whose windowless twin this installation actually runs: the managed
+/// directory the scheduler points at, and the directory of the running binary.
+#[cfg(windows)]
+fn default_twin_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(managed) = crate::setup::managed_exe_path()
+        && let Some(dir) = managed.parent()
+    {
+        dirs.push(dir.to_path_buf());
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        dirs.push(dir.to_path_buf());
+    }
+    dirs
+}
+
+/// The `devp doctor --fix` entry point for a stale scheduler binary: same reconcile,
+/// same guardrails, reported through the repair machinery instead of the upgrade
+/// transcript.
+pub(crate) fn repair_windowless_twins() -> crate::setup::Outcome {
+    #[cfg(windows)]
+    {
+        use crate::setup::Outcome;
+        match Registry::load() {
+            Ok(r) if r.settings.version_lock => {
+                return Outcome::Skipped(
+                    "version_lock is set, and nothing dev-prune does replaces a binary \
+                     while it is"
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+        if crate::setup::offline_requested() {
+            return Outcome::Skipped(format!(
+                "{} is set and this repair needs a download",
+                constants::ENV_OFFLINE
+            ));
+        }
+        let dirs = default_twin_dirs();
+        let refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
+        match reconcile_windowless_twins(constants::VERSION, &refs) {
+            TwinReconcile::UpToDate => Outcome::AlreadyPresent,
+            TwinReconcile::Updated => Outcome::Installed,
+            TwinReconcile::Failed(why) => Outcome::Failed(why),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // The finding this repairs is only ever raised on Windows; this arm exists for
+        // the compiler, not for a caller.
+        crate::setup::Outcome::AlreadyPresent
+    }
 }
 
 /// Write already-verified bytes over one binary.
@@ -1250,6 +1444,21 @@ mod tests {
             ("macos", "aarch64") => Some("dev-prune-v1.4.0-darwin-arm64"),
             // A platform the release does not build for must decline the direct route
             // rather than download some other platform's binary.
+            _ => None,
+        };
+        assert_eq!(name.as_deref(), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_windowless_asset_name_matches_what_the_release_workflow_builds() {
+        // Same contract, same failure mode as the console asset above: a wrong name is
+        // a scheduler binary that 404s on the day of a release and stays stale.
+        let name = constants::windowless_release_asset_name("1.4.0");
+        let expected = match std::env::consts::ARCH {
+            "x86_64" => Some("devpw-v1.4.0-windows-x64.exe"),
+            "aarch64" => Some("devpw-v1.4.0-windows-arm64.exe"),
+            "x86" => Some("devpw-v1.4.0-windows-x86.exe"),
             _ => None,
         };
         assert_eq!(name.as_deref(), expected);

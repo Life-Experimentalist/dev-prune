@@ -223,6 +223,15 @@ jobs:
           $rawHash = (Get-FileHash -Path $raw -Algorithm SHA256).Hash.ToLower()
           "$rawHash  $raw" | Out-File -FilePath "$raw.sha256" -Encoding ascii -NoNewline
 
+          # The windowless binary as its own raw asset, so the self-update can bring a
+          # stale devpw.exe forward without unpacking a zip. Name is a contract with
+          # `constants::windowless_release_asset_name`; a mismatch is a 404, not a test
+          # failure. Same sha256sum-format sidecar as every other asset.
+          $rawW = "devpw-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.exe"
+          Copy-Item "target/${{ matrix.target }}/release/devpw.exe" $rawW
+          $rawWHash = (Get-FileHash -Path $rawW -Algorithm SHA256).Hash.ToLower()
+          "$rawWHash  $rawW" | Out-File -FilePath "$rawW.sha256" -Encoding ascii -NoNewline
+
           # The digest of each file *inside* the zip, which is the only one an antivirus
           # ever sees. The sidecars above cover the archive, and an archive's hash stops
           # meaning anything the moment it is unpacked - so until this existed there was
@@ -252,6 +261,7 @@ jobs:
           name: dev-prune-${{ matrix.os_name }}-${{ matrix.arch }}
           path: |
             dev-prune-v*
+            devpw-v*
           if-no-files-found: error
 
   # Every staged executable is grepped for the strings an antivirus reads as

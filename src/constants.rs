@@ -456,6 +456,25 @@ pub fn release_asset_name(version: &str) -> Option<String> {
     Some(format!("dev-prune-v{version}-{os}-{arch}{ext}"))
 }
 
+/// The release-asset name for the windowless scheduler binary, without the `.sha256`
+/// suffix.
+///
+/// Same contract, same workflow: the Windows packaging step in
+/// `.github/workflows/release.yml` publishes this exact name beside the console asset,
+/// so the self-update can bring `devpw.exe` forward with the same verified-download
+/// path it uses for the console binary. Windows-only because the windowless twin is:
+/// no other platform has a subsystem split to paper over.
+#[cfg(windows)]
+pub fn windowless_release_asset_name(version: &str) -> Option<String> {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        "x86" => "x86",
+        _ => return None,
+    };
+    Some(format!("devpw-v{version}-windows-{arch}.exe"))
+}
+
 /// Whether the periodic release check runs. On by default — see `Settings::update_check`.
 pub const DEFAULT_UPDATE_CHECK: bool = true;
 

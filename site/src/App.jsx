@@ -2236,7 +2236,8 @@ Notes you should rely on, not work around:
                     </td>
                     <td>
                       Repair what the checks found — a stale <code>devp</code>{" "}
-                      twin, hooks or a scheduler pointing at a binary that is
+                      twin, a <code>devpw</code> scheduler binary behind the
+                      release, hooks or a scheduler pointing at a binary that is
                       gone, dead registry entries. Mends installed-but-broken
                       only; never a first-time install
                     </td>
@@ -2956,7 +2957,11 @@ Notes you should rely on, not work around:
                 <code>devp update --install</code> instead
                 upgrades all of them at once: it downloads the release binary
                 for your platform, checks it against the SHA-256 published
-                beside it, and installs nothing if that does not match.
+                beside it, and installs nothing if that does not match. The
+                windowless <code>devpw.exe</code> the scheduler runs is a
+                separate build, so it gets its own verified download in the
+                same pass, and a stale one is brought forward even when the
+                console binaries are already current.
               </Faq>
               <Faq q="Does it work with Chinese, Japanese or Korean paths?">
                 Yes, on all three platforms. Paths are handled as real
