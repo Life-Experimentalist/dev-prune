@@ -758,7 +758,7 @@ fn is_in_use_error(e: &std::io::Error) -> bool {
 }
 
 /// Whether this executable is running out of a Cargo build directory.
-fn is_dev_build(exe: &Path) -> bool {
+pub(crate) fn is_dev_build(exe: &Path) -> bool {
     let path = exe.to_string_lossy().replace('\\', "/");
     path.contains("/target/debug/") || path.contains("/target/release/")
 }
