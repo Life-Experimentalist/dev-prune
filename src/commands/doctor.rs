@@ -53,6 +53,8 @@ enum Repair {
     Hooks,
     /// The installed scheduler points at a deleted binary.
     Scheduler,
+    /// The windowless scheduler binary (`devpw.exe`) is behind the running release.
+    WindowlessTwin,
     /// Registered paths that no longer exist on disk.
     UnlinkMissing,
     /// Registered repositories whose `.devprune.json` cannot be parsed.
@@ -275,6 +277,7 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
             Repair::SkillFile => ("SKILL.md", "run `devp skill` yourself"),
             Repair::Hooks => ("Git hooks", "run `devp hook install` yourself"),
             Repair::Scheduler => ("Scheduler", "run `devp daemon install` yourself"),
+            Repair::WindowlessTwin => ("Scheduler binary", "run `devp update --install` yourself"),
             Repair::UnlinkMissing => {
                 match crate::commands::link::run_unlink_missing() {
                     Ok(()) => repaired += 1,
@@ -307,9 +310,14 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
                 continue;
             }
         };
-        // These three write outside the config directory, which is precisely what the
+        // These write outside the config directory, which is precisely what the
         // variable exists to forbid.
-        if installs_off && matches!(repair, Repair::Twin | Repair::Hooks | Repair::Scheduler) {
+        if installs_off
+            && matches!(
+                repair,
+                Repair::Twin | Repair::Hooks | Repair::Scheduler | Repair::WindowlessTwin
+            )
+        {
             skipped(
                 label,
                 &format!("{} is set — {manual}", setup::ENV_NO_AUTO_SETUP),
@@ -325,6 +333,7 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
             Repair::SkillFile => setup::ensure_skill_copies(),
             Repair::Hooks => setup::ensure_hooks(chain),
             Repair::Scheduler => setup::ensure_daemon(interval),
+            Repair::WindowlessTwin => crate::commands::update::repair_windowless_twins(),
             Repair::UnlinkMissing | Repair::RepoConfigs => unreachable!("handled above"),
         };
         match outcome {
@@ -459,28 +468,69 @@ fn check_binary(f: &mut Findings) {
             // Either name may recreate a twin that is missing outright.
             f.fixable(Repair::Twin);
         }
-    } else if same_binary(&exe, &twin) {
-        f.ok(twin_stem, &output::clean_path(&twin));
     } else {
-        // An upgrade that could not replace a running executable leaves exactly this
-        // state, and the stale name silently runs the previous version from then on.
-        f.warn(
-            twin_stem,
-            &format!(
-                "{} is not the same binary as {} — one of the pair is stale and \
-                 silently runs a different version. `dev-prune setup` refreshes `devp` \
-                 from the canonical `dev-prune`.",
-                output::clean_path(&twin),
-                output::clean_path(&exe)
-            ),
-        );
-        // Only the canonical `dev-prune` may overwrite a differing twin — `devp`
-        // refreshing `dev-prune` could reinstall the version an upgrade just replaced.
-        // So this is repairable only from the canonical side.
-        if running == "dev-prune" {
-            f.fixable(Repair::Twin);
+        // Compared by build stamp when both sides carry one: `cargo install` links the
+        // two names as separate images, so byte equality reports a healthy pair as
+        // stale. The stamp is the fact actually being checked. Byte comparison remains
+        // the fallback for copies built before stamping existed.
+        let stamp = |p: &Path| {
+            std::fs::read(p)
+                .ok()
+                .and_then(|b| crate::commands::trust::version_from_stamp(&b))
+        };
+        match (stamp(&exe), stamp(&twin)) {
+            (Some(exe_v), Some(twin_v)) if exe_v == twin_v => {
+                f.ok(twin_stem, &output::clean_path(&twin));
+            }
+            (Some(exe_v), Some(twin_v)) => {
+                f.warn(
+                    twin_stem,
+                    &format!(
+                        "{} is v{twin_v} while {} is v{exe_v}, so the stale name \
+                         silently runs a different version. `dev-prune setup` refreshes \
+                         `devp` from the canonical `dev-prune`.",
+                        output::clean_path(&twin),
+                        output::clean_path(&exe)
+                    ),
+                );
+                // `ensure_alias` copies the canonical `dev-prune` over `devp`, so the
+                // repair is offered only from the canonical side, and only when that
+                // direction does not reinstall the older of the two versions.
+                if running == "dev-prune"
+                    && crate::commands::update::compare_versions(&exe_v, &twin_v)
+                        != Some(std::cmp::Ordering::Less)
+                {
+                    f.fixable(Repair::Twin);
+                }
+            }
+            _ if same_binary(&exe, &twin) => {
+                f.ok(twin_stem, &output::clean_path(&twin));
+            }
+            _ => {
+                // An upgrade that could not replace a running executable leaves exactly
+                // this state, and the stale name silently runs the previous version
+                // from then on.
+                f.warn(
+                    twin_stem,
+                    &format!(
+                        "{} is not the same binary as {} — one of the pair is stale and \
+                         silently runs a different version. `dev-prune setup` refreshes `devp` \
+                         from the canonical `dev-prune`.",
+                        output::clean_path(&twin),
+                        output::clean_path(&exe)
+                    ),
+                );
+                // Only the canonical `dev-prune` may overwrite a differing twin — `devp`
+                // refreshing `dev-prune` could reinstall the version an upgrade just replaced.
+                // So this is repairable only from the canonical side.
+                if running == "dev-prune" {
+                    f.fixable(Repair::Twin);
+                }
+            }
         }
     }
+
+    check_windowless_twin(f);
 
     let sep = if cfg!(windows) { ';' } else { ':' };
     let on_path = std::env::var("PATH")
@@ -515,6 +565,71 @@ fn check_binary(f: &mut Findings) {
                 output::clean_path(dir)
             ),
         );
+    }
+}
+
+/// Whether the windowless scheduler binary matches the running release.
+///
+/// `devpw.exe` is a separate `[[bin]]` image the scheduled task runs, so nothing the
+/// console-pair check sees covers it: the pair can be fully current while every
+/// scheduled pass still runs a release from months ago, and nothing on the machine
+/// says so. Drift is a problem when the installed scheduler actually names a
+/// `devpw.exe` (the stale copy runs unattended every night) and a warning otherwise.
+/// Only existing files are checked: an installation without a twin is not missing one,
+/// which is also what makes this compile everywhere rather than behind `cfg(windows)`.
+/// No other platform ever has the file, so elsewhere the loop finds nothing.
+fn check_windowless_twin(f: &mut Findings) {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(managed) = setup::managed_exe_path()
+        && let Some(dir) = managed.parent()
+    {
+        candidates.push(dir.join(constants::WINDOWS_WINDOWLESS_BIN));
+    }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        let path = dir.join(constants::WINDOWS_WINDOWLESS_BIN);
+        if !candidates.contains(&path) {
+            candidates.push(path);
+        }
+    }
+    let scheduler_runs_devpw = crate::daemon::registered_exe_path().is_some_and(|p| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.eq_ignore_ascii_case(constants::WINDOWS_WINDOWLESS_BIN))
+    });
+    for twin in candidates {
+        if !twin.is_file() {
+            continue;
+        }
+        let stamped = std::fs::read(&twin)
+            .ok()
+            .and_then(|b| crate::commands::trust::version_from_stamp(&b));
+        match stamped {
+            Some(v) if v == constants::VERSION => {
+                f.ok("Scheduler binary", &output::clean_path(&twin));
+            }
+            found => {
+                let held = match &found {
+                    Some(v) => format!("is v{v}"),
+                    None => "has no readable build stamp (built before 1.17.0)".to_string(),
+                };
+                let detail = format!(
+                    "{} {held} while this binary is v{}. The scheduled pass runs \
+                     whatever that file is, so it can silently run old code every \
+                     night. `devp update --install` brings it forward.",
+                    output::clean_path(&twin),
+                    constants::VERSION
+                );
+                if scheduler_runs_devpw {
+                    f.problem("Scheduler binary", &detail);
+                    f.fixable_problem(Repair::WindowlessTwin);
+                } else {
+                    f.warn("Scheduler binary", &detail);
+                    f.fixable(Repair::WindowlessTwin);
+                }
+            }
+        }
     }
 }
 
