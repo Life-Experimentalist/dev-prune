@@ -756,6 +756,15 @@ pub(crate) fn repair_windowless_twins() -> crate::setup::Outcome {
                 constants::ENV_OFFLINE
             ));
         }
+        // A development build carries whatever version Cargo.toml says next, and the
+        // release asset for that version does not exist until the tag is pushed, so
+        // reconciling from `target/` would report a spurious download failure once per
+        // version bump. The real install heals itself; a dev build stands down.
+        if std::env::current_exe().is_ok_and(|exe| crate::commands::uninstall::is_dev_build(&exe)) {
+            return Outcome::Skipped(
+                "this is a development build, and its version may not be released yet".to_string(),
+            );
+        }
         let dirs = default_twin_dirs();
         let refs: Vec<&Path> = dirs.iter().map(|p| p.as_path()).collect();
         match reconcile_windowless_twins(constants::VERSION, &refs) {
