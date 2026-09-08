@@ -735,7 +735,19 @@ pub fn ensure_daemon(interval_days: u64) -> Outcome {
         // when no twin is in use.
         Ok(daemon::DaemonStatus::Installed) => {
             daemon::refresh_windowless_twin();
-            Outcome::AlreadyPresent
+            // The refresh above sources from the devpw beside the running binary, which
+            // is the *previous* delivery's copy after an upgrade the old console
+            // performed, and the scheduled pass itself runs devpw, so nothing devpw
+            // does can ever replace devpw. This per-version pass is the first place new
+            // console code runs without being asked, which makes it the one hook that
+            // can close that loop: reconcile the twin against the release itself. It
+            // stands down under `DEV_PRUNE_OFFLINE` and `version_lock`, and only ever
+            // moves an existing, stale twin forward.
+            match crate::commands::update::repair_windowless_twins() {
+                Outcome::Installed => Outcome::Installed,
+                Outcome::Failed(why) => Outcome::Failed(why),
+                _ => Outcome::AlreadyPresent,
+            }
         }
         Ok(daemon::DaemonStatus::NotInstalled) => match daemon::install_daemon(interval_days) {
             Ok(()) => Outcome::Installed,
