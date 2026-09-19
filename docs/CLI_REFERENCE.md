@@ -1007,9 +1007,25 @@ silently when none is available.
     "bytes_reclaimable": 481296384,
     "directories_pruned": 0,
     "errors": 0                // lockfile_error + activity_check_error + delete_error + config_error
-  }
+  },
+  // Only on the bulk `--dry-run` document, and only when there is something to say:
+  // opt-in build adapters that detect() in registered repositories but are switched
+  // off, so the pass above could not examine them. Repositories the pass skips
+  // (disabled, `--except`, ignored, missing) are not counted. Additive: absent
+  // entirely when empty, and never present on a real pass or a targeted `devp run <path>`.
+  "recommendations": [
+    {
+      "adapter": "cargo",
+      "setting": "enable_cargo",
+      "command": "devp config set enable_cargo true",
+      "repositories": 3
+    }
+  ]
 }
 ```
+
+The human dry-run report carries the same information as a closing
+`Detected, but switched off` section, one line per adapter with the enable command.
 
 | `status` | Meaning |
 | :--- | :--- |

@@ -552,6 +552,85 @@ fn test_a_personal_exclusion_keeps_a_committed_declaration_from_running() {
     );
 }
 
+#[test]
+fn test_dry_run_recommends_dormant_opt_in_adapters() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let repo = tmp.path().join("zig-repo");
+    fs::create_dir_all(&repo).unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    fs::write(
+        repo.join("build.zig"),
+        "pub fn build(b: *std.Build) void {}",
+    )
+    .unwrap();
+
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    // Switched off, the adapter cannot appear in the pass, so the dry run says so instead.
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run", "--json"])
+        .output()
+        .expect("Failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let recs = doc["recommendations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no recommendations key:\n{stdout}"));
+    let zig = recs
+        .iter()
+        .find(|r| r["adapter"] == "zig")
+        .unwrap_or_else(|| panic!("zig not recommended:\n{stdout}"));
+    assert_eq!(zig["setting"], "enable_zig", "{stdout}");
+    assert_eq!(
+        zig["command"], "devp config set enable_zig true",
+        "{stdout}"
+    );
+    assert_eq!(zig["repositories"], 1, "{stdout}");
+
+    let human = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run"])
+        .output()
+        .expect("Failed to run");
+    let human_out = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        human_out.contains("Detected, but switched off"),
+        "{human_out}"
+    );
+    assert!(
+        human_out.contains("devp config set enable_zig true"),
+        "{human_out}"
+    );
+
+    // Switched on, the adapter is in the pass itself and the hint must disappear.
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["config", "set", "enable_zig", "true"])
+        .output()
+        .unwrap();
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run", "--json"])
+        .output()
+        .expect("Failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        doc.get("recommendations").is_none(),
+        "an enabled adapter must not be recommended:\n{stdout}"
+    );
+}
+
 /// A refused declaration has to reach the person running the pass.
 ///
 /// It was computed correctly and emitted correctly in `--json`, and then dropped by
