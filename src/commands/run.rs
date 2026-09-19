@@ -1207,6 +1207,13 @@ fn report_blocked(blocked: &[PruneResult]) {
             "  Drop {} from the registry:  devp unlink <path>",
             output::plural(n, "it", "them")
         ));
+        // Unlink is not the only sane answer: the directory may hold files worth
+        // keeping. `git init` on an existing directory touches no working files, so
+        // offering it costs nothing and saves the user working out that it is safe.
+        output::print_info(&format!(
+            "  Or keep {} tracked:  git init <path> makes it a repository again",
+            output::plural(n, "it", "them")
+        ));
     }
 
     for result in blocked {
@@ -1354,6 +1361,12 @@ fn report_orphaned(orphaned: &[PruneResult]) {
     }
     output::print_info(&format!(
         "  Drop {} from the registry:  devp unlink <path>",
+        output::plural(n, "it", "them")
+    ));
+    // Same reasoning as the dry-run report: `git init` on an existing directory is
+    // non-destructive, and it is the repair for the user who wants the entry kept.
+    output::print_info(&format!(
+        "  Or keep {} tracked:  git init <path> makes it a repository again",
         output::plural(n, "it", "them")
     ));
 }

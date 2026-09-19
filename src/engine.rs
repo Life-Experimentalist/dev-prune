@@ -115,7 +115,8 @@ impl std::fmt::Display for PruneStatus {
             PruneStatus::NotARepo => {
                 write!(
                     f,
-                    "No longer a git repository (`devp unlink` removes the entry)"
+                    "No longer a git repository (`devp unlink` removes the entry; \
+                     `git init` there makes it a repository again)"
                 )
             }
             PruneStatus::SkippedAdapterWindow(days) => {
@@ -796,12 +797,28 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
     // with its own unpushed history. No lockfile rebuilds somebody else's git history,
     // so refuse.
     if let Some(nested) = find_nested_git(path) {
-        return Some(PruneStatus::SkippedNestedRepo(format!(
+        let mut msg = format!(
             "`{}` contains a git repository at `{}` — refusing to delete it. Move or \
              remove that checkout yourself if it holds nothing you need.",
             crate::output::clean_path(path),
             crate::output::clean_path(&nested)
-        )));
+        );
+        // A package-manager cache kept inside the project (uv with `cache-dir =
+        // ".uv-cache"` is the case that surfaced this) accumulates sdist checkouts,
+        // so the refusal fires on every pass until the cache moves. The name is the
+        // only signal this code has for "this is a cache", but it is enough to point
+        // at the lasting fix instead of leaving the user to re-hit the warning.
+        if path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().contains("cache"))
+        {
+            msg.push_str(
+                " If this directory is a package manager's cache configured to live \
+                 inside the project (uv's `cache-dir`, for example), relocating the \
+                 cache outside the repository clears this warning for good.",
+            );
+        }
+        return Some(PruneStatus::SkippedNestedRepo(msg));
     }
 
     None
