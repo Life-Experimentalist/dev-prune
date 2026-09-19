@@ -105,9 +105,17 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
   --include-volumes`: after the narrow steps it lists the unused volumes by name and the
   user types the numbers of the ones to delete, each pick one unforced `volume rm`. You
   cannot run that for them: it refuses `--yes`, `--json` and a piped stdin, so the
-  typing of each number is the consent, and that is the design. docker and podman only;
-  the other engines cannot narrow their listing to unused volumes, so there the user
-  runs `<engine> volume ls` and decides by name themselves.
+  typing of each number is the consent, and that is the design. What you *can* run is
+  `devp caches clear docker --include-volumes --dry-run`: it deletes nothing, lists the
+  unused volumes by name and size, and prints the exact command above for the user to
+  paste at their own terminal. That is the whole hand-off: prepare the list, relay it,
+  hand over the command, stop. Do not translate a pick into `docker volume rm` yourself:
+  a raw engine command is never measured, while a pick made through devp is counted on
+  `devp stats`, which is the reason the flag exists inside devp at all. The dry-run list
+  is drawn before the narrow steps run, so the real run can offer *more* volumes than
+  you saw, because containers deleted by the pass free the volumes they were holding. docker
+  and podman only; the other engines cannot narrow their listing to unused volumes, so
+  there the user runs `<engine> volume ls` and decides by name themselves.
 - Never empties `~/.m2/repository`. Maven's local repository is an install target as well
   as a download cache — `mvn install:install-file` puts artifacts there that exist in no
   remote at all — so `devp caches` sizes it and prints `rm -rf ~/.m2/repository` and

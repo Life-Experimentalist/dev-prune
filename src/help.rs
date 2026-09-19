@@ -370,7 +370,12 @@ nothing uses. After the narrow steps run, the unused volumes are listed by name 
 type the numbers of the ones to delete; each pick is one unforced `volume rm`, and an \
 empty answer keeps them all. dev-prune never runs `volume prune`. Because a volume \
 holds the only copy of what is in it, the flag refuses `--yes`, `--json` and a piped \
-stdin: nothing unattended can reach it, and that is the point.";
+stdin: nothing unattended can reach it, and that is the point. The one unattended \
+spelling is `--include-volumes --dry-run`, which deletes nothing: it lists the unused \
+volumes by name with the command to paste, so a script or an agent can prepare \
+everything and a person runs the final command at a terminal. What the picks free is \
+then counted on `devp stats`, which a `volume rm` typed straight at the engine would \
+not be.";
 
 pub const CACHES_CLEAR_EXAMPLES: &str = "\
 EXAMPLES:

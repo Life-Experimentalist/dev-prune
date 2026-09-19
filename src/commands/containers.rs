@@ -756,8 +756,9 @@ pub fn run_clear(
         if !dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
             return Err(anyhow::Error::new(crate::UsageError(
                 "`--include-volumes` needs a terminal, because someone has to pick each \
-                 volume off the list. There is no way to answer it from a script, and \
-                 that is deliberate."
+                 volume off the list, and that is deliberate. From a script or an \
+                 agent, add `--dry-run`: it lists the unused volumes by name and \
+                 prints the command a person runs to do the picking themselves."
                     .to_string(),
             )));
         }
@@ -1116,7 +1117,10 @@ fn remove_volume(engine: &Engine, surface: &VolumeSurface, name: &str) -> StepOu
     }
 }
 
-/// What `--include-volumes --dry-run` shows: the list, and nothing run.
+/// What `--include-volumes --dry-run` shows: the list, the one devp command to paste,
+/// and nothing run. It exists for the hand-off where an agent or script does everything
+/// up to the deletion and a person runs that command at a terminal; the command is
+/// devp's own rather than the engine's so the picks land on `devp stats`.
 fn print_volume_dry_run(engine: &Engine, surface: &VolumeSurface) {
     match unused_volumes(engine, surface) {
         Err(why) => output::print_info(&format!(
@@ -1141,6 +1145,20 @@ fn print_volume_dry_run(engine: &Engine, surface: &VolumeSurface) {
                 let size = sizes.get(name).map_or("size unknown", String::as_str);
                 println!("  {:>3}. {:<44} {}", i + 1, name, size);
             }
+            println!();
+            output::print_wrapped(
+                "  ",
+                &format!(
+                    "Nothing was deleted. To delete any of them, a person runs the \
+                     line below at their own terminal and types the picks at the \
+                     list; each pick is one unforced `volume rm`, and what it frees \
+                     is measured and counted on `devp stats`, which a raw `{} volume \
+                     rm` typed by hand would not be.",
+                    engine.binary
+                ),
+            );
+            println!();
+            println!("    devp caches clear {} --include-volumes", engine.name);
             println!();
         }
     }
