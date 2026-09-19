@@ -18,6 +18,9 @@ directory was or wasn't cleaned, use `devp` instead of deleting anything by hand
   do not delete the lockfile; no flag skips verification.
 - `--ignore-idle` prunes a repository the user is actively working in — ask first.
 - `devp restore .` (or `devp restore --last-run`) reinstalls what a prune deleted.
+  When a directory devp removed is needed again, put it back with `devp restore`, not
+  by running `npm ci` or the manager's own install yourself; `devp history` names the
+  pass that took it.
 - Prefer `--json` (on `run`, `status`, `stats`, `caches`) when you need to read the
   answer rather than show it. Exit codes: 0 success, 1 failure, 2 usage error.
 - Never run `devp uninstall --deep` without explicit user confirmation.
