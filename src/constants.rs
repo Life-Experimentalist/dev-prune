@@ -513,6 +513,22 @@ pub const CONFIG_DIR_NAME: &str = "dev-prune";
 /// Global environment variable name to override config directory location.
 pub const ENV_CONFIG_DIR_OVERRIDE: &str = "DEV_PRUNE_CONFIG_DIR";
 
+/// Prefix of the per-engine stamp a completed volume dry run leaves in the config
+/// directory (`volume-pick-docker.stamp` holds the Unix time it finished). The real
+/// `--include-volumes` pick list only arms while a stamp is fresh, so the first time
+/// anyone types the real command they get the dry run instead of a deletion prompt.
+pub const VOLUME_PICK_STAMP_PREFIX: &str = "volume-pick-";
+
+/// Extension of the volume dry-run stamp file.
+pub const VOLUME_PICK_STAMP_SUFFIX: &str = ".stamp";
+
+/// How long a completed volume dry run arms the real pick list, in seconds.
+///
+/// Long enough to read the list and retype the line; short enough that a list read
+/// this morning cannot authorize a deletion this afternoon, when the volumes on it
+/// may no longer be the unused ones.
+pub const VOLUME_PICK_WINDOW_SECS: u64 = 600;
+
 /// File in the config directory recording the first-run answer to "may dev-prune set
 /// itself up?" — `granted` or `declined`. Its absence means the question has never been
 /// asked, or that `devp uninstall` put it back that way. Separate from the version

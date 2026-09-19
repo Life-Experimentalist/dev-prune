@@ -2971,7 +2971,11 @@ Notes you should rely on, not work around:
                 command to paste, so an agent can prepare everything and hand
                 the final command to a person; picks made through devp are
                 counted on <code>devp stats</code>, which a raw{" "}
-                <code>volume rm</code> would not be. Nothing on a schedule goes near any of it. The figures
+                <code>volume rm</code> would not be. The pick list only arms
+                within ten minutes of a completed dry run for that engine:
+                typed cold, the real command runs the dry run instead and says
+                so, and the same line typed again inside the window reaches the
+                picking. Nothing on a schedule goes near any of it. The figures
                 come from the engine's own{" "}
                 <code>system df</code> rather than a look at the disk, because on
                 Docker Desktop and Podman the store lives inside a VM disk image

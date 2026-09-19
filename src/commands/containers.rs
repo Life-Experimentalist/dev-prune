@@ -25,7 +25,9 @@
 // adds is not a bulk delete but a pick list, unused volumes named one per line for a
 // person at a terminal to choose from, each choice becoming its own unforced `volume rm`.
 // It refuses `--yes`, `--json` and a piped stdin, so no script, scheduler, hook or agent
-// can reach it: the typing of each number is the consent.
+// can reach it: the typing of each number is the consent. And the list is read before it
+// is picked from: the real command only arms within ten minutes of a completed dry run
+// for that engine, and outside that window it *is* the dry run, said out loud.
 //
 // The numbers come from the engine's own `system df`, not from a directory walk. On
 // Docker Desktop and Podman the store lives inside a VM disk image that the host cannot
@@ -708,6 +710,9 @@ impl ClearOutcome {
 /// that: it appends a phase that lists unused volumes by name and deletes only the ones
 /// a person picks off that list at a terminal, one unforced `volume rm` each, and it
 /// refuses `--yes`, `--json` and a piped stdin so nothing unattended can reach it.
+/// The pick list also only arms within [`constants::VOLUME_PICK_WINDOW_SECS`] of a
+/// completed dry run for the engine; any other invocation runs the dry run instead,
+/// loudly, and stamps the window so the retyped line goes through.
 pub fn run_clear(
     name: &str,
     include_volumes: bool,
@@ -764,6 +769,14 @@ pub fn run_clear(
         }
     }
 
+    // The real pick list only arms within the window after a completed dry run for
+    // this engine. Anyone who has not just read the list gets the list: the command
+    // becomes the dry run — same output, and it writes the same stamp — so typing the
+    // identical line again inside the window does the picking. Loudly, below, never
+    // silently: this module refuses silent downgrades everywhere else too.
+    let redirected = include_volumes && !dry_run && !volume_stamp_fresh(engine);
+    let dry_run = dry_run || redirected;
+
     // Same reason as `caches clear`: a prompt nobody can answer is a hang, and the line
     // printed in its place would land in the middle of the JSON document.
     if json_output && !yes && !dry_run {
@@ -795,6 +808,22 @@ pub fn run_clear(
     };
     let before_bytes: u64 = rows.iter().filter_map(|r| r.bytes).sum();
 
+    if redirected {
+        let minutes = constants::VOLUME_PICK_WINDOW_SECS / 60;
+        output::print_header("This run is the dry run");
+        println!();
+        output::print_wrapped(
+            "  ",
+            &format!(
+                "No volume dry run for {} has finished in the last {minutes} minutes, \
+                 so nothing below is deleted: the pick list only arms right after the \
+                 list has been read. Run the exact same line again within {minutes} \
+                 minutes to do the picking.",
+                engine.name
+            ),
+        );
+        println!();
+    }
     if !json_output {
         print_clear_plan(engine, rows, include_volumes, dry_run);
     }
@@ -810,6 +839,7 @@ pub fn run_clear(
         }
         if include_volumes && let Some(surface) = &engine.volume_candidates {
             print_volume_dry_run(engine, surface);
+            write_volume_stamp(engine);
         }
         return Ok(());
     }
@@ -1121,6 +1151,75 @@ fn remove_volume(engine: &Engine, surface: &VolumeSurface, name: &str) -> StepOu
 /// and nothing run. It exists for the hand-off where an agent or script does everything
 /// up to the deletion and a person runs that command at a terminal; the command is
 /// devp's own rather than the engine's so the picks land on `devp stats`.
+/// Where this engine's volume dry-run stamp lives, when the config dir is resolvable.
+fn volume_stamp_path(engine: &Engine) -> Option<PathBuf> {
+    crate::config::Registry::config_dir().ok().map(|dir| {
+        dir.join(format!(
+            "{}{}{}",
+            constants::VOLUME_PICK_STAMP_PREFIX,
+            engine.name.to_ascii_lowercase(),
+            constants::VOLUME_PICK_STAMP_SUFFIX
+        ))
+    })
+}
+
+/// Seconds since the Unix epoch, or zero on a clock set before 1970 — which reads as
+/// "no dry run is fresh", the safe direction.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Whether the stamp at `path` was written within the pick window before `now`.
+///
+/// A stamp from the future counts as stale, not fresh: a clock that jumped backwards
+/// must not leave a permanently armed pick list behind it.
+fn volume_stamp_fresh_at(path: &std::path::Path, now: u64) -> bool {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(stamped) = contents.trim().parse::<u64>() else {
+        return false;
+    };
+    stamped <= now && now - stamped <= constants::VOLUME_PICK_WINDOW_SECS
+}
+
+fn volume_stamp_fresh(engine: &Engine) -> bool {
+    volume_stamp_path(engine).is_some_and(|path| volume_stamp_fresh_at(&path, unix_now()))
+}
+
+/// Record that a volume dry run for `engine` just finished, arming the real pick list.
+///
+/// Same pid-suffixed temp-then-rename dance as the registry save: a torn stamp would
+/// parse as garbage and read as stale, which only costs one more dry run, but the
+/// pattern is cheap and this file lives in the same directory.
+fn write_volume_stamp_at(path: &std::path::Path, now: u64) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp_path = path.with_extension(format!("stamp.{}.tmp", std::process::id()));
+    std::fs::write(&tmp_path, now.to_string())?;
+    std::fs::rename(&tmp_path, path)
+}
+
+fn write_volume_stamp(engine: &Engine) {
+    let Some(path) = volume_stamp_path(engine) else {
+        return;
+    };
+    // Surfaced rather than swallowed: if the stamp cannot land, the promise "run the
+    // same line again within ten minutes" is not going to hold, and the person should
+    // hear that now instead of meeting another dry run.
+    if let Err(why) = write_volume_stamp_at(&path, unix_now()) {
+        output::print_info(&format!(
+            "Could not record this dry run at {}: {why}. The real `--include-volumes` \
+             run will redirect here again until it can be recorded.",
+            path.display()
+        ));
+    }
+}
+
 fn print_volume_dry_run(engine: &Engine, surface: &VolumeSurface) {
     match unused_volumes(engine, surface) {
         Err(why) => output::print_info(&format!(
@@ -1150,10 +1249,12 @@ fn print_volume_dry_run(engine: &Engine, surface: &VolumeSurface) {
                 "  ",
                 &format!(
                     "Nothing was deleted. To delete any of them, a person runs the \
-                     line below at their own terminal and types the picks at the \
-                     list; each pick is one unforced `volume rm`, and what it frees \
-                     is measured and counted on `devp stats`, which a raw `{} volume \
-                     rm` typed by hand would not be.",
+                     line below at their own terminal within the next {} minutes and \
+                     types the picks at the list; each pick is one unforced `volume \
+                     rm`, and what it frees is measured and counted on `devp stats`, \
+                     which a raw `{} volume rm` typed by hand would not be. After \
+                     that the line shows this list again first.",
+                    constants::VOLUME_PICK_WINDOW_SECS / 60,
                     engine.binary
                 ),
             );
@@ -1562,6 +1663,59 @@ mod tests {
                 engine.name
             );
         }
+    }
+
+    #[test]
+    fn a_missing_stamp_never_arms_the_pick_list() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("volume-pick-docker.stamp");
+        assert!(!volume_stamp_fresh_at(&path, 1_000_000));
+    }
+
+    #[test]
+    fn a_fresh_stamp_arms_it_and_an_expired_one_does_not() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("volume-pick-docker.stamp");
+        let now = 1_000_000;
+        write_volume_stamp_at(&path, now).unwrap();
+        assert!(volume_stamp_fresh_at(&path, now));
+        assert!(volume_stamp_fresh_at(
+            &path,
+            now + constants::VOLUME_PICK_WINDOW_SECS
+        ));
+        assert!(!volume_stamp_fresh_at(
+            &path,
+            now + constants::VOLUME_PICK_WINDOW_SECS + 1
+        ));
+    }
+
+    #[test]
+    fn a_stamp_from_the_future_reads_as_stale() {
+        // A clock that jumped backwards must not leave a permanently armed pick list.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("volume-pick-docker.stamp");
+        write_volume_stamp_at(&path, 2_000_000).unwrap();
+        assert!(!volume_stamp_fresh_at(&path, 1_000_000));
+    }
+
+    #[test]
+    fn a_garbled_stamp_reads_as_stale() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("volume-pick-docker.stamp");
+        std::fs::write(&path, "not a number").unwrap();
+        assert!(!volume_stamp_fresh_at(&path, 1_000_000));
+    }
+
+    #[test]
+    fn each_engine_stamps_its_own_file() {
+        // A dry run for podman must not arm docker's pick list.
+        let docker = ENGINES.iter().find(|e| e.name == "docker").unwrap();
+        let podman = ENGINES.iter().find(|e| e.name == "podman").unwrap();
+        let (Some(a), Some(b)) = (volume_stamp_path(docker), volume_stamp_path(podman)) else {
+            // No resolvable config dir on this machine; nothing to compare.
+            return;
+        };
+        assert_ne!(a, b);
     }
 
     #[test]
