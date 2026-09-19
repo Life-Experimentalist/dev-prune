@@ -121,11 +121,11 @@ deleted before anything is; a targeted `devp run <path>` lists every directory w
 its size and the total, notes that `devp restore` brings it back, and asks. Either \
 way `-y` skips the confirmation, `--dry-run` reports what a pass would do without \
 deleting anything at all, and without a terminal the run exits with an error naming \
-`--yes` rather than waiting on a prompt. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, uv, \
+`--yes` rather than waiting on a prompt. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, deno, uv, \
 poetry, pdm, pipenv, venv, cargo, go, composer, bundler, cocoapods, mix, mix_build, \
-gradle, maven, swift, terraform, dart, vcpkg, cmake_build — an unknown name is an \
+gradle, maven, swift, terraform, dart, vcpkg, cmake_build, dotnet_build, godot — an unknown name is an \
 error listing the valid ones, not a silently empty pass. cargo, gradle, maven, \
-swift, dart, mix_build, vcpkg and cmake_build are opt-in (`devp config set \
+swift, dart, mix_build, vcpkg, cmake_build, dotnet_build and godot are opt-in (`devp config set \
 enable_cargo true`) and idle-gated separately by `build_idle_days`, because a \
 build directory takes far longer to get back than a dependency directory. \
 `devp config wizard` switches them on by language, and can give any one adapter \

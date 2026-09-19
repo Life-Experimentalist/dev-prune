@@ -147,6 +147,11 @@ pub struct Settings {
     /// again. See [`crate::adapters::dotnet_build`].
     #[serde(default)]
     pub enable_dotnet_build: bool,
+    /// Whether the opt-in Godot adapter is active. Off by default: `.godot/` and
+    /// `.import/` are the editor's imported-resource caches, and they come back by the
+    /// editor re-importing every asset. See [`crate::adapters::godot`].
+    #[serde(default)]
+    pub enable_godot: bool,
     /// Idle days required before *build-tree* directories — everything the opt-in
     /// adapters claim — are pruned.
     ///
@@ -348,6 +353,7 @@ impl Default for Settings {
             enable_vcpkg: false,
             enable_cmake_build: false,
             enable_dotnet_build: false,
+            enable_godot: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: constants::DEFAULT_AUTO_UPDATE,
             version_lock: constants::DEFAULT_VERSION_LOCK,

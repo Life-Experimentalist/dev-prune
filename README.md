@@ -28,7 +28,7 @@ gigabytes hostage for a build you are not running.
 
 `dev-prune` finds those directories across every Git repository you register, and deletes
 them — but only after proving the exact command that puts them back would succeed. It
-knows twenty-five package managers, not just the obvious four: Composer, Bundler, Mix,
+knows twenty-six package managers, not just the obvious four: Composer, Bundler, Mix,
 CocoaPods and Terraform are as first-class as npm and pip. It is one Rust program,
 installs its own background schedule, and answers to two names you type — `dev-prune` and
 `devp` — alongside a third, windowless build, `devpw`, that exists only so the Windows
@@ -629,11 +629,11 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
 
-The nine build-tool adapters ship **disabled**, because a build tree is regenerated
+The ten build-tool adapters ship **disabled**, because a build tree is regenerated
 by recompiling, not downloading — it costs more to get back. `devp config set
 enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` /
 `enable_dart true` / `enable_mix_build true` / `enable_vcpkg true` /
-`enable_cmake_build true` / `enable_dotnet_build true` switches them on, and their candidates wait for
+`enable_cmake_build true` / `enable_dotnet_build true` / `enable_godot true` switches them on, and their candidates wait for
 `build_idle_days` (45 by default), applied as the *maximum* of it and `idle_days` — the
 build-tool gate only ever makes pruning later, never earlier.
 
