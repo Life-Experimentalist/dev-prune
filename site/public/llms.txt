@@ -338,7 +338,13 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   (docker and podman only) then lists those unused volumes by name after the steps run;
   the user types the row numbers to delete, and each pick is one unforced `volume rm`.
   The flag refuses `--yes`, `--json` and a piped stdin, all exit 2, so nothing
-  unattended can reach it, and dev-prune never runs `volume prune` either way. On the
+  unattended can reach it, and dev-prune never runs `volume prune` either way. The one
+  unattended spelling is `--include-volumes --dry-run`, which deletes nothing: it lists
+  the unused volumes by name and size and prints the `devp caches clear <engine>
+  --include-volumes` line for a person to paste at a terminal, so an agent or script
+  prepares the hand-off and the person does the picking. The printed command is devp's
+  own rather than a raw `volume rm`, because picks made through devp are counted on
+  `devp stats` and a raw engine command is not. On the
   other engines the flag is exit 2 pointing at `<engine> volume ls`.
   Freed space is `system df` before minus after,
   never the sum of what the commands claimed: layers are shared, so those add up to more
@@ -540,7 +546,9 @@ with a `git clone` of possibly-untrusted code.
   `devp caches clear <engine> --include-volumes` (docker and podman): unused volumes
   listed by name, the numbers typed by a person at a terminal, one unforced `volume rm`
   per pick. That flag refuses `--yes`, `--json` and a piped stdin, so no script,
-  scheduler or agent can reach it.
+  scheduler or agent can reach the deletion; `--include-volumes --dry-run` is the
+  prepared hand-off, listing the volumes and printing that same devp command for the
+  person to paste, so the picks land on `devp stats`.
 - Never empties Maven's local repository at all. `~/.m2/repository` holds artifacts
   `mvn install:install-file` put there that no remote can hand back, so dev-prune sizes
   it, prints the command, and leaves running it to you.

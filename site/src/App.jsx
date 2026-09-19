@@ -2877,7 +2877,12 @@ Notes you should rely on, not work around:
                 numbers of the ones to delete, and each pick is one unforced{" "}
                 <code>volume rm</code>. The flag refuses <code>--yes</code>,{" "}
                 <code>--json</code> and a piped stdin, so only a person at a
-                terminal can use it. Nothing on a schedule goes near any of it. The figures
+                terminal can use it. With <code>--dry-run</code> it deletes
+                nothing and instead lists the unused volumes with the devp
+                command to paste, so an agent can prepare everything and hand
+                the final command to a person; picks made through devp are
+                counted on <code>devp stats</code>, which a raw{" "}
+                <code>volume rm</code> would not be. Nothing on a schedule goes near any of it. The figures
                 come from the engine's own{" "}
                 <code>system df</code> rather than a look at the disk, because on
                 Docker Desktop and Podman the store lives inside a VM disk image

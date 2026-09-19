@@ -464,7 +464,12 @@ copy, so a volume goes only when someone names it. That naming has a spelling no
 `devp caches clear docker --include-volumes` (docker and podman) lists the unused
 volumes by name after the narrow steps run and you type the numbers of the ones to
 delete, each pick one unforced `volume rm`. It refuses `--yes`, `--json` and a piped
-stdin, so no script or scheduler can reach it. Without the flag, the estimate still
+stdin, so no script or scheduler can reach it. The one unattended spelling is
+`--include-volumes --dry-run`, which deletes nothing: it lists the unused volumes by
+name with the command to paste, so an agent can prepare everything and a person runs
+the final command at a terminal, and what the picks free is then counted on
+`devp stats`, which a `volume rm` typed straight at the engine would not be. Without
+the flag, the estimate still
 says how much unused-volume space is being left alone rather than folding it into a
 number these commands cannot deliver.
 

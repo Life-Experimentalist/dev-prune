@@ -1761,6 +1761,9 @@ fn include_volumes_refuses_every_unattended_way_in() {
         (Some("--json"), "--json"),
         (Some("--yes"), "--yes"),
         (None, "terminal"),
+        // The refusal also has to name the way out: `--dry-run` is how an agent or a
+        // script prepares the hand-off a person then runs at a terminal.
+        (None, "--dry-run"),
     ] {
         let mut cmd = devp(&config);
         cmd.args(["caches", "clear", "docker", "--include-volumes"]);
