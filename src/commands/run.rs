@@ -712,11 +712,14 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
 
     // A dry run stops here in both output modes: sizes are known, nothing was verified.
     if args.dry_run {
+        let recommendations = opt_in_recommendations(&registry, &except);
         if args.json {
-            json::emit(&json::run_document(
+            let mut doc = json::run_document(
                 &[candidates, blocked, left_alone, missing, orphaned].concat(),
                 true,
-            ))?;
+            );
+            json::attach_recommendations(&mut doc, &recommendations);
+            json::emit(&doc)?;
             return Ok(());
         }
         if candidates.is_empty()
@@ -726,6 +729,10 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             && orphaned.is_empty()
         {
             output::print_info(i18n::t("run.nothing"));
+            // The one moment this hint matters most: a machine full of Rust or Unity
+            // reads "nothing found" precisely because the adapter that would find it
+            // is off.
+            report_recommendations(&recommendations);
             return Ok(());
         }
         if !candidates.is_empty() {
@@ -746,6 +753,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         report_left_alone(&left_alone);
         report_missing(&missing);
         report_orphaned(&orphaned);
+        report_recommendations(&recommendations);
         return Ok(());
     }
 
@@ -1369,6 +1377,79 @@ fn report_orphaned(orphaned: &[PruneResult]) {
         "  Or keep {} tracked:  git init <path> makes it a repository again",
         output::plural(n, "it", "them")
     ));
+}
+
+/// Count, per dormant opt-in adapter, the registered repositories that use it.
+///
+/// A disabled opt-in adapter never reaches the engine, so the pass above cannot have
+/// produced a row for it; this is a second, read-only walk asking the one question that
+/// pass could not. It skips exactly what the pass skips (disabled entries, missing
+/// paths, the `--except` list, `ignore.devprune.json`, a per-repo `ignore`) and resolves
+/// depth the same way, so a repository the user has opted out never generates a nag.
+fn opt_in_recommendations(registry: &Registry, except: &[String]) -> Vec<(String, usize)> {
+    let mut counts: std::collections::BTreeMap<&'static str, usize> =
+        std::collections::BTreeMap::new();
+    for (path, entry) in &registry.repositories {
+        if !entry.enabled
+            || !path.exists()
+            || is_excepted(path, except)
+            || path.join(constants::DEVPRUNE_IGNORE_FILE).exists()
+        {
+            continue;
+        }
+        let per_repo = match crate::config::PerRepoConfig::load_with_diagnostics(path) {
+            Ok(cfg) => cfg,
+            // The pass refuses an unreadable config; a hint must not read past it.
+            Err(_) => continue,
+        };
+        if per_repo.as_ref().is_some_and(|c| c.ignore) {
+            continue;
+        }
+        let depth = crate::workspace::clamp_depth(
+            per_repo
+                .as_ref()
+                .and_then(|c| c.scan_depth)
+                .unwrap_or(registry.settings.scan_depth),
+        );
+        let mut here: std::collections::BTreeSet<&'static str> = std::collections::BTreeSet::new();
+        for project in crate::workspace::discover_dormant_opt_in_to_depth(path, depth) {
+            for adapter in &project.adapters {
+                here.insert(adapter.name());
+            }
+        }
+        for name in here {
+            *counts.entry(name).or_insert(0) += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .map(|(name, n)| (name.to_string(), n))
+        .collect()
+}
+
+/// Close the dry-run report with what being switched off is hiding.
+///
+/// One line per adapter with the exact command, because the alternative is a user whose
+/// dry run says "nothing found" on a disk full of `target/` directories and no clue
+/// that a single setting is why.
+fn report_recommendations(recommendations: &[(String, usize)]) {
+    if recommendations.is_empty() {
+        return;
+    }
+    println!();
+    output::print_header("Detected, but switched off");
+    for (adapter, repos) in recommendations {
+        output::print_info(&format!(
+            "  {adapter}: {repos} {}. Enable with:  devp config set enable_{adapter} true",
+            output::plural(*repos, "repository", "repositories")
+        ));
+    }
+    output::print_wrapped(
+        "  ",
+        "These adapters claim build trees, which come back by recompiling rather than \
+         re-downloading, so they ship disabled until you opt in. `devp config` shows \
+         the same switches in a full-screen picker.",
+    );
 }
 
 /// Turn a non-empty blocked list into the process's failure exit.

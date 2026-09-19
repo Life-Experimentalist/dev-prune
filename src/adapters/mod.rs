@@ -467,6 +467,25 @@ pub fn detect_all_adapters(project_path: &Path) -> Vec<Box<dyn PackageManager>> 
     detect_adapters_with(project_path, &opt_in, &[])
 }
 
+/// The opt-in adapters this directory uses that no switch has turned on.
+///
+/// A disabled opt-in adapter is invisible to the whole pass: it produces no bloat row,
+/// so nothing downstream can say "cargo would have claimed a `target/` here". The dry-run
+/// report calls this to say it once, at the moment the user is already deciding what the
+/// next pass should do. Adapters named in `disabled_adapters` are excluded: that list is
+/// an explicit "no", and recommending against it is nagging.
+pub fn detect_dormant_opt_in(project_path: &Path) -> Vec<Box<dyn PackageManager>> {
+    let enabled = opt_in_enabled();
+    let disabled = user_disabled();
+    get_all_adapters()
+        .into_iter()
+        .filter(|a| a.opt_in())
+        .filter(|a| !enabled.iter().any(|n| n == a.name()))
+        .filter(|a| !disabled.iter().any(|n| n == a.name()))
+        .filter(|a| a.detect(project_path))
+        .collect()
+}
+
 /// The body of [`detect_adapters`], with the two user-configured lists passed in.
 ///
 /// Split out so the tests can state which opt-in adapters are on instead of inheriting

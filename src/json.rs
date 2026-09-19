@@ -183,6 +183,32 @@ pub fn run_document(results: &[PruneResult], dry_run: bool) -> Value {
     })
 }
 
+/// Add the dry run's `recommendations` key: opt-in adapters detected but switched off.
+///
+/// Additive, and only on the bulk `run --dry-run` document, so every existing consumer
+/// of the run schema keeps parsing untouched. Left out entirely when there is nothing
+/// to recommend: an empty array would make "no key" and "empty list" two spellings of
+/// the same fact.
+pub fn attach_recommendations(doc: &mut Value, recommendations: &[(String, usize)]) {
+    if recommendations.is_empty() {
+        return;
+    }
+    if let Some(obj) = doc.as_object_mut() {
+        let entries: Vec<Value> = recommendations
+            .iter()
+            .map(|(adapter, repositories)| {
+                json!({
+                    "adapter": adapter,
+                    "setting": format!("enable_{adapter}"),
+                    "command": format!("devp config set enable_{adapter} true"),
+                    "repositories": repositories,
+                })
+            })
+            .collect();
+        obj.insert("recommendations".to_string(), Value::Array(entries));
+    }
+}
+
 /// The stable machine name for why a repository is or is not a candidate.
 fn reason_tag(reason: &SkipReason) -> &'static str {
     match reason {

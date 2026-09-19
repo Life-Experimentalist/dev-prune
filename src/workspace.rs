@@ -108,6 +108,15 @@ pub fn discover_all_to_depth(repo_root: &Path, depth: usize) -> Vec<Project> {
     discover_with(repo_root, depth, adapters::detect_all_adapters)
 }
 
+/// [`discover_to_depth`], finding only the opt-in adapters nothing has switched on.
+///
+/// The dry-run recommendation list is the one caller: it needs the same walk the prune
+/// pass made, but answering "what did being switched off hide" instead of "what would a
+/// pass touch".
+pub fn discover_dormant_opt_in_to_depth(repo_root: &Path, depth: usize) -> Vec<Project> {
+    discover_with(repo_root, depth, adapters::detect_dormant_opt_in)
+}
+
 /// The walk both discovery functions share, parameterised only by which detector runs
 /// at each directory.
 fn discover_with(
