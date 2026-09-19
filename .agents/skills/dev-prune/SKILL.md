@@ -109,7 +109,10 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
   `devp caches clear docker --include-volumes --dry-run`: it deletes nothing, lists the
   unused volumes by name and size, and prints the exact command above for the user to
   paste at their own terminal. That is the whole hand-off: prepare the list, relay it,
-  hand over the command, stop. Do not translate a pick into `docker volume rm` yourself:
+  hand over the command, stop. The hand-off is also timed: the real command only works
+  within ten minutes of a completed dry run for that engine, and typed cold it runs the
+  dry run instead and says so, so tell the user to paste the line while the list is
+  fresh. Do not translate a pick into `docker volume rm` yourself:
   a raw engine command is never measured, while a pick made through devp is counted on
   `devp stats`, which is the reason the flag exists inside devp at all. The dry-run list
   is drawn before the narrow steps run, so the real run can offer *more* volumes than

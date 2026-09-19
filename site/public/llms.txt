@@ -344,7 +344,10 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   --include-volumes` line for a person to paste at a terminal, so an agent or script
   prepares the hand-off and the person does the picking. The printed command is devp's
   own rather than a raw `volume rm`, because picks made through devp are counted on
-  `devp stats` and a raw engine command is not. On the
+  `devp stats` and a raw engine command is not. The pick list arms only within ten
+  minutes of a completed dry run for that engine: typed cold, the real command runs the
+  dry run instead and says so, and the same line typed again within ten minutes reaches
+  the picking. On the
   other engines the flag is exit 2 pointing at `<engine> volume ls`.
   Freed space is `system df` before minus after,
   never the sum of what the commands claimed: layers are shared, so those add up to more

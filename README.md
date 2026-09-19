@@ -468,7 +468,10 @@ stdin, so no script or scheduler can reach it. The one unattended spelling is
 `--include-volumes --dry-run`, which deletes nothing: it lists the unused volumes by
 name with the command to paste, so an agent can prepare everything and a person runs
 the final command at a terminal, and what the picks free is then counted on
-`devp stats`, which a `volume rm` typed straight at the engine would not be. Without
+`devp stats`, which a `volume rm` typed straight at the engine would not be. The pick
+list arms only within ten minutes of a completed dry run for that engine: typed cold,
+the real command runs the dry run instead and says so, and the same line typed again
+within ten minutes reaches the picking. Without
 the flag, the estimate still
 says how much unused-volume space is being left alone rather than folding it into a
 number these commands cannot deliver.
