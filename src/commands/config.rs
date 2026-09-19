@@ -307,6 +307,45 @@ const RECOMMENDED: &[Recommendation] = &[
         taken: None,
     },
     Recommendation {
+        key: "enable_unity",
+        label: "Unity imported-asset database",
+        why: "`Library/` holds the editor's imported copy of every asset and is routinely \
+              larger than the assets themselves; the editor rebuilds it on the next open, \
+              and a project the editor has open right now is refused outright.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_unreal",
+        label: "Unreal derived data and intermediates",
+        why: "`DerivedDataCache/` and `Intermediate/` are compiled shaders and build \
+              output the editor and UnrealBuildTool regenerate; `Saved/` and `Binaries/` \
+              are never touched.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_defold",
+        label: "Defold build output",
+        why: "`build/` beside `game.project` is the compiled project, and the editor or \
+              bob rebuilds it in full on the next build.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_cocos",
+        label: "Cocos Creator imported-asset caches",
+        why: "`library/` and `temp/` are the editor's import caches, rebuilt from the \
+              committed sources on the next open; a plain Node `package.json` without \
+              Creator's own keys is never claimed.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
         key: "cache_max_gb",
         label: "Cache size ceilings",
         why: "Every other suggestion here is about one project's folders. This one is about the \
@@ -745,6 +784,62 @@ const SETTINGS: &[Setting] = &[
         get: |s| s.enable_godot.to_string(),
         set: |s, v| {
             s.enable_godot = parse_bool("enable_godot", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_unity",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Unity adapter (Library/ and Temp/ come back by re-importing).",
+        plain: "Clean Unity's imported-asset database too. The editor rebuilds it from your \
+                assets the next time it opens the project, and an open editor is refused.",
+        get: |s| s.enable_unity.to_string(),
+        set: |s, v| {
+            s.enable_unity = parse_bool("enable_unity", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_unreal",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Unreal adapter (DerivedDataCache/ and Intermediate/ come back by recompiling).",
+        plain: "Clean Unreal's derived data and intermediates too. Saved/ and Binaries/ are \
+                never touched.",
+        get: |s| s.enable_unreal.to_string(),
+        set: |s, v| {
+            s.enable_unreal = parse_bool("enable_unreal", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_defold",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Defold adapter (build/ comes back on the next build).",
+        plain: "Clean Defold's build output too. The editor or bob rebuilds it in full on \
+                the next build.",
+        get: |s| s.enable_defold.to_string(),
+        set: |s, v| {
+            s.enable_defold = parse_bool("enable_defold", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_cocos",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Cocos Creator adapter (library/ and temp/ come back by re-importing).",
+        plain: "Clean Cocos Creator's imported-asset caches too. The editor rebuilds them \
+                from your assets the next time it opens the project.",
+        get: |s| s.enable_cocos.to_string(),
+        set: |s, v| {
+            s.enable_cocos = parse_bool("enable_cocos", v)?;
             Ok(())
         },
     },

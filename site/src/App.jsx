@@ -670,18 +670,99 @@ const ECOSYSTEMS = [
           </>
         ),
       },
+      {
+        name: "unity",
+        detect: <code>ProjectSettings/ProjectVersion.txt</code>,
+        deletes: (
+          <>
+            <code>Library</code>, <code>Temp</code>
+          </>
+        ),
+        verify: (
+          <>
+            <code>ProjectVersion.txt</code> carries an{" "}
+            <code>m_EditorVersion:</code> line, and{" "}
+            <code>Temp/UnityLockfile</code> is absent (an open editor is
+            refused, not raced)
+          </>
+        ),
+        restore: <>editor re-imports on next open</>,
+      },
+      {
+        name: "unreal",
+        detect: (
+          <>
+            any <code>*.uproject</code> file
+          </>
+        ),
+        deletes: (
+          <>
+            <code>DerivedDataCache</code>, <code>Intermediate</code> (never{" "}
+            <code>Saved</code>, <code>Binaries</code> or <code>Content</code>)
+          </>
+        ),
+        verify: (
+          <>
+            the <code>.uproject</code> parses as JSON with a{" "}
+            <code>&quot;FileVersion&quot;</code> key
+          </>
+        ),
+        restore: (
+          <>editor rebuilds the DDC on next open; regenerate project files</>
+        ),
+      },
+      {
+        name: "defold",
+        detect: <code>game.project</code>,
+        deletes: (
+          <>
+            <code>build</code> (never <code>.internal</code> or{" "}
+            <code>assets</code>)
+          </>
+        ),
+        verify: (
+          <>
+            <code>game.project</code> carries a <code>[project]</code> section
+          </>
+        ),
+        restore: <>next editor build recompiles</>,
+      },
+      {
+        name: "cocos",
+        detect: (
+          <>
+            <code>package.json</code> naming Cocos Creator
+          </>
+        ),
+        deletes: (
+          <>
+            <code>library</code>, <code>temp</code> (never <code>build</code>,
+            the exported output)
+          </>
+        ),
+        verify: (
+          <>
+            the <code>package.json</code> has a <code>&quot;creator&quot;</code>{" "}
+            key or a <code>cocos-creator</code> engine line, so a plain Node
+            project is never touched
+          </>
+        ),
+        restore: <>Creator re-imports on next open</>,
+      },
     ],
     tieBreak: (
       <>
         <strong>Off until you switch them on.</strong> A build directory takes
         far longer to get back than a dependency directory — a full recompile,
-        not a download — so these nine, and Cargo above, ship disabled and
+        not a download — so these thirteen, and Cargo above, ship disabled and
         invisible. <code>devp config set enable_gradle true</code> /{" "}
         <code>enable_maven true</code> / <code>enable_swift true</code> /{" "}
         <code>enable_dart true</code> / <code>enable_mix_build true</code> /{" "}
         <code>enable_vcpkg true</code> / <code>enable_cmake_build true</code> /{" "}
-        <code>enable_dotnet_build true</code> /{" "}
-        <code>enable_godot true</code> turns them on, and their candidates wait
+        <code>enable_dotnet_build true</code> / <code>enable_godot true</code> /{" "}
+        <code>enable_unity true</code> / <code>enable_unreal true</code> /{" "}
+        <code>enable_defold true</code> /{" "}
+        <code>enable_cocos true</code> turns them on, and their candidates wait
         for <code>build_idle_days</code> (45 by default), applied as the{" "}
         <em>maximum</em> of it and <code>idle_days</code> — the build-tool gate
         can only ever make pruning later, never earlier. One adapter can be made
@@ -1135,7 +1216,7 @@ Notes you should rely on, not work around:
                 touched in a while and deletes what their package managers can
                 rebuild — <code>node_modules</code>, <code>.venv</code>,{" "}
                 <code>target</code>, <code>vendor</code> and the rest, across
-                twenty-six managers from npm and pip to Composer, Bundler,
+                thirty managers from npm and pip to Composer, Bundler,
                 Mix, CocoaPods and Terraform. Nothing is deleted until the
                 package manager itself confirms a lockfile can restore it.
                 Verification is not a flag you can turn off.
@@ -1835,7 +1916,7 @@ Notes you should rely on, not work around:
           <div className="container">
             <div className="section-header">
               <h2 className="section-title">
-                Twenty-six managers.{" "}
+                Thirty managers.{" "}
                 <span className="gradient-text">
                   Any number per repository.
                 </span>
@@ -1884,8 +1965,8 @@ Notes you should rely on, not work around:
 
             <div className="info-card eco-contribute">
               <h3>
-                <Puzzle size={18} /> Twenty-seven would be better than
-                twenty-six
+                <Puzzle size={18} /> Thirty-one would be better than
+                thirty
               </h3>
               <p>
                 Adding a manager is deliberately small: implement one{" "}
@@ -2806,7 +2887,7 @@ Notes you should rely on, not work around:
                 the exclusion still wins and the declaration then never runs
                 — <code>devp doctor</code> says so rather than letting it pass
                 quietly. The
-                ten exceptions are opt-in and say so —{" "}
+                fourteen exceptions are opt-in and say so —{" "}
                 <code>devp config set enable_cargo true</code> (
                 <code>target/</code>), <code>enable_gradle</code> (
                 <code>build/</code>, <code>.gradle/</code>),{" "}
@@ -2819,9 +2900,17 @@ Notes you should rely on, not work around:
                 <code>CMakeCache.txt</code> that names sources in this
                 repository), <code>enable_dotnet_build</code> (
                 <code>bin/</code>+<code>obj/</code>, proven by{" "}
-                <code>project.assets.json</code>) and{" "}
+                <code>project.assets.json</code>),{" "}
                 <code>enable_godot</code> (<code>.godot/</code>, the
-                editor&apos;s import cache) — whose
+                editor&apos;s import cache),{" "}
+                <code>enable_unity</code> (<code>Library/</code>+
+                <code>Temp/</code>, refused while the editor holds{" "}
+                <code>Temp/UnityLockfile</code>),{" "}
+                <code>enable_unreal</code> (<code>DerivedDataCache/</code>+
+                <code>Intermediate/</code>), <code>enable_defold</code> (
+                <code>build/</code>) and <code>enable_cocos</code> (
+                <code>library/</code>+<code>temp/</code>, only when the{" "}
+                <code>package.json</code> names Cocos Creator) — whose
                 claim is rebuild-from-source rather than
                 reinstall-from-lockfile, which is why they ship off and wait an
                 extra <code>build_idle_days</code> (45) before they touch

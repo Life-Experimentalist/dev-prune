@@ -152,6 +152,26 @@ pub struct Settings {
     /// editor re-importing every asset. See [`crate::adapters::godot`].
     #[serde(default)]
     pub enable_godot: bool,
+    /// Whether the opt-in Unity adapter is active. Off by default: `Library/` is the
+    /// editor's imported-asset database, and it comes back by the editor re-importing
+    /// every asset on the next open. See [`crate::adapters::unity`].
+    #[serde(default)]
+    pub enable_unity: bool,
+    /// Whether the opt-in Unreal Engine adapter is active. Off by default:
+    /// `DerivedDataCache/` and `Intermediate/` are compiled shaders and build output,
+    /// and they come back by recompiling. See [`crate::adapters::unreal`].
+    #[serde(default)]
+    pub enable_unreal: bool,
+    /// Whether the opt-in Defold adapter is active. Off by default: `build/` is the
+    /// compiled project, and it comes back by building it again. See
+    /// [`crate::adapters::defold`].
+    #[serde(default)]
+    pub enable_defold: bool,
+    /// Whether the opt-in Cocos Creator adapter is active. Off by default: `library/`
+    /// and `temp/` are the editor's imported-asset caches, and they come back by the
+    /// editor re-importing every asset. See [`crate::adapters::cocos`].
+    #[serde(default)]
+    pub enable_cocos: bool,
     /// Idle days required before *build-tree* directories — everything the opt-in
     /// adapters claim — are pruned.
     ///
@@ -354,6 +374,10 @@ impl Default for Settings {
             enable_cmake_build: false,
             enable_dotnet_build: false,
             enable_godot: false,
+            enable_unity: false,
+            enable_unreal: false,
+            enable_defold: false,
+            enable_cocos: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: constants::DEFAULT_AUTO_UPDATE,
             version_lock: constants::DEFAULT_VERSION_LOCK,

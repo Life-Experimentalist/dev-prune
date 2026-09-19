@@ -21,8 +21,10 @@ pub mod bundler;
 pub mod cargo_adapter;
 pub mod cmake_build;
 pub mod cocoapods;
+pub mod cocos;
 pub mod composer;
 pub mod dart;
+pub mod defold;
 pub mod deno;
 pub mod dotnet_build;
 pub mod go;
@@ -38,6 +40,8 @@ pub mod pnpm;
 pub mod poetry;
 pub mod swift;
 pub mod terraform;
+pub mod unity;
+pub mod unreal;
 pub mod uv;
 pub mod vcpkg;
 pub mod venv;
@@ -184,7 +188,8 @@ pub trait PackageManager: Send + Sync {
     /// Whether this adapter is inert until the user enables it in settings.
     ///
     /// Adapters whose directory is compiler output answer `true` — cargo, gradle,
-    /// maven, swift, dart, mix_build, vcpkg, cmake_build, dotnet_build and godot.
+    /// maven, swift, dart, mix_build, vcpkg, cmake_build, dotnet_build, godot,
+    /// unity, unreal, defold and cocos.
     /// Theirs come back by
     /// recompiling the project, which costs far
     /// more than a dependency reinstall, so nobody should find them deleted without
@@ -254,6 +259,10 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(cmake_build::CmakeBuild),
         Box::new(dotnet_build::DotnetBuild),
         Box::new(godot::Godot),
+        Box::new(unity::Unity),
+        Box::new(unreal::Unreal),
+        Box::new(defold::Defold),
+        Box::new(cocos::Cocos),
     ]
 }
 
@@ -299,6 +308,18 @@ fn opt_in_enabled() -> &'static [String] {
                 }
                 if r.settings.enable_godot {
                     names.push("godot".to_string());
+                }
+                if r.settings.enable_unity {
+                    names.push("unity".to_string());
+                }
+                if r.settings.enable_unreal {
+                    names.push("unreal".to_string());
+                }
+                if r.settings.enable_defold {
+                    names.push("defold".to_string());
+                }
+                if r.settings.enable_cocos {
+                    names.push("cocos".to_string());
                 }
                 names
             })
@@ -359,7 +380,10 @@ pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("Dart & Flutter", &["dart"]),
     ("C & C++", &["vcpkg", "cmake_build"]),
     (".NET", &["dotnet_build"]),
-    ("Godot", &["godot"]),
+    (
+        "Game engines",
+        &["godot", "unity", "unreal", "defold", "cocos"],
+    ),
 ];
 
 /// The language group `name` belongs to, or `"Other"` if it somehow belongs to none.
@@ -1314,7 +1338,7 @@ pub(crate) fn python_runtime_available(tag: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-const NO_RESTORE_BINARY: [&str; 9] = [
+const NO_RESTORE_BINARY: [&str; 13] = [
     "venv",
     "gradle",
     "maven",
@@ -1324,6 +1348,10 @@ const NO_RESTORE_BINARY: [&str; 9] = [
     "cmake_build",
     "dotnet_build",
     "godot",
+    "unity",
+    "unreal",
+    "defold",
+    "cocos",
 ];
 
 /// Adapters whose executable is not called what the adapter is called.
@@ -1496,13 +1524,17 @@ mod tests {
             vec![
                 "cargo",
                 "cmake_build",
+                "cocos",
                 "dart",
+                "defold",
                 "dotnet_build",
                 "godot",
                 "gradle",
                 "maven",
                 "mix_build",
                 "swift",
+                "unity",
+                "unreal",
                 "vcpkg"
             ]
         );
