@@ -346,6 +346,45 @@ const RECOMMENDED: &[Recommendation] = &[
         taken: None,
     },
     Recommendation {
+        key: "enable_zig",
+        label: "Zig build caches and install output",
+        why: "`.zig-cache/` (or the older `zig-cache/`) and `zig-out/` are written only \
+              by `zig build` and come back in full on the next one; `build.zig` is \
+              checked for its `pub fn build` entry point first.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_stack",
+        label: "Haskell Stack build tree",
+        why: "`.stack-work/` is compiled output that `stack build` regenerates against \
+              the snapshot `stack.yaml` pins; a project file naming no snapshot is \
+              refused.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_cabal",
+        label: "Haskell Cabal build tree",
+        why: "`dist-newstyle/` is compiled output that `cabal build` regenerates from \
+              the packages `cabal.project` declares.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_sbt",
+        label: "sbt build trees",
+        why: "`target/` and `project/target/` beside `build.sbt` are compiled output \
+              that `sbt compile` regenerates; sub-project targets deeper in a \
+              multi-module build are left alone.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
         key: "cache_max_gb",
         label: "Cache size ceilings",
         why: "Every other suggestion here is about one project's folders. This one is about the \
@@ -840,6 +879,62 @@ const SETTINGS: &[Setting] = &[
         get: |s| s.enable_cocos.to_string(),
         set: |s, v| {
             s.enable_cocos = parse_bool("enable_cocos", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_zig",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Zig adapter (.zig-cache/, zig-cache/ and zig-out/ come back on the next build).",
+        plain: "Clean Zig's build caches and install output too. `zig build` writes all \
+                three directories back the next time it runs.",
+        get: |s| s.enable_zig.to_string(),
+        set: |s, v| {
+            s.enable_zig = parse_bool("enable_zig", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_stack",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Haskell Stack adapter (.stack-work/ comes back by recompiling).",
+        plain: "Clean Stack's build tree too. `stack build` recompiles it against the \
+                snapshot `stack.yaml` pins.",
+        get: |s| s.enable_stack.to_string(),
+        set: |s, v| {
+            s.enable_stack = parse_bool("enable_stack", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_cabal",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Haskell Cabal adapter (dist-newstyle/ comes back by recompiling).",
+        plain: "Clean Cabal's build tree too. `cabal build` recompiles it from the \
+                packages `cabal.project` declares.",
+        get: |s| s.enable_cabal.to_string(),
+        set: |s, v| {
+            s.enable_cabal = parse_bool("enable_cabal", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_sbt",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in sbt adapter (target/ and project/target/ come back by recompiling).",
+        plain: "Clean sbt's build trees too. `sbt compile` regenerates both the project's \
+                target/ and the build definition's project/target/.",
+        get: |s| s.enable_sbt.to_string(),
+        set: |s, v| {
+            s.enable_sbt = parse_bool("enable_sbt", v)?;
             Ok(())
         },
     },

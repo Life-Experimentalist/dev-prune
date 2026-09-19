@@ -172,7 +172,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   4. Pre-verifies required package manager binaries (`npm`, `pnpm`, `uv`, `cargo`, `go`, etc.).
   5. Calculates reclaimable disk space and launches interactive selection TUI (unless `-y` is passed).
   6. Enforces two-tier lockfile safety with configurable command timeout (`command_timeout_secs`).
-  7. Safely removes the directories each matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` and the rest — one set per package manager, thirty of them).
+  7. Safely removes the directories each matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` and the rest — one set per package manager, thirty-five of them).
 
   **A targeted run confirms first.** `devp run <path>` prunes that one repository
   without registering it — and before deleting anything it lists every directory that
@@ -205,10 +205,10 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   at a time.
 
   Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `deno`, `uv`, `venv`, `poetry`, `pdm`,
-  `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`, `terraform` —
-  plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg`, `cmake_build`,
-  `dotnet_build`, `godot`, `unity`, `unreal`, `defold` and `cocos`,
-  which are opt-in (see below). An unrecognised name is an error
+  `pipenv`, `pixi`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`,
+  `terraform` — plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg`,
+  `cmake_build`, `dotnet_build`, `godot`, `unity`, `unreal`, `defold`, `cocos`, `zig`,
+  `stack`, `cabal` and `sbt`, which are opt-in (see below). An unrecognised name is an error
   listing the valid ones rather than a silently empty pass, and `--only` and `--skip`
   cannot be combined. A name listed in `disabled_adapters` is gone from that set
   entirely, and `--only <that name>` prunes nothing.
@@ -221,6 +221,14 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `composer` declines `vendor/` outright when a `vendor/bundle` is inside it: deleting
   it would take gems with it under a proof that says nothing about them.
 
+  `pixi` claims the `.pixi/` environments beside a `pixi.toml`, a `pixi.lock`, or a
+  `pyproject.toml` carrying a `[tool.pixi` table. Verification reads `pixi.lock` and
+  nothing else: the file must carry its `version:` and record at least one conda or
+  PyPI package. `pixi lock --check` is deliberately not run, because it can re-solve
+  the environment over the network in the middle of a delete pass; a lockfile that
+  fails the read is refused with `pixi lock` named as the fix. Restore is
+  `pixi install`.
+
   `terraform` claims `.terraform/providers` and nothing else under `.terraform/`.
   The sibling directories are not bloat: `environment` records the selected workspace,
   and losing it silently returns you to `default` — the next `apply` then targets the
@@ -229,13 +237,15 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   about. Providers are the bulk anyway, and the lock file proves those exactly.
 
   **Cargo, Gradle, Maven, SwiftPM, Dart, Mix's build tree, vcpkg, CMake's build tree,
-  .NET's `bin/`+`obj/` and the game-engine caches (Godot, Unity, Unreal, Defold, Cocos
-  Creator) are opt-in adapters.** `devp config set enable_cargo true` / `enable_gradle true` /
+  .NET's `bin/`+`obj/`, the game-engine caches (Godot, Unity, Unreal, Defold, Cocos
+  Creator), Zig, Haskell's Stack and Cabal trees and sbt are opt-in adapters.**
+  `devp config set enable_cargo true` / `enable_gradle true` /
   `enable_maven true` / `enable_swift true` / `enable_dart true` /
   `enable_mix_build true` / `enable_vcpkg true` / `enable_cmake_build true` /
   `enable_dotnet_build true` / `enable_godot true` / `enable_unity true` /
-  `enable_unreal true` / `enable_defold true` / `enable_cocos true` turns each
-  on; until then the adapter is
+  `enable_unreal true` / `enable_defold true` / `enable_cocos true` /
+  `enable_zig true` / `enable_stack true` / `enable_cabal true` /
+  `enable_sbt true` turns each on; until then the adapter is
   invisible everywhere — `status`, `run`, `--only cargo` all behave as if it did not
   exist. They are off by default because of what it costs to get their directories back,
   not because of any doubt that they come back: `target/`, `build/`, `.gradle/`,
@@ -250,7 +260,8 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   (`Cargo.lock`, `pom.xml`, `build.gradle`/`settings.gradle`, `Package.swift`,
   `pubspec.lock`, `vcpkg.json`, `CMakeLists.txt`, `project.godot`,
   `ProjectSettings/ProjectVersion.txt`, the `.uproject`, `game.project`, Cocos Creator's
-  `package.json`) being present and readable — for
+  `package.json`, `build.zig`, `stack.yaml`, `cabal.project`, `build.sbt`) being present
+  and readable — for
   cargo, `cargo metadata --locked`; for the rest, no network command runs at all. vcpkg
   asks one thing more, because every vcpkg *port* also ships a `vcpkg.json`: the manifest
   has to declare a non-empty `dependencies` list, or there is nothing an install would
@@ -280,6 +291,20 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `package.json` and claims `library/` and `temp/` only when it names Cocos Creator (a
   `"creator"` key, or a `cocos-creator` engine line on 2.x), so a plain Node project
   keeps its `package.json` to the npm adapter, and never the exported `build/` output.
+  `zig` claims `.zig-cache/` and `zig-cache/` (the 0.12 and pre-0.12 spellings) plus
+  `zig-out/` beside a `build.zig` that declares a `pub fn build` — `zig-out/` is
+  included because it is the build system's own install prefix, populated by the steps
+  `build.zig` declares, so `zig build` puts all three back. `stack` claims
+  `.stack-work/` beside a `stack.yaml` that names its `resolver:` (or the newer
+  `snapshot:`) — the snapshot pin is what makes the rebuild reproducible. `cabal`
+  claims `dist-newstyle/` beside a `cabal.project` that declares its `packages`; a
+  directory holding only a `*.cabal` file with no project file is deliberately left
+  alone, and a Stack project wrapping the same `.cabal` files is claimed by the stack
+  adapter instead. `sbt` claims `target/` and `project/target/` beside a `build.sbt`
+  that carries at least one setting (or whose `project/build.properties` pins
+  `sbt.version`); sub-project `target/` trees are not walked for, and a Maven or
+  Gradle build in the same repository keeps its own `target/`/`build/` because each
+  directory is claimed once, by the first adapter that owns it.
   User-home caches (`~/.cargo`, `~/.m2`, `~/.gradle`) are never touched; those
   belong to `devp caches`.
 
@@ -467,7 +492,7 @@ reads unambiguously:
 
   Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, `ccache --get-config cache_dir`, `composer config --global cache-dir`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`, `SCCACHE_DIR`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. CocoaPods and Hex are found the same way (`CP_CACHE_DIR`, `HEX_HOME`) for the simpler reason that neither ships a command that prints the path at all. conda is found by convention too — `~/miniconda3/pkgs`, `~/anaconda3/pkgs`, `~/miniforge3/pkgs`, `~/mambaforge/pkgs` and the `~/.conda/pkgs` it falls back to when the installation is not writable — plus `CONDA_PKGS_DIRS` and, for a conda installed somewhere else entirely, the installation root that `CONDA_EXE` names. `conda config --show pkgs_dirs` would answer exactly, and takes seconds to start on a cold shell, which is the same price Maven charges for the same read-only size. Two probes that resolve to the same directory are counted once.
 
-  This is also where most of the .NET and C/C++ story lives: their *dependencies* never live in the repository at all — they live in these machine-wide stores, which is exactly what this command reports. Their in-repository build trees are deletable only through [opt-in adapters](#5-devp-run-target_path). Cargo `target/`, Maven `target/`, Gradle `build/`+`.gradle/`, vcpkg `vcpkg_installed/`, a configured CMake build tree, .NET's `bin/`+`obj/` and the game-engine import caches (Godot's `.godot/`, Unity's `Library/`, Unreal's `DerivedDataCache/`+`Intermediate/`, Defold's `build/`, Cocos Creator's `library/`) are those exceptions: their recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle`/`vcpkg.json`/`CMakeLists.txt`/the project file beside them, plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`. Two of those have to prove which tool made the tree, because their directory names are too generic to trust: cmake_build claims a directory only when it holds a `CMakeCache.txt` naming a source directory inside the same repository, and dotnet_build claims `obj/` only when NuGet's `obj/project.assets.json` records this directory's own project file — `bin/` goes with it only when it holds nothing but `Debug`/`Release` build output — so a `build/` you filled by hand, or a `bin/` holding anything of yours, is left alone. (A repository that knows better can still [declare](#8-devp-config-action) a directory of its own, where the required `rebuild` command is the proof a lockfile could not give.) The `vcpkg` row here is the classic-mode install tree, shared by every project on the machine; the adapter claims only manifest mode's per-project one.
+  This is also where most of the .NET and C/C++ story lives: their *dependencies* never live in the repository at all — they live in these machine-wide stores, which is exactly what this command reports. Their in-repository build trees are deletable only through [opt-in adapters](#5-devp-run-target_path). Cargo `target/`, Maven `target/`, Gradle `build/`+`.gradle/`, vcpkg `vcpkg_installed/`, a configured CMake build tree, .NET's `bin/`+`obj/`, the game-engine import caches (Godot's `.godot/`, Unity's `Library/`, Unreal's `DerivedDataCache/`+`Intermediate/`, Defold's `build/`, Cocos Creator's `library/`), Zig's `.zig-cache/`+`zig-out/`, Stack's `.stack-work/`, Cabal's `dist-newstyle/` and sbt's `target/`+`project/target/` are those exceptions: their recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle`/`vcpkg.json`/`CMakeLists.txt`/the project file beside them, plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`. Two of those have to prove which tool made the tree, because their directory names are too generic to trust: cmake_build claims a directory only when it holds a `CMakeCache.txt` naming a source directory inside the same repository, and dotnet_build claims `obj/` only when NuGet's `obj/project.assets.json` records this directory's own project file — `bin/` goes with it only when it holds nothing but `Debug`/`Release` build output — so a `build/` you filled by hand, or a `bin/` holding anything of yours, is left alone. (A repository that knows better can still [declare](#8-devp-config-action) a directory of its own, where the required `rebuild` command is the proof a lockfile could not give.) The `vcpkg` row here is the classic-mode install tree, shared by every project on the machine; the adapter claims only manifest mode's per-project one.
 - **Two commands per row, not one**: each cache is printed with `clear: devp caches clear <manager>` above `runs: <the manager's own command>`. They are not synonyms, which is why both are there. What dev-prune clears is added to the lifetime cache total in [`devp stats`](#15-devp-stats---json); the same `npm cache clean --force` typed into a terminal is invisible to it, so the report a week later is short by exactly the space you reclaimed. The manager's command is shown rather than hidden because it is what dev-prune executes, and a tool that will not tell you what it runs is worse than one that repeats itself. Maven is the exception and prints only `clear:` with its own command — dev-prune will not run that one, and says so.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the table. Global within `caches`, so `devp caches clear npm --json` parses the same as `devp caches --json clear npm`.
@@ -628,7 +653,11 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
     | `enable_unreal` | `false` | Turn on the opt-in Unreal adapter (`DerivedDataCache/` and `Intermediate/` beside a `.uproject` with a `"FileVersion"` key; `Saved/`, `Binaries/` and `Content/` are never claimed; the editor rebuilds the DDC on next open) |
     | `enable_defold` | `false` | Turn on the opt-in Defold adapter (`build/` beside a `game.project` carrying a `[project]` section; the next build regenerates it; `.internal/` and `assets/` are never claimed) |
     | `enable_cocos` | `false` | Turn on the opt-in Cocos Creator adapter (`library/` and `temp/`, claimed only when `package.json` names Cocos Creator; the exported `build/` output is never claimed; the editor re-imports on next open) |
-    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart, mix_build, vcpkg, cmake_build, dotnet_build, godot, unity, unreal, defold, cocos), applied as `max(build_idle_days, idle_days)` |
+    | `enable_zig` | `false` | Turn on the opt-in Zig adapter (`.zig-cache/`, `zig-cache/` and `zig-out/` beside a `build.zig` declaring a `pub fn build`; `zig-out/` is the build system's own install prefix, so the next `zig build` writes all three again) |
+    | `enable_stack` | `false` | Turn on the opt-in Haskell Stack adapter (`.stack-work/` beside a `stack.yaml` that names its `resolver:` or `snapshot:`; the next `stack build` compiles it again) |
+    | `enable_cabal` | `false` | Turn on the opt-in Haskell Cabal adapter (`dist-newstyle/` beside a `cabal.project` declaring its `packages`; a lone `*.cabal` file is never claimed; the next `cabal build` compiles it again) |
+    | `enable_sbt` | `false` | Turn on the opt-in sbt adapter (`target/` and `project/target/` beside a `build.sbt` carrying a setting, or whose `project/build.properties` pins `sbt.version`; the next `sbt compile` writes both again) |
+    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart, mix_build, vcpkg, cmake_build, dotnet_build, godot, unity, unreal, defold, cocos, zig, stack, cabal, sbt), applied as `max(build_idle_days, idle_days)` |
 
     **Shared download caches** — One key, because the cap only ever marks — the clearing is a command you type.
 
@@ -679,12 +708,13 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
   - `config show [--update]`: View all configuration values or force global update.
 
     It ends with whatever the first run recommends and this machine has not taken yet,
-    in two tiers. **Recommended** is the fourteen adapters and build trees that are off by
+    in two tiers. **Recommended** is the eighteen adapters and build trees that are off by
     default because they are not universally wanted, not because they are risky —
     `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`,
     `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`,
     `enable_dotnet_build`, `enable_godot`, `enable_unity`, `enable_unreal`,
-    `enable_defold`, `enable_cocos` — plus `cache_max_gb`,
+    `enable_defold`, `enable_cocos`, `enable_zig`, `enable_stack`, `enable_cabal`,
+    `enable_sbt` — plus `cache_max_gb`,
     suggested as `default=10`. **Recommended, with one thing to know first** is
     `allow_manifest_rewrite` alone, printed with the reason it is in a tier of its own.
     Nothing outstanding prints nothing.
@@ -1705,7 +1735,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   - **Guaranteed by the code** — the seven [safety invariants](SAFETY_INVARIANTS.md) plus the two questions asked as often as any of them: there is no telemetry endpoint, and build output is never deleted. These rows read the same on every machine. None of them has a setting or a flag behind it, and a build where one did not hold would be a bug, not a configuration.
   - **On this machine** — read live: whether the scheduler is installed, whether the Git hooks register repositories on their own, how many repositories are registered, the idle window, the managed binary's path, and the settings that widen what may happen without you asking.
   - **Binaries on this machine** — **every** copy of `dev-prune`, `devp` and `devpw` on this machine, not only the managed ones: everything on `PATH`, plus the install directory of every channel dev-prune knows about, whether or not that directory is still on `PATH`. The one currently running is marked and listed first. Each row carries the version it was built as, the package manager that put it there, its SHA-256 and a VirusTotal lookup URL for that digest. The version is read out of the file rather than by running it, so it is blank for anything built before 1.17.0; the newest copy is marked `(latest release)` when a release check has confirmed that is the newest release, and `(newest here)` when it is only the highest version on this machine. This exists because an antivirus judges the bytes on your disk, not the asset on a release page, so the only digest worth showing you is your own — and on a machine that has both a `cargo install` and an installer run, "your own" is several files of different ages. The links are lookups by hash: the digest is computed locally, the URL is printed rather than fetched, and no file is uploaded anywhere. A digest the service has never seen returns *not found*, which means unscanned — not clean. On Windows `dev-prune.exe` and `devp.exe` as shipped are one file under two names and share a digest on purpose; `devpw.exe`, the console-free build the scheduler runs, is a separate `[[bin]]` target and legitimately differs. A copy installed from a release matches the `.sha256` published beside the asset and the per-file `.zip.contents.sha256` manifest; one built by `cargo install` was compiled locally and matches nothing published. Shims are not listed — npm's `.cmd` and `.ps1` wrappers are text files that run the real executable, and a digest for one would compare against nothing. Nothing found is ever executed, only hashed. More than one copy is not a fault; [`devp uninstall`](#14-devp-uninstall---deep) lists them with the command that removes each.
-- **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`, `enable_dotnet_build`, `enable_godot`, `enable_unity`, `enable_unreal`, `enable_defold`, `enable_cocos`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
+- **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`, `enable_dotnet_build`, `enable_godot`, `enable_unity`, `enable_unreal`, `enable_defold`, `enable_cocos`, `enable_zig`, `enable_stack`, `enable_cabal`, `enable_sbt`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
 - **No letter grade, on purpose**: `trust level: MEDIUM` tells nobody which switch to look at. The report lists the switches.
 - **Row marks**: `+` guaranteed or safe, `!` widened, blank for a neutral fact (a path, a count).
 - **Flags**:

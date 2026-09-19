@@ -172,6 +172,26 @@ pub struct Settings {
     /// editor re-importing every asset. See [`crate::adapters::cocos`].
     #[serde(default)]
     pub enable_cocos: bool,
+    /// Whether the opt-in Zig adapter is active. Off by default: `.zig-cache/`,
+    /// `zig-cache/` and `zig-out/` are the build system's caches and install output,
+    /// and they come back on the next `zig build`. See [`crate::adapters::zig`].
+    #[serde(default)]
+    pub enable_zig: bool,
+    /// Whether the opt-in Haskell Stack adapter is active. Off by default:
+    /// `.stack-work/` is compiled output, and it comes back by recompiling against the
+    /// snapshot `stack.yaml` pins. See [`crate::adapters::stack`].
+    #[serde(default)]
+    pub enable_stack: bool,
+    /// Whether the opt-in Haskell Cabal adapter is active. Off by default:
+    /// `dist-newstyle/` is compiled output, and it comes back on the next
+    /// `cabal build`. See [`crate::adapters::cabal`].
+    #[serde(default)]
+    pub enable_cabal: bool,
+    /// Whether the opt-in sbt adapter is active. Off by default: `target/` and
+    /// `project/target/` are compiled output, and they come back on the next
+    /// `sbt compile`. See [`crate::adapters::sbt`].
+    #[serde(default)]
+    pub enable_sbt: bool,
     /// Idle days required before *build-tree* directories — everything the opt-in
     /// adapters claim — are pruned.
     ///
@@ -378,6 +398,10 @@ impl Default for Settings {
             enable_unreal: false,
             enable_defold: false,
             enable_cocos: false,
+            enable_zig: false,
+            enable_stack: false,
+            enable_cabal: false,
+            enable_sbt: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: constants::DEFAULT_AUTO_UPDATE,
             version_lock: constants::DEFAULT_VERSION_LOCK,

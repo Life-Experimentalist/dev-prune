@@ -28,7 +28,7 @@ gigabytes hostage for a build you are not running.
 
 `dev-prune` finds those directories across every Git repository you register, and deletes
 them — but only after proving the exact command that puts them back would succeed. It
-knows thirty package managers, not just the obvious four: Composer, Bundler, Mix,
+knows thirty-five package managers, not just the obvious four: Composer, Bundler, Mix,
 CocoaPods and Terraform are as first-class as npm and pip. It is one Rust program,
 installs its own background schedule, and answers to two names you type — `dev-prune` and
 `devp` — alongside a third, windowless build, `devpw`, that exists only so the Windows
@@ -623,6 +623,7 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **PDM** (Python)              | `pdm.lock`, `[tool.pdm]` or `pdm.backend` in `pyproject.toml` | `.venv`, `__pypackages__`                  | `pdm lock --check`                                                                                                | `pdm install`                                             |
 | **Pipenv** (Python)           | `Pipfile`                                                     | `.venv` *(in-project installs only)*       | `pipenv verify`                                                                                                   | `pipenv install --deploy`                                 |
 | **venv** (Python)             | `requirements.txt` + a directory containing `pyvenv.cfg`      | every directory containing `pyvenv.cfg`    | `requirements.txt` must exist and list at least one package                                                       | `python -m venv .venv && pip install -r requirements.txt` |
+| **pixi** (Python/conda)       | `pixi.toml`, `pixi.lock`, `[tool.pixi]` in `pyproject.toml`   | `.pixi`                                    | `pixi.lock` carries its `version:` and records at least one conda or PyPI package                                | `pixi install`                                            |
 | **Cargo** (Rust) *(opt-in)*   | `Cargo.toml`                                                  | `target`                                   | `cargo metadata --locked`                                                                                         | *(rebuilt by the next `cargo build`)*                     |
 | **Go**                        | `go.mod`                                                      | `vendor`                                   | `go mod download`                                                                                                 | `go mod vendor`                                           |
 | **Composer** (PHP)            | `composer.json`                                               | `vendor`                                   | `composer validate --no-check-publish --no-check-all`                                                             | `composer install`                                        |
@@ -638,17 +639,22 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **vcpkg** (C/C++) *(opt-in)*  | `vcpkg.json`                                                  | `vcpkg_installed`                          | `vcpkg.json` declares a non-empty `dependencies` list                                                             | *(rebuilt by the next `vcpkg install`)*                   |
 | **CMake** (C/C++) *(opt-in)*  | `CMakeLists.txt`                                              | any tree holding a `CMakeCache.txt`        | the tree's own `CMakeCache.txt` names a source directory inside this repository                                   | *(rebuilt by the next `cmake --build`)*                   |
 | **.NET build** *(opt-in)*     | `*.csproj`, `*.fsproj`, `*.vbproj`                            | `obj`, and `bin` beside it *(only while `bin` holds nothing but `Debug`/`Release`)* | `obj/project.assets.json` names a project file still sitting in this directory, and every project file here has a `<Project` root | *(rebuilt by the next `dotnet build`)*                    |
+| **Zig** *(opt-in)*            | `build.zig`                                                   | `.zig-cache`, `zig-cache`, `zig-out`       | `build.zig` declares a `pub fn build` — the rebuild-from-source proof                                             | *(rebuilt by the next `zig build`)*                       |
+| **Stack** (Haskell) *(opt-in)* | `stack.yaml`                                                  | `.stack-work`                              | `stack.yaml` names its `resolver:` (or `snapshot:`)                                                               | *(rebuilt by the next `stack build`)*                     |
+| **Cabal** (Haskell) *(opt-in)* | `cabal.project`                                               | `dist-newstyle`                            | `cabal.project` declares its `packages` — a lone `*.cabal` file is never claimed                                  | *(rebuilt by the next `cabal build`)*                     |
+| **sbt** (Scala) *(opt-in)*    | `build.sbt`                                                   | `target`, `project/target`                 | `build.sbt` carries a setting, or `project/build.properties` pins `sbt.version`                                   | *(rebuilt by the next `sbt compile`)*                     |
 
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
 
-The fourteen build-tool adapters ship **disabled**, because a build tree is regenerated
+The eighteen build-tool adapters ship **disabled**, because a build tree is regenerated
 by recompiling, not downloading — it costs more to get back. `devp config set
 enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` /
 `enable_dart true` / `enable_mix_build true` / `enable_vcpkg true` /
 `enable_cmake_build true` / `enable_dotnet_build true` / `enable_godot true` /
 `enable_unity true` / `enable_unreal true` / `enable_defold true` /
-`enable_cocos true` switches them on, and their candidates wait for
+`enable_cocos true` / `enable_zig true` / `enable_stack true` /
+`enable_cabal true` / `enable_sbt true` switches them on, and their candidates wait for
 `build_idle_days` (45 by default), applied as the *maximum* of it and `idle_days` — the
 build-tool gate only ever makes pruning later, never earlier.
 
@@ -764,7 +770,7 @@ not universally wanted, and leaves `allow_manifest_rewrite` — the one recommen
 that edits files Git tracks — named, explained and off unless you add
 `--with-cautious`. `devp config show` lists whatever you have not taken yet.
 
-Thirty-two settings, in the seven groups the configurator asks them in — the order the
+Forty-one settings, in the seven groups the configurator asks them in — the order the
 decisions actually arrive in. Every key, with its full description and range, is in the
 [CLI reference](docs/CLI_REFERENCE.md#8-devp-config-action).
 
@@ -797,7 +803,7 @@ rather than downloading. That is the whole reason each one is a switch.
 
 | Key | Default | Meaning |
 | :--- | :---: | :--- |
-| `enable_cargo` … `enable_cocos` | `false` | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all fourteen |
+| `enable_cargo` … `enable_sbt` | `false` | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all eighteen |
 
 **Shared download caches** — one key, because the cap only ever marks.
 
