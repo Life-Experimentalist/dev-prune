@@ -20,9 +20,12 @@
 // theirs to have remembered, and dev-prune could neither count it nor say afterwards what
 // it had cost. `caches clear <engine>` now runs the narrow ones itself — build cache,
 // unused images, stopped containers — in the foreground, after printing them, after
-// asking, and never from the daemon. The volume-deleting variants stay printed and
-// unrun, which is the only part of this that was ever about proof rather than about
-// consent.
+// asking, and never from the daemon. The bulk volume-deleting variants stay printed and
+// unrun: no argv here ever contains `volume prune` or `--volumes`. What `--include-volumes`
+// adds is not a bulk delete but a pick list, unused volumes named one per line for a
+// person at a terminal to choose from, each choice becoming its own unforced `volume rm`.
+// It refuses `--yes`, `--json` and a piped stdin, so no script, scheduler, hook or agent
+// can reach it: the typing of each number is the consent.
 //
 // The numbers come from the engine's own `system df`, not from a directory walk. On
 // Docker Desktop and Podman the store lives inside a VM disk image that the host cannot
@@ -84,6 +87,33 @@ struct Engine {
     /// not define would turn every step into a usage error. So this is a fact about the
     /// engine, checked in the tests, rather than a habit applied to all of them.
     prompts: bool,
+    /// How to name this engine's unused volumes, when it can. See [`VolumeSurface`].
+    ///
+    /// `None` for the engines that cannot: nerdctl's `volume ls` filters on label, name
+    /// and size but not on dangling (its own command reference says "not supported
+    /// yet"), finch forwards to nerdctl verbatim, and Apple's `container` exposes no
+    /// per-volume usage at all. For those, `--include-volumes` is a usage error that
+    /// points at the engine's own `volume ls`, because a pick list dev-prune cannot
+    /// prove is unused would be a list of guesses.
+    volume_candidates: Option<VolumeSurface>,
+}
+
+/// The three commands behind `--include-volumes`, for an engine that has them.
+///
+/// The only deleting argv in here is `rm_args`, and it is deliberately incomplete: its
+/// final argument is one volume's name, appended only after a person picked that volume
+/// off a numbered list at a terminal. It is never forced, so a volume something still
+/// uses is the engine's own refusal rather than dev-prune's judgement call.
+struct VolumeSurface {
+    /// Arguments that print one unused volume name per line and nothing else.
+    ls_args: &'static [&'static str],
+    /// Arguments for the verbose disk usage that sizes volumes individually.
+    ///
+    /// Decoration on the pick list, not a gate: an answer in a shape
+    /// [`parse_volume_sizes`] cannot read degrades to "size unknown" on each row.
+    df_args: &'static [&'static str],
+    /// The delete, missing its final argument: one picked volume's name.
+    rm_args: &'static [&'static str],
 }
 
 /// One command `devp caches clear <engine>` runs.
@@ -147,6 +177,13 @@ const ENGINES: &[Engine] = &[
                 args: &["container", "prune", "-f"],
             },
         ],
+        volume_candidates: Some(VolumeSurface {
+            ls_args: &["volume", "ls", "-q", "--filter", "dangling=true"],
+            // `-v` is what puts a per-volume table in the answer; without it the
+            // document has only the four summary rows the report already reads.
+            df_args: &["system", "df", "-v", "--format", "{{json .}}"],
+            rm_args: &["volume", "rm"],
+        }),
     },
     Engine {
         name: "podman",
@@ -181,6 +218,14 @@ const ENGINES: &[Engine] = &[
                 args: &["container", "prune", "-f"],
             },
         ],
+        // Podman documents the same `dangling=true` filter as Docker: "matches all
+        // volumes not referenced by any containers". Its verbose `system df` names its
+        // JSON fields its own way, which is why the size parser reads either spelling.
+        volume_candidates: Some(VolumeSurface {
+            ls_args: &["volume", "ls", "-q", "--filter", "dangling=true"],
+            df_args: &["system", "df", "-v", "--format", "json"],
+            rm_args: &["volume", "rm"],
+        }),
     },
     Engine {
         name: "nerdctl",
@@ -205,6 +250,7 @@ const ENGINES: &[Engine] = &[
             what: "images, stopped containers and the build cache",
             args: &["system", "prune", "-a", "-f"],
         }],
+        volume_candidates: None,
     },
     // finch is nerdctl inside a Lima VM, and it forwards `system` to it verbatim with
     // flag parsing turned off — so the nerdctl spellings above are the finch spellings,
@@ -229,6 +275,7 @@ const ENGINES: &[Engine] = &[
             what: "images, stopped containers and the build cache",
             args: &["system", "prune", "-a", "-f"],
         }],
+        volume_candidates: None,
     },
     // Apple's `container`, on Apple silicon. Named after its binary like the rest, so
     // `devp caches clear container` is the command someone who has been typing
@@ -269,6 +316,7 @@ const ENGINES: &[Engine] = &[
                 args: &["prune"],
             },
         ],
+        volume_candidates: None,
     },
 ];
 
@@ -656,14 +704,64 @@ impl ClearOutcome {
 ///
 /// Volumes are the exception that stays one. An image can be pulled again and a build
 /// cache rebuilt; what is inside a named volume exists nowhere else, and there is no
-/// argv in any [`Engine::reclaim`] that touches one.
-pub fn run_clear(name: &str, yes: bool, dry_run: bool, json_output: bool) -> Result<()> {
+/// argv in any [`Engine::reclaim`] that touches one. `include_volumes` does not soften
+/// that: it appends a phase that lists unused volumes by name and deletes only the ones
+/// a person picks off that list at a terminal, one unforced `volume rm` each, and it
+/// refuses `--yes`, `--json` and a piped stdin so nothing unattended can reach it.
+pub fn run_clear(
+    name: &str,
+    include_volumes: bool,
+    yes: bool,
+    dry_run: bool,
+    json_output: bool,
+) -> Result<()> {
     let Some(engine) = ENGINES.iter().find(|e| e.name.eq_ignore_ascii_case(name)) else {
         return Err(anyhow::Error::new(crate::UsageError(format!(
             "`{name}` is not a container engine dev-prune knows. Try one of: {}.",
             known_engines().join(", ")
         ))));
     };
+
+    // Every one of these is a usage error rather than a silent downgrade, so a script
+    // that reaches for the flag learns it is not for scripts instead of quietly getting
+    // the volume-free clear it never asked about. Capability first, because "this
+    // engine cannot do it at all" outranks how the command was spelled.
+    if include_volumes {
+        if engine.volume_candidates.is_none() {
+            return Err(anyhow::Error::new(crate::UsageError(format!(
+                "{} has no way to name only its unused volumes, so dev-prune cannot put \
+                 an honest pick list in front of you. Run `{} volume ls` and decide by \
+                 name yourself.",
+                engine.name, engine.binary
+            ))));
+        }
+        if json_output {
+            return Err(anyhow::Error::new(crate::UsageError(
+                "`--include-volumes` is a hand-picked deletion at a terminal, and \
+                 `--json` is for a program reading the answer. They do not combine; \
+                 drop one."
+                    .to_string(),
+            )));
+        }
+        if yes {
+            return Err(anyhow::Error::new(crate::UsageError(
+                "`--include-volumes` has no pre-answered form: the picking is the \
+                 point, and a volume goes only when its number is typed at the list. \
+                 Drop `--yes`."
+                    .to_string(),
+            )));
+        }
+        // Skipped for a dry run, which lists and deletes nothing; that much a
+        // redirected terminal may as well have.
+        if !dry_run && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            return Err(anyhow::Error::new(crate::UsageError(
+                "`--include-volumes` needs a terminal, because someone has to pick each \
+                 volume off the list. There is no way to answer it from a script, and \
+                 that is deliberate."
+                    .to_string(),
+            )));
+        }
+    }
 
     // Same reason as `caches clear`: a prompt nobody can answer is a hang, and the line
     // printed in its place would land in the middle of the JSON document.
@@ -697,7 +795,7 @@ pub fn run_clear(name: &str, yes: bool, dry_run: bool, json_output: bool) -> Res
     let before_bytes: u64 = rows.iter().filter_map(|r| r.bytes).sum();
 
     if !json_output {
-        print_clear_plan(engine, rows, dry_run);
+        print_clear_plan(engine, rows, include_volumes, dry_run);
     }
     if dry_run {
         if json_output {
@@ -709,6 +807,9 @@ pub fn run_clear(name: &str, yes: bool, dry_run: bool, json_output: bool) -> Res
             };
             return json::emit(&json::containers_clear_document(&planned, true));
         }
+        if include_volumes && let Some(surface) = &engine.volume_candidates {
+            print_volume_dry_run(engine, surface);
+        }
         return Ok(());
     }
     if !json_output && !crate::commands::caches::confirm_clear(yes) {
@@ -716,7 +817,14 @@ pub fn run_clear(name: &str, yes: bool, dry_run: bool, json_output: bool) -> Res
         return Ok(());
     }
 
-    let steps: Vec<StepOutcome> = engine.reclaim.iter().map(|s| run_step(engine, s)).collect();
+    let mut steps: Vec<StepOutcome> = engine.reclaim.iter().map(|s| run_step(engine, s)).collect();
+
+    // After the reclaim steps on purpose: `container prune` is what turns a stopped
+    // container's anonymous volumes dangling, so a list drawn first would be missing
+    // the rows this very command just freed up.
+    if include_volumes && let Some(surface) = &engine.volume_candidates {
+        run_volume_phase(engine, surface, &mut steps);
+    }
 
     // Asked again rather than subtracted from what each command claimed. `image prune`
     // reports the layers it deleted, and layers are shared — three images can each report
@@ -792,6 +900,252 @@ fn run_step(engine: &Engine, step: &ReclaimStep) -> StepOutcome {
     }
 }
 
+/// The unused volumes an engine can name, one per line from its own `volume ls`.
+fn unused_volumes(engine: &Engine, surface: &VolumeSurface) -> Result<Vec<String>, String> {
+    let captured = adapters::capture_allowing_failure(
+        engine.binary,
+        surface.ls_args,
+        &query_dir(),
+        std::time::Duration::from_secs(constants::CONTAINER_QUERY_TIMEOUT_SECS),
+    );
+    match captured {
+        Ok(out) if out.ok => Ok(out
+            .stdout
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect()),
+        Ok(out) => Err(first_line(&out.stderr)
+            .unwrap_or_else(|| format!("`{} volume ls` failed without saying why", engine.binary))),
+        Err(e) => Err(first_line(&e.to_string())
+            .unwrap_or_else(|| format!("`{} volume ls` could not be run", engine.binary))),
+    }
+}
+
+/// Each volume's size, for the pick list. Best-effort: an empty map on any failure.
+fn volume_sizes(
+    engine: &Engine,
+    surface: &VolumeSurface,
+) -> std::collections::HashMap<String, String> {
+    let Ok(out) = adapters::capture_allowing_failure(
+        engine.binary,
+        surface.df_args,
+        &query_dir(),
+        std::time::Duration::from_secs(constants::CONTAINER_QUERY_TIMEOUT_SECS),
+    ) else {
+        return std::collections::HashMap::new();
+    };
+    if !out.ok {
+        return std::collections::HashMap::new();
+    }
+    parse_volume_sizes(&out.stdout)
+}
+
+/// Per-volume sizes out of a verbose `system df`, in whichever spelling this engine uses.
+///
+/// Docker's `{{json .}}` with `-v` is one object holding a `Volumes` array whose entries
+/// carry `Name` and a formatted `Size`; Podman formats the same idea with its own field
+/// names and sometimes raw byte counts. The sizes decorate the pick list rather than
+/// gate it, so anything unrecognised degrades to "size unknown" on that row instead of
+/// refusing the phase.
+fn parse_volume_sizes(raw: &str) -> std::collections::HashMap<String, String> {
+    let mut sizes = std::collections::HashMap::new();
+    for candidate in std::iter::once(raw.trim()).chain(raw.lines().map(str::trim)) {
+        let Ok(v) = serde_json::from_str::<Value>(candidate) else {
+            continue;
+        };
+        let Some(volumes) = ["Volumes", "volumes"]
+            .iter()
+            .find_map(|k| v.get(k))
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for entry in volumes {
+            let Some(name) = ["Name", "VolumeName", "Names"]
+                .iter()
+                .find_map(|k| entry.get(k))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            let size = match ["Size", "size"].iter().find_map(|k| entry.get(k)) {
+                Some(Value::String(s)) => s.trim().to_string(),
+                Some(Value::Number(n)) => n.as_u64().map(output::format_bytes).unwrap_or_default(),
+                _ => String::new(),
+            };
+            if !size.is_empty() {
+                sizes.insert(name.to_string(), size);
+            }
+        }
+        if !sizes.is_empty() {
+            break;
+        }
+    }
+    sizes
+}
+
+/// The numbers typed at the pick list, as zero-based indexes in the order given.
+///
+/// An empty answer is a deliberate "none", `all` is every row, and anything else is
+/// numbers and `3-5` ranges separated by commas or spaces, one-based to match the list,
+/// duplicates dropped. Anything that does not read that way (a zero, a number past the
+/// end, a word, a backwards range) is `None`, and `None` deletes nothing. One shot, no
+/// retry loop: a mistyped answer costs re-running the command, not a volume.
+fn parse_selection(input: &str, count: usize) -> Option<Vec<usize>> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Some(Vec::new());
+    }
+    if trimmed.eq_ignore_ascii_case("all") {
+        return Some((0..count).collect());
+    }
+    let mut picked = Vec::new();
+    let mut push = |index: usize| {
+        if !picked.contains(&index) {
+            picked.push(index);
+        }
+    };
+    for token in trimmed.split([',', ' ']).filter(|t| !t.is_empty()) {
+        if let Some((low, high)) = token.split_once('-') {
+            let low: usize = low.trim().parse().ok()?;
+            let high: usize = high.trim().parse().ok()?;
+            if low == 0 || high < low || high > count {
+                return None;
+            }
+            (low..=high).for_each(|n| push(n - 1));
+        } else {
+            let n: usize = token.parse().ok()?;
+            if n == 0 || n > count {
+                return None;
+            }
+            push(n - 1);
+        }
+    }
+    Some(picked)
+}
+
+/// The `--include-volumes` phase: list what is unused, ask which, delete only those.
+///
+/// Everything it prints goes to stderr with the question, so a redirected stdout cannot
+/// eat the list the answer is about. Each deletion lands in `steps` like any reclaim
+/// step, so the result rows, the failure count and the exit code cover it too.
+fn run_volume_phase(engine: &Engine, surface: &VolumeSurface, steps: &mut Vec<StepOutcome>) {
+    use std::io::Write;
+    let names = match unused_volumes(engine, surface) {
+        Ok(names) => names,
+        Err(why) => {
+            output::print_info(&format!(
+                "{} could not name its unused volumes, so none was offered: {why}",
+                engine.name
+            ));
+            return;
+        }
+    };
+    if names.is_empty() {
+        output::print_info(&format!(
+            "{} reports no unused volumes, so there is nothing to pick from.",
+            engine.name
+        ));
+        return;
+    }
+    let sizes = volume_sizes(engine, surface);
+    eprintln!();
+    eprintln!("  Unused volumes. A volume holds the only copy of what is in it; anything");
+    eprintln!("  picked here is gone for good.");
+    eprintln!();
+    for (i, name) in names.iter().enumerate() {
+        let size = sizes.get(name).map_or("size unknown", String::as_str);
+        eprintln!("  {:>3}. {:<44} {}", i + 1, name, size);
+    }
+    eprintln!();
+    eprint!("Delete which? [numbers or ranges like `1 3-5`, `all`, Enter for none]: ");
+    if std::io::stderr().flush().is_err() {
+        return;
+    }
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        output::print_info("No answer could be read, so no volume was deleted.");
+        return;
+    }
+    let Some(picked) = parse_selection(&input, names.len()) else {
+        output::print_info(
+            "That did not read as numbers from the list, so no volume was deleted. Run \
+             the command again to see the list once more.",
+        );
+        return;
+    };
+    if picked.is_empty() {
+        output::print_info("No volume picked; all of them stay.");
+        return;
+    }
+    for index in picked {
+        steps.push(remove_volume(engine, surface, &names[index]));
+    }
+}
+
+/// One `volume rm <name>`, never forced.
+///
+/// Unforced on purpose: if the engine thinks something still uses this volume, its
+/// refusal is the right answer and it lands in the result row, not overridden.
+fn remove_volume(engine: &Engine, surface: &VolumeSurface, name: &str) -> StepOutcome {
+    let mut args: Vec<&str> = surface.rm_args.to_vec();
+    args.push(name);
+    let command = format!("{} {}", engine.binary, args.join(" "));
+    let captured = adapters::capture_allowing_failure(
+        engine.binary,
+        &args,
+        &query_dir(),
+        std::time::Duration::from_secs(constants::CONTAINER_PRUNE_TIMEOUT_SECS),
+    );
+    let problem = match captured {
+        Ok(out) if out.ok => None,
+        Ok(out) => Some(
+            first_line(&out.stderr)
+                .unwrap_or_else(|| format!("`{command}` failed without saying why")),
+        ),
+        Err(e) => Some(
+            first_line(&e.to_string()).unwrap_or_else(|| format!("`{command}` could not be run")),
+        ),
+    };
+    StepOutcome {
+        command,
+        what: "a volume picked by name",
+        problem,
+    }
+}
+
+/// What `--include-volumes --dry-run` shows: the list, and nothing run.
+fn print_volume_dry_run(engine: &Engine, surface: &VolumeSurface) {
+    match unused_volumes(engine, surface) {
+        Err(why) => output::print_info(&format!(
+            "{} could not name its unused volumes: {why}",
+            engine.name
+        )),
+        Ok(names) if names.is_empty() => output::print_info(&format!(
+            "{} reports no unused volumes right now.",
+            engine.name
+        )),
+        Ok(names) => {
+            let sizes = volume_sizes(engine, surface);
+            output::print_wrapped(
+                "  ",
+                "These volumes are unused right now and would be offered on the pick \
+                 list. The real list can be longer, because it is drawn after the \
+                 containers are pruned and a stopped container keeps its anonymous \
+                 volumes counted as in use until it is gone.",
+            );
+            println!();
+            for (i, name) in names.iter().enumerate() {
+                let size = sizes.get(name).map_or("size unknown", String::as_str);
+                println!("  {:>3}. {:<44} {}", i + 1, name, size);
+            }
+            println!();
+        }
+    }
+}
+
 /// Credit what was reclaimed to the machine's running container total.
 fn record_container_clear(bytes: u64) {
     if bytes == 0 {
@@ -804,7 +1158,7 @@ fn record_container_clear(bytes: u64) {
 }
 
 /// What is about to run, and what the engine says it is holding.
-fn print_clear_plan(engine: &Engine, rows: &[Row], dry_run: bool) {
+fn print_clear_plan(engine: &Engine, rows: &[Row], include_volumes: bool, dry_run: bool) {
     output::print_header(&format!("Clearing {}", engine.name));
     println!();
     for step in engine.reclaim {
@@ -823,24 +1177,49 @@ fn print_clear_plan(engine: &Engine, rows: &[Row], dry_run: bool) {
     output::print_wrapped(
         "  ",
         &format!(
-            "{} says about {} of this is reclaimable. Volumes are not touched by any of \
-             the commands above and never will be — a named volume is the one thing here \
-             that cannot be rebuilt from anywhere.",
+            "{} says about {} of this is reclaimable. None of the commands above touches \
+             a volume, and dev-prune never runs `{} volume prune`: a volume holds the one \
+             copy of what is in it, so a volume goes only when someone names it.",
             engine.name,
-            output::format_bytes(reclaimable.saturating_sub(volumes))
+            output::format_bytes(reclaimable.saturating_sub(volumes)),
+            engine.binary
         ),
     );
     if volumes > 0 {
         println!();
-        output::print_wrapped(
-            "  ",
-            &format!(
-                "{} of unused volumes is being left alone. If you have read what is in \
-                 them and want it gone, that one is yours to run: `{} volume prune`.",
-                output::format_bytes(volumes),
-                engine.binary
-            ),
-        );
+        if include_volumes {
+            output::print_wrapped(
+                "  ",
+                &format!(
+                    "{} of unused volumes will be offered after these steps run, listed \
+                     by name for you to pick from. After, because pruning the stopped \
+                     containers is what frees their anonymous volumes onto the list. \
+                     Each pick is one `{} volume rm`, never forced.",
+                    output::format_bytes(volumes),
+                    engine.binary
+                ),
+            );
+        } else if engine.volume_candidates.is_some() {
+            output::print_wrapped(
+                "  ",
+                &format!(
+                    "{} of unused volumes is being left alone. To pick which of them go, \
+                     by name and one at a time, add `--include-volumes`.",
+                    output::format_bytes(volumes)
+                ),
+            );
+        } else {
+            output::print_wrapped(
+                "  ",
+                &format!(
+                    "{} of unused volumes is being left alone. If you have read what is \
+                     in them and want it gone, that one is yours to run: `{} volume \
+                     prune`.",
+                    output::format_bytes(volumes),
+                    engine.binary
+                ),
+            );
+        }
     }
     if dry_run {
         println!();
@@ -911,8 +1290,9 @@ fn print_report(reports: &[EngineReport], clusters: &[String], only: Option<&str
         "Nothing above was deleted, and nothing dev-prune runs on a schedule will ever \
          delete it. To have dev-prune run the narrow ones for you — build cache, unused \
          images, stopped containers, and what that gave back counted on your stats — use \
-         `devp caches clear <engine>`. It asks first, and it never touches a volume: that \
-         is the one thing here that cannot be rebuilt at all, so it stays yours to run.",
+         `devp caches clear <engine>`. It asks first, and it touches no volume on its \
+         own: `--include-volumes` lists the unused ones by name for you to pick from, \
+         one at a time, at a terminal.",
     );
 }
 
@@ -1079,7 +1459,8 @@ pub fn print_summary(reports: &[EngineReport]) {
     output::print_wrapped(
         "  ",
         "Container images, volumes and build cache are not package manager caches and are \
-         not in the total above — dev-prune reports them and never deletes them.",
+         not in the total above — dev-prune reports them, and deletes nothing of them \
+         except through `devp caches clear <engine>`, which asks first.",
     );
 }
 
@@ -1105,6 +1486,117 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_volume_surface_deletes_one_named_volume_and_never_forces_it() {
+        // The `--include-volumes` promise, checked against the argv like the one above:
+        // the listing asks only for what nothing uses, the deletion takes exactly one
+        // name, and no spelling of force or bulk prune appears anywhere on the surface.
+        for engine in ENGINES {
+            let Some(surface) = &engine.volume_candidates else {
+                continue;
+            };
+            assert_eq!(
+                surface.rm_args,
+                ["volume", "rm"],
+                "{} would delete with `{}`, not a single unforced rm",
+                engine.name,
+                surface.rm_args.join(" ")
+            );
+            assert!(
+                surface.ls_args.contains(&"dangling=true") && surface.ls_args.contains(&"-q"),
+                "{} would list volumes without narrowing to unused names",
+                engine.name
+            );
+            for arg in surface
+                .ls_args
+                .iter()
+                .chain(surface.df_args)
+                .chain(surface.rm_args)
+            {
+                let lower = arg.to_ascii_lowercase();
+                assert!(
+                    lower != "-f"
+                        && lower != "--force"
+                        && !lower.contains("prune")
+                        && lower != "--volumes",
+                    "{} carries `{arg}` on its volume surface",
+                    engine.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_engines_that_can_name_unused_volumes_offer_them() {
+        // nerdctl's `volume ls` filter knows label, name and size but not dangling
+        // ("not supported yet" in its command reference), finch forwards nerdctl's
+        // surface verbatim, and Apple's container exposes no per-volume usage. Offering
+        // a pick list an engine cannot narrow to unused names would put in-use volumes
+        // on it, so those three get a usage error instead.
+        for engine in ENGINES {
+            let can = matches!(engine.name, "docker" | "podman");
+            assert_eq!(
+                engine.volume_candidates.is_some(),
+                can,
+                "{} disagrees about offering volumes",
+                engine.name
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_answer_keeps_every_volume() {
+        assert_eq!(parse_selection("", 5), Some(vec![]));
+        assert_eq!(parse_selection("   \n", 5), Some(vec![]));
+    }
+
+    #[test]
+    fn all_is_every_row_once() {
+        assert_eq!(parse_selection("all", 3), Some(vec![0, 1, 2]));
+        assert_eq!(parse_selection("ALL", 3), Some(vec![0, 1, 2]));
+    }
+
+    #[test]
+    fn numbers_and_ranges_read_one_based_in_the_order_given() {
+        assert_eq!(parse_selection("1 3-5", 5), Some(vec![0, 2, 3, 4]));
+        assert_eq!(parse_selection("2,2,1", 3), Some(vec![1, 0]));
+    }
+
+    #[test]
+    fn anything_that_is_not_a_row_number_deletes_nothing() {
+        // `None` is the safe verdict, and it must catch every malformed shape: the list
+        // is one-based so zero names nothing, a number past the end names nothing, a
+        // backwards range is a typo, and words (including anything shell-shaped) are
+        // not numbers.
+        assert_eq!(parse_selection("0", 3), None);
+        assert_eq!(parse_selection("4", 3), None);
+        assert_eq!(parse_selection("2-1", 3), None);
+        assert_eq!(parse_selection("yes please", 3), None);
+        assert_eq!(parse_selection("1; rm -rf /", 3), None);
+    }
+
+    #[test]
+    fn reads_dockers_volume_sizes_and_podmans() {
+        // Docker's shape, from a run of `system df -v --format "{{json .}}"`: one
+        // object, `Volumes` array, `Name` and a formatted `Size`.
+        let docker = r#"{"Volumes":[
+            {"Name":"chronos_cache_store","Size":"89B","Links":"0"},
+            {"Name":"pgdata","Size":"1.2GB","Links":"0"}
+        ]}"#;
+        let sizes = parse_volume_sizes(docker);
+        assert_eq!(
+            sizes.get("chronos_cache_store").map(String::as_str),
+            Some("89B")
+        );
+        assert_eq!(sizes.get("pgdata").map(String::as_str), Some("1.2GB"));
+        // Podman spells the fields its own way and sometimes counts raw bytes; the
+        // parser only has to find a name and render something, not match a format.
+        let podman = r#"{"Volumes":[{"VolumeName":"data","Size":2048}]}"#;
+        assert!(parse_volume_sizes(podman).contains_key("data"));
+        // Garbage decorates nothing rather than failing anything.
+        assert!(parse_volume_sizes("TYPE  TOTAL  ACTIVE").is_empty());
     }
 
     #[test]

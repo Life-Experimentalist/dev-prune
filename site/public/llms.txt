@@ -61,8 +61,9 @@ and it is what makes restore fast. Container engines are reported the same way b
 `devp caches docker`, and nothing that runs on its own will ever touch one.
 `devp caches clear <manager>` empties a cache when you type it, and
 `devp caches clear <engine>` runs Docker's or Podman's own narrow prune commands when you
-name the engine — both after showing what goes and asking, and neither ever touching a
-volume, which is the one thing here that nothing can hand back.
+name the engine — both after showing what goes and asking, and neither touching a
+volume on its own: a volume is the one thing here that nothing can hand back, so one
+goes only when a person at a terminal names it through `--include-volumes`.
 
 ## Install
 
@@ -320,20 +321,26 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   container disk is not a package manager cache and adding the two figures together is
   always wrong. Exit 0 whether an engine answered, was stopped, or was not installed;
   2 for an engine name it does not know
-- `devp caches clear <docker|podman|nerdctl|finch|container> [--dry-run] [--yes] [--json]`
+- `devp caches clear <docker|podman|nerdctl|finch|container> [--include-volumes] [--dry-run] [--yes] [--json]`
   — run the narrow prune commands the report above prints, after printing them and asking:
   `builder prune -a -f`, `image prune -a -f` and `container prune -f` for docker and
   podman, and `system prune -a -f` for nerdctl and finch, whose narrow subcommands are
   spelled differently across versions. Apple's `container` gets `image prune -a` and
   `prune`: it has no `system prune`, and its prune subcommands neither ask a question nor
   define a `-f`, so those two run the moment they are typed — the confirmation is
-  dev-prune's own, and the report says so before the list. **No volume, ever**: there is no argument anywhere in that
-  table containing the word, and a unit test fails the build if one appears. That is not
+  dev-prune's own, and the report says so before the list. **No volume on its own, and
+  never a bulk volume delete**: there is no argument anywhere in that table containing
+  the word, and a unit test fails the build if one appears. That is not
   the lockfile rule — an image can be pulled again and a build cache rebuilt, so those are
   a question of consent, and the prompt is the consent — it is that a named volume holds
   the only copy of what is inside it. The headline estimate has the engine's unused-volume
-  figure subtracted out and names it separately as left alone, pointing at
-  `<engine> volume prune` as yours to type. Freed space is `system df` before minus after,
+  figure subtracted out and names it separately as left alone. `--include-volumes`
+  (docker and podman only) then lists those unused volumes by name after the steps run;
+  the user types the row numbers to delete, and each pick is one unforced `volume rm`.
+  The flag refuses `--yes`, `--json` and a piped stdin, all exit 2, so nothing
+  unattended can reach it, and dev-prune never runs `volume prune` either way. On the
+  other engines the flag is exit 2 pointing at `<engine> volume ls`.
+  Freed space is `system df` before minus after,
   never the sum of what the commands claimed: layers are shared, so those add up to more
   than the disk ever held. It is counted on its own line in `devp stats`. Not reachable
   from `clear all`, from any scheduler, or from a Git hook — naming the engine is the
@@ -527,10 +534,13 @@ with a `git clone` of possibly-untrusted code.
 - Never deletes container disk on its own. No prune pass, scheduler or Git hook reaches
   an engine, and `devp caches clear all` does not either. `devp caches clear docker` does,
   when you name it and answer the prompt.
-- Never deletes a volume, in any command, with any flag. There is no argument in
-  dev-prune's container table containing the word "volume", and a unit test fails the
-  build if one appears. `docker volume prune` stays a command the report prints and you
-  type.
+- Never bulk-deletes volumes, and never runs `volume prune` or `system prune --volumes`.
+  There is no argument in dev-prune's container reclaim table containing the word
+  "volume", and a unit test fails the build if one appears. The one path to a volume is
+  `devp caches clear <engine> --include-volumes` (docker and podman): unused volumes
+  listed by name, the numbers typed by a person at a terminal, one unforced `volume rm`
+  per pick. That flag refuses `--yes`, `--json` and a piped stdin, so no script,
+  scheduler or agent can reach it.
 - Never empties Maven's local repository at all. `~/.m2/repository` holds artifacts
   `mvn install:install-file` put there that no remote can hand back, so dev-prune sizes
   it, prints the command, and leaves running it to you.

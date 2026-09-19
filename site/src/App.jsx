@@ -2187,10 +2187,15 @@ Notes you should rely on, not work around:
                       Run the narrow prune commands for you &mdash; build cache,
                       unused images, stopped containers &mdash; after printing
                       them and asking, and count what came back on{" "}
-                      <code>devp stats</code>. Never a volume: there is no
-                      argument in the table containing the word, and a test
-                      fails the build if one appears. Name the engine; no
-                      schedule, hook or <code>clear all</code> reaches it
+                      <code>devp stats</code>. Never a volume on its own: there
+                      is no argument in the table containing the word, and a
+                      test fails the build if one appears.{" "}
+                      <code>--include-volumes</code> (docker and podman) then
+                      lists the unused volumes by name for you to pick from,
+                      one unforced <code>volume rm</code> per pick, and refuses{" "}
+                      <code>--yes</code>, <code>--json</code> and a piped
+                      stdin. Name the engine; no schedule, hook or{" "}
+                      <code>clear all</code> reaches it
                     </td>
                   </tr>
                   <tr>
@@ -2863,11 +2868,16 @@ Notes you should rely on, not work around:
                 you: build cache, unused images, stopped containers, printed
                 first, after a prompt, and counted on <code>devp stats</code>{" "}
                 so the space you reclaimed on its advice is space it can account
-                for. It will not touch a volume, and there is no flag that makes
-                it &mdash; an image can be pulled again and a build cache
-                rebuilt, but what is inside a named volume is the only copy, so{" "}
-                <code>docker volume prune</code> stays a command it prints and
-                you type. Nothing on a schedule goes near any of it. The figures
+                for. It will not touch a volume on its own, and it never runs{" "}
+                <code>volume prune</code> &mdash; an image can be pulled again
+                and a build cache rebuilt, but what is inside a named volume is
+                the only copy, so a volume goes only when someone names it.{" "}
+                <code>--include-volumes</code> (docker and podman) is that
+                naming: it lists the unused volumes by name, you type the
+                numbers of the ones to delete, and each pick is one unforced{" "}
+                <code>volume rm</code>. The flag refuses <code>--yes</code>,{" "}
+                <code>--json</code> and a piped stdin, so only a person at a
+                terminal can use it. Nothing on a schedule goes near any of it. The figures
                 come from the engine's own{" "}
                 <code>system df</code> rather than a look at the disk, because on
                 Docker Desktop and Podman the store lives inside a VM disk image

@@ -362,7 +362,15 @@ it refuses to run at all when there are no registered repositories to check agai
 Nothing else in a cache is lost; every manager re-downloads what it needs. What it costs \
 is time, in every project on the machine, on the next install and the next `devp \
 restore`. The freed size reported afterwards is measured rather than assumed, because \
-a `prune` keeps what is still in use.";
+a `prune` keeps what is still in use.
+
+`--include-volumes` belongs to a container engine named alone, and only docker and \
+podman can honour it: they are the engines whose `volume ls` can narrow to volumes \
+nothing uses. After the narrow steps run, the unused volumes are listed by name and you \
+type the numbers of the ones to delete; each pick is one unforced `volume rm`, and an \
+empty answer keeps them all. dev-prune never runs `volume prune`. Because a volume \
+holds the only copy of what is in it, the flag refuses `--yes`, `--json` and a piped \
+stdin: nothing unattended can reach it, and that is the point.";
 
 pub const CACHES_CLEAR_EXAMPLES: &str = "\
 EXAMPLES:
@@ -378,6 +386,8 @@ EXAMPLES:
   devp caches clear all --yes     No prompt, for a script
   devp caches clear go --json --yes
                                   Machine-readable (`--json` requires `--yes`)
+  devp caches clear docker --include-volumes
+                                  Also pick unused volumes by name (terminal only)
 
 Exit code 1 if any cache could not be cleared; the rows are printed either way.
 Exit code 2 for `maven`, which is reported but never cleared.";

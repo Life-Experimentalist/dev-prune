@@ -1830,12 +1830,14 @@ impl ClearOutcome {
 /// user, it asks. `over_cap` narrows the selection to managers that have outgrown their
 /// `cache_max_gb` entry, and `unused` to managers no registered repository uses at all.
 /// `except` names managers `all` must leave alone — the one-time blacklist to the
-/// list's whitelist.
+/// list's whitelist. `include_volumes` belongs to one container engine named alone; the
+/// engine module enforces the rest of what that flag refuses.
 pub fn run_clear(
     target: &str,
     except: Option<&str>,
     over_cap: bool,
     unused: bool,
+    include_volumes: bool,
     yes: bool,
     dry_run: bool,
     json_output: bool,
@@ -1852,6 +1854,17 @@ pub fn run_clear(
         ))));
     }
     let all = targets.len() == 1 && targets[0].eq_ignore_ascii_case("all");
+    // Checked here rather than in the engine module so `clear all --include-volumes`
+    // and `clear npm --include-volumes` both answer before any measuring starts.
+    if include_volumes
+        && !(targets.len() == 1 && crate::commands::containers::is_engine(targets[0]))
+    {
+        return Err(anyhow::Error::new(crate::UsageError(
+            "`--include-volumes` lists a container engine's unused volumes, so it needs \
+             one engine named alone: `devp caches clear docker --include-volumes`."
+                .to_string(),
+        )));
+    }
     // `npm,all` reads as a contradiction, so it is one: either the list decides, or
     // `all` does — with `--except` to carve pieces out of it.
     if !all && targets.iter().any(|t| t.eq_ignore_ascii_case("all")) {
@@ -1897,7 +1910,13 @@ pub fn run_clear(
                  caches clear {target}` on its own."
             ))));
         }
-        return crate::commands::containers::run_clear(target, yes, dry_run, json_output);
+        return crate::commands::containers::run_clear(
+            target,
+            include_volumes,
+            yes,
+            dry_run,
+            json_output,
+        );
     }
     // An engine elsewhere in a list would otherwise fall into the unknown-manager
     // error below, which is the wrong answer: `clear docker` works, it just has to be
@@ -2641,7 +2660,7 @@ mod tests {
     fn clearing_a_manual_only_manager_explains_itself_instead_of_reporting_nothing() {
         // The unhelpful failure this guards against is "No maven cache on this machine",
         // which is both untrue and no help at all.
-        let err = run_clear("maven", None, false, false, true, true, false).unwrap_err();
+        let err = run_clear("maven", None, false, false, false, true, true, false).unwrap_err();
         assert!(
             err.downcast_ref::<crate::UsageError>().is_some(),
             "expected a usage error, got: {err:#}"
@@ -2675,7 +2694,7 @@ mod tests {
     #[test]
     fn an_unknown_manager_is_a_usage_error() {
         // Returns before anything is measured, so this touches nothing.
-        let err = run_clear("nonesuch", None, false, false, true, true, false).unwrap_err();
+        let err = run_clear("nonesuch", None, false, false, false, true, true, false).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
     }
 
@@ -2683,7 +2702,7 @@ mod tests {
     fn a_manual_only_manager_in_a_list_gets_the_same_refusal_as_alone() {
         // Writing `npm,maven` is not quieter consent than `maven`; the refusal must
         // stay loud and still name the command the user can run themselves.
-        let err = run_clear("npm,maven", None, false, false, true, true, false).unwrap_err();
+        let err = run_clear("npm,maven", None, false, false, false, true, true, false).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
         let text = format!("{err}");
         assert!(
@@ -2694,7 +2713,7 @@ mod tests {
 
     #[test]
     fn all_inside_a_list_is_a_usage_error() {
-        let err = run_clear("npm,all", None, false, false, true, true, false).unwrap_err();
+        let err = run_clear("npm,all", None, false, false, false, true, true, false).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
         let text = format!("{err}");
         assert!(
@@ -2705,19 +2724,30 @@ mod tests {
 
     #[test]
     fn except_with_a_named_target_is_a_usage_error() {
-        let err = run_clear("npm", Some("uv"), false, false, true, true, false).unwrap_err();
+        let err = run_clear("npm", Some("uv"), false, false, false, true, true, false).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
     }
 
     #[test]
     fn an_unknown_name_in_except_is_a_usage_error() {
-        let err = run_clear("all", Some("nonesuch"), false, false, true, true, false).unwrap_err();
+        let err = run_clear(
+            "all",
+            Some("nonesuch"),
+            false,
+            false,
+            false,
+            true,
+            true,
+            false,
+        )
+        .unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
     }
 
     #[test]
     fn an_engine_in_a_list_is_refused_with_the_standalone_command() {
-        let err = run_clear("npm,docker", None, false, false, true, true, false).unwrap_err();
+        let err =
+            run_clear("npm,docker", None, false, false, false, true, true, false).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
         let text = format!("{err}");
         assert!(
@@ -2730,19 +2760,29 @@ mod tests {
     fn an_engine_in_except_is_a_usage_error() {
         // `all` never reaches an engine, so excepting one means the user misread what
         // `all` covers — worth saying rather than silently accepting a no-op.
-        let err = run_clear("all", Some("docker"), false, false, true, true, false).unwrap_err();
+        let err = run_clear(
+            "all",
+            Some("docker"),
+            false,
+            false,
+            false,
+            true,
+            true,
+            false,
+        )
+        .unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
     }
 
     #[test]
     fn a_target_of_only_commas_names_nothing() {
-        let err = run_clear(",", None, false, false, true, true, false).unwrap_err();
+        let err = run_clear(",", None, false, false, false, true, true, false).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
     }
 
     #[test]
     fn json_without_yes_is_a_usage_error_rather_than_a_prompt() {
-        let err = run_clear("npm", None, false, false, false, false, true).unwrap_err();
+        let err = run_clear("npm", None, false, false, false, false, false, true).unwrap_err();
         assert!(err.downcast_ref::<crate::UsageError>().is_some());
     }
 
