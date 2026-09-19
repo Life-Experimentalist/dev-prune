@@ -208,13 +208,16 @@ every time: does a lockfile prove it comes back? If any of them ever gets built,
 separate tool with a separate promise on its own front page — never a mode of `devp`,
 because a command whose guarantee holds for some of its arguments has no guarantee.
 
-- **Deleting Docker images, volumes or build cache.** Nothing about them is
-  lockfile-recoverable. An image layer may be irreproducible the moment an upstream tag
-  moves, and a volume is data, not a cache. `docker system prune` exists, is well
-  understood, and its consequences are the user's to accept. Reporting what is there was
-  always a different question, and it shipped in 1.9.0: `devp caches docker` sizes it,
-  says what the engine calls reclaimable, and prints those commands for you to run. There
-  is no flag that makes dev-prune run one, and there will not be.
+- **Deleting container disk unattended.** Nothing about it is lockfile-recoverable. An
+  image layer may be irreproducible the moment an upstream tag moves, and a volume is
+  data, not a cache. Reporting what is there shipped in 1.9.0 (`devp caches docker`),
+  and running the engine's narrow prune commands when you name the engine and answer
+  the prompt shipped in 1.17.0 (`devp caches clear docker`). `--include-volumes` goes
+  one step further on docker and podman: unused volumes listed by name, picked one at a
+  time by a person at a terminal, one unforced `volume rm` each. The line that does not
+  move is attendance. No scheduler, Git hook or `clear all` reaches an engine,
+  dev-prune never runs `volume prune` or `system prune --volumes`, and no flag
+  bulk-deletes a volume or ever will.
 - **Growing into a general "developer storage manager"** — Xcode DerivedData, simulator
   runtimes, Android SDK images, browser and IDE caches, the Downloads folder. The review
   framed it as the obvious next market. The problem is that dev-prune's whole claim is

@@ -569,6 +569,11 @@ pub enum CachesAction {
         /// there are no registered repositories to check against.
         #[arg(long)]
         unused: bool,
+
+        /// With a container engine: after the narrow steps, list its unused volumes by
+        /// name and pick which of them go. Refuses `--yes`, `--json` and a piped stdin.
+        #[arg(long)]
+        include_volumes: bool,
     },
 
     /// What Docker is holding: images, containers, volumes and build cache (read-only).
@@ -980,11 +985,13 @@ pub fn run_cli() {
                 except,
                 over_cap,
                 unused,
+                include_volumes,
             }) => commands::caches::run_clear(
                 &target,
                 except.as_deref(),
                 over_cap,
                 unused,
+                include_volumes,
                 cli.yes,
                 cli.dry_run,
                 json,

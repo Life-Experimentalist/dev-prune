@@ -526,6 +526,10 @@ Engine {
         what: "images, stopped containers and the build cache",
         args: &["system", "prune", "-a", "-f"],
     }],
+    // None: finch forwards to nerdctl, whose dangling filter is "not supported
+    // yet", so it cannot list only its unused volumes and `--include-volumes`
+    // is a usage error for it.
+    volume_candidates: None,
 }
 ```
 
@@ -534,14 +538,23 @@ engine names `devp caches clear` accepts, the list in its usage error, and what
 `devp caches containers` runs when given no engine. There is no separate list to keep
 in step.
 
-Two fields are the ones to get right:
+Three fields are the ones to get right:
 
 - **`prune` and `reclaim` are deliberately separate tables.** `prune` is every command
   worth *knowing about*, including the volume-deleting variant; it is printed and never
   run. `reclaim` is only what `devp caches clear <engine>` will execute. There is no
-  argv in any `reclaim` list that touches a volume — so "dev-prune never deletes your
-  volumes" is a property of the table rather than a flag someone could pass or a check
+  argv in any `reclaim` list that touches a volume — so "no reclaim step can touch a
+  volume" is a property of the table rather than a flag someone could pass or a check
   someone could forget.
+- **`volume_candidates`** is `Some` only when the engine can list *just* its unused
+  volumes by name, which today means a `volume ls -q --filter dangling=true` the engine
+  actually honours: docker and podman do. The surface is what `--include-volumes`
+  reads. The list is printed with row numbers, the user types the numbers, and each
+  pick runs one unforced `volume rm <name>`. No argv on the surface may contain
+  `prune`, `--volumes` or a force flag, and a unit test fails the build if one appears.
+  An engine whose filter is unreliable sets `None`, which makes `--include-volumes` a
+  usage error pointing at `<engine> volume ls`. When in doubt, `None`: a filter that
+  silently lists in-use volumes would put the wrong names on a deletion menu.
 - **`prompts`** says whether the engine stops to ask on its own. Docker, Podman,
   nerdctl and finch all do, and all take `-f` to mean the question has been asked
   already. Apple's `container` does not: its prune subcommands neither ask nor define

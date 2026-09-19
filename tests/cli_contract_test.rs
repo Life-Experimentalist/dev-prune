@@ -1725,6 +1725,79 @@ fn clearing_a_container_engine_as_json_still_demands_an_answer() {
 }
 
 #[test]
+fn include_volumes_needs_one_engine_named_alone() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    // A package manager has no volumes and `all` never reaches an engine, so both
+    // spellings are the same misunderstanding; the refusal names the shape that works.
+    for target in ["npm", "all"] {
+        let out = devp(&config)
+            .args(["caches", "clear", target, "--include-volumes"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`clear {target} --include-volumes` was not a usage error:\n{}",
+            combined(&out)
+        );
+        let text = combined(&out);
+        assert!(text.contains("--include-volumes"), "{text}");
+    }
+}
+
+#[test]
+fn include_volumes_refuses_every_unattended_way_in() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    // The flag's whole design is that a person types each volume's number at a
+    // terminal, so the three ways of not being that person are refused, and refused
+    // before the engine is even looked for: the answer is the same on a machine with
+    // Docker running and on one without it. The bare spelling lands here too: a test
+    // harness owns stdin, which is exactly the piped-stdin case the contract pins.
+    for (extra, must_name) in [
+        (Some("--json"), "--json"),
+        (Some("--yes"), "--yes"),
+        (None, "terminal"),
+    ] {
+        let mut cmd = devp(&config);
+        cmd.args(["caches", "clear", "docker", "--include-volumes"]);
+        if let Some(flag) = extra {
+            cmd.arg(flag);
+        }
+        let out = cmd.output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`clear docker --include-volumes {}` was not a usage error:\n{}",
+            extra.unwrap_or("(piped stdin)"),
+            combined(&out)
+        );
+        let text = combined(&out);
+        assert!(text.contains(must_name), "{text}");
+    }
+}
+
+#[test]
+fn an_engine_that_cannot_name_unused_volumes_says_so() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    // nerdctl's `volume ls` filter cannot narrow to dangling volumes, so a pick list
+    // through dev-prune would show volumes that are still in use. The refusal hands
+    // the user the engine's own listing instead.
+    let out = devp(&config)
+        .args(["caches", "clear", "nerdctl", "--include-volumes"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+    let text = combined(&out);
+    assert!(text.contains("nerdctl volume ls"), "{text}");
+}
+
+#[test]
 fn the_container_json_document_carries_no_command_to_run() {
     let tmp = TempDir::new().unwrap();
     let config = tmp.path().join("config");

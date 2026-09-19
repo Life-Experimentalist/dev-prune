@@ -539,10 +539,10 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
   nerdctl gets one command rather than three because its narrow subcommands are spelled differently across versions and `system prune` is the spelling that has been stable. finch is nerdctl inside a Lima VM and forwards `system` to it verbatim, so it gets the same one.
 
   Apple's `container` is the odd one twice over. It has no `system prune`, so images and containers are two steps; and its prune subcommands neither ask a question nor define a `-f`, so unlike every row above them these run the moment they are typed. dev-prune still prints the plan and still asks — the confirmation is dev-prune's, not the engine's — and the report says so in as many words before the list. There is no build-cache step because BuildKit lives in a separate builder VM, and `container builder delete` removes that VM rather than pruning what it cached, which is more than clearing a cache.
-- **Volumes are not in that table, and cannot be put in it by a flag.** There is no argument anywhere in it containing the word "volume", and a unit test fails the build if one appears. This is not the same promise as the rest of the tool: an image can be pulled again and a build cache rebuilt, so those are a question of consent, and consent is what the prompt is for. A named volume holds the only copy of what is in it. `docker volume prune` stays a command the report prints and you type.
+- **Volumes are not in that table, and no flag puts one in it.** There is no argument anywhere in it containing the word "volume", and a unit test fails the build if one appears. This is not the same promise as the rest of the tool: an image can be pulled again and a build cache rebuilt, so those are a question of consent, and consent is what the prompt is for. A named volume holds the only copy of what is in it, so a volume goes only when someone names it. `--include-volumes` is how you name it: after the steps above run, dev-prune lists the engine's unused volumes by name and you type the numbers of the ones to delete, one unforced `<engine> volume rm <name>` each. dev-prune never runs `<engine> volume prune`, with or without the flag.
 - **Why dev-prune runs it at all**: because the alternative was worse. The report used to end by printing four commands and asking you to go and run one, which made the space it reclaimed yours to have remembered — and left dev-prune unable to count it, so 20 GiB of build cache you cleared on its advice never appeared in `devp stats`.
 - **Nothing schedulable reaches this.** No daemon, no Git hook and no `devp run` path calls it, with or without `--yes`. The rule the unattended pass follows — delete only what a lockfile rebuilds — is unchanged; this is the foreground kind, asked for by name, with what is about to happen printed first.
-- **The estimate excludes volumes**: the engine's own reclaimable figure counts unused volumes, and none of the commands above touches one. Printing it whole would promise back space these steps cannot give, so the volume row comes out of the headline number and is named separately as left alone, with `<engine> volume prune` if you have read what is in them and want it gone.
+- **The estimate excludes volumes**: the engine's own reclaimable figure counts unused volumes, and none of the commands above touches one. Printing it whole would promise back space these steps cannot give, so the volume row comes out of the headline number and is named separately as left alone. To pick which of those volumes go, by name and one at a time, add `--include-volumes`; without it the row is not touched.
 - **Freed size is the engine's answer, not the sum of the steps**: `system df` before, `system df` after, and the difference. Container layers are shared, so three `image prune` lines can each report a gigabyte while the disk gives back one — adding what the commands claim produces a number that cannot be true.
 - **What it costs**: a pull of the whole layer stack next time, and a cold build cache. That is why `devp stats` counts it on its own line rather than adding it to the other two.
 - **An engine that is not installed**, or is installed with its daemon stopped, is a **usage error** (exit `2`) quoting the engine's own words — dev-prune does not start deleting on a guess about why something did not answer.
@@ -550,12 +550,14 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
   - `--dry-run` — print the commands and the estimate; run nothing. (Global flag.)
   - `--yes` / `-y` — skip the confirmation. (Global flag.)
   - `--json` — emit one machine-readable document. **Requires `--yes` or `--dry-run`**, for the same reason as the manager form.
-- **Exit codes**: `0` if every step finished, `1` if any did not (the rows print either way), `2` for `--json` without `--yes`, for `--over-cap` or `--unused`, or for an engine that did not answer.
+  - `--include-volumes`: after the steps above run, list the engine's unused volumes by name and ask which of them to delete. The answer is row numbers, ranges like `1 3-5`, `all`, or Enter for none; each pick runs one `<engine> volume rm <name>`, never forced, and an answer that does not read as numbers from the list deletes nothing. docker and podman only: the other engines cannot list only their unused volumes, so the flag is a usage error there, naming `<engine> volume ls` as yours to run. It refuses `--yes`, `--json` and a piped stdin, all usage errors: the picking is the point, so only a person at a terminal can answer it, and nothing scheduled or scripted can reach it. `--dry-run` shows the list read-only.
+- **Exit codes**: `0` if every step finished, `1` if any did not (the rows print either way), `2` for `--json` without `--yes`, for `--over-cap` or `--unused`, for `--include-volumes` alongside `--yes`, `--json` or a piped stdin, for `--include-volumes` on an engine that cannot list its unused volumes, or for an engine that did not answer.
 - **Examples**:
   ```bash
   devp caches clear docker --dry-run   # the three commands and the estimate
   devp caches clear docker             # after confirming
   devp caches clear podman --yes
+  devp caches clear docker --include-volumes   # then pick unused volumes by name
   devp caches clear docker --json --yes | jq '.summary.freed_bytes'
   ```
 
@@ -1400,7 +1402,9 @@ than the disk ever held.
 `volumes_untouched` is stated rather than left to be inferred. It is the one promise this
 command makes about what it did *not* do, and a consumer should be able to check it
 without reading the argv table inside the binary. It is always `true`; a document without
-it is from a version that could not make the promise.
+it is from a version that could not make the promise. `--include-volumes` does not bend
+this: that flag refuses `--json`, so no run that offered volumes ever produces this
+document, and the key never has a second value.
 
 ### `devp trust --json`
 
