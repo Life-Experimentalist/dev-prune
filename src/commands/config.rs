@@ -297,6 +297,16 @@ const RECOMMENDED: &[Recommendation] = &[
         taken: None,
     },
     Recommendation {
+        key: "enable_godot",
+        label: "Godot imported-resource caches",
+        why: "`.godot/` (and `.import/` on Godot 3) holds the editor's import cache for \
+              every asset, often larger than the assets themselves, and the editor \
+              rebuilds it the next time it opens the project.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
         key: "cache_max_gb",
         label: "Cache size ceilings",
         why: "Every other suggestion here is about one project's folders. This one is about the \
@@ -721,6 +731,20 @@ const SETTINGS: &[Setting] = &[
         get: |s| s.enable_dotnet_build.to_string(),
         set: |s, v| {
             s.enable_dotnet_build = parse_bool("enable_dotnet_build", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_godot",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Godot adapter (.godot/ and .import/ come back by re-importing).",
+        plain: "Clean Godot's imported-resource caches too. The editor rebuilds them from \
+                your assets the next time it opens the project.",
+        get: |s| s.enable_godot.to_string(),
+        set: |s, v| {
+            s.enable_godot = parse_bool("enable_godot", v)?;
             Ok(())
         },
     },
