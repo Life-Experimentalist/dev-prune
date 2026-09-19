@@ -873,6 +873,10 @@ fn opt_in_adapters(registry: &Registry) -> Vec<&'static str> {
         ("cmake_build", s.enable_cmake_build),
         ("dotnet_build", s.enable_dotnet_build),
         ("godot", s.enable_godot),
+        ("unity", s.enable_unity),
+        ("unreal", s.enable_unreal),
+        ("defold", s.enable_defold),
+        ("cocos", s.enable_cocos),
     ]
     .into_iter()
     .filter_map(|(name, on)| on.then_some(name))
