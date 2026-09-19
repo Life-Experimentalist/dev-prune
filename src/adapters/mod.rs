@@ -18,6 +18,7 @@
 
 pub mod bun;
 pub mod bundler;
+pub mod cabal;
 pub mod cargo_adapter;
 pub mod cmake_build;
 pub mod cocoapods;
@@ -36,8 +37,11 @@ pub mod mix_build;
 pub mod npm;
 pub mod pdm;
 pub mod pipenv;
+pub mod pixi;
 pub mod pnpm;
 pub mod poetry;
+pub mod sbt;
+pub mod stack;
 pub mod swift;
 pub mod terraform;
 pub mod unity;
@@ -46,6 +50,7 @@ pub mod uv;
 pub mod vcpkg;
 pub mod venv;
 pub mod yarn;
+pub mod zig;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -189,7 +194,7 @@ pub trait PackageManager: Send + Sync {
     ///
     /// Adapters whose directory is compiler output answer `true` — cargo, gradle,
     /// maven, swift, dart, mix_build, vcpkg, cmake_build, dotnet_build, godot,
-    /// unity, unreal, defold and cocos.
+    /// unity, unreal, defold, cocos, zig, stack, cabal and sbt.
     /// Theirs come back by
     /// recompiling the project, which costs far
     /// more than a dependency reinstall, so nobody should find them deleted without
@@ -243,6 +248,7 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(pdm::Pdm),
         Box::new(pipenv::Pipenv),
         Box::new(venv::Venv),
+        Box::new(pixi::Pixi),
         Box::new(cargo_adapter::Cargo),
         Box::new(go::Go),
         Box::new(composer::Composer),
@@ -263,6 +269,10 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(unreal::Unreal),
         Box::new(defold::Defold),
         Box::new(cocos::Cocos),
+        Box::new(zig::Zig),
+        Box::new(stack::Stack),
+        Box::new(cabal::Cabal),
+        Box::new(sbt::Sbt),
     ]
 }
 
@@ -321,6 +331,18 @@ fn opt_in_enabled() -> &'static [String] {
                 if r.settings.enable_cocos {
                     names.push("cocos".to_string());
                 }
+                if r.settings.enable_zig {
+                    names.push("zig".to_string());
+                }
+                if r.settings.enable_stack {
+                    names.push("stack".to_string());
+                }
+                if r.settings.enable_cabal {
+                    names.push("cabal".to_string());
+                }
+                if r.settings.enable_sbt {
+                    names.push("sbt".to_string());
+                }
                 names
             })
             .unwrap_or_default()
@@ -368,10 +390,10 @@ pub fn is_adapter_name(name: &str) -> bool {
 /// the picker, which is the one place a user goes to find it.
 pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("JavaScript", &["npm", "pnpm", "yarn", "bun", "deno"]),
-    ("Python", &["uv", "poetry", "pdm", "pipenv", "venv"]),
+    ("Python", &["uv", "poetry", "pdm", "pipenv", "venv", "pixi"]),
     ("Rust", &["cargo"]),
     ("Go", &["go"]),
-    ("JVM", &["gradle", "maven"]),
+    ("JVM", &["gradle", "maven", "sbt"]),
     ("PHP", &["composer"]),
     ("Ruby", &["bundler"]),
     ("Swift & Objective-C", &["swift", "cocoapods"]),
@@ -380,6 +402,8 @@ pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("Dart & Flutter", &["dart"]),
     ("C & C++", &["vcpkg", "cmake_build"]),
     (".NET", &["dotnet_build"]),
+    ("Zig", &["zig"]),
+    ("Haskell", &["stack", "cabal"]),
     (
         "Game engines",
         &["godot", "unity", "unreal", "defold", "cocos"],
@@ -1338,7 +1362,7 @@ pub(crate) fn python_runtime_available(tag: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-const NO_RESTORE_BINARY: [&str; 13] = [
+const NO_RESTORE_BINARY: [&str; 17] = [
     "venv",
     "gradle",
     "maven",
@@ -1352,6 +1376,10 @@ const NO_RESTORE_BINARY: [&str; 13] = [
     "unreal",
     "defold",
     "cocos",
+    "zig",
+    "stack",
+    "cabal",
+    "sbt",
 ];
 
 /// Adapters whose executable is not called what the adapter is called.
@@ -1369,7 +1397,7 @@ pub fn adapter_binary(adapter: &str) -> &str {
 ///
 /// `devp doctor` naming a missing manager without saying how to get it is a finding the
 /// reader has to go and research; every other finding it prints carries its own repair.
-const INSTALL_HINTS: [(&str, &str); 17] = [
+const INSTALL_HINTS: [(&str, &str); 18] = [
     ("npm", "ships with Node.js — https://nodejs.org"),
     (
         "pnpm",
@@ -1417,6 +1445,7 @@ const INSTALL_HINTS: [(&str, &str); 17] = [
         "dart",
         "https://dart.dev/get-dart — or the Flutter SDK, which bundles it",
     ),
+    ("pixi", "https://pixi.sh/latest/installation/"),
 ];
 
 /// How to install the manager behind `adapter`, if there is a one-line answer.
@@ -1522,6 +1551,7 @@ mod tests {
         assert_eq!(
             opt_in,
             vec![
+                "cabal",
                 "cargo",
                 "cmake_build",
                 "cocos",
@@ -1532,10 +1562,13 @@ mod tests {
                 "gradle",
                 "maven",
                 "mix_build",
+                "sbt",
+                "stack",
                 "swift",
                 "unity",
                 "unreal",
-                "vcpkg"
+                "vcpkg",
+                "zig"
             ]
         );
     }

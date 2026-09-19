@@ -877,6 +877,10 @@ fn opt_in_adapters(registry: &Registry) -> Vec<&'static str> {
         ("unreal", s.enable_unreal),
         ("defold", s.enable_defold),
         ("cocos", s.enable_cocos),
+        ("zig", s.enable_zig),
+        ("stack", s.enable_stack),
+        ("cabal", s.enable_cabal),
+        ("sbt", s.enable_sbt),
     ]
     .into_iter()
     .filter_map(|(name, on)| on.then_some(name))

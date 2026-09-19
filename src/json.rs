@@ -103,11 +103,14 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         // Like bun, pub has no resolve-only write mode: `pub get` is what writes
         // `pubspec.lock`, and it fills the machine-wide pub cache on the way past.
         "dart" => "dart pub get",
+        // `pixi lock` re-solves from the manifest and writes the lockfile without
+        // installing anything.
+        "pixi" => "pixi lock",
         // venv has no lockfile to regenerate — the fix is to write `requirements.txt`,
         // which is authoring work, not a command we can hand over. gradle, maven, swift,
-        // vcpkg, cmake_build, dotnet_build and the game engines verify the manifest, not
-        // lockfile sync — a missing manifest, or a `vcpkg.json` that declares no
-        // dependencies, has no mechanical fix either.
+        // vcpkg, cmake_build, dotnet_build, the game engines, zig, stack, cabal and sbt
+        // verify the manifest, not lockfile sync — a missing manifest, or a `vcpkg.json`
+        // that declares no dependencies, has no mechanical fix either.
         _ => return None,
     })
 }
@@ -1275,9 +1278,10 @@ mod tests {
     #[test]
     fn every_adapter_with_a_lockfile_has_a_fix_command() {
         for adapter in crate::adapters::get_all_adapters() {
-            // venv, gradle, maven, swift, vcpkg, cmake_build, dotnet_build and the game
-            // engines verify without a lockfile-sync step — see `lockfile_fix_command`
-            // for why each has nothing mechanical to hand over.
+            // venv, gradle, maven, swift, vcpkg, cmake_build, dotnet_build, the game
+            // engines, zig, stack, cabal and sbt verify without a lockfile-sync step —
+            // see `lockfile_fix_command` for why each has nothing mechanical to hand
+            // over.
             if matches!(
                 adapter.name(),
                 "venv"
@@ -1292,6 +1296,10 @@ mod tests {
                     | "unreal"
                     | "defold"
                     | "cocos"
+                    | "zig"
+                    | "stack"
+                    | "cabal"
+                    | "sbt"
             ) {
                 continue;
             }
