@@ -159,7 +159,7 @@ anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 
 # Cross-platform paths
-dirs = "6"
+dirs = "7"
 
 # Directory walking
 walkdir = "2"
