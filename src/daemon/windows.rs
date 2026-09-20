@@ -295,7 +295,7 @@ fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
         }
         // An upgrade replaced the shipped binary, so the placed one is a previous
         // release that the scheduled task still names. Removing it first and only
-        // then placing the replacement used to fail outright on Windows CI runners —
+        // then placing the replacement used to fail outright on Windows CI runners:
         // a moment where the antivirus scanner has the freshly-written `.exe` open is
         // enough to fail `remove_file`, and the twin was left stale with nothing
         // retrying the swap. Staging beside it and renaming over it never needs the
@@ -320,7 +320,7 @@ fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
 /// is at `twin` already.
 ///
 /// Renaming over an existing file only needs it to be replaceable, not first
-/// deletable — unlike a `remove_file` followed by `hard_link`, which fails outright
+/// deletable, unlike a `remove_file` followed by `hard_link`, which fails outright
 /// the moment something else (an antivirus scan, a concurrent pass) briefly has the
 /// old file open.
 fn stage_and_replace(shipped: &Path, twin: &Path) -> Option<PathBuf> {
