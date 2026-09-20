@@ -31,7 +31,10 @@ A dry run tells you when this group would have found something: if a repository 
 one of these tools and the adapter is off, `devp run --dry-run` ends with a
 `Detected, but switched off` section naming the adapter, how many repositories use it,
 and the exact `devp config set` command that turns it on. The same information is in
-the `--json` document under the additive `recommendations` key.
+the `--json` document under the additive `recommendations` key. Once you have made
+your choices and the reminder has become noise,
+`devp config set recommendations false` silences it machine-wide; ignoring or
+excepting a repository already silences it for that repository alone.
 
 ---
 

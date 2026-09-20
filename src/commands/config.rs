@@ -436,6 +436,19 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "recommendations",
+        category: Category::Presentation,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "End a dry run with the switched-off opt-in adapters that would have found something. Changes nothing about what is scanned or deleted.",
+        plain: "Whether a dry run points out build-tool and game-engine directories it noticed but is not allowed to touch, with the command that would let it. Turn it off once you have made your choices and the reminder has become noise.",
+        get: |s| s.recommendations.to_string(),
+        set: |s, v| {
+            s.recommendations = parse_bool("recommendations", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "idle_days",
         category: Category::Scope,
         since: "1.0.0",

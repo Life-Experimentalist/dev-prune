@@ -612,6 +612,41 @@ fn test_dry_run_recommends_dormant_opt_in_adapters() {
         "{human_out}"
     );
 
+    // The hint is presentation only: with `recommendations` off, the same dormant
+    // adapter goes silent in both output modes, and the "no key" and "empty list"
+    // spellings must not diverge.
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["config", "set", "recommendations", "false"])
+        .output()
+        .unwrap();
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run", "--json"])
+        .output()
+        .expect("Failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        doc.get("recommendations").is_none(),
+        "recommendations=false must drop the JSON key entirely:\n{stdout}"
+    );
+    let human = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run"])
+        .output()
+        .expect("Failed to run");
+    let human_out = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        !human_out.contains("Detected, but switched off"),
+        "recommendations=false must drop the human section:\n{human_out}"
+    );
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["config", "set", "recommendations", "true"])
+        .output()
+        .unwrap();
+
     // Switched on, the adapter is in the pass itself and the hint must disappear.
     devp()
         .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
