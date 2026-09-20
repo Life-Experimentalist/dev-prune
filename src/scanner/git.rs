@@ -243,10 +243,14 @@ mod tests {
     /// developer's real registry and leaves a dead entry behind once the fixture is
     /// deleted. Pointing `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` at files that do not
     /// exist is how git is told to read neither.
+    ///
+    /// Built on `git_in` for the same reason production is: run from inside a git hook
+    /// (a local pre-push gate that runs `cargo test`), an inherited absolute `GIT_DIR`
+    /// aims every fixture command at the hook's own repository. One fixture commit
+    /// landed on a real branch that way on 2026-09-20.
     fn git(path: &Path) -> Command {
-        let mut cmd = Command::new("git");
-        cmd.current_dir(path)
-            .env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
+        let mut cmd = git_in(path);
+        cmd.env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
             .env("GIT_CONFIG_SYSTEM", path.join("no-such-gitconfig"));
         cmd
     }

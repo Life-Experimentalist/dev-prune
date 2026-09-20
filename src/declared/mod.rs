@@ -462,7 +462,6 @@ pub(crate) fn label_of(parts: &[String], file: &str) -> String {
 mod tests {
     use super::*;
     use std::fs;
-    use std::process::Command;
     use tempfile::TempDir;
 
     fn declared(path: &str, rebuild: &str) -> DeclaredDir {
@@ -482,6 +481,11 @@ mod tests {
     }
 
     /// A repository with one commit, so `git ls-files` has an index to answer from.
+    ///
+    /// `git_in`, not a bare `git`: run from inside a git hook, an inherited absolute
+    /// `GIT_DIR` would aim these commands at the hook's own repository, and the
+    /// `config user.*` writes here are exactly how a real repo once ended up owned
+    /// by "t <t@example.com>" (2026-09-20).
     fn repo() -> TempDir {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path();
@@ -490,9 +494,8 @@ mod tests {
             vec!["config", "user.email", "t@example.com"],
             vec!["config", "user.name", "t"],
         ] {
-            Command::new("git")
+            crate::scanner::git::git_in(path)
                 .args(&args)
-                .current_dir(path)
                 .output()
                 .unwrap();
         }
@@ -543,9 +546,8 @@ mod tests {
         let path = tmp.path();
         fs::create_dir_all(path.join("src")).unwrap();
         fs::write(path.join("src/main.rs"), "fn main() {}").unwrap();
-        Command::new("git")
+        crate::scanner::git::git_in(path)
             .args(["add", "src/main.rs"])
-            .current_dir(path)
             .output()
             .unwrap();
 
@@ -661,9 +663,8 @@ mod tests {
         let path = tmp.path();
         fs::create_dir_all(path.join("src")).unwrap();
         fs::write(path.join("src/main.rs"), "fn main() {}").unwrap();
-        Command::new("git")
+        crate::scanner::git::git_in(path)
             .args(["add", "src/main.rs"])
-            .current_dir(path)
             .output()
             .unwrap();
 

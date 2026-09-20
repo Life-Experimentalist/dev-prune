@@ -61,10 +61,13 @@ fn write_sized(path: &Path, bytes: usize) {
 /// directory in the developer's real registry — leaving a dead entry behind after the
 /// fixture is deleted. `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` pointing at files that do
 /// not exist is how git is told to read neither.
+///
+/// Built on `git_in` because tests also run from inside a git hook (a local pre-push
+/// gate that runs `cargo test`), where an inherited absolute `GIT_DIR` would aim every
+/// fixture command at the hook's own repository instead of the fixture.
 fn git(path: &Path) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(path)
-        .env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
+    let mut cmd = dev_prune::scanner::git::git_in(path);
+    cmd.env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
         .env("GIT_CONFIG_SYSTEM", path.join("no-such-gitconfig"));
     cmd
 }

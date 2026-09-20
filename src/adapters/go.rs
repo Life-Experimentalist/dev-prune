@@ -171,9 +171,8 @@ mod tests {
         // …and inside one, a staged-but-uncommitted vendor entry is a refusal. Staging
         // is enough to move the entry past `??` without needing commit identity.
         let git = |args: &[&str]| {
-            std::process::Command::new("git")
+            crate::scanner::git::git_in(dir.path())
                 .args(args)
-                .current_dir(dir.path())
                 .output()
                 .unwrap()
         };

@@ -1798,7 +1798,6 @@ fn to_utc(system_time: Option<SystemTime>) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::process::Command;
     use tempfile::TempDir;
 
     /// Restore in these tests either fails before running anything or runs against an
@@ -1854,32 +1853,32 @@ mod tests {
         assert!(!bloat.exists(), "the directory must be gone");
     }
 
+    /// `git_in`, not a bare `git`: run from inside a git hook, an inherited absolute
+    /// `GIT_DIR` would aim these fixture commands (the commit included) at the hook's
+    /// own repository. The config isolation keeps the commit from firing the
+    /// developer's real global `post-commit` hook.
     fn create_git_repo_with_commit(path: &Path) {
         fs::create_dir_all(path).unwrap();
-        Command::new("git")
-            .args(["init"])
-            .current_dir(path)
-            .output()
-            .unwrap();
+        let git = |args: &[&str]| {
+            crate::scanner::git::git_in(path)
+                .env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
+                .env("GIT_CONFIG_SYSTEM", path.join("no-such-gitconfig"))
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        git(&["init"]);
         fs::write(path.join("README.md"), "# Test").unwrap();
-        Command::new("git")
-            .args(["add", "."])
-            .current_dir(path)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args([
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@test.com",
-                "commit",
-                "-m",
-                "initial",
-            ])
-            .current_dir(path)
-            .output()
-            .unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            "initial",
+        ]);
     }
 
     #[test]
