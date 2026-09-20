@@ -65,6 +65,15 @@ replaces it.
    `cargo binstall dev-prune --force` (prebuilt), or
    `cargo install dev-prune --force` (compiles). `devp update --channels` prints that
    whole table offline, for when the stale copy is on a machine you are not sitting at.
+6. **Never `rm -rf` a bloat directory by hand.** If devp deleted it and it is needed
+   again, the way back is `devp restore`, not the package manager's own install. If the
+   user wants it gone, the way is `devp run . --dry-run` and then `devp run . -y`
+   (`--ignore-idle`, after asking, if the repository is active): the pass verifies the
+   lockfile first and records itself, so `devp restore --last-run` can undo it. A
+   hand-typed `rm -rf` has neither the proof nor the undo. Harnesses with command hooks
+   can turn this rule and the volume rule below into a confirmation prompt instead of
+   trusting memory — a copy-paste hook lives in `docs/IDE_INTEGRATION.md` (see the docs
+   map at the end of this file).
 
 ## What it will never do
 
@@ -771,5 +780,6 @@ anywhere.
 | Corruption & edge cases | `docs/troubleshooting/CORRUPTION_AND_EDGE_CASES.md` | https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/troubleshooting/CORRUPTION_AND_EDGE_CASES.md |
 | Architecture (HLD / LLD) | `docs/architecture/` | https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/architecture/HLD.md |
 | Writing a new adapter | `docs/ADDING_ADAPTERS.md` | https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/ADDING_ADAPTERS.md |
+| Editor rules, agent guardrail hook | `docs/IDE_INTEGRATION.md` | https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/IDE_INTEGRATION.md |
 
 A machine-readable summary for agents lives at <https://devprune.vkrishna04.me/llms.txt>.
