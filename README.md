@@ -765,7 +765,7 @@ once on a first install — so the defaults are something you agreed to rather t
 inherited — and again after an upgrade adds a setting you have never been shown.
 
 If you already know what you want, `devp config recommended` is the one-command version:
-it turns on the nine adapters and build trees that are off by default because they are
+it turns on the eighteen adapters and build trees that are off by default because they are
 not universally wanted, and leaves `allow_manifest_rewrite` — the one recommendation
 that edits files Git tracks — named, explained and off unless you add
 `--with-cautious`. `devp config show` lists whatever you have not taken yet.

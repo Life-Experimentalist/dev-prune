@@ -222,8 +222,8 @@ hand-rolled script never has:</p>
 
 <p>And it is not only Node: the same pass handles <code>.venv</code> for uv, Poetry, PDM,
 Pipenv and plain venv, <code>vendor/</code> for Go, Composer and Bundler,
-<code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods: twenty-five package
-managers in total, sixteen of them on by default.</p>
+<code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods: thirty-five package
+managers in total, seventeen of them on by default.</p>
 
 <h2>Which to use</h2>
 
@@ -729,11 +729,12 @@ you would rather be told "no" than be surprised.</strong> The differences that m
     package installed into <code>.venv</code> that <code>uv.lock</code> did not mention.
     Both would have been silently lost by any tool that deletes on a last-modified
     heuristic.</li>
-  <li><strong>Twenty-five package managers, not one.</strong> npm, pnpm, yarn, bun, Deno;
-    uv, Poetry, PDM, Pipenv, venv; Go, Composer, Bundler, Mix, CocoaPods, Terraform, all
-    on by default. Cargo, Gradle, Maven, SwiftPM, Dart, .NET, <code>_build</code> for Mix,
-    vcpkg and CMake ship disabled, because their output is a compile rather than a
-    download and that is a different price.</li>
+  <li><strong>Thirty-five package managers, not one.</strong> npm, pnpm, yarn, bun, Deno;
+    uv, Poetry, PDM, Pipenv, venv, pixi; Go, Composer, Bundler, Mix, CocoaPods, Terraform,
+    all on by default. Cargo, Gradle, Maven, sbt, SwiftPM, Dart, .NET, Zig, Stack, Cabal,
+    <code>_build</code> for Mix, vcpkg, CMake and the game-engine import caches (Godot,
+    Unity, Unreal, Defold, Cocos Creator) ship disabled, because their output is a compile
+    rather than a download and that is a different price.</li>
   <li><strong>Idle-gated.</strong> Nothing is a candidate until its repository has gone
     without a commit or a working-tree change for a threshold you set.</li>
   <li><strong>Hard safety rules with no override flag.</strong> It never crosses a
@@ -801,7 +802,7 @@ Elixir <code>deps/</code> are four more scans you will not run.</p>
 <p>Two tools cover the multi-ecosystem case. <a href="https://github.com/tbillington/kondo">kondo</a>
 keeps npkill's interactive shape: it recognises twenty-odd project types in one binary,
 shows what each costs, and deletes what you confirm. <a href="/">dev-prune</a> covers
-twenty-five package managers, but changes the shape instead: it is built to run without
+thirty-five package managers, but changes the shape instead: it is built to run without
 you, which is the next section.</p>
 
 <h2>"I want this to stop being a chore"</h2>
