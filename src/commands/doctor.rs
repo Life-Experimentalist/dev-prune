@@ -2109,14 +2109,16 @@ mod tests {
     #[test]
     fn a_declared_directory_counts_as_a_project() {
         let dir = TempDir::new().unwrap();
+        // `git_in`, not a bare `git`: run from inside a git hook, an inherited
+        // absolute `GIT_DIR` would write this fixture identity into the hook's own
+        // repository configuration instead of the temporary one.
         for args in [
             ["init", "-q"].as_slice(),
             &["config", "user.email", "t@example.com"],
             &["config", "user.name", "t"],
         ] {
-            std::process::Command::new("git")
+            crate::scanner::git::git_in(dir.path())
                 .args(args)
-                .current_dir(dir.path())
                 .output()
                 .unwrap();
         }

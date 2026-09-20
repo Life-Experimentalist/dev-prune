@@ -45,6 +45,16 @@ fn scratch_config_dir() -> PathBuf {
     dir
 }
 
+/// `git init` aimed at the fixture and nothing else. Run from inside a git hook (a
+/// local pre-push gate that runs `cargo test`), an inherited absolute `GIT_DIR` would
+/// otherwise re-initialize the hook's own repository and leave the fixture without one.
+fn git_init(path: &Path) {
+    dev_prune::scanner::git::git_in(path)
+        .args(["init"])
+        .output()
+        .unwrap();
+}
+
 #[test]
 fn test_cli_help() {
     let output = devp()
@@ -85,11 +95,7 @@ fn test_cli_init_and_status() {
     fs::create_dir_all(&repo_dir).unwrap();
 
     // Initialize mock git repo
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo_dir)
-        .output()
-        .unwrap();
+    git_init(&repo_dir);
 
     // Run init command with --dry-run targeting the temp repo dir
     let output = devp()
@@ -136,11 +142,7 @@ fn test_cli_link_unlink_undo() {
     fs::create_dir_all(&repo_dir).unwrap();
 
     // Initialize git repo
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo_dir)
-        .output()
-        .unwrap();
+    git_init(&repo_dir);
 
     let config_dir = tmp.path().join("config");
 
@@ -225,11 +227,7 @@ fn test_cli_run_dry_run_across_ecosystems() {
     // Create npm repo
     let npm_repo = tmp.path().join("npm-repo");
     fs::create_dir_all(&npm_repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&npm_repo)
-        .output()
-        .unwrap();
+    git_init(&npm_repo);
     fs::write(npm_repo.join("package.json"), "{}").unwrap();
     fs::write(npm_repo.join("package-lock.json"), "{}").unwrap();
     let node_modules = npm_repo.join("node_modules");
@@ -261,11 +259,7 @@ fn test_cli_restore_no_lockfiles() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("empty-repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
 
     let restore_out = devp()
         .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
@@ -355,11 +349,7 @@ fn test_auto_setup_opt_out_installs_nothing() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
 
     // `devp()` sets DEV_PRUNE_NO_AUTO_SETUP.
     let output = devp()
@@ -394,11 +384,7 @@ fn test_a_repo_with_a_broken_config_is_reported_and_fails_the_run() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("broken-repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     let broken = r#"{ "project_name": "api", "override_idle_days": 90, }"#;
     fs::write(repo.join(".devprune.json"), broken).unwrap();
 
@@ -438,11 +424,7 @@ fn test_a_broken_config_is_a_config_error_in_the_json_document() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("broken-repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     fs::write(repo.join(".devprune.json"), "{ not json").unwrap();
 
     devp()
@@ -503,11 +485,7 @@ fn test_a_personal_exclusion_keeps_a_committed_declaration_from_running() {
         )
         .unwrap();
     }
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     // `echo` is the documented rebuild for a directory that needs nothing to come back,
     // and it is the one command that resolves on every platform.
     fs::write(
@@ -558,11 +536,7 @@ fn test_dry_run_recommends_dormant_opt_in_adapters() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("zig-repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     fs::write(
         repo.join("build.zig"),
         "pub fn build(b: *std.Build) void {}",
@@ -682,11 +656,7 @@ fn test_a_refused_declaration_is_reported_without_failing_the_run() {
         vec![0u8; 4096],
     )
     .unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     // The rebuild tool is absent on every machine, so the refusal is the same everywhere.
     fs::write(
         repo.join(".devprune.json"),
