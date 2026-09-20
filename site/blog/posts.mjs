@@ -774,4 +774,255 @@ devp run --dry-run</code></pre>
     ],
     related: ['delete-node-modules-all-projects', 'cargo-target-directory-size'],
   },
+
+  {
+    slug: 'docker-disk-space',
+    title: 'Where Docker disk space actually goes',
+    description:
+      'Images, build cache, stopped containers and volumes each cost you differently to reclaim. What each one is, which are safe to delete, and the one flag that destroys data.',
+    keywords:
+      'docker disk space, docker system prune, docker build cache, docker volume prune safe',
+    body: `
+<p><strong>Short answer: run <code>docker system df</code>.</strong> It splits what Docker
+holds into four rows, and the four are not equally safe to reclaim: images, containers,
+local volumes and build cache. Three of them come back by pulling or rebuilding. The
+fourth is the only copy of whatever is inside it.</p>
+
+<h2>The four rows, safest first</h2>
+
+<ul>
+  <li><strong>Build cache.</strong> Layers BuildKit kept so your next build starts warm.
+    Deleting it costs exactly one cold build per project. <code>docker builder prune -a -f</code>
+    clears it.</li>
+  <li><strong>Unused images.</strong> Base images and old tags nothing references. They come
+    back from the registry when something pulls them, at the cost of the download.
+    <code>docker image prune -a -f</code> takes every image no container uses.</li>
+  <li><strong>Stopped containers.</strong> A stopped container keeps its writable layer.
+    Anything a process wrote inside the container, and not into a mounted volume, lives in
+    that layer and goes with it. If that describes data you care about, it was in the wrong
+    place, and the time to move it is before the prune. <code>docker container prune -f</code>
+    removes stopped containers.</li>
+  <li><strong>Volumes.</strong> A named volume is where databases, message queues and
+    anything else with real state keep it. There is no registry behind a volume and no
+    rebuild that brings one back. This row is not a cache and should never be cleared like
+    one.</li>
+</ul>
+
+<h2>The flag that turns cleanup into data loss</h2>
+
+<p><code>docker system prune --volumes</code> deletes every volume no container currently
+references. "Currently" is the trap: a database whose container is stopped, or removed and
+recreated on demand by compose, counts as unreferenced at that moment. People run the flag
+to reclaim cache space and delete a local database as a side effect. If you want volume
+space back, list them with <code>docker volume ls</code>, look at what each one is, and
+remove the ones you can name with <code>docker volume rm</code>, one at a time.</p>
+
+<h2>Why the numbers look strange</h2>
+
+<p>Two things about Docker's accounting are worth knowing before you compare numbers.
+Layers are shared, so deleting three images can free far less than the sum of their listed
+sizes. And on Docker Desktop the whole store lives inside a virtual machine disk the host
+cannot see into, so the honest measurement is the engine's own <code>system df</code>,
+before and after, rather than anything a directory walk on the host can tell you.</p>
+
+<h2>Doing it with a tool that keeps score</h2>
+
+<p><a href="/">dev-prune</a> treats container disk as something you look at often and
+delete from deliberately. <code>devp caches docker</code> prints the four rows, sized, with
+how much the engine says is reclaimable, and deletes nothing. <code>devp caches clear
+docker</code> runs the three narrow commands above (build cache, unused images, stopped
+containers), prints them before running anything, asks, and measures what came back by
+asking the engine again afterwards, so the figure lands in <code>devp stats</code> instead
+of being forgotten. Podman, nerdctl, finch and Apple's container engine get the same
+treatment under their own names.</p>
+
+<p>Volumes are excluded from that estimate and from those commands: there is no argument
+in dev-prune's table containing the word "volume", and a test fails the build if one
+appears. The one path that touches them, <code>devp caches clear docker
+--include-volumes</code>, lists the unused volumes by name and takes each deletion as a
+typed pick at a real terminal, one unforced <code>docker volume rm</code> per pick. It
+refuses <code>--yes</code>, <code>--json</code> and piped input, so no script, scheduler
+or AI agent can reach the picking. Nothing bulk, nothing silent.</p>
+`,
+    faq: [
+      {
+        q: 'Is docker system prune safe to run?',
+        a: 'Without --volumes, mostly: it removes stopped containers, unused networks, dangling images and dangling build cache, all of which come back by pulling or rebuilding. The caveat is stopped containers, whose writable layers go with them, so anything a process wrote inside a container rather than into a volume is lost. With --volumes it stops being a cleanup command: it deletes every volume no container currently references, which includes the database whose container happens to be stopped.',
+      },
+      {
+        q: 'What is using all my Docker disk space?',
+        a: 'Run docker system df for the split across images, containers, volumes and build cache, or devp caches docker for the same figures with per-row reclaimable amounts. On build machines the build cache is usually the biggest recoverable row; on machines running databases in containers, volumes often dominate and should be left alone.',
+      },
+      {
+        q: 'How do I delete Docker volumes safely?',
+        a: 'By name, one at a time, after looking: docker volume ls, then docker volume rm for the ones you can identify. Avoid docker volume prune and docker system prune --volumes, which delete by reference counting rather than by your judgment. devp caches clear docker --include-volumes wraps the same per-name deletion in a typed pick list that scripts and agents cannot answer.',
+      },
+    ],
+    related: ['clear-package-manager-cache', 'reclaim-disk-space-developer-machine'],
+  },
+
+  {
+    slug: 'ai-agents-disk-cleanup',
+    title: 'Giving an AI agent a safe way to free disk space',
+    description:
+      'An agent that runs rm -rf has no dry run, no proof and no undo. What to demand of any cleanup an agent performs, and how to teach yours the safer path.',
+    keywords:
+      'ai coding agent cleanup, agent rm -rf node_modules, claude code disk space, cursor rules cleanup',
+    body: `
+<p>Coding agents notice full disks. They see the failing write, they know
+<code>node_modules</code> is rebuildable, and the shortest path from problem to fix is
+<code>rm -rf</code>. Sometimes that is fine. The times it is not fine are the times a
+lockfile no longer resolved, or the directory held something edited in place, or the
+command was <code>docker system prune --volumes</code> and the thing reclaimed was a
+database. An agent deleting by hand has no dry run, no proof the thing comes back, and no
+record to undo from.</p>
+
+<h2>What to demand of any deletion an agent performs</h2>
+
+<p>The bar is the same whether the agent is a person or a model, but a model needs it
+written down:</p>
+
+<ul>
+  <li><strong>A dry run first.</strong> The plan is shown before anything is deleted, and
+    the real run does exactly what the plan said.</li>
+  <li><strong>Proof of recoverability.</strong> Not "this is usually rebuildable" but a
+    check, run now, that this particular directory rebuilds from what sits beside it.</li>
+  <li><strong>A record and an undo.</strong> Every deletion is written down, and one
+    command puts it back.</li>
+  <li><strong>Refusals that cannot be scripted around.</strong> The dangerous paths refuse
+    piped input and auto-confirm flags, so the agent can prepare the command but only a
+    person can run it.</li>
+</ul>
+
+<p><a href="/">dev-prune</a> is those four bullets as a binary. <code>devp run
+--dry-run</code> is the plan; lockfile verification runs before every deletion and has no
+bypass flag; <code>devp history</code> records each pass and what started it; <code>devp
+restore --last-run</code> reinstalls exactly what the last pass removed. The one path that
+can touch a container volume takes each deletion as a typed pick and refuses
+<code>--yes</code>, <code>--json</code> and piped stdin, so an agent can run the
+<code>--dry-run</code> form and hand the final command to you, and nothing more.</p>
+
+<h2>Teaching the agent it exists</h2>
+
+<p>An agent uses the safer path only if it knows the path is there. <code>devp skill</code>
+handles that: it reports which coding tools this machine or repository shows traces of
+(pure existence checks, nothing executed), and writes a rules file into the current
+repository in the place each editor's agent actually reads: <code>.cursor/rules/</code>
+for Cursor, <code>.windsurf/rules/</code> for Windsurf, a marked block in
+<code>AGENTS.md</code> for the tools that read the shared convention, and a dozen others.</p>
+
+<pre><code>devp skill                    # what is detected, and what is current or missing
+devp skill --agent cursor     # rules for one editor
+devp skill --detected         # rules for every detected editor at once</code></pre>
+
+<p>The rules are inert text, safe to commit, and they say the things above in the agent's
+terms: never rm -rf a bloat directory by hand, restore through devp restore rather than
+reinstalling manually, never touch a volume, never empty the Maven local repository
+uninvited. Claude Code is the one tool not written per repository, because its skill
+installs globally and every project gets it.</p>
+
+<h2>When rules are not enough</h2>
+
+<p>Rules are advisory: a long session can bury them. Harnesses with command hooks can turn
+the two rules that matter most into a real confirmation prompt, so a volume deletion the
+agent composes stops and asks you first. A copy-paste hook for Claude Code, with the
+matching patterns and the reasoning, lives in the
+<a href="https://github.com/Life-Experimentalist/dev-prune/blob/main/docs/IDE_INTEGRATION.md">IDE
+integration guide</a>.</p>
+`,
+    faq: [
+      {
+        q: 'How do I stop my AI agent deleting node_modules by hand?',
+        a: 'Give it a better path and write the rule where it reads. devp skill --detected writes a rules file for every coding tool your repository or machine shows traces of, and the rules say to prune through devp run (which verifies the lockfile first and records the deletion) and to put things back with devp restore. For a harness with command hooks, the IDE integration guide has a hook that turns the dangerous commands into a confirmation prompt.',
+      },
+      {
+        q: 'What if the agent already deleted a dependencies directory?',
+        a: 'If dev-prune deleted it, devp restore reinstalls it, and devp history shows which pass took it and what started that pass. If the agent ran rm -rf itself, there is no record to restore from: reinstall from the lockfile with your package manager, and check the lockfile still resolves before trusting the result.',
+      },
+      {
+        q: 'Can an AI agent delete Docker volumes through dev-prune?',
+        a: 'No. The only command that touches volumes lists them by name and takes each deletion as a typed pick at an interactive terminal; it refuses --yes, --json and piped stdin, which are the three ways an agent answers prompts. The agent can run the --dry-run form, which lists the unused volumes and prints the command for a person to run, and that is the intended division of labour.',
+      },
+    ],
+    related: ['safe-to-delete-node-modules', 'docker-disk-space'],
+  },
+
+  {
+    slug: 'gradle-maven-build-directories',
+    title: 'Cleaning Gradle and Maven build directories',
+    description:
+      'target/, build/ and .gradle/ rebuild from the project beside them. The local repository at ~/.m2 does not, and treating it as a cache is how artifacts vanish.',
+    keywords:
+      'delete maven target folder, gradle build directory, clear gradle cache, is m2 repository safe to delete',
+    body: `
+<p><strong>Short answer: the per-project build trees are safe to delete.</strong> Maven's
+<code>target/</code> comes back on the next <code>mvn package</code>. Gradle's
+<code>build/</code> and <code>.gradle/</code> come back on the next build. sbt's
+<code>target/</code> and <code>project/target/</code> likewise. Everything in them is
+compiled from the sources and the build file sitting beside them, and on a JVM project of
+any age they are usually the largest directories in the repository.</p>
+
+<p>What they cost to delete is not download time but compile time. A
+<code>node_modules</code> returns as fast as the network allows; a build tree returns as
+fast as your machine compiles, which on a large project is the difference between seconds
+and minutes. That distinction matters later.</p>
+
+<h2>The machine-wide stores are a different question</h2>
+
+<p>Outside the repository, both tools keep shared state under your home directory, and the
+two are not equally safe.</p>
+
+<p><strong>Gradle's is a cache.</strong> <code>~/.gradle/caches</code> holds downloaded
+dependencies and build metadata; <code>~/.gradle/wrapper/dists</code> holds the Gradle
+distributions your wrappers have fetched. Both are re-downloaded on demand. Deleting them
+costs every Gradle project on the machine one cold start, and nothing else.</p>
+
+<p><strong>Maven's is not.</strong> <code>~/.m2/repository</code> is called the local
+repository, not the cache, and the name is load-bearing. <code>mvn install</code> writes
+your own builds into it. <code>mvn install:install-file</code> is the documented way to
+use a jar that exists in no remote repository at all, which is how a database driver
+behind a click-through licence or a partner SDK ends up there, with no origin to fetch it
+back from. Your <code>-SNAPSHOT</code> builds live there and nowhere else. Emptying it as
+if it were a download cache deletes the recoverable majority and the unrecoverable
+minority together, and you find out which was which at the next build failure.</p>
+
+<h2>How dev-prune handles the pair</h2>
+
+<p>In <a href="/">dev-prune</a>, Gradle and Maven are opt-in adapters, off by default like
+every adapter whose directories come back by recompiling rather than downloading. Turning
+one on is one setting:</p>
+
+<pre><code>devp config set enable_gradle true
+devp config set enable_maven true</code></pre>
+
+<p>An enabled build adapter waits for the longer idle window (45 days by default, against
+the usual 15) before its directories become candidates, so a project you build weekly
+keeps its warm build tree and a repository untouched since spring gives its tree up. Every
+directory is still verified against the project file beside it before deletion, and a dry
+run of <code>devp run</code> ends by naming any build adapters that are switched off but
+would have found something.</p>
+
+<p>The machine-wide stores follow the split above. <code>devp caches</code> sizes both.
+<code>devp caches clear gradle</code> empties Gradle's caches and wrapper distributions,
+after showing what would go and asking. <code>devp caches clear maven</code> is refused
+outright: it exits with a usage error, explains that the local repository holds artifacts
+no remote can restore, and prints the <code>rm -rf</code> line so that if you want that
+space, the decision and the keystroke are both yours.</p>
+`,
+    faq: [
+      {
+        q: 'Is it safe to delete the target folder in a Maven project?',
+        a: 'Yes. target/ holds compiled classes, packaged jars and generated sources, all rebuilt by the next mvn package from pom.xml and your sources. mvn clean deletes it through Maven; deleting the directory directly has the same effect. The cost is the recompile, not any lost data.',
+      },
+      {
+        q: 'Is it safe to delete ~/.gradle/caches?',
+        a: 'Yes. It holds downloaded dependencies and build metadata that Gradle re-fetches on demand, and ~/.gradle/wrapper/dists beside it holds re-downloadable Gradle distributions. The cost is one cold build per project on the machine while the cache refills.',
+      },
+      {
+        q: 'Is it safe to delete the ~/.m2 repository?',
+        a: 'Not as a bulk operation. Most of it is re-downloadable, but mvn install and mvn install:install-file write artifacts there that exist in no remote repository: your own SNAPSHOT builds, and third-party jars installed by hand. Maven records artifact origins only in an internal file it documents as free to change, so no tool can reliably separate the recoverable part from the rest. Delete specific subdirectories you can vouch for, or accept that emptying it may cost artifacts you cannot re-fetch.',
+      },
+    ],
+    related: ['cargo-target-directory-size', 'clear-package-manager-cache'],
+  },
 ];

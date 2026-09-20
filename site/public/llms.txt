@@ -949,3 +949,6 @@ https://devprune.vkrishna04.me/blog/ :
 - /blog/delete-venv-safely/ — deleting `.venv` for uv, Poetry, PDM, Pipenv and plain venv
 - /blog/cargo-target-directory-size/ — why Rust's `target/` grows, and what to delete
 - /blog/vs/ — an honest comparison with kondo, npkill, cargo-sweep, rimraf and a cron job
+- /blog/docker-disk-space/ — where Docker disk space goes, and which rows are safe to reclaim
+- /blog/ai-agents-disk-cleanup/ — giving an AI coding agent a safe path to free disk space
+- /blog/gradle-maven-build-directories/ — Gradle and Maven build trees, and why ~/.m2 is not a cache
