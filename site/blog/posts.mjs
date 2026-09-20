@@ -833,16 +833,18 @@ how much the engine says is reclaimable, and deletes nothing. <code>devp caches 
 docker</code> runs the three narrow commands above (build cache, unused images, stopped
 containers), prints them before running anything, asks, and measures what came back by
 asking the engine again afterwards, so the figure lands in <code>devp stats</code> instead
-of being forgotten. Podman, nerdctl, finch and Apple's container engine get the same
-treatment under their own names.</p>
+of being forgotten. Podman, nerdctl, finch and Apple's container engine each get the
+same report and their own engine's equivalent of those narrow commands.</p>
 
-<p>Volumes are excluded from that estimate and from those commands: there is no argument
-in dev-prune's table containing the word "volume", and a test fails the build if one
+<p>Volumes are excluded from that estimate and from those commands: none of the engine
+commands dev-prune runs contains the word "volume", and a test fails the build if one
 appears. The one path that touches them, <code>devp caches clear docker
 --include-volumes</code>, lists the unused volumes by name and takes each deletion as a
 typed pick at a real terminal, one unforced <code>docker volume rm</code> per pick. It
 refuses <code>--yes</code>, <code>--json</code> and piped input, so no script, scheduler
-or AI agent can reach the picking. Nothing bulk, nothing silent.</p>
+or AI agent can reach the picking. And typed cold, it does not delete at all: the pick
+list arms only within ten minutes of a completed dry run for that engine, so the real
+command runs the dry run instead and says so. Nothing bulk, nothing silent.</p>
 `,
     faq: [
       {
@@ -905,9 +907,10 @@ can touch a container volume takes each deletion as a typed pick and refuses
 <h2>Teaching the agent it exists</h2>
 
 <p>An agent uses the safer path only if it knows the path is there. <code>devp skill</code>
-handles that: it reports which coding tools this machine or repository shows traces of
-(pure existence checks, nothing executed), and writes a rules file into the current
-repository in the place each editor's agent actually reads: <code>.cursor/rules/</code>
+handles that: on its own it reports which coding tools this machine or repository shows
+traces of (pure existence checks, nothing executed), and with <code>--agent</code> or
+<code>--detected</code> it writes a rules file into the current repository in the place
+each editor's agent actually reads: <code>.cursor/rules/</code>
 for Cursor, <code>.windsurf/rules/</code> for Windsurf, a marked block in
 <code>AGENTS.md</code> for the tools that read the shared convention, and a dozen others.</p>
 
