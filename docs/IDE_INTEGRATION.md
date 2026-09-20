@@ -230,6 +230,14 @@ Claude Code is deliberately absent from that table: its skill installs globally
 (`devp skill`, `devp setup`), so there is nothing to write per repository. It has a
 section of its own [below](#claude-code-the-plugin-marketplace).
 
+Not sure which of these you have? Plain `devp skill` ends with a detection report:
+every editor whose traces are on the machine (a home-directory footprint like
+`~/.cursor`, an installed VS Code-family extension) or in the repository (a committed
+`.windsurf/` or `GEMINI.md`), whether its rules here are current, stale or missing,
+and the `--agent` command that writes them. The report only ever prints —
+`devp skill --detected` is what writes rules for everything on it, in one pass, from
+the repository root.
+
 **Contributing a new editor** is four small changes in
 [`src/commands/skill.rs`](../src/commands/skill.rs) and
 [`src/constants.rs`](../src/constants.rs):
@@ -246,6 +254,12 @@ section of its own [below](#claude-code-the-plugin-marketplace).
 4. Mention the new value in `SKILL_LONG` in `src/help.rs` and in
    [`docs/CLI_REFERENCE.md`](CLI_REFERENCE.md) §13 — plus `site/public/llms.txt` and
    the skill's own `SKILL.md`, which restate the list.
+
+An optional fifth step, if the editor leaves a well-known trace behind: add a row to
+`AgentEditor::traces()` naming its home-directory footprint, repository config
+directory, or extension ID prefix, so the detection report and `--detected` pick it
+up. An editor with no row is still fully reachable by name — detection is a
+convenience, not a requirement.
 
 If the editor instead reads the cross-tool `AGENTS.md` convention, no code is needed —
 it is already covered by `--agent agents-md`.

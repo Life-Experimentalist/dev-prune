@@ -441,9 +441,14 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   `devp config recommended [--with-cautious]` applies the recommended tier in one
   non-interactive command
 - `devp setup [--status]` — install any missing integration; `--status` only reports
-- `devp skill [--agent <editor>]` — export `SKILL.md` and install it into a detected
-  agent skills directory (`~/.claude/skills/dev-prune/`); prints onboarding prompts for
-  agents without one. `--agent` writes per-repository rules for one editor instead.
+- `devp skill [--agent <editor> | --detected]` — export `SKILL.md` and install it into a
+  detected agent skills directory (`~/.claude/skills/dev-prune/`); prints onboarding
+  prompts for agents without one, and ends with a read-only detection report: every
+  editor whose traces are on the machine (home-directory footprint, installed VS
+  Code-family extension) or in the repository, its rules state here, and the command
+  that writes them. `--agent` writes per-repository rules for one editor instead;
+  `--detected`, from a repository root, writes them for every detected editor in one
+  pass.
   Ten write a file of their own: cursor (`.cursor/rules/dev-prune.mdc`), windsurf
   (`.windsurf/rules/`), antigravity (`.agent/rules/`), cline (`.clinerules/`), roo
   (`.roo/rules/`), kilocode (`.kilocode/rules/`), continue (`.continue/rules/`),

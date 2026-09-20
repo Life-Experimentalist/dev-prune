@@ -772,13 +772,21 @@ share a file with other tools, so dev-prune owns a marked block inside it: agent
 editor does not read by finding it — writing it prints the `read: CONVENTIONS.md` line \
 that makes Aider load it). Every byte outside the markers is left as found. \
 `devp skill --help` lists each value with its exact path. Claude Code needs no \
-per-repository file — its skill installs globally.";
+per-repository file — its skill installs globally.
+
+The bare run also reports which of those editors this machine or repository shows \
+traces of — a home-directory footprint, an installed VS Code-family extension, or a \
+config directory committed to the repository — with each one's rules state here and \
+the `--agent` command that writes them. The report only ever prints. \
+`--detected` writes rules for everything on it in one pass, into the current \
+repository; like `--agent` it must be run from a repository root.";
 
 pub const SKILL_EXAMPLES: &str = "\
 EXAMPLES:
-  devp skill                      Export SKILL.md, print onboarding prompts
+  devp skill                      Export SKILL.md, report detected editors
   devp skill --agent cursor       Write .cursor/rules/dev-prune.mdc here
-  devp skill --agent agents-md    Upsert the marked block in AGENTS.md";
+  devp skill --agent agents-md    Upsert the marked block in AGENTS.md
+  devp skill --detected           Write rules for every detected editor";
 
 pub const SETUP_LONG: &str = "\
 Install whatever integration is missing and leave the rest alone: the `devp` alias, \

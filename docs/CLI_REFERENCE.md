@@ -1632,8 +1632,10 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 13. `devp skill [--agent <EDITOR>]`
-- **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory, installs it into any detected on-disk agent skills directory (`~/.claude/skills/dev-prune/` — the same install `devp setup` performs automatically), and displays ready-to-copy AI Agent onboarding prompts for assistants without a skills directory (Gemini Antigravity, Cursor, Windsurf, Copilot, OpenClaw).
+### 13. `devp skill [--agent <EDITOR> | --detected]`
+- **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory, installs it into any detected on-disk agent skills directory (`~/.claude/skills/dev-prune/` — the same install `devp setup` performs automatically), reports which of the editors below this machine or repository shows traces of, and displays ready-to-copy AI Agent onboarding prompts for assistants without a skills directory (Gemini Antigravity, Cursor, Windsurf, Copilot, OpenClaw).
+- **The detection report**: an editor counts as detected when its home-directory footprint exists (`~/.cursor`, `~/.continue`, `~/.antigravity-ide`, …), when its extension is installed under a VS Code-family editor's extensions directory (Cline, Roo Code, Kilo Code, Continue, Amazon Q, GitHub Copilot), or when the current repository carries its config directory — evidence the *team* uses it even if this machine never has. Detection is pure `exists()` checks: nothing is executed, nothing is written. Each detected row shows whether this repository's rules are current, stale, or missing, and the exact `--agent` command that writes them.
+- **`--detected`**: writes rules for every editor on that report into the current repository in one pass — the batch form of `--agent`. Like `--agent`, it must be run from a repository root, and it conflicts with `--agent` (name one editor or take them all, not both).
 - **`--agent <EDITOR>`**: instead writes per-repository rules into the current repository (it must be a Git repository root), in the file that editor's agent actually reads:
 
   | Editor | File written |
@@ -1661,6 +1663,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   devp skill
   devp skill --agent cursor
   devp skill --agent agents-md
+  devp skill --detected
   ```
 
 ---
