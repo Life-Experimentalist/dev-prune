@@ -92,6 +92,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ones reached from inside another command, so agents driving a terminal never get a
   dashboard they cannot read.
 
+- The scheduled task's windowless twin, and a stray managed-binary alias, could be
+  left running a stale release. Both are refreshed by comparing the new copy against
+  the one already in place, and that comparison trusted two files with the same size
+  and the same modified-time to also hold the same bytes, which is not guaranteed and
+  occasionally false. A refresh that hit the coincidence quietly kept the old binary
+  in place instead of replacing it. The comparison now always reads both files once
+  their lengths match.
+
 ### For contributors
 
 - crates.io publishing now uses Trusted Publishing: the release workflow exchanges a

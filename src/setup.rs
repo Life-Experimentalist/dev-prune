@@ -416,20 +416,17 @@ fn ensure_twin_of(current_exe: &std::path::Path, parent_dir: &std::path::Path) -
 
 /// Sameness test for two executables, cheap in the common case.
 ///
-/// A hard link makes size and mtime equal by construction, so the usual layout answers
-/// without reading either file. When only the mtime differs — the alias came from the
-/// copy fallback, which does not preserve timestamps — the bytes themselves decide,
-/// because calling that pair "different" made every single invocation delete and
-/// recreate an alias whose content never changed.
+/// A mismatched length answers without reading either file. Equal length still reads
+/// both: an equal mtime used to short-circuit the check, on the assumption that only a
+/// hard link (or a copy that happened to preserve it) could produce one, but two
+/// unrelated files of the same length can share a modified-time by coincidence, and
+/// that shortcut treated them as identical without ever inspecting a byte.
 pub(crate) fn same_contents(a: &std::path::Path, b: &std::path::Path) -> bool {
     let (Ok(ma), Ok(mb)) = (fs::metadata(a), fs::metadata(b)) else {
         return false;
     };
     if ma.len() != mb.len() {
         return false;
-    }
-    if ma.modified().ok() == mb.modified().ok() {
-        return true;
     }
     match (fs::read(a), fs::read(b)) {
         (Ok(ca), Ok(cb)) => ca == cb,
