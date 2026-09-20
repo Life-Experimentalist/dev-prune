@@ -308,6 +308,56 @@ That is not a collision; Claude Code namespaces plugin skills. But only one of t
 tracks the binary you have: `devp skill` re-exports the version you installed, while the
 plugin follows `main`. Keep whichever matches how you got dev-prune.
 
+### A guardrail hook, if rules are not enough
+
+The rules file and the skill both tell an agent never to delete container volumes and
+never to `rm -rf` a bloat directory by hand. Rules are prose, though, and an agent under
+pressure to free disk space has been known to reach for `docker volume prune` anyway. If
+your harness supports command hooks, you can turn the volume rule into a confirmation
+prompt the agent cannot skip — not a hard block, just a question that reaches you before
+the command runs.
+
+For Claude Code, save this as `~/.claude/hooks/devp-volume-guard.sh`:
+
+```sh
+#!/bin/sh
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+# PreToolUse hook: ask before any command that deletes container volumes.
+# A volume is the only copy of its data, so the decision belongs to a human.
+# devp's own volume flow (`devp caches clear docker --include-volumes`) already
+# takes each deletion as a typed pick, so it never trips this.
+input=$(cat)
+if printf '%s' "$input" | grep -qE 'volume[[:space:]]+(rm|remove|prune)|(^|[^[:alnum:]-])--volumes'; then
+  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"This deletes container volumes, which are the only copy of their data. If disk space is the goal, devp caches clear docker --include-volumes lists the unused ones and takes each deletion as a typed pick."}}'
+fi
+exit 0
+```
+
+and wire it into `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "sh ~/.claude/hooks/devp-volume-guard.sh" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The pattern deliberately does not match `--include-volumes` — that is devp's own
+consent-gated flow — and it matches nothing about installs or restores, so `npm ci`
+and `devp restore` never prompt. On Windows the same two patterns port directly to a
+PowerShell hook (`volume\s+(rm|remove|prune)\b` and `(?<![\w-])--volumes\b`) run as
+`powershell -File`. Other harnesses with pre-command hooks can reuse the regexes as-is;
+the JSON envelope is Claude Code's.
+
 ---
 
 ## JetBrains IDEs
