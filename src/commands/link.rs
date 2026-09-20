@@ -45,6 +45,16 @@ pub fn run_link(path_str: &str, quiet: bool) -> Result<()> {
         return Ok(());
     }
 
+    // A linked worktree nested inside its own main repository is agent tooling's
+    // scratch space, not a workspace: the first commit inside one fired the hook, and
+    // the registry gained a row the user never asked for and will never prune —
+    // the `.git` boundary already keeps the main repository's pass out of it, and
+    // `git worktree remove` reclaims the whole thing at once. An explicit
+    // `devp link` still registers one, same as every other quiet-only decline.
+    if quiet && is_nested_linked_worktree(&path) {
+        return Ok(());
+    }
+
     // A config that does not parse also keeps the hook out. It may well be the file that
     // says `disable_hooks`, and a broken one is not licence to register the repo anyway.
     if quiet
@@ -168,6 +178,10 @@ pub(crate) fn adopt_repo_at(registry: &mut Registry, start: &Path) -> Option<Pat
         return None;
     }
 
+    if is_nested_linked_worktree(&path) {
+        return None;
+    }
+
     if !matches!(
         PerRepoConfig::load_with_diagnostics(&path),
         Ok(None)
@@ -265,6 +279,68 @@ fn is_under_ephemeral_ancestor(path: &Path, root: Option<&Path>) -> bool {
                 constants::EPHEMERAL_ANCESTORS.contains(&&*name.to_string_lossy())
             })
         })
+}
+
+/// Is `path` a linked Git worktree sitting *inside* its own main working tree?
+///
+/// A linked worktree's `.git` is a file, not a directory, and its one meaningful line
+/// points at the metadata git keeps for it under the main repository:
+/// `gitdir: <main>/.git/worktrees/<name>`. When that main working tree is also an
+/// ancestor of `path`, this is a checkout some tool carved out of the repository it
+/// belongs to — agent harnesses do exactly this, under `.claude/worktrees/` — and the
+/// hook firing on its first commit is the tool committing, not the user adopting a
+/// workspace.
+///
+/// Only the nested case is declined. A worktree checked out *beside* its main
+/// repository is somebody's parallel branch and registers like any other repository.
+/// Anything unreadable or oddly shaped is treated as no match, for the same reason
+/// [`is_ephemeral_location`] resolves doubt that way: refusing to register a real
+/// workspace is the worse error.
+fn is_nested_linked_worktree(path: &Path) -> bool {
+    let dot_git = path.join(".git");
+    if !dot_git.is_file() {
+        return false;
+    }
+    let Ok(contents) = std::fs::read_to_string(&dot_git) else {
+        return false;
+    };
+    let Some(gitdir) = contents
+        .lines()
+        .find_map(|line| line.strip_prefix(constants::GITDIR_PREFIX))
+    else {
+        return false;
+    };
+    // git writes the gitdir relative when the worktree was created with a relative
+    // path; it resolves against the worktree directory, so this must too.
+    let gitdir = path.join(gitdir.trim());
+    let Ok(gitdir) = gitdir.canonicalize() else {
+        return false;
+    };
+
+    // Walk the shape backwards: <main>/.git/worktrees/<name>.
+    let Some(worktrees) = gitdir.parent() else {
+        return false;
+    };
+    if worktrees.file_name().is_none_or(|n| n != "worktrees") {
+        return false;
+    }
+    let Some(main_git) = worktrees.parent() else {
+        return false;
+    };
+    if main_git.file_name().is_none_or(|n| n != ".git") {
+        return false;
+    }
+    let Some(main_root) = main_git.parent() else {
+        return false;
+    };
+
+    // Canonicalise both sides before comparing: on Windows one of them typically
+    // carries the `\\?\` verbatim prefix and the other does not, and `starts_with`
+    // on mixed spellings never matches.
+    let (Ok(main_root), Ok(this)) = (main_root.canonicalize(), path.canonicalize()) else {
+        return false;
+    };
+    this != main_root && this.starts_with(&main_root)
 }
 
 /// Would registering `repo`, found by scanning `root`, be registering a throwaway?
@@ -480,6 +556,97 @@ mod tests {
 
         let mut registry = Registry::default();
         assert!(adopt_repo_at(&mut registry, &plain).is_none());
+    }
+
+    /// A fabricated linked worktree: a main repository, git's metadata directory for
+    /// the worktree under `.git/worktrees/<name>`, and a worktree whose `.git` file
+    /// carries the given `gitdir:` line. No git shell-out — the guard reads the file
+    /// shape, and the file shape is all these tests build.
+    fn fabricated_worktree(base: &Path, worktree_rel: &str, gitdir_line: &str) -> PathBuf {
+        let meta = base.join("main/.git/worktrees/wt");
+        std::fs::create_dir_all(&meta).unwrap();
+        let worktree = base.join(worktree_rel);
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(worktree.join(".git"), format!("{gitdir_line}\n")).unwrap();
+        worktree
+    }
+
+    #[test]
+    fn a_worktree_nested_in_its_main_repository_is_declined_by_the_quiet_paths() {
+        // The registry row that motivated this: an agent harness ran
+        // `git worktree add .claude/worktrees/<name>`, the first commit inside it fired
+        // the hook, and the user found a repository they never made in `devp status`.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().canonicalize().unwrap();
+        let worktree = fabricated_worktree(
+            &base,
+            "main/.claude/worktrees/wt",
+            &format!("gitdir: {}", base.join("main/.git/worktrees/wt").display()),
+        );
+
+        assert!(is_nested_linked_worktree(&worktree));
+    }
+
+    #[test]
+    fn a_relative_gitdir_resolves_against_the_worktree_directory() {
+        // git writes the pointer relative when the worktree was added by relative
+        // path; the same nesting must still be recognised.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().canonicalize().unwrap();
+        let worktree = fabricated_worktree(
+            &base,
+            "main/.claude/worktrees/wt",
+            "gitdir: ../../../.git/worktrees/wt",
+        );
+
+        assert!(is_nested_linked_worktree(&worktree));
+    }
+
+    #[test]
+    fn a_worktree_beside_its_main_repository_is_a_parallel_branch_not_scratch() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().canonicalize().unwrap();
+        let worktree = fabricated_worktree(
+            &base,
+            "main-wt",
+            &format!("gitdir: {}", base.join("main/.git/worktrees/wt").display()),
+        );
+
+        assert!(!is_nested_linked_worktree(&worktree));
+    }
+
+    #[test]
+    fn a_submodule_is_not_mistaken_for_a_nested_worktree() {
+        // A submodule's `.git` is also a file, but it points under `.git/modules/`,
+        // and a submodule is pruned as itself — it must keep registering.
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().canonicalize().unwrap();
+        let modules = base.join("main/.git/modules/sub");
+        std::fs::create_dir_all(&modules).unwrap();
+        let sub = base.join("main/sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join(".git"), format!("gitdir: {}\n", modules.display())).unwrap();
+
+        assert!(!is_nested_linked_worktree(&sub));
+    }
+
+    #[test]
+    fn adoption_declines_a_nested_worktree_too() {
+        // The status-command adoption path mirrors the hook's guards; a worktree the
+        // hook declines must not slip in because somebody ran `devp status` inside it.
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/adopt-fixtures");
+        std::fs::create_dir_all(&fixtures).unwrap();
+        let tmp = TempDir::new_in(&fixtures).unwrap();
+        let base = tmp.path().canonicalize().unwrap();
+        let worktree = fabricated_worktree(
+            &base,
+            "main/.claude/worktrees/wt",
+            "gitdir: ../../../.git/worktrees/wt",
+        );
+
+        let mut registry = Registry::default();
+        assert!(adopt_repo_at(&mut registry, &worktree).is_none());
+        assert_eq!(registry.repo_count(), 0);
     }
 
     #[test]

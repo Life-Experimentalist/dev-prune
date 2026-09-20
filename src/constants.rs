@@ -340,6 +340,10 @@ pub const EPHEMERAL_ANCESTORS: &[&str] = &["cache", ".cache", "Cache", "Caches",
 /// a real workspace is the worse of the two errors.
 pub const EPHEMERAL_REPO_PREFIXES: &[&str] = &["temp_git_", "tmp_git_"];
 
+/// The line prefix in a linked worktree's `.git` *file* that names its metadata
+/// directory inside the main repository (`gitdir: <main>/.git/worktrees/<name>`).
+pub const GITDIR_PREFIX: &str = "gitdir:";
+
 /// Whether an adapter whose sync command edits tracked manifests may run it.
 ///
 /// Off. `cargo generate-lockfile` re-resolves every dependency and rewrites
