@@ -294,11 +294,13 @@ fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
             return Some(twin.to_path_buf());
         }
         // An upgrade replaced the shipped binary, so the placed one is a previous
-        // release that the scheduled task still names. Replacing a running executable
-        // fails on Windows; the next pass that is not itself the twin retries.
-        if std::fs::remove_file(twin).is_err() {
-            return Some(twin.to_path_buf());
-        }
+        // release that the scheduled task still names. Removing it first and only
+        // then placing the replacement used to fail outright on Windows CI runners —
+        // a moment where the antivirus scanner has the freshly-written `.exe` open is
+        // enough to fail `remove_file`, and the twin was left stale with nothing
+        // retrying the swap. Staging beside it and renaming over it never needs the
+        // old file to be deletable, only replaceable.
+        return stage_and_replace(shipped, twin);
     }
     if std::fs::hard_link(shipped, twin).is_ok() {
         return Some(twin.to_path_buf());
@@ -311,10 +313,21 @@ fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
     if twin.is_file() {
         return Some(twin.to_path_buf());
     }
-    // Stage beside and rename into place, so a scheduler firing mid-copy never runs a
-    // torn binary.
+    stage_and_replace(shipped, twin)
+}
+
+/// Put `shipped` at `twin` via a staging file renamed into place, replacing whatever
+/// is at `twin` already.
+///
+/// Renaming over an existing file only needs it to be replaceable, not first
+/// deletable — unlike a `remove_file` followed by `hard_link`, which fails outright
+/// the moment something else (an antivirus scan, a concurrent pass) briefly has the
+/// old file open.
+fn stage_and_replace(shipped: &Path, twin: &Path) -> Option<PathBuf> {
     let staging = twin.with_extension("new");
-    if std::fs::copy(shipped, &staging).is_ok() && std::fs::rename(&staging, twin).is_ok() {
+    let staged =
+        std::fs::hard_link(shipped, &staging).is_ok() || std::fs::copy(shipped, &staging).is_ok();
+    if staged && std::fs::rename(&staging, twin).is_ok() {
         return Some(twin.to_path_buf());
     }
     let _ = std::fs::remove_file(&staging);
