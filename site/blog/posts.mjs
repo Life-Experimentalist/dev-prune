@@ -21,7 +21,21 @@
 //   - No backticks or ${} inside the template literals below.
 
 export const SITE = 'https://devprune.vkrishna04.me';
-export const UPDATED = '2026-08-31';
+export const UPDATED = '2026-09-20';
+
+// The seven guides that shipped at the site root before everything moved under
+// /blog/. Their old URLs are in a published sitemap and in links we do not control,
+// so build-blog.mjs writes a redirect stub at each. A guide added after the move
+// never joins this list — it has no root URL to honour.
+export const LEGACY_ROOT_SLUGS = [
+  'safe-to-delete-node-modules',
+  'delete-node-modules-all-projects',
+  'reclaim-disk-space-developer-machine',
+  'clear-package-manager-cache',
+  'delete-venv-safely',
+  'cargo-target-directory-size',
+  'vs',
+];
 
 export const POSTS = [
   {
@@ -111,7 +125,7 @@ not come back.</p>
 <p>That is the job <a href="/">dev-prune</a> does: it walks your Git repositories, runs the
 matching dry-run for whichever lockfile it finds, and deletes only after that command exits
 zero. When it does not, it says which package failed and moves on rather than deleting
-anyway. <a href="/delete-node-modules-all-projects/">Deleting node_modules from every
+anyway. <a href="/blog/delete-node-modules-all-projects/">Deleting node_modules from every
 project at once</a> covers that case in full.</p>
 `,
     faq: [
@@ -218,7 +232,7 @@ it. Going through a machine by hand once, deciding case by case: npkill. Wanting
 to stay clean without you thinking about it, and wanting a refusal rather than a deletion
 when something is off: that is the case dev-prune was written for. There is a fuller
 comparison, including <code>cargo-sweep</code>, <code>rimraf</code> and the rest, on
-<a href="/vs/">dev-prune vs the alternatives</a>.</p>
+<a href="/blog/vs/">dev-prune vs the alternatives</a>.</p>
 `,
     faq: [
       {
@@ -261,7 +275,7 @@ the single biggest number on most machines.</p>
 <p>They are also the safest thing to delete, and the reason is worth stating plainly:
 <em>you can prove it</em>. Every one of these managers has a command that verifies the
 lockfile without installing, so "can this be rebuilt" is a question with a real answer
-rather than a guess. <a href="/safe-to-delete-node-modules/">Is it safe to delete
+rather than a guess. <a href="/blog/safe-to-delete-node-modules/">Is it safe to delete
 node_modules</a> goes through those commands.</p>
 
 <h2>2. Build directories</h2>
@@ -269,7 +283,7 @@ node_modules</a> goes through those commands.</p>
 <p>Rust's <code>target/</code>, Gradle's <code>build/</code> and <code>.gradle/</code>,
 Maven's <code>target/</code>, SwiftPM's <code>.build/</code>. Individually these are the
 biggest single directories you own — a Rust workspace's <code>target/</code> passing several
-gigabytes is ordinary, and <a href="/cargo-target-directory-size/">there is a reason for
+gigabytes is ordinary, and <a href="/blog/cargo-target-directory-size/">there is a reason for
 that</a>.</p>
 
 <p>But they are not the same decision as a dependency directory, because getting one back is
@@ -291,7 +305,7 @@ everything else in this list cheap to delete</em>. Clear <code>node_modules</cod
 thirty repositories with a warm npm cache and the restores are near-instant; clear the cache
 too and every one of those restores becomes a network round trip. Delete dependency
 directories freely; treat the cache as a separate, occasional decision.
-<a href="/clear-package-manager-cache/">Clearing package manager caches safely</a> has the
+<a href="/blog/clear-package-manager-cache/">Clearing package manager caches safely</a> has the
 per-manager commands.</p>
 
 <h2>4. Everything else</h2>
@@ -690,7 +704,7 @@ leaving the current ones intact, so you reclaim most of the space <em>and</em> k
 incremental build. Nothing else here does that; dev-prune's cargo adapter deletes
 <code>target/</code> whole, which is a blunter instrument. If Rust is where your disk goes,
 cargo-sweep is better at this than dev-prune is.
-<a href="/cargo-target-directory-size/">Why target/ gets so big</a> has the detail.</p>
+<a href="/blog/cargo-target-directory-size/">Why target/ gets so big</a> has the detail.</p>
 
 <h2>A find command in cron</h2>
 

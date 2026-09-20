@@ -126,5 +126,5 @@ touches a repository you committed to yesterday: its scope is repositories idle 
 is dead weight. Deleting part of a directory would also make the pass's arithmetic a
 lie: the report says what it freed and `devp restore` knows what to bring back, and
 both of those depend on the unit being the whole directory. The
-[comparison pages on the site](https://devprune.vkrishna04.me/vs/) hold the longer
+[comparison pages on the site](https://devprune.vkrishna04.me/blog/vs/) hold the longer
 version of this argument against cargo-sweep and its neighbours.

@@ -942,10 +942,10 @@ under your own config and data directories and is removed by `devp uninstall`.
 Long-form answers to the questions that lead people here, at
 https://devprune.vkrishna04.me/blog/ :
 
-- /safe-to-delete-node-modules/ — is it safe to delete `node_modules`, and how to check
-- /delete-node-modules-all-projects/ — clearing `node_modules` across a whole machine
-- /reclaim-disk-space-developer-machine/ — where a developer machine's disk actually goes
-- /clear-package-manager-cache/ — the right clear command for thirteen managers
-- /delete-venv-safely/ — deleting `.venv` for uv, Poetry, PDM, Pipenv and plain venv
-- /cargo-target-directory-size/ — why Rust's `target/` grows, and what to delete
-- /vs/ — an honest comparison with kondo, npkill, cargo-sweep, rimraf and a cron job
+- /blog/safe-to-delete-node-modules/ — is it safe to delete `node_modules`, and how to check
+- /blog/delete-node-modules-all-projects/ — clearing `node_modules` across a whole machine
+- /blog/reclaim-disk-space-developer-machine/ — where a developer machine's disk actually goes
+- /blog/clear-package-manager-cache/ — the right clear command for thirteen managers
+- /blog/delete-venv-safely/ — deleting `.venv` for uv, Poetry, PDM, Pipenv and plain venv
+- /blog/cargo-target-directory-size/ — why Rust's `target/` grows, and what to delete
+- /blog/vs/ — an honest comparison with kondo, npkill, cargo-sweep, rimraf and a cron job
