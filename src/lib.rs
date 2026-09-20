@@ -464,6 +464,11 @@ pub enum Commands {
         /// plain `devp skill` installs its skill globally.
         #[arg(long, value_enum, value_name = "EDITOR")]
         agent: Option<commands::skill::AgentEditor>,
+
+        /// Write rules for every editor detected on this machine or in this
+        /// repository — the ones plain `devp skill` lists — in one pass.
+        #[arg(long, conflicts_with = "agent")]
+        detected: bool,
     },
 
     /// Install whatever dev-prune integration is missing: alias, SKILL.md, Git hooks, scheduler.
@@ -1062,7 +1067,7 @@ pub fn run_cli() {
             install,
             channels,
         } => commands::update::run(offline, install, channels, cli.yes),
-        Commands::Skill { agent } => commands::skill::run(agent),
+        Commands::Skill { agent, detected } => commands::skill::run(agent, detected),
         Commands::Setup { status } => commands::setup::run(status),
         Commands::Doctor { path, fix } => {
             let path = path.map(|p| config::expand_tilde(&p));

@@ -2717,7 +2717,11 @@ Notes you should rely on, not work around:
                   that has to be told to read its{" "}
                   <code>CONVENTIONS.md</code> — the command says so after
                   writing it. Run <code>devp skill --help</code> for the exact
-                  paths.
+                  paths. Not sure which you have? Plain{" "}
+                  <code>devp skill</code> reports every editor it detects on the
+                  machine or in the repository, and{" "}
+                  <code>devp skill --detected</code> writes rules for all of
+                  them in one pass.
                 </p>
               </div>
               <div className="info-card">
