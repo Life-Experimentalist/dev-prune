@@ -413,6 +413,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | Key | Default | Meaning |
 | :--- | :---: | :--- |
 | `language` | `en` | Catalogue for dev-prune's own headings and summary lines: `en`, `zh`, `hi`, `te`, `ta`, `kn`, `ml`, `bn`, `mr`, `gu`, `pa`, `sa`. **Never translate a value you read out of `--json`, a key you pass to `config set`, a flag name or an adapter name** — those are English in every catalogue by design. `DEV_PRUNE_LANG` overrides it for one command; an untranslated key falls back to English |
+| `recommendations` | `true` | Whether `devp run --dry-run` ends with the `Detected, but switched off` section (and the `--json` `recommendations` key) naming opt-in adapters that would have found something. Presentation only: changes nothing about what is scanned or deleted. When the user says the hint is noise, `devp config set recommendations false` |
 
 **What gets pruned**
 

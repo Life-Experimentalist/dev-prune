@@ -712,7 +712,13 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
 
     // A dry run stops here in both output modes: sizes are known, nothing was verified.
     if args.dry_run {
-        let recommendations = opt_in_recommendations(&registry, &except);
+        // An empty list renders as nothing in both output modes, so switching the
+        // setting off is one branch here rather than a guard at every report site.
+        let recommendations = if registry.settings.recommendations {
+            opt_in_recommendations(&registry, &except)
+        } else {
+            Vec::new()
+        };
         if args.json {
             let mut doc = json::run_document(
                 &[candidates, blocked, left_alone, missing, orphaned].concat(),

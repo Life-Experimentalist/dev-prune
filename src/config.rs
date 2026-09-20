@@ -290,6 +290,16 @@ pub struct Settings {
     /// back to English rather than failing.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Whether a dry run ends by naming the switched-off opt-in adapters that would
+    /// have found something, with the command that turns each on.
+    ///
+    /// On by default: the hint is how anyone discovers the opt-in class exists. It is
+    /// a setting because a hint read once is advice and the same hint read every week
+    /// is noise. Turning it off changes nothing about what is scanned or deleted; it
+    /// only drops the section from the report and the `recommendations` key from
+    /// `--json`.
+    #[serde(default = "default_recommendations")]
+    pub recommendations: bool,
     /// Settings this build has never heard of, carried through a save verbatim.
     ///
     /// A registry written by a newer dev-prune can hold keys this build does not
@@ -365,6 +375,10 @@ fn default_language() -> String {
     constants::DEFAULT_LANGUAGE.to_string()
 }
 
+fn default_recommendations() -> bool {
+    constants::DEFAULT_RECOMMENDATIONS
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -409,6 +423,7 @@ impl Default for Settings {
             adapter_idle_days: BTreeMap::new(),
             cache_max_gb: BTreeMap::new(),
             language: constants::DEFAULT_LANGUAGE.to_string(),
+            recommendations: constants::DEFAULT_RECOMMENDATIONS,
             unknown_keys: BTreeMap::new(),
         }
     }
@@ -1928,6 +1943,10 @@ mod tests {
         assert!(!settings.auto_daemon, "an explicit opt-out is preserved");
         assert!(settings.auto_hooks, "a missing key takes the default");
         assert!(settings.auto_setup);
+        assert!(
+            settings.recommendations,
+            "a registry written before the toggle existed keeps the dry-run hint on"
+        );
     }
 
     #[test]

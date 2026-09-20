@@ -616,6 +616,7 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
     | Key | Default | Meaning |
     | :--- | :---: | :--- |
     | `language` | `en` | Which catalogue dev-prune draws its own headings and summary lines from: `en`, `zh`, `hi`, `te`, `ta`, `kn`, `ml`, `bn`, `mr`, `gu`, `pa` or `sa`. Everything a script reads stays English in every one of them — `--json`, exit codes, flag names, config keys and adapter names — so translating the interface can never change what a pipeline sees. A key a catalogue has not translated falls back to English rather than printing blank. `DEV_PRUNE_LANG=te devp run` overrides the setting for one command; the OS locale is deliberately never consulted. English is the only catalogue a native speaker has reviewed, and `devp config set language` says so when the one you picked has not been — see [TRANSLATIONS.md](TRANSLATIONS.md) |
+    | `recommendations` | `true` | Whether `devp run --dry-run` ends with the `Detected, but switched off` section naming the opt-in adapters that would have found something, and whether the `--json` document carries the matching `recommendations` key. Changes nothing about what is scanned or deleted; turn it off once you have made your adapter choices and the reminder has become noise |
 
     **What gets pruned** — The size and age of what a pass will consider at all.
 
@@ -1026,6 +1027,8 @@ silently when none is available.
 
 The human dry-run report carries the same information as a closing
 `Detected, but switched off` section, one line per adapter with the enable command.
+`devp config set recommendations false` drops both the section and the JSON key,
+which fits the additive contract: consumers already handle the key being absent.
 
 | `status` | Meaning |
 | :--- | :--- |

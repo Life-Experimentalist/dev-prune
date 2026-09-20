@@ -486,6 +486,10 @@ pub const DEFAULT_AUTO_UPDATE: bool = true;
 /// setting that outranks every other update path -- see `Settings::version_lock`.
 pub const DEFAULT_VERSION_LOCK: bool = false;
 
+/// Whether a dry run ends with the switched-off-adapter recommendations. On by
+/// default; see `Settings::recommendations`.
+pub const DEFAULT_RECOMMENDATIONS: bool = true;
+
 /// Default interval, in days, between automatic release checks.
 ///
 /// A week. Frequent enough that a security fix is not missed for long, rare enough that

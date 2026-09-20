@@ -696,6 +696,11 @@ walks them in this order:
 **The language this is all in** — which catalogue dev-prune's own headings and
 summary lines come from: `language` (en).
 
+**What the report says, beyond what it did**: `recommendations` (true) — whether a
+dry run ends with the `Detected, but switched off` section (and the `--json`
+`recommendations` key) naming opt-in adapters that would have found something.
+Presentation only; turning it off changes nothing about what is scanned or deleted.
+
 **What gets pruned** — the size and age of what a pass considers at all:
 `idle_days` (15), `min_size_mb` (0), `scan_depth` (6), `disabled_adapters` (none),
 `adapter_idle_days` (none).
