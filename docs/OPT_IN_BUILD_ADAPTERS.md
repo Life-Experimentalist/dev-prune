@@ -21,7 +21,7 @@ things:
 
 1. Its directories start appearing in `devp run --dry-run` and count toward the pass.
 2. It waits for the **longer** idle window: `max(build_idle_days, idle_days)`, 45 days
-   by default instead of the usual 7. An actively built project keeps its warm build
+   by default instead of the usual 15. An actively built project keeps its warm build
    tree; only a repository that has sat untouched for weeks gives it up.
 3. Every safety invariant still applies. The adapter must prove the directory is
    regenerable from what sits beside it (a lockfile, a build script, the editor's own
