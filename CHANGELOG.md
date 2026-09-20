@@ -5,6 +5,103 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.22.0] - 2026-09-20
+
+### Added
+
+- **Ten new adapters** bring the total to thirty-five. pixi joins the regular set (on by
+  default): a `.pixi/` directory beside `pixi.toml`, `pixi.lock` or a `pyproject.toml`
+  with a `[tool.pixi]` table is verified against `pixi.lock` read-only, because
+  `pixi lock --check` can re-solve over the network and a verification must never do
+  that. The other nine are opt-in like every build tree: Zig (`.zig-cache/`,
+  `zig-cache/` and `zig-out/` beside a `build.zig`), Haskell Stack (`.stack-work/`),
+  Haskell Cabal (`dist-newstyle/`; a lone `.cabal` file is never claimed), sbt
+  (`target/` and `project/target/` beside `build.sbt`), and the imported-resource
+  caches of Godot, Unity, Unreal, Defold and Cocos Creator. `devp config set
+  enable_zig true` and friends switch them on, and every one is in the recommended
+  set the config wizard offers. That makes thirty-five adapters, eighteen opt-in
+  switches and forty-one settings; the whole opt-in class is walked through in
+  [docs/OPT_IN_BUILD_ADAPTERS.md](docs/OPT_IN_BUILD_ADAPTERS.md).
+
+- **`devp caches clear docker --include-volumes`** (podman too): after the narrow
+  reclaim, it lists the engine's unused volumes by name and takes one line of picks
+  (numbers, ranges, `all`, or Enter for none), then runs one unforced `volume rm
+  <name>` per pick. It is consent-gated end to end: it refuses `--yes`, `--json` and a
+  piped stdin, and the pick list only arms within ten minutes of a completed volume
+  dry run for that engine. Typed cold, the command becomes that dry run, and
+  `--include-volumes --dry-run` ends by naming the command to type next. dev-prune
+  still never runs `volume prune` or `system prune --volumes` anywhere, and the unit
+  tests fail the build if any argv it assembles contains `prune`, `--volumes` or a
+  force flag. nerdctl, finch and Apple's `container` get a usage error naming
+  `<engine> volume ls` instead, because their volume listings cannot be sized safely.
+
+- **A "Detected, but switched off" section at the end of a bulk dry run.** When a
+  dormant opt-in adapter would find bloat, `devp run --dry-run` now says so: how many
+  repositories, and the exact `devp config set enable_<name> true` that would include
+  them. The `--json` document carries the same facts under an additive
+  `recommendations` key, and `devp config set recommendations false` silences the
+  section once you have read it.
+
+- **`devp skill --detected`** and an editor detection report. Plain `devp skill` now
+  ends by naming every editor and agent whose traces are on the machine or committed
+  in the repository (home-directory footprints, VS Code-family extensions, rules
+  files), and whether each one's rules are current, stale or missing. `devp skill
+  --detected` then writes the right rules file for everything detected in one pass.
+  Detection is pure existence checks; nothing is executed or fetched.
+
+- Exported rules files now carry three guardrails for the agents that read them: never
+  delete a bloat directory by hand (use `devp run`, and `devp restore` to put back
+  anything devp removed), never clear container volumes through a bulk engine prune,
+  and never empty `~/.m2/repository` uninvited.
+  [docs/IDE_INTEGRATION.md](docs/IDE_INTEGRATION.md) adds a copy-paste PreToolUse hook
+  that turns the volume rule into a hard confirmation prompt in Claude Code.
+
+### Changed
+
+- The windowless Windows twin (`devpw.exe`) can no longer fall behind silently. The
+  release publishes it as its own asset with a SHA-256 sidecar; `devp update
+  --install` reconciles every twin alongside the main binary; `devp doctor` compares
+  each twin's build stamp against the running version, names `devp update --install`
+  as the fix, and exits 1 when the scheduled task is actually running a stale twin
+  (a warning otherwise); `devp doctor --fix` performs the reconcile itself. The setup
+  pass also self-heals once per version at an attended terminal. All of it stands
+  down under `DEV_PRUNE_OFFLINE`, `version_lock`, and in development builds.
+
+- A worktree nested inside its own repository (the shape agent harnesses create under
+  `.claude/worktrees/`) is no longer self-registered by the quiet Git hook or by
+  status adoption. An explicit `devp link` still registers one when you mean it.
+
+- The no-longer-a-repository report now names both ways out in place (`devp unlink
+  <path>` to drop the row, `git init` if the directory should be one again), and the
+  nested-repository refusal explains why it exists (no lockfile of yours can vouch
+  for someone else's git history) and points at the cache-relocation config for the
+  common cause.
+
+### Fixed
+
+- `devp restore` in a Go repository rebuilds the recorded `vendor/` directory again.
+  It used to consult the directory the prune had already deleted to decide between
+  `go mod vendor` and `go mod download`, so a pruned vendor tree came back as a
+  module-cache download instead of the `vendor/` the build was using.
+
+- `devp trust --fix-ownership -y` is honoured with the flag on either side of
+  `--fix-ownership`. Previously one order asked anyway, which is what a script cannot
+  answer.
+
+- `DEV_PRUNE_NO_TUI=1` is honoured at every full-screen entry point, including the
+  ones reached from inside another command, so agents driving a terminal never get a
+  dashboard they cannot read.
+
+### For contributors
+
+- crates.io publishing now uses Trusted Publishing: the release workflow exchanges a
+  GitHub OIDC token for a 30-minute crates.io token at publish time, so the
+  long-lived `CARGO_REGISTRY_TOKEN` secret is no longer read by the workflow.
+
+- Test fixtures create their repositories through `git_in` (an explicit `-C` on every
+  invocation), so a test run started from inside a Git hook can never act on the
+  repository that hosts the checkout.
+
 ## [1.21.0] - 2026-09-07
 
 ### Added
