@@ -20,6 +20,7 @@ pub mod receipt;
 pub mod scanner;
 pub mod setup;
 pub mod spawn;
+pub mod tools;
 pub mod tui;
 pub mod workspace;
 

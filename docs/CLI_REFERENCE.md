@@ -207,9 +207,9 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   at a time.
 
   Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `pycache`, `poetry`, `pdm`,
-  `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`, `terraform` —
-  plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg` and `cmake_build`,
-  which are opt-in (see below). An unrecognised name is an error
+  `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`, `terraform`, `deno` —
+  plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg`, `cmake_build` and
+  `dotnet_build`, which are opt-in (see below). An unrecognised name is an error
   listing the valid ones rather than a silently empty pass, and `--only` and `--skip`
   cannot be combined. A name listed in `disabled_adapters` is gone from that set
   entirely, and `--only <that name>` prunes nothing.
@@ -370,6 +370,12 @@ reads unambiguously:
   nothing and is subtracted from the coverage, so a partial answer says so. The timings
   are three numbers per adapter — sample count, bytes, milliseconds — held in the
   registry and never uploaded; see [`PRIVACY.md`](PRIVACY.md).
+- **Tools**: a repository whose root holds `graphify-out/` or `.understand-anything/`
+  (graphify's and understand-anything's own output) gets a line naming the tool and its
+  size, in the header (TUI) or its own block after the totals (plain table and
+  `--json`'s `tools` array). Report-only: no lockfile proves either can be rebuilt
+  without re-running the tool's own extraction passes, LLM calls included, so neither is
+  ever added to a reclaimable total or offered to `devp run`.
 - **Flags**:
   - `--top <N>` — list only the `N` repositories with the most reclaimable space. On a
     machine tracking a hundred repositories the handful worth pruning are otherwise pushed
@@ -1008,7 +1014,11 @@ silently when none is available.
       "adapters": ["pnpm"],
       "reclaimable_bytes": 481296384,
       "restore_estimate_secs": 96,  // null when no adapter here has ever been timed on this machine
-      "directories": [{ "name": "node_modules", "path": "~/Code/api/node_modules", "bytes": 481296384, "shared_bytes": 0 }]
+      "directories": [{ "name": "node_modules", "path": "~/Code/api/node_modules", "bytes": 481296384, "shared_bytes": 0 }],
+      // AI-assistant tool output at the repository root, always present, empty when
+      // neither is here. Report-only: never folded into `reclaimable_bytes` or
+      // `directories`, and never a `run` candidate. See "Tools" below.
+      "tools": [{ "name": "graphify", "path": "~/Code/api/graphify-out", "bytes": 1319413760 }]
       // "error" — present only when `state` is `config_error`, carrying the parse failure
     }
   ]
@@ -1018,6 +1028,16 @@ silently when none is available.
 `state` is one of `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, or
 `config_error`. `last_activity` is the later of the last commit and the newest source file
 mtime — the same value the idle decision uses, so the two can never disagree.
+
+#### Tools
+
+`tools` reports `graphify-out/` and `.understand-anything/` when either sits at a
+repository's root: graphify's and understand-anything's own output directories.
+Neither has a lockfile proving it can be rebuilt for free: doing so re-runs the tool's
+extraction passes, LLM calls included. So `devp status` reports the size and stops
+there. A tool footprint is never counted in `reclaimable_bytes`, never listed in
+`directories`, and never offered to `devp run`, dry-run or otherwise. Detection is
+root-only; a tool configured to write its output somewhere else is not found.
 
 ### `devp status --drift --json`
 

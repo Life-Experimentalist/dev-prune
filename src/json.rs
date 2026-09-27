@@ -230,6 +230,15 @@ fn repo_value(registry: &Registry, entry: &RepoStatusEntry) -> Value {
         "restore_estimate_secs": registry
             .estimate_restore(&entry.reclaimable_by_adapter)
             .map(|(secs, _)| secs.round() as u64),
+        // Report-only: graphify and understand-anything output found at the repo root.
+        // Always present, empty when neither is here. Never folded into
+        // `reclaimable_bytes` or `directories`: there is no lockfile proof these can be
+        // rebuilt, so nothing here is ever a prune candidate.
+        "tools": entry.tools.iter().map(|t| json!({
+            "name": t.name,
+            "path": clean_path(&t.path),
+            "bytes": t.size_bytes,
+        })).collect::<Vec<_>>(),
     });
 
     // Present only on `config_error`, and absent rather than null everywhere else — the
@@ -1013,6 +1022,7 @@ mod tests {
             reclaimable_by_adapter: Vec::new(),
             last_activity: None,
             idle_days: 15,
+            tools: Vec::new(),
         };
 
         let registry = Registry::default();

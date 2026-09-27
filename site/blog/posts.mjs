@@ -207,8 +207,8 @@ hand-rolled script never has:</p>
 </ul>
 
 <p>And it is not only Node: the same pass handles <code>.venv</code> for uv, Poetry, PDM,
-Pipenv and plain venv, <code>__pycache__</code> for Python bytecode and its test
-tools' caches, <code>vendor/</code> for Go, Composer and Bundler,
+Pipenv and plain venv, <code>__pycache__</code> for Python bytecode and pytest's,
+mypy's and ruff's own caches, <code>vendor/</code> for Go, Composer and Bundler,
 <code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods: twenty-six adapters
 in total, seventeen of them on by default.</p>
 

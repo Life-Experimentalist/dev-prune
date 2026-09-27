@@ -852,3 +852,14 @@ pub const GIT_DUBIOUS_OWNERSHIP: &str = "detected dubious ownership";
 ///
 /// Same reasoning as [`GIT_DUBIOUS_OWNERSHIP`]: one cause, one fix, one paragraph.
 pub const GIT_NOT_A_REPOSITORY: &str = "not a git repository";
+
+/// Output directory graphify writes at the root of the folder it was pointed at, per
+/// its own `SKILL.md`. There is no lockfile that proves it can be rebuilt: doing so
+/// re-runs every extraction pass, LLM calls included, so this is reported under "Tools"
+/// and never a prune candidate.
+pub const GRAPHIFY_OUTPUT_DIR: &str = "graphify-out";
+
+/// Output directory understand-anything writes at the root of the project it scanned
+/// (`UA_DIR` in its own `persistence/index.ts`). Same reasoning as
+/// [`GRAPHIFY_OUTPUT_DIR`]: rebuilding it costs LLM calls, so it is reported, not pruned.
+pub const UNDERSTAND_ANYTHING_DIR: &str = ".understand-anything";

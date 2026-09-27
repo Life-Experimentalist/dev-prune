@@ -1413,6 +1413,10 @@ pub struct RepoStatusEntry {
     pub last_activity: Option<DateTime<Utc>>,
     /// Idle threshold that applies to this repo (days).
     pub idle_days: u64,
+    /// AI-assistant tool output found at the repo root (graphify, understand-anything).
+    /// Report-only: never counted in `reclaimable_bytes` or `bloat_dirs`, and never a
+    /// prune candidate. Empty whenever `path` does not exist.
+    pub tools: Vec<crate::tools::ToolFootprint>,
 }
 
 /// Compute full status for ALL registered repositories.
@@ -1441,6 +1445,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
             reclaimable_bytes: 0,
             last_activity: None,
             idle_days: registry_idle_days,
+            tools: Vec::new(),
         };
     }
 
@@ -1461,6 +1466,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
                 reclaimable_bytes: 0,
                 last_activity: last_activity_time(path),
                 idle_days: registry_idle_days,
+                tools: crate::tools::scan(path),
             };
         }
     };
@@ -1484,6 +1490,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
             reclaimable_bytes: 0,
             last_activity: last_activity_time(path),
             idle_days,
+            tools: crate::tools::scan(path),
         };
     }
 
@@ -1559,6 +1566,7 @@ fn status_for_repo(registry: &Registry, path: &Path, reg_entry: &RepoEntry) -> R
         reclaimable_by_adapter: by_adapter,
         last_activity: activity_time,
         idle_days: lowest_unmet_window.unwrap_or(idle_days),
+        tools: crate::tools::scan(path),
     }
 }
 
@@ -2278,6 +2286,7 @@ mod tests {
             reclaimable_bytes: reclaimable,
             last_activity: None,
             idle_days: 15,
+            tools: Vec::new(),
         }
     }
 

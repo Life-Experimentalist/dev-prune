@@ -809,7 +809,10 @@ Add `--json` to `run`, `status`, `stats`, `history`, `trust` or `caches` for a v
 - `devp status --json` — per-repository totals, per-directory sizes, and status
   (candidate / active / ignored / no_bloat / path_missing / config_error). `totals.restore_estimate`
   and each repository's `restore_estimate_secs` are null until a restore has been timed
-  on that machine.
+  on that machine. Each repository's `tools` array reports graphify's `graphify-out/`
+  and understand-anything's `.understand-anything/` when either sits at its root, size
+  only: report-only, never folded into `reclaimable_bytes` and never a `run` candidate,
+  since neither has a lockfile proving it can be rebuilt for free.
 - `devp run --json` — one result per repository × directory with the action taken or
   the refusal reason; refusals include the exact fix command where one exists
   (e.g. the lockfile-repair command for that ecosystem). `size_freed` counts only bytes

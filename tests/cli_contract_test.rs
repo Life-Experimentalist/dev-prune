@@ -276,6 +276,60 @@ fn run_json_refuses_to_delete_without_an_explicit_go_ahead() {
 }
 
 // ---------------------------------------------------------------------------
+// Tools (graphify, understand-anything): report-only, never a prune candidate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn tools_are_reported_but_never_counted_as_reclaimable() {
+    let tmp = TempDir::new().unwrap();
+    let (config, repo) = fixture(&tmp);
+
+    // graphify's own output directory, per its SKILL.md. No lockfile proves this can be
+    // rebuilt for free, so it must show up in `tools`, never in `reclaimable_bytes` or
+    // `directories`, and never as a `run --dry-run` candidate.
+    write_sized(&repo.join("graphify-out/graph.json"), 4096);
+
+    let out = devp(&config).args(["status", "--json"]).output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    let doc = parse_json(&out);
+    let repo_entry = &doc["repositories"][0];
+
+    let tools = repo_entry["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 1, "expected one tool footprint: {repo_entry}");
+    assert_eq!(tools[0]["name"], "graphify");
+    assert!(tools[0]["bytes"].as_u64().unwrap() > 0);
+
+    // The fixture's cargo/venv bloat is the only thing reclaimable: graphify's 4096
+    // bytes must not have been folded in.
+    let reclaimable = repo_entry["reclaimable_bytes"].as_u64().unwrap();
+    let dir_names: Vec<_> = repo_entry["directories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        !dir_names.iter().any(|n| n.contains("graphify")),
+        "graphify leaked into `directories`: {dir_names:?}"
+    );
+    assert!(reclaimable > 0, "fixture's own bloat went missing");
+
+    let out = devp(&config)
+        .args(["--force", "run", "--json", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    let doc = parse_json(&out);
+    for r in doc["results"].as_array().unwrap() {
+        let dir = r["directory"].as_str().unwrap();
+        assert!(
+            !dir.contains("graphify"),
+            "graphify-out was offered as a prune candidate: {r}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // --only / --skip
 // ---------------------------------------------------------------------------
 

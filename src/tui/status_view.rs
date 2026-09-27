@@ -382,6 +382,25 @@ fn reclaimable_split(repos: &[RepoStatusEntry]) -> (u64, u64) {
     (ready, total)
 }
 
+/// Total bytes and repository count per tool name (graphify, understand-anything),
+/// across every repository passed in, in the order the tools were first seen. Report-
+/// only figures: never added to [`reclaimable_split`], never a prune candidate.
+fn tools_summary(repos: &[RepoStatusEntry]) -> Vec<(&'static str, u64, usize)> {
+    let mut totals: Vec<(&'static str, u64, usize)> = Vec::new();
+    for repo in repos {
+        for tool in &repo.tools {
+            match totals.iter_mut().find(|(name, _, _)| *name == tool.name) {
+                Some((_, bytes, count)) => {
+                    *bytes += tool.size_bytes;
+                    *count += 1;
+                }
+                None => totals.push((tool.name, tool.size_bytes, 1)),
+            }
+        }
+    }
+    totals
+}
+
 /// Render the full interactive status view.
 ///
 /// Returns `Some` with the selected repositories' paths if the user confirmed a
@@ -668,7 +687,8 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
     };
 
     let (ready, total) = reclaimable_split(app.repos);
-    let header_line = Line::from(vec![
+    let tools = tools_summary(app.repos);
+    let mut header_spans = vec![
         Span::styled(
             " dev-prune ",
             Style::default()
@@ -705,7 +725,29 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
             format!("  |  {} reclaimable in all", format_bytes(total)),
             Style::default().fg(Color::DarkGray),
         ),
-    ]);
+    ];
+    // Report-only: never folded into `ready`/`total` above, and omitted entirely when
+    // no repository has a graphify or understand-anything output directory.
+    if !tools.is_empty() {
+        let summary = tools
+            .iter()
+            .map(|(name, bytes, count)| {
+                format!(
+                    "{} {} in {} repo{}",
+                    name,
+                    format_bytes(*bytes),
+                    count,
+                    if *count == 1 { "" } else { "s" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        header_spans.push(Span::styled(
+            format!("  |  Tools: {summary}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    let header_line = Line::from(header_spans);
 
     let header_widget =
         Paragraph::new(header_line).block(Block::default().borders(Borders::ALL).border_style(
@@ -1182,6 +1224,27 @@ pub fn render_status_plain(repos: &[RepoStatusEntry]) {
             format_bytes(shared)
         ));
     }
+
+    // AI-assistant tool output (graphify, understand-anything) is never a prune
+    // candidate: nothing here has a lockfile proving it can be rebuilt, so `devp run`
+    // does not touch it. Reported once, in its own block, so its size is not a mystery.
+    let all_paths: Vec<_> = repos.iter().map(|r| r.path.clone()).collect();
+    let with_tools: Vec<_> = repos.iter().filter(|r| !r.tools.is_empty()).collect();
+    if !with_tools.is_empty() {
+        println!();
+        output::print_info("Tools (report-only, never pruned):");
+        for repo in with_tools {
+            let path_str = crate::engine::compute_display_name(&repo.path, &all_paths);
+            for tool in &repo.tools {
+                println!(
+                    "  {}  {:<20}  {}",
+                    output::pad_display(&path_str, 35),
+                    tool.name,
+                    format_bytes(tool.size_bytes)
+                );
+            }
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1220,6 +1283,7 @@ mod tests {
             reclaimable_by_adapter: Vec::new(),
             last_activity: Some(chrono::Utc::now() - chrono::Duration::days(days_idle)),
             idle_days: 30,
+            tools: Vec::new(),
         }
     }
 

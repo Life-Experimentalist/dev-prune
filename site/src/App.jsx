@@ -2092,7 +2092,11 @@ Notes you should rely on, not work around:
                       the most reclaimable space — the totals above the table
                       still cover every one of them. Once a restore has been
                       timed on this machine, the header also estimates how long
-                      putting it all back would take
+                      putting it all back would take. A repository holding{" "}
+                      <code>graphify-out/</code> or{" "}
+                      <code>.understand-anything/</code> gets a Tools line too:
+                      report-only, since neither has a lockfile proving it can
+                      be rebuilt for free
                     </td>
                   </tr>
                   <tr>
