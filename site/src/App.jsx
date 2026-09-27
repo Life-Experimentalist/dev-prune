@@ -36,7 +36,7 @@ const MARKETPLACE =
   "https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune";
 const OPENVSX = "https://open-vsx.org/extension/VKrishna04/dev-prune";
 const DOCS = `${REPO}/blob/main/docs`;
-const VERSION = "1.22.0";
+const VERSION = "1.23.0";
 const THEME_KEY = "devprune-theme";
 
 /* ------------------------------------------------------------------ */
@@ -267,7 +267,7 @@ const ECOSYSTEMS = [
     id: "eco-python",
     language: "Python",
     summary:
-      "Six managers that can describe the same project, because a uv, Poetry or PDM project is still a directory with a virtual environment in it.",
+      "Seven managers that can describe the same project, because a uv, Poetry or PDM project is still a directory with a virtual environment in it.",
     rows: [
       {
         name: "uv",
@@ -352,6 +352,33 @@ const ECOSYSTEMS = [
           </>
         ),
         restore: <code>pixi install</code>,
+      },
+      {
+        name: "pycache",
+        detect: (
+          <>
+            any <code>.py</code> file anywhere in the repository
+          </>
+        ),
+        deletes: (
+          <>
+            <code>__pycache__</code>, plus <code>.pytest_cache</code>,{" "}
+            <code>.mypy_cache</code> and <code>.ruff_cache</code> when they
+            carry a <code>CACHEDIR.TAG</code>
+          </>
+        ),
+        verify: (
+          <>
+            a <code>.py</code> file exists somewhere to regenerate the
+            bytecode from
+          </>
+        ),
+        restore: (
+          <>
+            regenerates on its own: Python re-imports the module, or
+            pytest/mypy/ruff run again
+          </>
+        ),
       },
     ],
     tieBreak: (

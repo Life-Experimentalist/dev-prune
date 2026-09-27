@@ -1,6 +1,6 @@
 # The opt-in build adapters
 
-Eighteen of dev-prune's thirty-five adapters ship switched off. This guide explains why
+Eighteen of dev-prune's thirty-six adapters ship switched off. This guide explains why
 they are a separate class, what each one claims once you turn it on, and how to turn
 them on, one at a time or from the full-screen picker.
 

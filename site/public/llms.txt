@@ -7,7 +7,7 @@
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
 
-Version 1.22.0. Written by VKrishna04.
+Version 1.23.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json
@@ -766,7 +766,7 @@ and `devp doctor` prints the command to enable chaining if that is wanted.
 entirely: a disabled adapter is not detected, not counted by `stats`, not probed for
 by `doctor` and never pruned, as if that ecosystem were not installed on the machine.
 `devp config set disabled_adapters -` clears it. It is a deny-list rather than
-thirty-five switches because the answer for almost everyone is "none", and it is
+thirty-six switches because the answer for almost everyone is "none", and it is
 separate from `enable_cargo` / `enable_gradle` / `enable_maven` / `enable_swift` /
 `enable_dart` / `enable_mix_build` (Elixir: Mix is Elixir's build tool, and
 `_build/` holds the compiled project, separate from the downloaded `deps/` the

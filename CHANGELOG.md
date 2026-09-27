@@ -5,6 +5,29 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] - 2026-09-28
+
+### Added
+
+- **pycache** joins the Python group as a regular adapter (on by default): it deletes
+  `__pycache__` by name alone, since CPython owns that name unconditionally, and deletes
+  `.pytest_cache`, `.mypy_cache` and `.ruff_cache` only when a `CACHEDIR.TAG` file inside
+  proves the tool wrote it, per the [cache directory tagging
+  spec](https://bford.info/cachedir/). It never touches `.hypothesis` (holds regression
+  examples pytest cannot regenerate on its own), and never `.tox` or `.nox` (environments,
+  not caches). Verification requires at least one `.py` file anywhere in the repository,
+  so there is always something to regenerate the bytecode and tool caches from. That
+  makes thirty-six adapters.
+
+- **`devp status` reports a Tools line** for the output graphify and understand-anything
+  leave behind (`graphify-out/` and `.understand-anything/`), because both can grow
+  into gigabytes and neither has a lockfile to prove it is safe to delete: rebuilding
+  either means re-running the tool's own extraction passes, LLM calls included. The
+  interactive dashboard's header and the plain-table view both show the size next to
+  everything else, and `--json` carries it as a `tools` array on each repository entry.
+  It is report-only: never counted in the reclaimable total, and never a candidate for
+  `devp run`.
+
 ## [1.22.0] - 2026-09-20
 
 ### Added
