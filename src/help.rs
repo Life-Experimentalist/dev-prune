@@ -122,10 +122,12 @@ its size and the total, notes that `devp restore` brings it back, and asks. Eith
 way `-y` skips the confirmation, `--dry-run` reports what a pass would do without \
 deleting anything at all, and without a terminal the run exits with an error naming \
 `--yes` rather than waiting on a prompt. Adapter names for `--only`/`--skip` are: npm, pnpm, yarn, bun, deno, uv, \
-poetry, pdm, pipenv, venv, cargo, go, composer, bundler, cocoapods, mix, mix_build, \
-gradle, maven, swift, terraform, dart, vcpkg, cmake_build, dotnet_build — an unknown name is an \
+poetry, pdm, pipenv, venv, pycache, pixi, cargo, go, composer, bundler, cocoapods, mix, mix_build, \
+gradle, maven, swift, terraform, dart, vcpkg, cmake_build, dotnet_build, godot, \
+unity, unreal, defold, cocos, zig, stack, cabal, sbt — an unknown name is an \
 error listing the valid ones, not a silently empty pass. cargo, gradle, maven, \
-swift, dart, mix_build, vcpkg, cmake_build and dotnet_build are opt-in (`devp config set \
+swift, dart, mix_build, vcpkg, cmake_build, dotnet_build, godot, unity, unreal, \
+defold, cocos, zig, stack, cabal and sbt are opt-in (`devp config set \
 enable_cargo true`) and idle-gated separately by `build_idle_days`, because a \
 build directory takes far longer to get back than a dependency directory. \
 `devp config wizard` switches them on by language, and can give any one adapter \
@@ -364,7 +366,22 @@ it refuses to run at all when there are no registered repositories to check agai
 Nothing else in a cache is lost; every manager re-downloads what it needs. What it costs \
 is time, in every project on the machine, on the next install and the next `devp \
 restore`. The freed size reported afterwards is measured rather than assumed, because \
-a `prune` keeps what is still in use.";
+a `prune` keeps what is still in use.
+
+`--include-volumes` belongs to a container engine named alone, and only docker and \
+podman can honour it: they are the engines whose `volume ls` can narrow to volumes \
+nothing uses. After the narrow steps run, the unused volumes are listed by name and you \
+type the numbers of the ones to delete; each pick is one unforced `volume rm`, and an \
+empty answer keeps them all. dev-prune never runs `volume prune`. Because a volume \
+holds the only copy of what is in it, the flag refuses `--yes`, `--json` and a piped \
+stdin: nothing unattended can reach it, and that is the point. The one unattended \
+spelling is `--include-volumes --dry-run`, which deletes nothing: it lists the unused \
+volumes by name with the command to paste, so a script or an agent can prepare \
+everything and a person runs the final command at a terminal. The pick list also arms \
+only within ten minutes of a completed dry run for that engine: outside the window \
+the real command runs the dry run instead, says so, and the same line typed again \
+within ten minutes goes through. What the picks free is then counted on `devp stats`, \
+which a `volume rm` typed straight at the engine would not be.";
 
 pub const CACHES_CLEAR_EXAMPLES: &str = "\
 EXAMPLES:
@@ -380,6 +397,8 @@ EXAMPLES:
   devp caches clear all --yes     No prompt, for a script
   devp caches clear go --json --yes
                                   Machine-readable (`--json` requires `--yes`)
+  devp caches clear docker --include-volumes
+                                  Also pick unused volumes by name (terminal only)
 
 Exit code 1 if any cache could not be cleared; the rows are printed either way.
 Exit code 2 for `maven`, which is reported but never cleared.";
@@ -758,18 +777,26 @@ that makes Aider load it). Every byte outside the markers is left as found. \
 `devp skill --help` lists each value with its exact path. Claude Code needs no \
 per-repository file — its skill installs globally. This list is fixed on purpose: for \
 any other, renamed, or future agent, `--rules-file <path>` upserts the same marked \
-block into a path you name, so onboarding a new tool never waits on a dev-prune release.";
+block into a path you name, so onboarding a new tool never waits on a dev-prune release.
+
+The bare run also reports which of those editors this machine or repository shows \
+traces of — a home-directory footprint, an installed VS Code-family extension, or a \
+config directory committed to the repository — with each one's rules state here and \
+the `--agent` command that writes them. The report only ever prints. \
+`--detected` writes rules for everything on it in one pass, into the current \
+repository; like `--agent` it must be run from a repository root.";
 
 pub const SKILL_EXAMPLES: &str = "\
 EXAMPLES:
-  devp skill                      Export SKILL.md, print onboarding prompts
+  devp skill                      Export SKILL.md, report detected editors
   devp skill --agent cursor       Write .cursor/rules/dev-prune.mdc here
   devp skill --agent agents-md    Upsert the marked block in AGENTS.md
   devp skill --prompt agent       Print just the onboarding prompt, bare, to stdout
   devp skill --prompt agent --copy
                                   Copy that prompt to the clipboard instead
   devp skill --rules-file .windsurfrules
-                                  Upsert the marked block into any path you name";
+                                  Upsert the marked block into any path you name
+  devp skill --detected           Write rules for every detected editor";
 
 pub const SETUP_LONG: &str = "\
 Install whatever integration is missing and leave the rest alone: the `devp` alias, \

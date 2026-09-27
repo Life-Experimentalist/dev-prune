@@ -28,8 +28,8 @@ gigabytes hostage for a build you are not running.
 
 `dev-prune` finds those directories across every Git repository you register, and deletes
 them — but only after proving the exact command that puts them back would succeed. It
-knows twenty-six adapters, not just the obvious four: Composer, Bundler, Mix, CocoaPods,
-Terraform and Python's `__pycache__` are as first-class as npm and pip. It is one Rust program,
+knows thirty-five package managers, not just the obvious four: Composer, Bundler, Mix,
+CocoaPods and Terraform are as first-class as npm and pip. It is one Rust program,
 installs its own background schedule, and answers to two names you type — `dev-prune` and
 `devp` — alongside a third, windowless build, `devpw`, that exists only so the Windows
 scheduled task runs without flashing up a console.
@@ -345,7 +345,7 @@ devp history                # which pass reclaimed it, and what started that pas
 devp history --pass 1       # the exact command line, and every directory it took
 devp caches                 # every package manager cache, sized. The report deletes nothing
 devp caches docker          # what Docker holds, and the prune commands
-devp caches clear docker    # run the narrow ones — never a volume, never on a schedule
+devp caches clear docker    # run the narrow ones — no volume unless you name it, never on a schedule
 devp status --drift         # anything installed that the lockfiles don't record?
 devp doctor .               # why is this repository not being pruned?
 devp doctor --fix           # repair a broken integration — never a first-time install
@@ -455,13 +455,26 @@ them and asking, and counts what came back on its own line in `devp stats`. Prin
 commands and asking you to go and type one in another window meant whatever you reclaimed
 on its advice was yours to have remembered, and dev-prune could not account for it.
 
-**It will not touch a volume, and no flag makes it.** There is no argument anywhere in
-that table containing the word, and a unit test fails the build if one appears. That is a
-different promise from the lockfile rule: an image can be pulled again and a build cache
-rebuilt, so those are a question of consent and the prompt is the consent. What is inside
-a named volume is the only copy. `docker volume prune` stays a command this prints and
-you type — and the estimate says how much unused-volume space it is leaving alone rather
-than folding it into a number these commands cannot deliver.
+**It will not bulk-delete volumes, and no flag makes it.** No argument in the reclaim
+table contains the word volume, a unit test fails the build if one appears, and dev-prune
+never runs `volume prune` or `system prune --volumes`. That is a different promise from
+the lockfile rule: an image can be pulled again and a build cache rebuilt, so those are a
+question of consent and the prompt is the consent. What is inside a volume is the only
+copy, so a volume goes only when someone names it. That naming has a spelling now:
+`devp caches clear docker --include-volumes` (docker and podman) lists the unused
+volumes by name after the narrow steps run and you type the numbers of the ones to
+delete, each pick one unforced `volume rm`. It refuses `--yes`, `--json` and a piped
+stdin, so no script or scheduler can reach it. The one unattended spelling is
+`--include-volumes --dry-run`, which deletes nothing: it lists the unused volumes by
+name with the command to paste, so an agent can prepare everything and a person runs
+the final command at a terminal, and what the picks free is then counted on
+`devp stats`, which a `volume rm` typed straight at the engine would not be. The pick
+list arms only within ten minutes of a completed dry run for that engine: typed cold,
+the real command runs the dry run instead and says so, and the same line typed again
+within ten minutes reaches the picking. Without
+the flag, the estimate still
+says how much unused-volume space is being left alone rather than folding it into a
+number these commands cannot deliver.
 
 The figures come from the engine's own `system df`, not a walk of the disk. On Docker
 Desktop and Podman the store lives inside a VM disk image the host filesystem cannot see,
@@ -540,7 +553,7 @@ process that leaves a dirty working tree is a surprise.
 | 🧩 **Any number of ecosystems per repository** | uv, npm and cargo in one root, or spread across `frontend/`, `services/api/` and `tools/cli/` — each discovered, verified and pruned on its own terms                                                                                                                                                                                                       |
 | ↩️ **One-command restore**                     | `devp restore .` reinstalls a tree; `devp restore --last-run` puts back exactly what the most recent pass deleted, across every repository it touched                                                                                                                                                                                                       |
 | 🕒 **Activity-aware**                          | Combines `git log` timestamps with source-file `mtime`, so uncommitted work protects a repository just as a commit does                                                                                                                                                                                                                                     |
-| 🐳 **Container report**                        | `devp caches docker` (also `devp caches podman`, and `devp caches containers <engine>` for `nerdctl`, `finch` or Apple's `container` — the engine name is an argument to `containers`, never a subcommand of its own — or `devp caches containers` on its own for every engine it finds plus local Kubernetes clusters) breaks a container engine's disk into images, containers, local volumes and build cache, each with what the engine itself calls reclaimable, and prints the prune commands narrowest first with what each takes with it. `devp caches clear docker` then runs the narrow ones for you, after asking, and counts them in `devp stats` — **never a volume**, and never from a scheduler or a hook. `devp caches` carries a one-line summary per engine, outside its own total |
+| 🐳 **Container report**                        | `devp caches docker` (also `devp caches podman`, and `devp caches containers <engine>` for `nerdctl`, `finch` or Apple's `container` — the engine name is an argument to `containers`, never a subcommand of its own — or `devp caches containers` on its own for every engine it finds plus local Kubernetes clusters) breaks a container engine's disk into images, containers, local volumes and build cache, each with what the engine itself calls reclaimable, and prints the prune commands narrowest first with what each takes with it. `devp caches clear docker` then runs the narrow ones for you, after asking, and counts them in `devp stats` — **no volume unless you pick it by name** (`--include-volumes`, a terminal-only list you choose from, one unforced `volume rm` per pick, never `volume prune`), and never from a scheduler or a hook. `devp caches` carries a one-line summary per engine, outside its own total |
 | 📊 **Cache report**                            | `devp caches` sizes every package manager cache and store on the machine — npm to cargo to conda, Maven, Gradle, NuGet, vcpkg, Conan, Composer, CocoaPods, Hex, Bundler, pub, SwiftPM, Terraform, Poetry, PDM and Deno — and prints the command that clears each. It also finds the stores that belong to no package manager at all and are routinely the largest things in the list: the Playwright and Puppeteer browser bundles, the Cypress binary cache, the Electron and electron-builder download caches, and the HuggingFace hub — a whole browser or model per version, and nothing ever removes the old one. The report is read-only; `devp caches clear <manager>` runs that command for you, after asking. `devp config set cache_max_gb default=10` says how big is too big — for every manager at once, or per manager with `default=10,npm=4` — and marks the ones past it — `devp caches clear --over-cap all` then empties exactly those, still only when you type it. Each manager also says how many of your registered repositories use it and what that works out to per repository, and `devp caches clear --unused all` empties the ones nothing uses at all. pnpm is reported once per filesystem, because a store it hardlinks into `node_modules` cannot cross one and projects kept off the system disk get a store of their own. Nothing on a schedule ever touches a cache, and Maven's `~/.m2/repository` is never cleared at all — it holds artifacts `mvn install:install-file` put there that no remote can hand back |
 | 🩺 **`devp doctor`**                           | One read-only pass that ends by naming the *single* reason a repository would or would not be pruned. Runs no package manager, repairs nothing, safe to run twice. `devp doctor --fix` then mends what it found — installed-but-broken only                                                                                                                 |
 | 🤖 **Self-installing automation**              | OS-native scheduler (Task Scheduler, LaunchAgent, systemd user timer) and non-blocking Git hooks, installed once the first run’s walkthrough is accepted (quitting it installs nothing) and restored after an upgrade. `auto_setup`, `auto_hooks`, `auto_daemon` or `DEV_PRUNE_NO_AUTO_SETUP=1` turn it off                                                                                                             |
@@ -568,7 +581,7 @@ process that leaves a dirty working tree is a surprise.
 | `devp history`         | `--pass N`, `--limit N`, `--all`, `--json`, `--export [PATH]`       | Which pass deleted what, and what asked it to — one line per pass, then `--pass N` for the command line that ran it and every directory it removed. `--export` writes the lot to your documents folder                                                        |
 | `devp completions`     | `bash`, `zsh`, `fish`, `powershell`, `elvish`                       | Prints a shell completion script to stdout, generated from the same argument definitions the binary parses with                                                                                                                                               |
 | `devp caches`          | `clear <manager\|all>`, `--json`                                    | Sizes every package manager cache on the machine and prints the command that clears each. The report deletes nothing and nothing on a schedule ever will; `clear` empties one when you type it, after asking                                                  |
-| `devp caches docker`   | `podman`, `containers [ENGINE]` (`nerdctl`, `finch`, `container`), `--json` | What a container engine holds — images, containers, volumes, build cache — each sized, with what the engine calls reclaimable, then the prune commands. The report deletes nothing; `devp caches clear <engine>` runs the narrow ones when you name it, never a volume                                     |
+| `devp caches docker`   | `podman`, `containers [ENGINE]` (`nerdctl`, `finch`, `container`), `--json` | What a container engine holds — images, containers, volumes, build cache — each sized, with what the engine calls reclaimable, then the prune commands. The report deletes nothing; `devp caches clear <engine>` runs the narrow ones when you name it — a volume only through `--include-volumes`, picked by name at a terminal                                     |
 | `devp trust`           | `--json`                                                            | What dev-prune may do on this machine: the guarantees the code enforces, then the scheduler, hooks and settings read live, then every copy of dev-prune on the machine with the manager that installed it and its SHA-256. Read-only                          |
 | `devp restore [PATH]`  | `--last-run`                                                        | Reinstalls dependencies for every project in a tree; `--last-run` undoes the last prune pass                                                                                                                                                                  |
 | `devp doctor [PATH]`   | `--fix`                                                             | Diagnoses the installation, or one repository — ending with the single reason a pass would or would not touch it. `--fix` repairs what the checks found; it never performs a first-time install                                                               |
@@ -610,6 +623,7 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **PDM** (Python)              | `pdm.lock`, `[tool.pdm]` or `pdm.backend` in `pyproject.toml` | `.venv`, `__pypackages__`                  | `pdm lock --check`                                                                                                | `pdm install`                                             |
 | **Pipenv** (Python)           | `Pipfile`                                                     | `.venv` *(in-project installs only)*       | `pipenv verify`                                                                                                   | `pipenv install --deploy`                                 |
 | **venv** (Python)             | `requirements.txt` + a directory containing `pyvenv.cfg`      | every directory containing `pyvenv.cfg`    | `requirements.txt` must exist and list at least one package                                                       | `python -m venv .venv && pip install -r requirements.txt` |
+| **pixi** (Python/conda)       | `pixi.toml`, `pixi.lock`, `[tool.pixi]` in `pyproject.toml`   | `.pixi`                                    | `pixi.lock` carries its `version:` and records at least one conda or PyPI package                                | `pixi install`                                            |
 | **Cargo** (Rust) *(opt-in)*   | `Cargo.toml`                                                  | `target`                                   | `cargo metadata --locked`                                                                                         | *(rebuilt by the next `cargo build`)*                     |
 | **Go**                        | `go.mod`                                                      | `vendor`                                   | `go mod download`                                                                                                 | `go mod vendor`                                           |
 | **Composer** (PHP)            | `composer.json`                                               | `vendor`                                   | `composer validate --no-check-publish --no-check-all`                                                             | `composer install`                                        |
@@ -625,15 +639,22 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **vcpkg** (C/C++) *(opt-in)*  | `vcpkg.json`                                                  | `vcpkg_installed`                          | `vcpkg.json` declares a non-empty `dependencies` list                                                             | *(rebuilt by the next `vcpkg install`)*                   |
 | **CMake** (C/C++) *(opt-in)*  | `CMakeLists.txt`                                              | any tree holding a `CMakeCache.txt`        | the tree's own `CMakeCache.txt` names a source directory inside this repository                                   | *(rebuilt by the next `cmake --build`)*                   |
 | **.NET build** *(opt-in)*     | `*.csproj`, `*.fsproj`, `*.vbproj`                            | `obj`, and `bin` beside it *(only while `bin` holds nothing but `Debug`/`Release`)* | `obj/project.assets.json` names a project file still sitting in this directory, and every project file here has a `<Project` root | *(rebuilt by the next `dotnet build`)*                    |
+| **Zig** *(opt-in)*            | `build.zig`                                                   | `.zig-cache`, `zig-cache`, `zig-out`       | `build.zig` declares a `pub fn build` — the rebuild-from-source proof                                             | *(rebuilt by the next `zig build`)*                       |
+| **Stack** (Haskell) *(opt-in)* | `stack.yaml`                                                  | `.stack-work`                              | `stack.yaml` names its `resolver:` (or `snapshot:`)                                                               | *(rebuilt by the next `stack build`)*                     |
+| **Cabal** (Haskell) *(opt-in)* | `cabal.project`                                               | `dist-newstyle`                            | `cabal.project` declares its `packages` — a lone `*.cabal` file is never claimed                                  | *(rebuilt by the next `cabal build`)*                     |
+| **sbt** (Scala) *(opt-in)*    | `build.sbt`                                                   | `target`, `project/target`                 | `build.sbt` carries a setting, or `project/build.properties` pins `sbt.version`                                   | *(rebuilt by the next `sbt compile`)*                     |
 
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
 
-The nine build-tool adapters ship **disabled**, because a build tree is regenerated
+The eighteen build-tool adapters ship **disabled**, because a build tree is regenerated
 by recompiling, not downloading — it costs more to get back. `devp config set
 enable_cargo true` / `enable_gradle true` / `enable_maven true` / `enable_swift true` /
 `enable_dart true` / `enable_mix_build true` / `enable_vcpkg true` /
-`enable_cmake_build true` / `enable_dotnet_build true` switches them on, and their candidates wait for
+`enable_cmake_build true` / `enable_dotnet_build true` / `enable_godot true` /
+`enable_unity true` / `enable_unreal true` / `enable_defold true` /
+`enable_cocos true` / `enable_zig true` / `enable_stack true` /
+`enable_cabal true` / `enable_sbt true` switches them on, and their candidates wait for
 `build_idle_days` (45 by default), applied as the *maximum* of it and `idle_days` — the
 build-tool gate only ever makes pruning later, never earlier.
 
@@ -744,12 +765,12 @@ once on a first install — so the defaults are something you agreed to rather t
 inherited — and again after an upgrade adds a setting you have never been shown.
 
 If you already know what you want, `devp config recommended` is the one-command version:
-it turns on the nine adapters and build trees that are off by default because they are
+it turns on the eighteen adapters and build trees that are off by default because they are
 not universally wanted, and leaves `allow_manifest_rewrite` — the one recommendation
 that edits files Git tracks — named, explained and off unless you add
 `--with-cautious`. `devp config show` lists whatever you have not taken yet.
 
-Thirty-two settings, in the seven groups the configurator asks them in — the order the
+Forty-one settings, in the seven groups the configurator asks them in — the order the
 decisions actually arrive in. Every key, with its full description and range, is in the
 [CLI reference](docs/CLI_REFERENCE.md#8-devp-config-action).
 
@@ -782,7 +803,7 @@ rather than downloading. That is the whole reason each one is a switch.
 
 | Key | Default | Meaning |
 | :--- | :---: | :--- |
-| `enable_cargo` … `enable_dotnet_build` | `false` | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all nine |
+| `enable_cargo` … `enable_sbt` | `false` | Turn on an opt-in build-tool adapter; `build_idle_days` (`45`) gates all eighteen |
 
 **Shared download caches** — one key, because the cap only ever marks.
 

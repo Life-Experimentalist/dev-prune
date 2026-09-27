@@ -473,19 +473,19 @@ pub enum Commands {
             long,
             value_enum,
             value_name = "EDITOR",
-            conflicts_with_all = ["rules_file", "prompt"]
+            conflicts_with_all = ["rules_file", "prompt", "detected"]
         )]
         agent: Option<commands::skill::AgentEditor>,
 
         /// Write the condensed rules into an exact path in the current repository, as
         /// a marked block, for a coding agent `--agent` does not name — new, renamed,
         /// or reading a file of its own under a different name.
-        #[arg(long, value_name = "PATH", conflicts_with_all = ["agent", "prompt"])]
+        #[arg(long, value_name = "PATH", conflicts_with_all = ["agent", "prompt", "detected"])]
         rules_file: Option<std::path::PathBuf>,
 
         /// Print one onboarding prompt on its own, with no header or fence, so it can
         /// be piped straight into a clipboard tool or a file.
-        #[arg(long, value_enum, conflicts_with_all = ["agent", "rules_file"])]
+        #[arg(long, value_enum, conflicts_with_all = ["agent", "rules_file", "detected"])]
         prompt: Option<commands::skill::PromptKind>,
 
         /// Send the prompt named by `--prompt` to the clipboard instead of only
@@ -493,6 +493,11 @@ pub enum Commands {
         /// found on PATH; the prompt itself still reaches stdout either way.
         #[arg(long, requires = "prompt")]
         copy: bool,
+
+        /// Write rules for every editor detected on this machine or in this
+        /// repository — the ones plain `devp skill` lists — in one pass.
+        #[arg(long, conflicts_with_all = ["agent", "rules_file", "prompt"])]
+        detected: bool,
     },
 
     /// Install whatever dev-prune integration is missing: alias, SKILL.md, Git hooks, scheduler.
@@ -598,6 +603,11 @@ pub enum CachesAction {
         /// there are no registered repositories to check against.
         #[arg(long)]
         unused: bool,
+
+        /// With a container engine: after the narrow steps, list its unused volumes by
+        /// name and pick which of them go. Refuses `--yes`, `--json` and a piped stdin.
+        #[arg(long)]
+        include_volumes: bool,
     },
 
     /// What Docker is holding: images, containers, volumes and build cache (read-only).
@@ -1012,11 +1022,13 @@ pub fn run_cli() {
                 except,
                 over_cap,
                 unused,
+                include_volumes,
             }) => commands::caches::run_clear(
                 &target,
                 except.as_deref(),
                 over_cap,
                 unused,
+                include_volumes,
                 cli.yes,
                 cli.dry_run,
                 json,
@@ -1092,7 +1104,8 @@ pub fn run_cli() {
             rules_file,
             prompt,
             copy,
-        } => commands::skill::run(agent, rules_file, prompt, copy),
+            detected,
+        } => commands::skill::run(agent, rules_file, prompt, copy, detected),
         Commands::Setup { status } => commands::setup::run(status),
         Commands::Doctor { path, fix } => {
             let path = path.map(|p| config::expand_tilde(&p));

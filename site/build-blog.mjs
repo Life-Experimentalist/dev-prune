@@ -21,7 +21,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { POSTS, SITE, UPDATED } from './blog/posts.mjs';
+import { LEGACY_ROOT_SLUGS, POSTS, SITE, UPDATED } from './blog/posts.mjs';
 import { REFERENCE, referenceMain } from './reference.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -160,7 +160,7 @@ ${main}
 }
 
 function articleJsonLd(post) {
-  const url = `${SITE}/${post.slug}/`;
+  const url = `${SITE}/blog/${post.slug}/`;
   const graph = [
     {
       '@type': 'TechArticle',
@@ -217,7 +217,7 @@ ${post.faq
     ?.map((slug) => bySlug.get(slug))
     .filter(Boolean)
     .map(
-      (r) => `            <li><a href="/${r.slug}/"><strong>${esc(r.title)}</strong><span>${esc(
+      (r) => `            <li><a href="/blog/${r.slug}/"><strong>${esc(r.title)}</strong><span>${esc(
         r.description,
       )}</span></a></li>`,
     )
@@ -258,7 +258,7 @@ function indexMain() {
           <section class="doc-related">
             <ul>
 ${POSTS.map(
-  (p) => `              <li><a href="/${p.slug}/"><strong>${esc(p.title)}</strong><span>${esc(
+  (p) => `              <li><a href="/blog/${p.slug}/"><strong>${esc(p.title)}</strong><span>${esc(
     p.description,
   )}</span></a></li>`,
 ).join('\n')}
@@ -276,15 +276,44 @@ function write(dir, html) {
 
 for (const post of POSTS) {
   write(
-    post.slug,
+    `blog/${post.slug}`,
     page({
-      url: `/${post.slug}/`,
+      url: `/blog/${post.slug}/`,
       title: post.title,
       description: post.description,
       keywords: post.keywords,
       main: articleMain(post),
       jsonLd: articleJsonLd(post),
     }),
+  );
+}
+
+// The guides shipped at the site root before moving under /blog/, and those root URLs
+// are in a published sitemap and in links nobody controls. Each old URL gets a stub
+// that sends browsers to the new page immediately and tells crawlers where the
+// canonical copy lives — GitHub Pages has no server-side redirects, so the meta
+// refresh is the redirect. The stubs stay out of the sitemap and carry noindex.
+for (const slug of LEGACY_ROOT_SLUGS) {
+  if (!POSTS.some((p) => p.slug === slug)) {
+    throw new Error(`LEGACY_ROOT_SLUGS names "${slug}" but no post has that slug`);
+  }
+  const target = `/blog/${slug}/`;
+  write(
+    slug,
+    `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Moved to ${target}</title>
+<meta http-equiv="refresh" content="0; url=${target}" />
+<link rel="canonical" href="${SITE}${target}" />
+<meta name="robots" content="noindex" />
+</head>
+<body>
+<p>This guide moved to <a href="${target}">${SITE}${target}</a>.</p>
+</body>
+</html>
+`,
   );
 }
 
@@ -309,7 +338,7 @@ write(
             '@type': 'TechArticle',
             headline: p.title,
             description: p.description,
-            url: `${SITE}/${p.slug}/`,
+            url: `${SITE}/blog/${p.slug}/`,
           })),
         },
       ],
@@ -367,7 +396,7 @@ const urls = [
   { loc: `${SITE}/blog/`, priority: '0.8', changefreq: 'weekly' },
   { loc: `${SITE}${REFERENCE.url}`, priority: '0.9', changefreq: 'weekly' },
   ...POSTS.map((p) => ({
-    loc: `${SITE}/${p.slug}/`,
+    loc: `${SITE}/blog/${p.slug}/`,
     priority: '0.7',
     changefreq: 'monthly',
   })),

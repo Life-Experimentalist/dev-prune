@@ -340,6 +340,10 @@ pub const EPHEMERAL_ANCESTORS: &[&str] = &["cache", ".cache", "Cache", "Caches",
 /// a real workspace is the worse of the two errors.
 pub const EPHEMERAL_REPO_PREFIXES: &[&str] = &["temp_git_", "tmp_git_"];
 
+/// The line prefix in a linked worktree's `.git` *file* that names its metadata
+/// directory inside the main repository (`gitdir: <main>/.git/worktrees/<name>`).
+pub const GITDIR_PREFIX: &str = "gitdir:";
+
 /// Whether an adapter whose sync command edits tracked manifests may run it.
 ///
 /// Off. `cargo generate-lockfile` re-resolves every dependency and rewrites
@@ -456,6 +460,25 @@ pub fn release_asset_name(version: &str) -> Option<String> {
     Some(format!("dev-prune-v{version}-{os}-{arch}{ext}"))
 }
 
+/// The release-asset name for the windowless scheduler binary, without the `.sha256`
+/// suffix.
+///
+/// Same contract, same workflow: the Windows packaging step in
+/// `.github/workflows/release.yml` publishes this exact name beside the console asset,
+/// so the self-update can bring `devpw.exe` forward with the same verified-download
+/// path it uses for the console binary. Windows-only because the windowless twin is:
+/// no other platform has a subsystem split to paper over.
+#[cfg(windows)]
+pub fn windowless_release_asset_name(version: &str) -> Option<String> {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        "x86" => "x86",
+        _ => return None,
+    };
+    Some(format!("devpw-v{version}-windows-{arch}.exe"))
+}
+
 /// Whether the periodic release check runs. On by default — see `Settings::update_check`.
 pub const DEFAULT_UPDATE_CHECK: bool = true;
 
@@ -466,6 +489,10 @@ pub const DEFAULT_AUTO_UPDATE: bool = true;
 /// Whether the installed version is pinned where it is. Off by default, and the only
 /// setting that outranks every other update path -- see `Settings::version_lock`.
 pub const DEFAULT_VERSION_LOCK: bool = false;
+
+/// Whether a dry run ends with the switched-off-adapter recommendations. On by
+/// default; see `Settings::recommendations`.
+pub const DEFAULT_RECOMMENDATIONS: bool = true;
 
 /// Default interval, in days, between automatic release checks.
 ///
@@ -493,6 +520,22 @@ pub const CONFIG_DIR_NAME: &str = "dev-prune";
 
 /// Global environment variable name to override config directory location.
 pub const ENV_CONFIG_DIR_OVERRIDE: &str = "DEV_PRUNE_CONFIG_DIR";
+
+/// Prefix of the per-engine stamp a completed volume dry run leaves in the config
+/// directory (`volume-pick-docker.stamp` holds the Unix time it finished). The real
+/// `--include-volumes` pick list only arms while a stamp is fresh, so the first time
+/// anyone types the real command they get the dry run instead of a deletion prompt.
+pub const VOLUME_PICK_STAMP_PREFIX: &str = "volume-pick-";
+
+/// Extension of the volume dry-run stamp file.
+pub const VOLUME_PICK_STAMP_SUFFIX: &str = ".stamp";
+
+/// How long a completed volume dry run arms the real pick list, in seconds.
+///
+/// Long enough to read the list and retype the line; short enough that a list read
+/// this morning cannot authorize a deletion this afternoon, when the volumes on it
+/// may no longer be the unused ones.
+pub const VOLUME_PICK_WINDOW_SECS: u64 = 600;
 
 /// File in the config directory recording the first-run answer to "may dev-prune set
 /// itself up?" — `granted` or `declined`. Its absence means the question has never been

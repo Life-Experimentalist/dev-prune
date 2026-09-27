@@ -241,6 +241,14 @@ forever is exactly what `--rules-file` exists to avoid. For any editor not liste
 above, point it at `devp skill --rules-file <path>` and it is onboarded today, with no
 code change and no wait for a release.
 
+Not sure which of these you have? Plain `devp skill` ends with a detection report:
+every editor whose traces are on the machine (a home-directory footprint like
+`~/.cursor`, an installed VS Code-family extension) or in the repository (a committed
+`.windsurf/` or `GEMINI.md`), whether its rules here are current, stale or missing,
+and the `--agent` command that writes them. The report only ever prints —
+`devp skill --detected` is what writes rules for everything on it, in one pass, from
+the repository root.
+
 A dedicated `--agent` value is still worth adding when an editor is popular enough
 that naming it directly is worth the ongoing upkeep. That is four small changes in
 [`src/commands/skill.rs`](../src/commands/skill.rs) and
@@ -262,6 +270,12 @@ that naming it directly is worth the ongoing upkeep. That is four small changes 
    fails `cargo test` if a variant's name is missing from this page, so a forgotten row
    here is caught before it ships — it does not check the other three files, or that
    the row is still true.
+
+An optional fifth step, if the editor leaves a well-known trace behind: add a row to
+`AgentEditor::traces()` naming its home-directory footprint, repository config
+directory, or extension ID prefix, so the detection report and `--detected` pick it
+up. An editor with no row is still fully reachable by name — detection is a
+convenience, not a requirement.
 
 If the editor instead reads the cross-tool `AGENTS.md` convention, no code is needed —
 it is already covered by `--agent agents-md`.
@@ -319,6 +333,56 @@ that reason, the same way it reads the skill's own version stamp.
 That is not a collision; Claude Code namespaces plugin skills. But only one of the two
 tracks the binary you have: `devp skill` re-exports the version you installed, while the
 plugin follows `main`. Keep whichever matches how you got dev-prune.
+
+### A guardrail hook, if rules are not enough
+
+The rules file and the skill both tell an agent never to delete container volumes and
+never to `rm -rf` a bloat directory by hand. Rules are prose, though, and an agent under
+pressure to free disk space has been known to reach for `docker volume prune` anyway. If
+your harness supports command hooks, you can turn the volume rule into a confirmation
+prompt the agent cannot skip — not a hard block, just a question that reaches you before
+the command runs.
+
+For Claude Code, save this as `~/.claude/hooks/devp-volume-guard.sh`:
+
+```sh
+#!/bin/sh
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+# PreToolUse hook: ask before any command that deletes container volumes.
+# A volume is the only copy of its data, so the decision belongs to a human.
+# devp's own volume flow (`devp caches clear docker --include-volumes`) already
+# takes each deletion as a typed pick, so it never trips this.
+input=$(cat)
+if printf '%s' "$input" | grep -qE 'volume[[:space:]]+(rm|remove|prune)|(^|[^[:alnum:]-])--volumes'; then
+  printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"ask","permissionDecisionReason":"This deletes container volumes, which are the only copy of their data. If disk space is the goal, devp caches clear docker --include-volumes lists the unused ones and takes each deletion as a typed pick."}}'
+fi
+exit 0
+```
+
+and wire it into `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "sh ~/.claude/hooks/devp-volume-guard.sh" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The pattern deliberately does not match `--include-volumes` — that is devp's own
+consent-gated flow — and it matches nothing about installs or restores, so `npm ci`
+and `devp restore` never prompt. On Windows the same two patterns port directly to a
+PowerShell hook (`volume\s+(rm|remove|prune)\b` and `(?<![\w-])--volumes\b`) run as
+`powershell -File`. Other harnesses with pre-command hooks can reuse the regexes as-is;
+the JSON envelope is Claude Code's.
 
 ---
 

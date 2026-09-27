@@ -56,10 +56,13 @@ fn scratch_config_dir() -> PathBuf {
 /// dev-prune installs a *global* `core.hooksPath`, so without this a fixture's first
 /// commit fires the real `post-commit` hook and registers the temporary directory in the
 /// developer's real registry.
+///
+/// Built on `git_in` because tests also run from inside a git hook (a local pre-push
+/// gate that runs `cargo test`), where an inherited absolute `GIT_DIR` would aim every
+/// fixture command at the hook's own repository instead of the fixture.
 fn git(path: &Path) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(path)
-        .env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
+    let mut cmd = dev_prune::scanner::git::git_in(path);
+    cmd.env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
         .env("GIT_CONFIG_SYSTEM", path.join("no-such-gitconfig"));
     cmd
 }

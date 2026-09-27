@@ -147,6 +147,51 @@ pub struct Settings {
     /// again. See [`crate::adapters::dotnet_build`].
     #[serde(default)]
     pub enable_dotnet_build: bool,
+    /// Whether the opt-in Godot adapter is active. Off by default: `.godot/` and
+    /// `.import/` are the editor's imported-resource caches, and they come back by the
+    /// editor re-importing every asset. See [`crate::adapters::godot`].
+    #[serde(default)]
+    pub enable_godot: bool,
+    /// Whether the opt-in Unity adapter is active. Off by default: `Library/` is the
+    /// editor's imported-asset database, and it comes back by the editor re-importing
+    /// every asset on the next open. See [`crate::adapters::unity`].
+    #[serde(default)]
+    pub enable_unity: bool,
+    /// Whether the opt-in Unreal Engine adapter is active. Off by default:
+    /// `DerivedDataCache/` and `Intermediate/` are compiled shaders and build output,
+    /// and they come back by recompiling. See [`crate::adapters::unreal`].
+    #[serde(default)]
+    pub enable_unreal: bool,
+    /// Whether the opt-in Defold adapter is active. Off by default: `build/` is the
+    /// compiled project, and it comes back by building it again. See
+    /// [`crate::adapters::defold`].
+    #[serde(default)]
+    pub enable_defold: bool,
+    /// Whether the opt-in Cocos Creator adapter is active. Off by default: `library/`
+    /// and `temp/` are the editor's imported-asset caches, and they come back by the
+    /// editor re-importing every asset. See [`crate::adapters::cocos`].
+    #[serde(default)]
+    pub enable_cocos: bool,
+    /// Whether the opt-in Zig adapter is active. Off by default: `.zig-cache/`,
+    /// `zig-cache/` and `zig-out/` are the build system's caches and install output,
+    /// and they come back on the next `zig build`. See [`crate::adapters::zig`].
+    #[serde(default)]
+    pub enable_zig: bool,
+    /// Whether the opt-in Haskell Stack adapter is active. Off by default:
+    /// `.stack-work/` is compiled output, and it comes back by recompiling against the
+    /// snapshot `stack.yaml` pins. See [`crate::adapters::stack`].
+    #[serde(default)]
+    pub enable_stack: bool,
+    /// Whether the opt-in Haskell Cabal adapter is active. Off by default:
+    /// `dist-newstyle/` is compiled output, and it comes back on the next
+    /// `cabal build`. See [`crate::adapters::cabal`].
+    #[serde(default)]
+    pub enable_cabal: bool,
+    /// Whether the opt-in sbt adapter is active. Off by default: `target/` and
+    /// `project/target/` are compiled output, and they come back on the next
+    /// `sbt compile`. See [`crate::adapters::sbt`].
+    #[serde(default)]
+    pub enable_sbt: bool,
     /// Idle days required before *build-tree* directories — everything the opt-in
     /// adapters claim — are pruned.
     ///
@@ -245,6 +290,16 @@ pub struct Settings {
     /// back to English rather than failing.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Whether a dry run ends by naming the switched-off opt-in adapters that would
+    /// have found something, with the command that turns each on.
+    ///
+    /// On by default: the hint is how anyone discovers the opt-in class exists. It is
+    /// a setting because a hint read once is advice and the same hint read every week
+    /// is noise. Turning it off changes nothing about what is scanned or deleted; it
+    /// only drops the section from the report and the `recommendations` key from
+    /// `--json`.
+    #[serde(default = "default_recommendations")]
+    pub recommendations: bool,
     /// Settings this build has never heard of, carried through a save verbatim.
     ///
     /// A registry written by a newer dev-prune can hold keys this build does not
@@ -320,6 +375,10 @@ fn default_language() -> String {
     constants::DEFAULT_LANGUAGE.to_string()
 }
 
+fn default_recommendations() -> bool {
+    constants::DEFAULT_RECOMMENDATIONS
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -348,6 +407,15 @@ impl Default for Settings {
             enable_vcpkg: false,
             enable_cmake_build: false,
             enable_dotnet_build: false,
+            enable_godot: false,
+            enable_unity: false,
+            enable_unreal: false,
+            enable_defold: false,
+            enable_cocos: false,
+            enable_zig: false,
+            enable_stack: false,
+            enable_cabal: false,
+            enable_sbt: false,
             build_idle_days: constants::DEFAULT_BUILD_IDLE_DAYS,
             auto_update: constants::DEFAULT_AUTO_UPDATE,
             version_lock: constants::DEFAULT_VERSION_LOCK,
@@ -355,6 +423,7 @@ impl Default for Settings {
             adapter_idle_days: BTreeMap::new(),
             cache_max_gb: BTreeMap::new(),
             language: constants::DEFAULT_LANGUAGE.to_string(),
+            recommendations: constants::DEFAULT_RECOMMENDATIONS,
             unknown_keys: BTreeMap::new(),
         }
     }
@@ -1874,6 +1943,10 @@ mod tests {
         assert!(!settings.auto_daemon, "an explicit opt-out is preserved");
         assert!(settings.auto_hooks, "a missing key takes the default");
         assert!(settings.auto_setup);
+        assert!(
+            settings.recommendations,
+            "a registry written before the toggle existed keeps the dry-run hint on"
+        );
     }
 
     #[test]

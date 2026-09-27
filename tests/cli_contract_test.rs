@@ -61,10 +61,13 @@ fn write_sized(path: &Path, bytes: usize) {
 /// directory in the developer's real registry — leaving a dead entry behind after the
 /// fixture is deleted. `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` pointing at files that do
 /// not exist is how git is told to read neither.
+///
+/// Built on `git_in` because tests also run from inside a git hook (a local pre-push
+/// gate that runs `cargo test`), where an inherited absolute `GIT_DIR` would aim every
+/// fixture command at the hook's own repository instead of the fixture.
 fn git(path: &Path) -> Command {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(path)
-        .env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
+    let mut cmd = dev_prune::scanner::git::git_in(path);
+    cmd.env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
         .env("GIT_CONFIG_SYSTEM", path.join("no-such-gitconfig"));
     cmd
 }
@@ -1917,6 +1920,82 @@ fn clearing_a_container_engine_as_json_still_demands_an_answer() {
     let text = combined(&out);
     assert!(text.contains("--yes"), "{text}");
     assert!(text.contains("--dry-run"), "{text}");
+}
+
+#[test]
+fn include_volumes_needs_one_engine_named_alone() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    // A package manager has no volumes and `all` never reaches an engine, so both
+    // spellings are the same misunderstanding; the refusal names the shape that works.
+    for target in ["npm", "all"] {
+        let out = devp(&config)
+            .args(["caches", "clear", target, "--include-volumes"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`clear {target} --include-volumes` was not a usage error:\n{}",
+            combined(&out)
+        );
+        let text = combined(&out);
+        assert!(text.contains("--include-volumes"), "{text}");
+    }
+}
+
+#[test]
+fn include_volumes_refuses_every_unattended_way_in() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    // The flag's whole design is that a person types each volume's number at a
+    // terminal, so the three ways of not being that person are refused, and refused
+    // before the engine is even looked for: the answer is the same on a machine with
+    // Docker running and on one without it. The bare spelling lands here too: a test
+    // harness owns stdin, which is exactly the piped-stdin case the contract pins.
+    for (extra, must_name) in [
+        (Some("--json"), "--json"),
+        (Some("--yes"), "--yes"),
+        (None, "terminal"),
+        // The refusal also has to name the way out: `--dry-run` is how an agent or a
+        // script prepares the hand-off a person then runs at a terminal.
+        (None, "--dry-run"),
+    ] {
+        let mut cmd = devp(&config);
+        cmd.args(["caches", "clear", "docker", "--include-volumes"]);
+        if let Some(flag) = extra {
+            cmd.arg(flag);
+        }
+        let out = cmd.output().unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "`clear docker --include-volumes {}` was not a usage error:\n{}",
+            extra.unwrap_or("(piped stdin)"),
+            combined(&out)
+        );
+        let text = combined(&out);
+        assert!(text.contains(must_name), "{text}");
+    }
+}
+
+#[test]
+fn an_engine_that_cannot_name_unused_volumes_says_so() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    // nerdctl's `volume ls` filter cannot narrow to dangling volumes, so a pick list
+    // through dev-prune would show volumes that are still in use. The refusal hands
+    // the user the engine's own listing instead.
+    let out = devp(&config)
+        .args(["caches", "clear", "nerdctl", "--include-volumes"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+    let text = combined(&out);
+    assert!(text.contains("nerdctl volume ls"), "{text}");
 }
 
 #[test]

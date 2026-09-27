@@ -416,20 +416,17 @@ fn ensure_twin_of(current_exe: &std::path::Path, parent_dir: &std::path::Path) -
 
 /// Sameness test for two executables, cheap in the common case.
 ///
-/// A hard link makes size and mtime equal by construction, so the usual layout answers
-/// without reading either file. When only the mtime differs — the alias came from the
-/// copy fallback, which does not preserve timestamps — the bytes themselves decide,
-/// because calling that pair "different" made every single invocation delete and
-/// recreate an alias whose content never changed.
+/// A mismatched length answers without reading either file. Equal length still reads
+/// both: an equal mtime used to short-circuit the check, on the assumption that only a
+/// hard link (or a copy that happened to preserve it) could produce one, but two
+/// unrelated files of the same length can share a modified-time by coincidence, and
+/// that shortcut treated them as identical without ever inspecting a byte.
 pub(crate) fn same_contents(a: &std::path::Path, b: &std::path::Path) -> bool {
     let (Ok(ma), Ok(mb)) = (fs::metadata(a), fs::metadata(b)) else {
         return false;
     };
     if ma.len() != mb.len() {
         return false;
-    }
-    if ma.modified().ok() == mb.modified().ok() {
-        return true;
     }
     match (fs::read(a), fs::read(b)) {
         (Ok(ca), Ok(cb)) => ca == cb,
@@ -735,7 +732,19 @@ pub fn ensure_daemon(interval_days: u64) -> Outcome {
         // when no twin is in use.
         Ok(daemon::DaemonStatus::Installed) => {
             daemon::refresh_windowless_twin();
-            Outcome::AlreadyPresent
+            // The refresh above sources from the devpw beside the running binary, which
+            // is the *previous* delivery's copy after an upgrade the old console
+            // performed, and the scheduled pass itself runs devpw, so nothing devpw
+            // does can ever replace devpw. This per-version pass is the first place new
+            // console code runs without being asked, which makes it the one hook that
+            // can close that loop: reconcile the twin against the release itself. It
+            // stands down under `DEV_PRUNE_OFFLINE` and `version_lock`, and only ever
+            // moves an existing, stale twin forward.
+            match crate::commands::update::repair_windowless_twins() {
+                Outcome::Installed => Outcome::Installed,
+                Outcome::Failed(why) => Outcome::Failed(why),
+                _ => Outcome::AlreadyPresent,
+            }
         }
         Ok(daemon::DaemonStatus::NotInstalled) => match daemon::install_daemon(interval_days) {
             Ok(()) => Outcome::Installed,

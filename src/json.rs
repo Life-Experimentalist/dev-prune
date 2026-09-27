@@ -103,12 +103,16 @@ pub fn lockfile_fix_command(adapter: &str) -> Option<&'static str> {
         // Like bun, pub has no resolve-only write mode: `pub get` is what writes
         // `pubspec.lock`, and it fills the machine-wide pub cache on the way past.
         "dart" => "dart pub get",
+        // `pixi lock` re-solves from the manifest and writes the lockfile without
+        // installing anything.
+        "pixi" => "pixi lock",
         // venv has no lockfile to regenerate — the fix is to write `requirements.txt`,
         // which is authoring work, not a command we can hand over. gradle, maven, swift,
-        // vcpkg, cmake_build and dotnet_build verify the manifest, not lockfile sync —
-        // a missing manifest, or a `vcpkg.json` that declares no dependencies, has no
-        // mechanical fix either. pycache verifies that a `.py` file exists anywhere in
-        // the repository, which is proof, not a lockfile: there's nothing to run.
+        // vcpkg, cmake_build, dotnet_build, the game engines, zig, stack, cabal and sbt
+        // verify the manifest, not lockfile sync — a missing manifest, or a `vcpkg.json`
+        // that declares no dependencies, has no mechanical fix either. pycache verifies
+        // that a `.py` file exists anywhere in the repository, which is proof, not a
+        // lockfile: there's nothing to run.
         _ => return None,
     })
 }
@@ -179,6 +183,32 @@ pub fn run_document(results: &[PruneResult], dry_run: bool) -> Value {
             "errors": errors,
         },
     })
+}
+
+/// Add the dry run's `recommendations` key: opt-in adapters detected but switched off.
+///
+/// Additive, and only on the bulk `run --dry-run` document, so every existing consumer
+/// of the run schema keeps parsing untouched. Left out entirely when there is nothing
+/// to recommend: an empty array would make "no key" and "empty list" two spellings of
+/// the same fact.
+pub fn attach_recommendations(doc: &mut Value, recommendations: &[(String, usize)]) {
+    if recommendations.is_empty() {
+        return;
+    }
+    if let Some(obj) = doc.as_object_mut() {
+        let entries: Vec<Value> = recommendations
+            .iter()
+            .map(|(adapter, repositories)| {
+                json!({
+                    "adapter": adapter,
+                    "setting": format!("enable_{adapter}"),
+                    "command": format!("devp config set enable_{adapter} true"),
+                    "repositories": repositories,
+                })
+            })
+            .collect();
+        obj.insert("recommendations".to_string(), Value::Array(entries));
+    }
 }
 
 /// The stable machine name for why a repository is or is not a candidate.
@@ -1286,9 +1316,10 @@ mod tests {
     #[test]
     fn every_adapter_with_a_lockfile_has_a_fix_command() {
         for adapter in crate::adapters::get_all_adapters() {
-            // venv, gradle, maven, swift, vcpkg, cmake_build, dotnet_build and pycache
-            // verify without a lockfile-sync step — see `lockfile_fix_command` for why
-            // each has nothing mechanical to hand over.
+            // venv, gradle, maven, swift, vcpkg, cmake_build, dotnet_build, the game
+            // engines, zig, stack, cabal, sbt and pycache verify without a
+            // lockfile-sync step — see `lockfile_fix_command` for why each has
+            // nothing mechanical to hand over.
             if matches!(
                 adapter.name(),
                 "venv"
@@ -1299,6 +1330,15 @@ mod tests {
                     | "cmake_build"
                     | "dotnet_build"
                     | "pycache"
+                    | "godot"
+                    | "unity"
+                    | "unreal"
+                    | "defold"
+                    | "cocos"
+                    | "zig"
+                    | "stack"
+                    | "cabal"
+                    | "sbt"
             ) {
                 continue;
             }

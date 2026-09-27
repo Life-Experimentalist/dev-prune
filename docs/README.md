@@ -31,6 +31,8 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 ### 🛠️ How-To & Automation Guides
 - **[GitHub Releases, DIY Manual Install & Source Build Guide](RELEASES_AND_MANUAL_INSTALL.md)**
   Step-by-step DIY manual installation guide for pre-built release binaries (Windows ZIP, macOS Intel/Silicon, Linux x64), manual build from source instructions, quick 1-liner installer scripts, and setup verification checks.
+- **[The Opt-In Build Adapters](OPT_IN_BUILD_ADAPTERS.md)**
+  The eighteen adapters that ship switched off: compilers, build tools and game engine import caches (Cargo, Gradle, Maven, sbt, Swift, Dart, Mix, Zig, Stack, Cabal, vcpkg, CMake, .NET, Godot, Unity, Unreal, Defold, Cocos Creator). Why recompile-cost directories are a separate class, the longer `build_idle_days` window, the dry-run recommendation hint, and where surgical tools like cargo-sweep fit beside a whole-directory pass.
 - **[Background Automation & Subsystems](BACKGROUND_AUTOMATION.md)**
   Guide to the self-installing `devp setup` pass and the two background subsystems it puts in place, including OS-native schedulers (Windows Task Scheduler, macOS LaunchAgent, Linux systemd user timers) and non-blocking Git hook auto-registration (`post-commit`, `post-checkout`, `post-merge`).
 - **[Troubleshooting Directory & Synopsis](troubleshooting/README.md)**

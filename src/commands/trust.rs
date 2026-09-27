@@ -805,7 +805,7 @@ fn mark_newest(rows: &mut [BinaryIdentity], latest_known: Option<&str>) {
 /// Every hit on the mark is validated rather than the first one trusted, because each
 /// binary contains the mark twice: once in the stamp, and once as the search literal
 /// this function compares against. Only one of the two is followed by a version.
-fn version_from_stamp(haystack: &[u8]) -> Option<String> {
+pub(crate) fn version_from_stamp(haystack: &[u8]) -> Option<String> {
     let mark = constants::VERSION_STAMP_MARK.as_bytes();
     // Long enough for `999.999.999-rc.99`, short enough that a stray mark in the middle
     // of a megabyte of code cannot drag arbitrary bytes into the report.
@@ -872,6 +872,15 @@ fn opt_in_adapters(registry: &Registry) -> Vec<&'static str> {
         ("vcpkg", s.enable_vcpkg),
         ("cmake_build", s.enable_cmake_build),
         ("dotnet_build", s.enable_dotnet_build),
+        ("godot", s.enable_godot),
+        ("unity", s.enable_unity),
+        ("unreal", s.enable_unreal),
+        ("defold", s.enable_defold),
+        ("cocos", s.enable_cocos),
+        ("zig", s.enable_zig),
+        ("stack", s.enable_stack),
+        ("cabal", s.enable_cabal),
+        ("sbt", s.enable_sbt),
     ]
     .into_iter()
     .filter_map(|(name, on)| on.then_some(name))

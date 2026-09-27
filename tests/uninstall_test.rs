@@ -94,10 +94,12 @@ fn seed_registry(config_dir: &Path, repo_parent: &Path) {
 fn git_repo(path: &Path) {
     fs::create_dir_all(path).unwrap();
     let no_config = path.join("no-such-gitconfig");
+    // `git_in`, not a bare `git`: run from inside a git hook (a local pre-push gate
+    // that runs `cargo test`), an inherited absolute `GIT_DIR` would aim these fixture
+    // commands at the hook's own repository instead of the fixture.
     let run = |args: &[&str]| {
-        Command::new("git")
+        dev_prune::scanner::git::git_in(path)
             .args(args)
-            .current_dir(path)
             .env("GIT_CONFIG_GLOBAL", &no_config)
             .env("GIT_CONFIG_SYSTEM", &no_config)
             .output()

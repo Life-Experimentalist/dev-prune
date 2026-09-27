@@ -45,6 +45,16 @@ fn scratch_config_dir() -> PathBuf {
     dir
 }
 
+/// `git init` aimed at the fixture and nothing else. Run from inside a git hook (a
+/// local pre-push gate that runs `cargo test`), an inherited absolute `GIT_DIR` would
+/// otherwise re-initialize the hook's own repository and leave the fixture without one.
+fn git_init(path: &Path) {
+    dev_prune::scanner::git::git_in(path)
+        .args(["init"])
+        .output()
+        .unwrap();
+}
+
 #[test]
 fn test_cli_help() {
     let output = devp()
@@ -85,11 +95,7 @@ fn test_cli_init_and_status() {
     fs::create_dir_all(&repo_dir).unwrap();
 
     // Initialize mock git repo
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo_dir)
-        .output()
-        .unwrap();
+    git_init(&repo_dir);
 
     // Run init command with --dry-run targeting the temp repo dir
     let output = devp()
@@ -136,11 +142,7 @@ fn test_cli_link_unlink_undo() {
     fs::create_dir_all(&repo_dir).unwrap();
 
     // Initialize git repo
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo_dir)
-        .output()
-        .unwrap();
+    git_init(&repo_dir);
 
     let config_dir = tmp.path().join("config");
 
@@ -225,11 +227,7 @@ fn test_cli_run_dry_run_across_ecosystems() {
     // Create npm repo
     let npm_repo = tmp.path().join("npm-repo");
     fs::create_dir_all(&npm_repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&npm_repo)
-        .output()
-        .unwrap();
+    git_init(&npm_repo);
     fs::write(npm_repo.join("package.json"), "{}").unwrap();
     fs::write(npm_repo.join("package-lock.json"), "{}").unwrap();
     let node_modules = npm_repo.join("node_modules");
@@ -261,11 +259,7 @@ fn test_cli_restore_no_lockfiles() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("empty-repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
 
     let restore_out = devp()
         .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
@@ -355,11 +349,7 @@ fn test_auto_setup_opt_out_installs_nothing() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
 
     // `devp()` sets DEV_PRUNE_NO_AUTO_SETUP.
     let output = devp()
@@ -394,11 +384,7 @@ fn test_a_repo_with_a_broken_config_is_reported_and_fails_the_run() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("broken-repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     let broken = r#"{ "project_name": "api", "override_idle_days": 90, }"#;
     fs::write(repo.join(".devprune.json"), broken).unwrap();
 
@@ -438,11 +424,7 @@ fn test_a_broken_config_is_a_config_error_in_the_json_document() {
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("broken-repo");
     fs::create_dir_all(&repo).unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     fs::write(repo.join(".devprune.json"), "{ not json").unwrap();
 
     devp()
@@ -503,11 +485,7 @@ fn test_a_personal_exclusion_keeps_a_committed_declaration_from_running() {
         )
         .unwrap();
     }
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     // `echo` is the documented rebuild for a directory that needs nothing to come back,
     // and it is the one command that resolves on every platform.
     fs::write(
@@ -552,6 +530,116 @@ fn test_a_personal_exclusion_keeps_a_committed_declaration_from_running() {
     );
 }
 
+#[test]
+fn test_dry_run_recommends_dormant_opt_in_adapters() {
+    let tmp = TempDir::new().unwrap();
+    let config_dir = tmp.path().join("config");
+    let repo = tmp.path().join("zig-repo");
+    fs::create_dir_all(&repo).unwrap();
+    git_init(&repo);
+    fs::write(
+        repo.join("build.zig"),
+        "pub fn build(b: *std.Build) void {}",
+    )
+    .unwrap();
+
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    // Switched off, the adapter cannot appear in the pass, so the dry run says so instead.
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run", "--json"])
+        .output()
+        .expect("Failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let recs = doc["recommendations"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no recommendations key:\n{stdout}"));
+    let zig = recs
+        .iter()
+        .find(|r| r["adapter"] == "zig")
+        .unwrap_or_else(|| panic!("zig not recommended:\n{stdout}"));
+    assert_eq!(zig["setting"], "enable_zig", "{stdout}");
+    assert_eq!(
+        zig["command"], "devp config set enable_zig true",
+        "{stdout}"
+    );
+    assert_eq!(zig["repositories"], 1, "{stdout}");
+
+    let human = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run"])
+        .output()
+        .expect("Failed to run");
+    let human_out = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        human_out.contains("Detected, but switched off"),
+        "{human_out}"
+    );
+    assert!(
+        human_out.contains("devp config set enable_zig true"),
+        "{human_out}"
+    );
+
+    // The hint is presentation only: with `recommendations` off, the same dormant
+    // adapter goes silent in both output modes, and the "no key" and "empty list"
+    // spellings must not diverge.
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["config", "set", "recommendations", "false"])
+        .output()
+        .unwrap();
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run", "--json"])
+        .output()
+        .expect("Failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        doc.get("recommendations").is_none(),
+        "recommendations=false must drop the JSON key entirely:\n{stdout}"
+    );
+    let human = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run"])
+        .output()
+        .expect("Failed to run");
+    let human_out = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        !human_out.contains("Detected, but switched off"),
+        "recommendations=false must drop the human section:\n{human_out}"
+    );
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["config", "set", "recommendations", "true"])
+        .output()
+        .unwrap();
+
+    // Switched on, the adapter is in the pass itself and the hint must disappear.
+    devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["config", "set", "enable_zig", "true"])
+        .output()
+        .unwrap();
+    let out = devp()
+        .env("DEV_PRUNE_CONFIG_DIR", &config_dir)
+        .args(["run", "--dry-run", "--json"])
+        .output()
+        .expect("Failed to run");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let doc: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    assert!(
+        doc.get("recommendations").is_none(),
+        "an enabled adapter must not be recommended:\n{stdout}"
+    );
+}
+
 /// A refused declaration has to reach the person running the pass.
 ///
 /// It was computed correctly and emitted correctly in `--json`, and then dropped by
@@ -568,11 +656,7 @@ fn test_a_refused_declaration_is_reported_without_failing_the_run() {
         vec![0u8; 4096],
     )
     .unwrap();
-    Command::new("git")
-        .args(["init"])
-        .current_dir(&repo)
-        .output()
-        .unwrap();
+    git_init(&repo);
     // The rebuild tool is absent on every machine, so the refusal is the same everywhere.
     fs::write(
         repo.join(".devprune.json"),

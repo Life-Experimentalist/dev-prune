@@ -96,10 +96,11 @@ the one above:
    gh secret list; gh variable list
    ```
 
-   You want `CARGO_REGISTRY_TOKEN` in the first list — it is the only long-lived
-   credential left, because npm and PyPI both publish over OIDC — and `NPM_PUBLISH`,
-   `CRATES_PUBLISH` and `PYPI_PUBLISH` in the second. Empty output means nothing is
-   configured, and the release will reach the GitHub release page only.
+   The registries need nothing in the first list: npm, PyPI and crates.io all publish
+   over OIDC, so the only long-lived secrets left are the marketplace tokens. You want
+   `NPM_PUBLISH`, `CRATES_PUBLISH` and `PYPI_PUBLISH` in the second. Empty variable
+   output means nothing is configured, and the release will reach the GitHub release
+   page only.
 6. **Check the changelog date.** `CHANGELOG.md` dates the section for the version being
    released, and the date should be the day it actually ships. Fix it in place if the
    calendar has moved on.
@@ -181,7 +182,7 @@ instead of quietly skipping it.
 | GitHub Release | `GITHUB_TOKEN` | — always runs | n/a |
 | npm | *no secret* — Trusted Publishing | `NPM_PUBLISH` = `true` | Job reports `skipped` |
 | PyPI | *no secret* — Trusted Publishing | `PYPI_PUBLISH` = `true` | Job reports `skipped` |
-| crates.io | `CARGO_REGISTRY_TOKEN` secret | `CRATES_PUBLISH` = `true` | Job reports `skipped` |
+| crates.io | *no secret*, Trusted Publishing | `CRATES_PUBLISH` = `true` | Job reports `skipped` |
 | VS Code Marketplace + Open VSX | `VSCE_PAT` and `OVSX_PAT` secrets | `VSIX_PUBLISH` = `true` | Job reports `skipped` |
 | GitHub Pages (site) | Automatic | — Settings → Pages → "GitHub Actions" | Site does not deploy |
 
@@ -355,10 +356,29 @@ a Node patch is not one anyone would think to look at.
 
 ### crates.io
 
+Trusted Publishing, like PyPI: no token is stored anywhere. The
+`rust-lang/crates-io-auth-action` step in `release.yml` trades the job's OIDC token for
+a crates.io publish token that expires about thirty minutes later.
+
 1. Sign in at [crates.io](https://crates.io/) with GitHub.
-2. Account Settings → API Tokens → New Token. Scopes: `publish-new` and `publish-update`.
-3. Save it as the repository secret **`CARGO_REGISTRY_TOKEN`**.
-4. Set the repository **variable** **`CRATES_PUBLISH`** to `true`.
+2. On the crate page: **Settings → Trusted Publishing → Add** and fill in:
+
+   | Field | Value |
+   |---|---|
+   | Repository owner | `Life-Experimentalist` |
+   | Repository name | `dev-prune` |
+   | Workflow filename | `release.yml` |
+   | Environment | `crates-io` |
+
+   These are matched exactly against the OIDC token GitHub mints, so the workflow
+   filename and the `environment: crates-io` block in `release.yml` are load-bearing:
+   renaming either breaks publishing until crates.io is updated to match.
+3. Set the repository **variable** **`CRATES_PUBLISH`** to `true`. GitHub creates the
+   `crates-io` environment itself the first time the job runs; add a required reviewer
+   to it if you want a human approval gate before each crates.io upload.
+4. Once a release has published this way, delete the old `CARGO_REGISTRY_TOKEN` secret
+   and revoke the token on crates.io; nothing reads it any more. Turning on **Require
+   trusted publishing** in the crate's settings then closes the token door entirely.
 
 ### VS Code Marketplace and Open VSX
 

@@ -29,7 +29,7 @@ Software developers, polyglot engineering teams, and DevOps practitioners accumu
 | Feature / Capability | `dev-prune` (`devp`) | `kondo` | `npkill` | `cargo-clean-all` | `pyclean` / `pyprune` | `git clean` | `dust` / `ncdu` | `BleachBit` |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Language Runtime** | **Rust** | Rust | Node.js | Rust | Python | C / C++ | Rust / C | Python / C |
-| **Multi-Ecosystem Coverage** | **✓ (25 managers)** | ✓ (~20 project types) | ✗ (Node only) | ✗ (Rust only) | ✗ (Python only) | ✗ (All untracked) | ✗ (Generic FS) | ✗ (OS Caches) |
+| **Multi-Ecosystem Coverage** | **✓ (35 managers)** | ✓ (~20 project types) | ✗ (Node only) | ✗ (Rust only) | ✗ (Python only) | ✗ (All untracked) | ✗ (Generic FS) | ✗ (OS Caches) |
 | **Many Projects per Repository** | **✓ (monorepo-aware discovery)** | ✓ (walks the tree) | ✗ | ✗ | ✗ | n/a | n/a | ✗ |
 | **Git Repository Safety Boundary** | **✓ (`.git` enforced)** | ✗ | ✗ | ✓ | ✗ | ✓ | ✗ | ✗ |
 | **Pre-Deletion Lockfile Verification** | **✓ (Two-tier sync & verify)** | ✗ (confirmation prompt) | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |

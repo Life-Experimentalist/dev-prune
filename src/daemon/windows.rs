@@ -286,12 +286,21 @@ fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
         if crate::setup::same_contents(twin, shipped) {
             return Some(twin.to_path_buf());
         }
-        // An upgrade replaced the shipped binary, so the placed one is a previous
-        // release that the scheduled task still names. Replacing a running executable
-        // fails on Windows; the next pass that is not itself the twin retries.
-        if std::fs::remove_file(twin).is_err() {
+        // A twin strictly newer than the shipped copy stays. The self-update now
+        // reconciles the twin against the release directly, so the devpw beside the
+        // running binary can be the *older* of the two, and replacing a freshly
+        // downloaded twin with it would quietly undo the upgrade it came from.
+        if twin_outranks_shipped(twin, shipped) {
             return Some(twin.to_path_buf());
         }
+        // An upgrade replaced the shipped binary, so the placed one is a previous
+        // release that the scheduled task still names. Removing it first and only
+        // then placing the replacement used to fail outright on Windows CI runners:
+        // a moment where the antivirus scanner has the freshly-written `.exe` open is
+        // enough to fail `remove_file`, and the twin was left stale with nothing
+        // retrying the swap. Staging beside it and renaming over it never needs the
+        // old file to be deletable, only replaceable.
+        return stage_and_replace(shipped, twin);
     }
     if std::fs::hard_link(shipped, twin).is_ok() {
         return Some(twin.to_path_buf());
@@ -304,16 +313,50 @@ fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
     if twin.is_file() {
         return Some(twin.to_path_buf());
     }
-    // Stage beside and rename into place, so a scheduler firing mid-copy never runs a
-    // torn binary.
+    stage_and_replace(shipped, twin)
+}
+
+/// Put `shipped` at `twin` via a staging file renamed into place, replacing whatever
+/// is at `twin` already.
+///
+/// Renaming over an existing file only needs it to be replaceable, not first
+/// deletable, unlike a `remove_file` followed by `hard_link`, which fails outright
+/// the moment something else (an antivirus scan, a concurrent pass) briefly has the
+/// old file open.
+fn stage_and_replace(shipped: &Path, twin: &Path) -> Option<PathBuf> {
     let staging = twin.with_extension("new");
-    if std::fs::copy(shipped, &staging).is_ok() && std::fs::rename(&staging, twin).is_ok() {
+    let staged =
+        std::fs::hard_link(shipped, &staging).is_ok() || std::fs::copy(shipped, &staging).is_ok();
+    if staged && std::fs::rename(&staging, twin).is_ok() {
         return Some(twin.to_path_buf());
     }
     let _ = std::fs::remove_file(&staging);
     // The rename loses only to a concurrent pass that placed its own copy, which serves
     // exactly as well.
     twin.is_file().then(|| twin.to_path_buf())
+}
+
+/// Whether the placed twin's build stamp is strictly newer than the shipped copy's.
+///
+/// A twin with no readable stamp never outranks anything, and a shipped copy with no
+/// stamp is outranked by any stamped twin: unstamped means built before stamping
+/// existed, which is as old as a build can be.
+fn twin_outranks_shipped(twin: &Path, shipped: &Path) -> bool {
+    let stamp = |p: &Path| {
+        std::fs::read(p)
+            .ok()
+            .and_then(|b| crate::commands::trust::version_from_stamp(&b))
+    };
+    let Some(twin_v) = stamp(twin) else {
+        return false;
+    };
+    match stamp(shipped) {
+        None => true,
+        Some(shipped_v) => {
+            crate::commands::update::compare_versions(&twin_v, &shipped_v)
+                == Some(std::cmp::Ordering::Greater)
+        }
+    }
 }
 
 /// Refresh the windowless twin after an upgrade, when one is in use.
@@ -652,6 +695,59 @@ mod tests {
         // `/SC DAILY /MO` accepts 1–365; outside that, task creation fails outright.
         assert_eq!(build_install_command("dev-prune.exe", 0)[4], "1");
         assert_eq!(build_install_command("dev-prune.exe", 400)[4], "365");
+    }
+
+    /// Bytes carrying a synthetic build stamp, the shape `version_from_stamp` reads.
+    fn stamped(version: &str) -> Vec<u8> {
+        format!("{}{version}/end", crate::constants::VERSION_STAMP_MARK).into_bytes()
+    }
+
+    #[test]
+    fn a_newer_placed_twin_survives_a_refresh_from_an_older_shipped_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let shipped = dir.path().join("shipped-devpw.exe");
+        let twin = dir.path().join("devpw.exe");
+        std::fs::write(&shipped, stamped("1.18.0")).unwrap();
+        std::fs::write(&twin, stamped("1.21.0")).unwrap();
+
+        let placed = place_windowless_twin(&shipped, &twin).unwrap();
+
+        assert_eq!(placed, twin);
+        // The self-update downloads the twin directly now, so the devpw beside the
+        // running binary can be the older of the two. Refreshing from it must not
+        // quietly undo the upgrade the download just made.
+        assert_eq!(std::fs::read(&twin).unwrap(), stamped("1.21.0"));
+    }
+
+    #[test]
+    fn an_older_placed_twin_is_still_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let shipped = dir.path().join("shipped-devpw.exe");
+        let twin = dir.path().join("devpw.exe");
+        std::fs::write(&shipped, stamped("1.21.0")).unwrap();
+        std::fs::write(&twin, stamped("1.18.0")).unwrap();
+
+        place_windowless_twin(&shipped, &twin).unwrap();
+
+        assert_eq!(std::fs::read(&twin).unwrap(), stamped("1.21.0"));
+    }
+
+    #[test]
+    fn a_missing_stamp_never_outranks_and_is_always_outranked() {
+        let dir = tempfile::tempdir().unwrap();
+        let with_stamp = dir.path().join("stamped.exe");
+        let without = dir.path().join("plain.exe");
+        std::fs::write(&with_stamp, stamped("1.21.0")).unwrap();
+        std::fs::write(&without, b"built before stamping existed").unwrap();
+
+        assert!(
+            !twin_outranks_shipped(&without, &with_stamp),
+            "an unstamped twin outranks nothing"
+        );
+        assert!(
+            twin_outranks_shipped(&with_stamp, &without),
+            "an unstamped shipped copy is older than any stamped twin"
+        );
     }
 
     /// One CSV row as `schtasks /FO CSV /NH` emits it.

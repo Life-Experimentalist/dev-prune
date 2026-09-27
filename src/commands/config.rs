@@ -297,6 +297,94 @@ const RECOMMENDED: &[Recommendation] = &[
         taken: None,
     },
     Recommendation {
+        key: "enable_godot",
+        label: "Godot imported-resource caches",
+        why: "`.godot/` (and `.import/` on Godot 3) holds the editor's import cache for \
+              every asset, often larger than the assets themselves, and the editor \
+              rebuilds it the next time it opens the project.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_unity",
+        label: "Unity imported-asset database",
+        why: "`Library/` holds the editor's imported copy of every asset and is routinely \
+              larger than the assets themselves; the editor rebuilds it on the next open, \
+              and a project the editor has open right now is refused outright.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_unreal",
+        label: "Unreal derived data and intermediates",
+        why: "`DerivedDataCache/` and `Intermediate/` are compiled shaders and build \
+              output the editor and UnrealBuildTool regenerate; `Saved/` and `Binaries/` \
+              are never touched.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_defold",
+        label: "Defold build output",
+        why: "`build/` beside `game.project` is the compiled project, and the editor or \
+              bob rebuilds it in full on the next build.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_cocos",
+        label: "Cocos Creator imported-asset caches",
+        why: "`library/` and `temp/` are the editor's import caches, rebuilt from the \
+              committed sources on the next open; a plain Node `package.json` without \
+              Creator's own keys is never claimed.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_zig",
+        label: "Zig build caches and install output",
+        why: "`.zig-cache/` (or the older `zig-cache/`) and `zig-out/` are written only \
+              by `zig build` and come back in full on the next one; `build.zig` is \
+              checked for its `pub fn build` entry point first.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_stack",
+        label: "Haskell Stack build tree",
+        why: "`.stack-work/` is compiled output that `stack build` regenerates against \
+              the snapshot `stack.yaml` pins; a project file naming no snapshot is \
+              refused.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_cabal",
+        label: "Haskell Cabal build tree",
+        why: "`dist-newstyle/` is compiled output that `cabal build` regenerates from \
+              the packages `cabal.project` declares.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
+        key: "enable_sbt",
+        label: "sbt build trees",
+        why: "`target/` and `project/target/` beside `build.sbt` are compiled output \
+              that `sbt compile` regenerates; sub-project targets deeper in a \
+              multi-module build are left alone.",
+        value: "true",
+        cautious: false,
+        taken: None,
+    },
+    Recommendation {
         key: "cache_max_gb",
         label: "Cache size ceilings",
         why: "Every other suggestion here is about one project's folders. This one is about the \
@@ -344,6 +432,19 @@ const SETTINGS: &[Setting] = &[
                 );
             };
             s.language = meta.code.clone();
+            Ok(())
+        },
+    },
+    Setting {
+        key: "recommendations",
+        category: Category::Presentation,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "End a dry run with the switched-off opt-in adapters that would have found something. Changes nothing about what is scanned or deleted.",
+        plain: "Whether a dry run points out build-tool and game-engine directories it noticed but is not allowed to touch, with the command that would let it. Turn it off once you have made your choices and the reminder has become noise.",
+        get: |s| s.recommendations.to_string(),
+        set: |s, v| {
+            s.recommendations = parse_bool("recommendations", v)?;
             Ok(())
         },
     },
@@ -721,6 +822,132 @@ const SETTINGS: &[Setting] = &[
         get: |s| s.enable_dotnet_build.to_string(),
         set: |s, v| {
             s.enable_dotnet_build = parse_bool("enable_dotnet_build", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_godot",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Godot adapter (.godot/ and .import/ come back by re-importing).",
+        plain: "Clean Godot's imported-resource caches too. The editor rebuilds them from \
+                your assets the next time it opens the project.",
+        get: |s| s.enable_godot.to_string(),
+        set: |s, v| {
+            s.enable_godot = parse_bool("enable_godot", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_unity",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Unity adapter (Library/ and Temp/ come back by re-importing).",
+        plain: "Clean Unity's imported-asset database too. The editor rebuilds it from your \
+                assets the next time it opens the project, and an open editor is refused.",
+        get: |s| s.enable_unity.to_string(),
+        set: |s, v| {
+            s.enable_unity = parse_bool("enable_unity", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_unreal",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Unreal adapter (DerivedDataCache/ and Intermediate/ come back by recompiling).",
+        plain: "Clean Unreal's derived data and intermediates too. Saved/ and Binaries/ are \
+                never touched.",
+        get: |s| s.enable_unreal.to_string(),
+        set: |s, v| {
+            s.enable_unreal = parse_bool("enable_unreal", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_defold",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Defold adapter (build/ comes back on the next build).",
+        plain: "Clean Defold's build output too. The editor or bob rebuilds it in full on \
+                the next build.",
+        get: |s| s.enable_defold.to_string(),
+        set: |s, v| {
+            s.enable_defold = parse_bool("enable_defold", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_cocos",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Cocos Creator adapter (library/ and temp/ come back by re-importing).",
+        plain: "Clean Cocos Creator's imported-asset caches too. The editor rebuilds them \
+                from your assets the next time it opens the project.",
+        get: |s| s.enable_cocos.to_string(),
+        set: |s, v| {
+            s.enable_cocos = parse_bool("enable_cocos", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_zig",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Zig adapter (.zig-cache/, zig-cache/ and zig-out/ come back on the next build).",
+        plain: "Clean Zig's build caches and install output too. `zig build` writes all \
+                three directories back the next time it runs.",
+        get: |s| s.enable_zig.to_string(),
+        set: |s, v| {
+            s.enable_zig = parse_bool("enable_zig", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_stack",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Haskell Stack adapter (.stack-work/ comes back by recompiling).",
+        plain: "Clean Stack's build tree too. `stack build` recompiles it against the \
+                snapshot `stack.yaml` pins.",
+        get: |s| s.enable_stack.to_string(),
+        set: |s, v| {
+            s.enable_stack = parse_bool("enable_stack", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_cabal",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in Haskell Cabal adapter (dist-newstyle/ comes back by recompiling).",
+        plain: "Clean Cabal's build tree too. `cabal build` recompiles it from the \
+                packages `cabal.project` declares.",
+        get: |s| s.enable_cabal.to_string(),
+        set: |s, v| {
+            s.enable_cabal = parse_bool("enable_cabal", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "enable_sbt",
+        category: Category::BuildTrees,
+        since: "1.22.0",
+        kind: Kind::Toggle,
+        help: "Turn on the opt-in sbt adapter (target/ and project/target/ come back by recompiling).",
+        plain: "Clean sbt's build trees too. `sbt compile` regenerates both the project's \
+                target/ and the build definition's project/target/.",
+        get: |s| s.enable_sbt.to_string(),
+        set: |s, v| {
+            s.enable_sbt = parse_bool("enable_sbt", v)?;
             Ok(())
         },
     },

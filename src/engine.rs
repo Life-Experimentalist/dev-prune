@@ -115,7 +115,8 @@ impl std::fmt::Display for PruneStatus {
             PruneStatus::NotARepo => {
                 write!(
                     f,
-                    "No longer a git repository (`devp unlink` removes the entry)"
+                    "No longer a git repository (`devp unlink` removes the entry; \
+                     `git init` there makes it a repository again)"
                 )
             }
             PruneStatus::SkippedAdapterWindow(days) => {
@@ -796,12 +797,28 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
     // with its own unpushed history. No lockfile rebuilds somebody else's git history,
     // so refuse.
     if let Some(nested) = find_nested_git(path) {
-        return Some(PruneStatus::SkippedNestedRepo(format!(
+        let mut msg = format!(
             "`{}` contains a git repository at `{}` — refusing to delete it. Move or \
              remove that checkout yourself if it holds nothing you need.",
             crate::output::clean_path(path),
             crate::output::clean_path(&nested)
-        )));
+        );
+        // A package-manager cache kept inside the project (uv with `cache-dir =
+        // ".uv-cache"` is the case that surfaced this) accumulates sdist checkouts,
+        // so the refusal fires on every pass until the cache moves. The name is the
+        // only signal this code has for "this is a cache", but it is enough to point
+        // at the lasting fix instead of leaving the user to re-hit the warning.
+        if path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().contains("cache"))
+        {
+            msg.push_str(
+                " If this directory is a package manager's cache configured to live \
+                 inside the project (uv's `cache-dir`, for example), relocating the \
+                 cache outside the repository clears this warning for good.",
+            );
+        }
+        return Some(PruneStatus::SkippedNestedRepo(msg));
     }
 
     None
@@ -1789,7 +1806,6 @@ fn to_utc(system_time: Option<SystemTime>) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
     use std::fs;
-    use std::process::Command;
     use tempfile::TempDir;
 
     /// Restore in these tests either fails before running anything or runs against an
@@ -1845,32 +1861,32 @@ mod tests {
         assert!(!bloat.exists(), "the directory must be gone");
     }
 
+    /// `git_in`, not a bare `git`: run from inside a git hook, an inherited absolute
+    /// `GIT_DIR` would aim these fixture commands (the commit included) at the hook's
+    /// own repository. The config isolation keeps the commit from firing the
+    /// developer's real global `post-commit` hook.
     fn create_git_repo_with_commit(path: &Path) {
         fs::create_dir_all(path).unwrap();
-        Command::new("git")
-            .args(["init"])
-            .current_dir(path)
-            .output()
-            .unwrap();
+        let git = |args: &[&str]| {
+            crate::scanner::git::git_in(path)
+                .env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
+                .env("GIT_CONFIG_SYSTEM", path.join("no-such-gitconfig"))
+                .args(args)
+                .output()
+                .unwrap();
+        };
+        git(&["init"]);
         fs::write(path.join("README.md"), "# Test").unwrap();
-        Command::new("git")
-            .args(["add", "."])
-            .current_dir(path)
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args([
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@test.com",
-                "commit",
-                "-m",
-                "initial",
-            ])
-            .current_dir(path)
-            .output()
-            .unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            "initial",
+        ]);
     }
 
     #[test]

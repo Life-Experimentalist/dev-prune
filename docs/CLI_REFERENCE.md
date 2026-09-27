@@ -174,7 +174,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   4. Pre-verifies required package manager binaries (`npm`, `pnpm`, `uv`, `cargo`, `go`, etc.).
   5. Calculates reclaimable disk space and launches interactive selection TUI (unless `-y` is passed).
   6. Enforces two-tier lockfile safety with configurable command timeout (`command_timeout_secs`).
-  7. Safely removes the directories each matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` and the rest — one set per adapter, twenty-six of them).
+  7. Safely removes the directories each matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` and the rest — one set per package manager, thirty-six of them).
 
   **A targeted run confirms first.** `devp run <path>` prunes that one repository
   without registering it — and before deleting anything it lists every directory that
@@ -206,10 +206,11 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `--except`/`--ignore-idle`, so "why did that repo not prune?" is answerable one flag
   at a time.
 
-  Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `pycache`, `poetry`, `pdm`,
-  `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`, `terraform`, `deno` —
-  plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg`, `cmake_build` and
-  `dotnet_build`, which are opt-in (see below). An unrecognised name is an error
+  Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `deno`, `uv`, `venv`, `pycache`, `poetry`,
+  `pdm`, `pipenv`, `pixi`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`,
+  `terraform` — plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg`,
+  `cmake_build`, `dotnet_build`, `godot`, `unity`, `unreal`, `defold`, `cocos`, `zig`,
+  `stack`, `cabal` and `sbt`, which are opt-in (see below). An unrecognised name is an error
   listing the valid ones rather than a silently empty pass, and `--only` and `--skip`
   cannot be combined. A name listed in `disabled_adapters` is gone from that set
   entirely, and `--only <that name>` prunes nothing.
@@ -222,6 +223,14 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `composer` declines `vendor/` outright when a `vendor/bundle` is inside it: deleting
   it would take gems with it under a proof that says nothing about them.
 
+  `pixi` claims the `.pixi/` environments beside a `pixi.toml`, a `pixi.lock`, or a
+  `pyproject.toml` carrying a `[tool.pixi` table. Verification reads `pixi.lock` and
+  nothing else: the file must carry its `version:` and record at least one conda or
+  PyPI package. `pixi lock --check` is deliberately not run, because it can re-solve
+  the environment over the network in the middle of a delete pass; a lockfile that
+  fails the read is refused with `pixi lock` named as the fix. Restore is
+  `pixi install`.
+
   `terraform` claims `.terraform/providers` and nothing else under `.terraform/`.
   The sibling directories are not bloat: `environment` records the selected workspace,
   and losing it silently returns you to `default` — the next `apply` then targets the
@@ -229,12 +238,16 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `modules/` is fetched from module sources that `.terraform.lock.hcl` says nothing
   about. Providers are the bulk anyway, and the lock file proves those exactly.
 
-  **Cargo, Gradle, Maven, SwiftPM, Dart, Mix's build tree, vcpkg, CMake's build tree
-  and .NET's `bin/`+`obj/` are opt-in adapters.** `devp config set enable_cargo true` / `enable_gradle true` /
+  **Cargo, Gradle, Maven, SwiftPM, Dart, Mix's build tree, vcpkg, CMake's build tree,
+  .NET's `bin/`+`obj/`, the game-engine caches (Godot, Unity, Unreal, Defold, Cocos
+  Creator), Zig, Haskell's Stack and Cabal trees and sbt are opt-in adapters.**
+  `devp config set enable_cargo true` / `enable_gradle true` /
   `enable_maven true` / `enable_swift true` / `enable_dart true` /
   `enable_mix_build true` / `enable_vcpkg true` / `enable_cmake_build true` /
-  `enable_dotnet_build true` turns each
-  on; until then the adapter is
+  `enable_dotnet_build true` / `enable_godot true` / `enable_unity true` /
+  `enable_unreal true` / `enable_defold true` / `enable_cocos true` /
+  `enable_zig true` / `enable_stack true` / `enable_cabal true` /
+  `enable_sbt true` turns each on; until then the adapter is
   invisible everywhere — `status`, `run`, `--only cargo` all behave as if it did not
   exist. They are off by default because of what it costs to get their directories back,
   not because of any doubt that they come back: `target/`, `build/`, `.gradle/`,
@@ -247,7 +260,10 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   so a repository must be idle much longer before its build directories go than before
   its dependency directories do. Recoverability is proved by the build manifest
   (`Cargo.lock`, `pom.xml`, `build.gradle`/`settings.gradle`, `Package.swift`,
-  `pubspec.lock`, `vcpkg.json`, `CMakeLists.txt`) being present and readable — for
+  `pubspec.lock`, `vcpkg.json`, `CMakeLists.txt`, `project.godot`,
+  `ProjectSettings/ProjectVersion.txt`, the `.uproject`, `game.project`, Cocos Creator's
+  `package.json`, `build.zig`, `stack.yaml`, `cabal.project`, `build.sbt`) being present
+  and readable — for
   cargo, `cargo metadata --locked`; for the rest, no network command runs at all. vcpkg
   asks one thing more, because every vcpkg *port* also ships a `vcpkg.json`: the manifest
   has to declare a non-empty `dependencies` list, or there is nothing an install would
@@ -259,7 +275,39 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   repository — so a `build/` you filled by hand is never touched. The search stops
   descending at the first cache it finds, so the sub-builds `FetchContent` and CPM leave
   under `build/_deps/` go with the tree that configured them, and it reaches three levels
-  down because Visual Studio's CMake integration configures into `out/build/<preset>/`. User-home caches (`~/.cargo`, `~/.m2`, `~/.gradle`) are never touched; those
+  down because Visual Studio's CMake integration configures into `out/build/<preset>/`. `godot` is
+  the one whose directories come back by re-importing rather than recompiling: `.godot/`
+  (and `.import/` on Godot 3) hold the editor's imported-resource cache, claimed only
+  beside a readable `project.godot` that carries a `config_version=` line, and the editor
+  rebuilds them from your assets the next time it opens the project (`godot --headless
+  --import` does it without the window on 4.x). The other four engines follow the same
+  re-import pattern with their own proofs. `unity` claims `Library/` and `Temp/` only
+  beside a `ProjectSettings/ProjectVersion.txt` carrying an `m_EditorVersion:` line, and
+  refuses the whole project while `Temp/UnityLockfile` exists: that file is the open
+  editor's lock, and deleting `Library/` under a running editor corrupts the import in
+  progress. `unreal` claims `DerivedDataCache/` and `Intermediate/` beside a `.uproject`
+  that parses as JSON with a `"FileVersion"` key; `Saved/`, `Binaries/` and `Content/`
+  are never claimed, and because Unreal has no lockfile at all, `devp doctor` says so
+  rather than guessing at one. `defold` claims `build/` beside a `game.project` carrying
+  a `[project]` section, and never `.internal/` or `assets/`. `cocos` reads the
+  `package.json` and claims `library/` and `temp/` only when it names Cocos Creator (a
+  `"creator"` key, or a `cocos-creator` engine line on 2.x), so a plain Node project
+  keeps its `package.json` to the npm adapter, and never the exported `build/` output.
+  `zig` claims `.zig-cache/` and `zig-cache/` (the 0.12 and pre-0.12 spellings) plus
+  `zig-out/` beside a `build.zig` that declares a `pub fn build` — `zig-out/` is
+  included because it is the build system's own install prefix, populated by the steps
+  `build.zig` declares, so `zig build` puts all three back. `stack` claims
+  `.stack-work/` beside a `stack.yaml` that names its `resolver:` (or the newer
+  `snapshot:`) — the snapshot pin is what makes the rebuild reproducible. `cabal`
+  claims `dist-newstyle/` beside a `cabal.project` that declares its `packages`; a
+  directory holding only a `*.cabal` file with no project file is deliberately left
+  alone, and a Stack project wrapping the same `.cabal` files is claimed by the stack
+  adapter instead. `sbt` claims `target/` and `project/target/` beside a `build.sbt`
+  that carries at least one setting (or whose `project/build.properties` pins
+  `sbt.version`); sub-project `target/` trees are not walked for, and a Maven or
+  Gradle build in the same repository keeps its own `target/`/`build/` because each
+  directory is claimed once, by the first adapter that owns it.
+  User-home caches (`~/.cargo`, `~/.m2`, `~/.gradle`) are never touched; those
   belong to `devp caches`.
 
   **Any one adapter can wait longer still.** `devp config set adapter_idle_days
@@ -452,7 +500,7 @@ reads unambiguously:
 
   Each manager is *asked* where its cache is (`npm config get cache`, `pnpm store path`, `go env GOMODCACHE`, `ccache --get-config cache_dir`, `composer config --global cache-dir`, …) rather than assumed, because `CARGO_HOME`, a `--cache-dir` and a corporate `.npmrc` all move it. Every one of those queries is read-only and is run from your home directory, so a project-local `.npmrc` cannot skew a machine-wide answer. A manager that is not installed falls back to the conventional location — a cache left behind by a manager you uninstalled is exactly the multi-gigabyte directory nobody remembers. The JVM, .NET and C++ stores are found by convention plus their relocation variables (`GRADLE_USER_HOME`, `NUGET_PACKAGES`, `VCPKG_DEFAULT_BINARY_CACHE`, `CONAN_HOME`, `SCCACHE_DIR`) rather than by asking — `mvn help:evaluate` boots a JVM and resolves plugins over the network, which is the wrong price for a read-only size report. CocoaPods and Hex are found the same way (`CP_CACHE_DIR`, `HEX_HOME`) for the simpler reason that neither ships a command that prints the path at all. conda is found by convention too — `~/miniconda3/pkgs`, `~/anaconda3/pkgs`, `~/miniforge3/pkgs`, `~/mambaforge/pkgs` and the `~/.conda/pkgs` it falls back to when the installation is not writable — plus `CONDA_PKGS_DIRS` and, for a conda installed somewhere else entirely, the installation root that `CONDA_EXE` names. `conda config --show pkgs_dirs` would answer exactly, and takes seconds to start on a cold shell, which is the same price Maven charges for the same read-only size. Two probes that resolve to the same directory are counted once.
 
-  This is also where most of the .NET and C/C++ story lives: their *dependencies* never live in the repository at all — they live in these machine-wide stores, which is exactly what this command reports. Their in-repository build trees are deletable only through [opt-in adapters](#5-devp-run-target_path). Cargo `target/`, Maven `target/`, Gradle `build/`+`.gradle/`, vcpkg `vcpkg_installed/`, a configured CMake build tree and .NET's `bin/`+`obj/` are those exceptions: their recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle`/`vcpkg.json`/`CMakeLists.txt`/the project file beside them, plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`. Two of those have to prove which tool made the tree, because their directory names are too generic to trust: cmake_build claims a directory only when it holds a `CMakeCache.txt` naming a source directory inside the same repository, and dotnet_build claims `obj/` only when NuGet's `obj/project.assets.json` records this directory's own project file — `bin/` goes with it only when it holds nothing but `Debug`/`Release` build output — so a `build/` you filled by hand, or a `bin/` holding anything of yours, is left alone. (A repository that knows better can still [declare](#8-devp-config-action) a directory of its own, where the required `rebuild` command is the proof a lockfile could not give.) The `vcpkg` row here is the classic-mode install tree, shared by every project on the machine; the adapter claims only manifest mode's per-project one.
+  This is also where most of the .NET and C/C++ story lives: their *dependencies* never live in the repository at all — they live in these machine-wide stores, which is exactly what this command reports. Their in-repository build trees are deletable only through [opt-in adapters](#5-devp-run-target_path). Cargo `target/`, Maven `target/`, Gradle `build/`+`.gradle/`, vcpkg `vcpkg_installed/`, a configured CMake build tree, .NET's `bin/`+`obj/`, the game-engine import caches (Godot's `.godot/`, Unity's `Library/`, Unreal's `DerivedDataCache/`+`Intermediate/`, Defold's `build/`, Cocos Creator's `library/`), Zig's `.zig-cache/`+`zig-out/`, Stack's `.stack-work/`, Cabal's `dist-newstyle/` and sbt's `target/`+`project/target/` are those exceptions: their recoverability claim is rebuild-from-source (`Cargo.lock`/`pom.xml`/`build.gradle`/`vcpkg.json`/`CMakeLists.txt`/the project file beside them, plus the machine-wide stores this command reports), which is why they ship disabled and idle-gate separately through `build_idle_days`. Two of those have to prove which tool made the tree, because their directory names are too generic to trust: cmake_build claims a directory only when it holds a `CMakeCache.txt` naming a source directory inside the same repository, and dotnet_build claims `obj/` only when NuGet's `obj/project.assets.json` records this directory's own project file — `bin/` goes with it only when it holds nothing but `Debug`/`Release` build output — so a `build/` you filled by hand, or a `bin/` holding anything of yours, is left alone. (A repository that knows better can still [declare](#8-devp-config-action) a directory of its own, where the required `rebuild` command is the proof a lockfile could not give.) The `vcpkg` row here is the classic-mode install tree, shared by every project on the machine; the adapter claims only manifest mode's per-project one.
 - **Two commands per row, not one**: each cache is printed with `clear: devp caches clear <manager>` above `runs: <the manager's own command>`. They are not synonyms, which is why both are there. What dev-prune clears is added to the lifetime cache total in [`devp stats`](#15-devp-stats---json); the same `npm cache clean --force` typed into a terminal is invisible to it, so the report a week later is short by exactly the space you reclaimed. The manager's command is shown rather than hidden because it is what dev-prune executes, and a tool that will not tell you what it runs is worse than one that repeats itself. Maven is the exception and prints only `clear:` with its own command — dev-prune will not run that one, and says so.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the table. Global within `caches`, so `devp caches clear npm --json` parses the same as `devp caches --json clear npm`.
@@ -541,10 +589,10 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
   nerdctl gets one command rather than three because its narrow subcommands are spelled differently across versions and `system prune` is the spelling that has been stable. finch is nerdctl inside a Lima VM and forwards `system` to it verbatim, so it gets the same one.
 
   Apple's `container` is the odd one twice over. It has no `system prune`, so images and containers are two steps; and its prune subcommands neither ask a question nor define a `-f`, so unlike every row above them these run the moment they are typed. dev-prune still prints the plan and still asks — the confirmation is dev-prune's, not the engine's — and the report says so in as many words before the list. There is no build-cache step because BuildKit lives in a separate builder VM, and `container builder delete` removes that VM rather than pruning what it cached, which is more than clearing a cache.
-- **Volumes are not in that table, and cannot be put in it by a flag.** There is no argument anywhere in it containing the word "volume", and a unit test fails the build if one appears. This is not the same promise as the rest of the tool: an image can be pulled again and a build cache rebuilt, so those are a question of consent, and consent is what the prompt is for. A named volume holds the only copy of what is in it. `docker volume prune` stays a command the report prints and you type.
+- **Volumes are not in that table, and no flag puts one in it.** There is no argument anywhere in it containing the word "volume", and a unit test fails the build if one appears. This is not the same promise as the rest of the tool: an image can be pulled again and a build cache rebuilt, so those are a question of consent, and consent is what the prompt is for. A named volume holds the only copy of what is in it, so a volume goes only when someone names it. `--include-volumes` is how you name it: after the steps above run, dev-prune lists the engine's unused volumes by name and you type the numbers of the ones to delete, one unforced `<engine> volume rm <name>` each. dev-prune never runs `<engine> volume prune`, with or without the flag.
 - **Why dev-prune runs it at all**: because the alternative was worse. The report used to end by printing four commands and asking you to go and run one, which made the space it reclaimed yours to have remembered — and left dev-prune unable to count it, so 20 GiB of build cache you cleared on its advice never appeared in `devp stats`.
 - **Nothing schedulable reaches this.** No daemon, no Git hook and no `devp run` path calls it, with or without `--yes`. The rule the unattended pass follows — delete only what a lockfile rebuilds — is unchanged; this is the foreground kind, asked for by name, with what is about to happen printed first.
-- **The estimate excludes volumes**: the engine's own reclaimable figure counts unused volumes, and none of the commands above touches one. Printing it whole would promise back space these steps cannot give, so the volume row comes out of the headline number and is named separately as left alone, with `<engine> volume prune` if you have read what is in them and want it gone.
+- **The estimate excludes volumes**: the engine's own reclaimable figure counts unused volumes, and none of the commands above touches one. Printing it whole would promise back space these steps cannot give, so the volume row comes out of the headline number and is named separately as left alone. To pick which of those volumes go, by name and one at a time, add `--include-volumes`; without it the row is not touched.
 - **Freed size is the engine's answer, not the sum of the steps**: `system df` before, `system df` after, and the difference. Container layers are shared, so three `image prune` lines can each report a gigabyte while the disk gives back one — adding what the commands claim produces a number that cannot be true.
 - **What it costs**: a pull of the whole layer stack next time, and a cold build cache. That is why `devp stats` counts it on its own line rather than adding it to the other two.
 - **An engine that is not installed**, or is installed with its daemon stopped, is a **usage error** (exit `2`) quoting the engine's own words — dev-prune does not start deleting on a guess about why something did not answer.
@@ -552,12 +600,15 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
   - `--dry-run` — print the commands and the estimate; run nothing. (Global flag.)
   - `--yes` / `-y` — skip the confirmation. (Global flag.)
   - `--json` — emit one machine-readable document. **Requires `--yes` or `--dry-run`**, for the same reason as the manager form.
-- **Exit codes**: `0` if every step finished, `1` if any did not (the rows print either way), `2` for `--json` without `--yes`, for `--over-cap` or `--unused`, or for an engine that did not answer.
+  - `--include-volumes`: after the steps above run, list the engine's unused volumes by name and ask which of them to delete. The answer is row numbers, ranges like `1 3-5`, `all`, or Enter for none; each pick runs one `<engine> volume rm <name>`, never forced, and an answer that does not read as numbers from the list deletes nothing. docker and podman only: the other engines cannot list only their unused volumes, so the flag is a usage error there, naming `<engine> volume ls` as yours to run. It refuses `--yes`, `--json` and a piped stdin, all usage errors: the picking is the point, so only a person at a terminal can answer it, and nothing scheduled or scripted can reach it. `--dry-run` is the one unattended spelling and deletes nothing: it lists the unused volumes by name and size and prints the `devp caches clear <engine> --include-volumes` line to paste, so a script or an agent can prepare the hand-off and a person runs the final command. The command it prints is devp's own rather than a raw `volume rm`, because a pick made through devp is measured and counted on `devp stats` and a raw engine command is not. The pick list also arms only within ten minutes of a completed dry run for that engine: typed cold, the real command runs the dry run instead, says so at the top, and the same line typed again within ten minutes reaches the picking. Both spellings of the dry run start the window, so there is never a third step.
+- **Exit codes**: `0` if every step finished, `1` if any did not (the rows print either way), `2` for `--json` without `--yes`, for `--over-cap` or `--unused`, for `--include-volumes` alongside `--yes`, `--json` or a piped stdin, for `--include-volumes` on an engine that cannot list its unused volumes, or for an engine that did not answer.
 - **Examples**:
   ```bash
   devp caches clear docker --dry-run   # the three commands and the estimate
   devp caches clear docker             # after confirming
   devp caches clear podman --yes
+  devp caches clear docker --include-volumes   # then pick unused volumes by name
+  devp caches clear docker --include-volumes --dry-run   # list the volumes, print the line to paste, delete nothing
   devp caches clear docker --json --yes | jq '.summary.freed_bytes'
   ```
 
@@ -573,6 +624,7 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
     | Key | Default | Meaning |
     | :--- | :---: | :--- |
     | `language` | `en` | Which catalogue dev-prune draws its own headings and summary lines from: `en`, `zh`, `hi`, `te`, `ta`, `kn`, `ml`, `bn`, `mr`, `gu`, `pa` or `sa`. Everything a script reads stays English in every one of them — `--json`, exit codes, flag names, config keys and adapter names — so translating the interface can never change what a pipeline sees. A key a catalogue has not translated falls back to English rather than printing blank. `DEV_PRUNE_LANG=te devp run` overrides the setting for one command; the OS locale is deliberately never consulted. English is the only catalogue a native speaker has reviewed, and `devp config set language` says so when the one you picked has not been — see [TRANSLATIONS.md](TRANSLATIONS.md) |
+    | `recommendations` | `true` | Whether `devp run --dry-run` ends with the `Detected, but switched off` section naming the opt-in adapters that would have found something, and whether the `--json` document carries the matching `recommendations` key. Changes nothing about what is scanned or deleted; turn it off once you have made your adapter choices and the reminder has become noise |
 
     **What gets pruned** — The size and age of what a pass will consider at all.
 
@@ -605,7 +657,16 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
     | `enable_vcpkg` | `false` | Turn on the opt-in vcpkg adapter (`vcpkg_installed/` — manifest mode's per-project install tree, holding ports vcpkg compiled from source; `vcpkg install` builds them again) |
     | `enable_cmake_build` | `false` | Turn on the opt-in CMake adapter (any tree holding a `CMakeCache.txt` that records a source directory inside this repository — the next `cmake --build` compiles it again; a `build/` you made by hand has no cache file and is never claimed) |
     | `enable_dotnet_build` | `false` | Turn on the opt-in .NET adapter (`bin/` and `obj/` MSBuild wrote — `obj/project.assets.json` must record this directory's own project file, and `bin/` is claimed only when it holds nothing but `Debug`/`Release` build output; the next `dotnet build` writes both again) |
-    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart, mix_build, vcpkg, cmake_build, dotnet_build), applied as `max(build_idle_days, idle_days)` |
+    | `enable_godot` | `false` | Turn on the opt-in Godot adapter (`.godot/`, and `.import/` on Godot 3, hold the editor's imported-resource cache; the editor re-imports every asset the next time it opens the project) |
+    | `enable_unity` | `false` | Turn on the opt-in Unity adapter (`Library/` and `Temp/` beside a `ProjectSettings/ProjectVersion.txt` carrying an `m_EditorVersion:` line; refused while `Temp/UnityLockfile` says the editor is open; the editor re-imports on next open) |
+    | `enable_unreal` | `false` | Turn on the opt-in Unreal adapter (`DerivedDataCache/` and `Intermediate/` beside a `.uproject` with a `"FileVersion"` key; `Saved/`, `Binaries/` and `Content/` are never claimed; the editor rebuilds the DDC on next open) |
+    | `enable_defold` | `false` | Turn on the opt-in Defold adapter (`build/` beside a `game.project` carrying a `[project]` section; the next build regenerates it; `.internal/` and `assets/` are never claimed) |
+    | `enable_cocos` | `false` | Turn on the opt-in Cocos Creator adapter (`library/` and `temp/`, claimed only when `package.json` names Cocos Creator; the exported `build/` output is never claimed; the editor re-imports on next open) |
+    | `enable_zig` | `false` | Turn on the opt-in Zig adapter (`.zig-cache/`, `zig-cache/` and `zig-out/` beside a `build.zig` declaring a `pub fn build`; `zig-out/` is the build system's own install prefix, so the next `zig build` writes all three again) |
+    | `enable_stack` | `false` | Turn on the opt-in Haskell Stack adapter (`.stack-work/` beside a `stack.yaml` that names its `resolver:` or `snapshot:`; the next `stack build` compiles it again) |
+    | `enable_cabal` | `false` | Turn on the opt-in Haskell Cabal adapter (`dist-newstyle/` beside a `cabal.project` declaring its `packages`; a lone `*.cabal` file is never claimed; the next `cabal build` compiles it again) |
+    | `enable_sbt` | `false` | Turn on the opt-in sbt adapter (`target/` and `project/target/` beside a `build.sbt` carrying a setting, or whose `project/build.properties` pins `sbt.version`; the next `sbt compile` writes both again) |
+    | `build_idle_days` | `45` | Extra idle threshold for the opt-in build adapters (cargo, gradle, maven, swift, dart, mix_build, vcpkg, cmake_build, dotnet_build, godot, unity, unreal, defold, cocos, zig, stack, cabal, sbt), applied as `max(build_idle_days, idle_days)` |
 
     **Shared download caches** — One key, because the cap only ever marks — the clearing is a command you type.
 
@@ -656,11 +717,13 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
   - `config show [--update]`: View all configuration values or force global update.
 
     It ends with whatever the first run recommends and this machine has not taken yet,
-    in two tiers. **Recommended** is the nine adapters and build trees that are off by
+    in two tiers. **Recommended** is the eighteen adapters and build trees that are off by
     default because they are not universally wanted, not because they are risky —
     `enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`,
     `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`,
-    `enable_dotnet_build` — plus `cache_max_gb`,
+    `enable_dotnet_build`, `enable_godot`, `enable_unity`, `enable_unreal`,
+    `enable_defold`, `enable_cocos`, `enable_zig`, `enable_stack`, `enable_cabal`,
+    `enable_sbt` — plus `cache_max_gb`,
     suggested as `default=10`. **Recommended, with one thing to know first** is
     `allow_manifest_rewrite` alone, printed with the reason it is in a tier of its own.
     Nothing outstanding prints nothing.
@@ -930,7 +993,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "run",
   "dry_run": true,
   "results": [
@@ -953,9 +1016,27 @@ silently when none is available.
     "bytes_reclaimable": 481296384,
     "directories_pruned": 0,
     "errors": 0                // lockfile_error + activity_check_error + delete_error + config_error
-  }
+  },
+  // Only on the bulk `--dry-run` document, and only when there is something to say:
+  // opt-in build adapters that detect() in registered repositories but are switched
+  // off, so the pass above could not examine them. Repositories the pass skips
+  // (disabled, `--except`, ignored, missing) are not counted. Additive: absent
+  // entirely when empty, and never present on a real pass or a targeted `devp run <path>`.
+  "recommendations": [
+    {
+      "adapter": "cargo",
+      "setting": "enable_cargo",
+      "command": "devp config set enable_cargo true",
+      "repositories": 3
+    }
+  ]
 }
 ```
+
+The human dry-run report carries the same information as a closing
+`Detected, but switched off` section, one line per adapter with the enable command.
+`devp config set recommendations false` drops both the section and the JSON key,
+which fits the additive contract: consumers already handle the key being absent.
 
 | `status` | Meaning |
 | :--- | :--- |
@@ -981,7 +1062,7 @@ silently when none is available.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "status",
   "config_path": "~/.config/dev-prune/registry.json",
   "integrations": { "daemon": "...", "git_hooks": "..." },
@@ -1044,7 +1125,7 @@ root-only; a tool configured to write its output somewhere else is not found.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "status --drift",
   "drift": [
     {
@@ -1072,7 +1153,7 @@ is the healthy state. Exit code is `0` either way — drift is a report, not a f
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "stats",
   "history_starts_at": "1.1.0",  // the version that began recording the two sections below
   "detail_starts_at": "1.17.0",  // the version that began recording by_manager and by_trigger
@@ -1136,7 +1217,7 @@ them again.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "history",
   "detail_starts_at": "1.17.0",  // the version that began recording `removed` below
   "passes": [                    // newest first; `pass` is stable under --pass N
@@ -1193,7 +1274,7 @@ to a file.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "caches",
   "caches": [
     {
@@ -1273,7 +1354,7 @@ narrowed by which engines it was asked about.
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "caches containers",
   "engines": [
     {
@@ -1338,7 +1419,7 @@ see [below](#devp-caches-clear-engine---json).
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "caches clear",
   "dry_run": false,
   "caches": [
@@ -1386,7 +1467,7 @@ or a Maven local repository will look like a machine that simply has none. Exit 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "caches clear",
   "dry_run": false,
   "engine": "docker",
@@ -1415,14 +1496,16 @@ than the disk ever held.
 `volumes_untouched` is stated rather than left to be inferred. It is the one promise this
 command makes about what it did *not* do, and a consumer should be able to check it
 without reading the argv table inside the binary. It is always `true`; a document without
-it is from a version that could not make the promise.
+it is from a version that could not make the promise. `--include-volumes` does not bend
+this: that flag refuses `--json`, so no run that offered volumes ever produces this
+document, and the key never has a second value.
 
 ### `devp trust --json`
 
 ```jsonc
 {
   "schema": 1,
-  "version": "1.21.0",
+  "version": "1.22.0",
   "command": "trust",
   "guarantees": [
     {
@@ -1447,7 +1530,7 @@ it is from a version that could not make the promise.
       "path": "%APPDATA%/dev-prune/bin/dev-prune.exe",
       "channel": "install script",
       "sha256": "78feef18a95fa15c7a8c3288f220055fcfa0f75d1635f5370697c8878ffdbc1a",
-      "version": "1.21.0",
+      "version": "1.22.0",
       "marker": "latest release",
       "running": true,
       "scan_report": "https://www.virustotal.com/gui/file/78feef18a95fa15c7a8c3288f220055fcfa0f75d1635f5370697c8878ffdbc1a",
@@ -1514,6 +1597,8 @@ jq` is always safe. Exit codes are unchanged by `--json`.
   - `--channels` — print the upgrade command for every channel dev-prune ships through, not only the one that owns this copy. Reads nothing, writes nothing, opens no connection, and cannot be combined with `--offline` or `--install`. It is the answer to "how do I upgrade the copy on the *other* machine", which the default output deliberately does not try to guess.
   - `--install` — perform the upgrade without the report or the prompt. It downloads the release binary for this platform straight from GitHub Releases, verifies it against the SHA-256 sidecar published beside it, and writes it to every copy this installation runs: the managed binary under the config `bin` directory, its `devp` alias, the windowless `devpw` scheduler twin, and the running binary if that is a different file — unless that file lives in a directory WinGet, Scoop or Homebrew owns, which each replace wholesale on upgrade, so writing into one produces a copy the next upgrade throws away. **Nothing is installed if the checksum does not match.** The managed copy is the one whose failure aborts the upgrade — it is what the git hooks and the scheduler invoke — and a copy in a directory this process cannot write is reported rather than fatal.
 
+    The `devpw` scheduler twin is a separate `[[bin]]` image, so the console bytes cannot become it: it gets its own release asset (`devpw-v<version>-windows-<arch>.exe`), verified against its own SHA-256 sidecar, and is refreshed wherever a twin already exists. A twin the download cannot bring forward is a warning, not a failure: the scheduled pass keeps running the version it has until `devp update --install` or `devp doctor --fix` succeeds. And `--install` on a copy already at the latest release still reconciles a stale twin up to the running version, because the incident this exists for is exactly that shape: consoles current, `devpw.exe` releases behind, every scheduled pass silently running old code.
+
     The package manager that delivered the first copy is deliberately *not* run. Its record of the installed version therefore goes stale, and the one command that resyncs it (`cargo install dev-prune --force`, `npm install -g dev-prune@latest`, `bun add -g dev-prune@latest`, `pnpm add -g dev-prune@latest`, `yarn global upgrade dev-prune`, `uv tool upgrade dev-prune`, `pipx upgrade dev-prune`, `pip install --upgrade dev-prune`, `winget upgrade --id VKrishna04.dev-prune`, `scoop update dev-prune`, `brew upgrade dev-prune`) is printed after a successful install. Run it or don't — the binaries are already current either way. `devp update --channels` prints the same table without checking anything.
 
     Falls back to that channel's own upgrade command when the release publishes no binary for this platform or the download fails, so a release-page outage costs the fast path and not the upgrade. The channel is detected from where the binary lives, by the one classifier `devp doctor` and `devp uninstall` also read: the managed `bin` directory means the installer script, `.cargo` means cargo (`cargo binstall` when available, `cargo install` otherwise), `~/.bun` means bun, pnpm's and Yarn's global directories mean pnpm and yarn, any other `node_modules` tree means npm, uv's tool directory means `uv tool upgrade`, a `pipx` venv means `pipx upgrade`, a `pip` script beside the binary means `pip install --upgrade`, and a WinGet, Scoop or Homebrew package directory means that manager's own upgrade; an unrecognised location prints every channel's command instead. It refuses under `DEV_PRUNE_OFFLINE`, cannot be combined with `--offline`, and does nothing when the installed build is already the latest.
@@ -1535,7 +1620,7 @@ jq` is always safe. Exit codes are unchanged by `--json`.
 ---
 
 ### 11. `devp setup [--status]`
-- **Description**: Installs whatever dev-prune integration is missing and leaves the rest alone: the `devp` alias, the managed binary directory on your `PATH` (a user `PATH` entry on Windows, `~/.local/bin` symlinks elsewhere — this is what keeps `devp` working after the venv or npx cache it was installed from disappears), the exported `SKILL.md`, the skill installed into any detected AI agent skills directory (`~/.claude/skills/dev-prune/`), the file-manager icon registration for `*.devprune.json`, the global Git auto-registration hooks, and the OS scheduler. Safe to run repeatedly — it is the same pass the install scripts run, the same one `devp init` runs, and the same one that runs by itself on the first command after an upgrade. Typing it is also the durable yes to the first-run question: a machine where the setup walkthrough was quit — or never shown — treats `devp setup` as the answer, and upgrades maintain what it installed from then on.
+- **Description**: Installs whatever dev-prune integration is missing and leaves the rest alone: the `devp` alias, the managed binary directory on your `PATH` (a user `PATH` entry on Windows, `~/.local/bin` symlinks elsewhere — this is what keeps `devp` working after the venv or npx cache it was installed from disappears), the exported `SKILL.md`, the skill installed into any detected AI agent skills directory (`~/.claude/skills/dev-prune/`), the file-manager icon registration for `*.devprune.json`, the global Git auto-registration hooks, and the OS scheduler. On Windows, a scheduler that is already installed gets its `devpw.exe` reconciled against the running release in the same pass: the scheduled task runs devpw itself, so nothing devpw does can ever replace devpw, and this pass is the first place freshly upgraded console code runs unattended enough to close that loop (it stands down under `DEV_PRUNE_OFFLINE` and `version_lock`, and only moves an existing, stale twin forward). Safe to run repeatedly — it is the same pass the install scripts run, the same one `devp init` runs, and the same one that runs by itself on the first command after an upgrade. Typing it is also the durable yes to the first-run question: a machine where the setup walkthrough was quit — or never shown — treats `devp setup` as the answer, and upgrades maintain what it installed from then on.
 - **`--status`**: Report what is installed, what is not, and which automation settings are in force. Changes nothing.
 - **Skips, rather than forces**:
   - Git hooks, when `git` is not on `PATH` (with instructions to install it), or when `core.hooksPath` already belongs to husky, pre-commit or lefthook and `auto_hooks_chain` is off. Take the slot without displacing that tool: `devp hook install --chain`.
@@ -1555,10 +1640,10 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ### 12. `devp doctor [PATH] [--fix]`
 - **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. Plain `doctor` changes nothing — no config is created, no integration installed, no package manager run — and when some of what it found is repairable, its verdict says how many findings `--fix` would mend.
-- **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **which package manager installed this copy, and the exact commands that upgrade and remove it through that manager** — the installers, cargo, npm, bun, pnpm, yarn, uv, pipx, pip, WinGet, Scoop or Homebrew, never a warning, because an unrecognised location is a valid way to run a binary; **the install receipt**, for a copy one of the install scripts wrote — its version, which of `install.sh` and `install.ps1` wrote it, and the date, read from `<bindir>/install.json` rather than worked out again, and simply absent for every other channel because a date belonging to a different file is worse than no date; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus every fixed directory those managers install into, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
+- **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **which package manager installed this copy, and the exact commands that upgrade and remove it through that manager** — the installers, cargo, npm, bun, pnpm, yarn, uv, pipx, pip, WinGet, Scoop or Homebrew, never a warning, because an unrecognised location is a valid way to run a binary; **the install receipt**, for a copy one of the install scripts wrote — its version, which of `install.sh` and `install.ps1` wrote it, and the date, read from `<bindir>/install.json` rather than worked out again, and simply absent for every other channel because a date belonging to a different file is worse than no date; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus every fixed directory those managers install into, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); **the windowless scheduler binary** (`devpw.exe`, Windows), checked by build stamp against the running version, because the scheduled task runs that file and a stale one silently runs old code every night, with `devp update --install` named as the fix; the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
 - **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses, what it overrides, and any key in it that dev-prune does not read (a warning, not an error — unknown keys are tolerated so a newer file never bricks an older dev-prune, which makes this the one place a typo'd key is ever pointed out), the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.
-- **`--fix`** — diagnosis first, then treatment: run the same checks, then repair what they found. It mends *installed-but-broken* only — a stale or missing `devp` twin, a missing `SKILL.md` export, Git hooks or a scheduler entry whose recorded binary no longer exists, a chained hook set that has drifted from the tool it forwards to, and registry entries whose repository is gone (the same cleanup as `devp unlink --missing`). Each repair is the corresponding `devp setup` pass re-run, so a repair can never do more than setup itself would; each re-checks state first, so a finding that healed in the meantime reports "already in place". It never performs a first-time install (that is `devp setup`'s job, gated by your `auto_*` settings), never touches an unreadable `registry.json` (a parse failure is for you to look at, not for a tool to guess at), and with `DEV_PRUNE_NO_AUTO_SETUP=1` set it skips every repair that writes outside the config directory, naming the command to run yourself. Problems `--fix` cannot mend are re-listed as such. Cannot be combined with a `PATH` — repository findings (not a Git repo, opted out, idle) are facts about your project, not breakage to mend.
-- **Exit codes**: `0` when everything works, warnings included — a missing scheduler should not fail a script. `1` only for something actually broken: an unreadable `registry.json`, an out-of-range setting, a registered path that no longer exists, a directory that is not a Git repository. `--fix` exits `0` when everything it found was repaired, `1` when any repair failed, was skipped, or was out of its reach.
+- **`--fix`** — diagnosis first, then treatment: run the same checks, then repair what they found. It mends *installed-but-broken* only — a stale or missing `devp` twin, a `devpw.exe` scheduler binary behind the running release (its own verified download from GitHub Releases, and the one repair that touches the network: it stands down under `DEV_PRUNE_OFFLINE` and `version_lock`), a missing `SKILL.md` export, Git hooks or a scheduler entry whose recorded binary no longer exists, a chained hook set that has drifted from the tool it forwards to, and registry entries whose repository is gone (the same cleanup as `devp unlink --missing`). Each repair is the corresponding `devp setup` pass re-run, so a repair can never do more than setup itself would; each re-checks state first, so a finding that healed in the meantime reports "already in place". It never performs a first-time install (that is `devp setup`'s job, gated by your `auto_*` settings), never touches an unreadable `registry.json` (a parse failure is for you to look at, not for a tool to guess at), and with `DEV_PRUNE_NO_AUTO_SETUP=1` set it skips every repair that writes outside the config directory, naming the command to run yourself. Problems `--fix` cannot mend are re-listed as such. Cannot be combined with a `PATH` — repository findings (not a Git repo, opted out, idle) are facts about your project, not breakage to mend.
+- **Exit codes**: `0` when everything works, warnings included — a missing scheduler should not fail a script. `1` only for something actually broken: an unreadable `registry.json`, an out-of-range setting, a registered path that no longer exists, a directory that is not a Git repository, or a `devpw.exe` behind the running release *while the scheduler is registered to run it*: that copy runs old code unattended every night, which is breakage, not a nuisance. The same drift on a twin the scheduler does not run is only a warning. `--fix` exits `0` when everything it found was repaired, `1` when any repair failed, was skipped, or was out of its reach.
 - **Examples**:
   ```bash
   devp doctor              # the installation
@@ -1569,11 +1654,13 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 13. `devp skill [--agent <EDITOR>] [--prompt <KIND>] [--copy] [--rules-file <path>]`
-- **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory, installs it into any detected on-disk agent skills directory (`~/.claude/skills/dev-prune/` — the same install `devp setup` performs automatically), and displays ready-to-copy AI Agent onboarding prompts for whichever assistant you use.
-- **`--prompt <workspace|agent>`**: prints just that one onboarding prompt on its own, with no header, checkmark or fence, so it can be piped or scripted instead of read from a decorated block. Writes nothing: no `SKILL.md` export, no skill-directory install. Conflicts with `--agent` and `--rules-file`.
+### 13. `devp skill [--agent <EDITOR> | --detected] [--prompt <KIND>] [--copy] [--rules-file <path>]`
+- **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory, installs it into any detected on-disk agent skills directory (`~/.claude/skills/dev-prune/` — the same install `devp setup` performs automatically), reports which of the editors below this machine or repository shows traces of, and displays ready-to-copy AI Agent onboarding prompts for whichever assistant you use.
+- **The detection report**: an editor counts as detected when its home-directory footprint exists (`~/.cursor`, `~/.continue`, `~/.antigravity-ide`, …), when its extension is installed under a VS Code-family editor's extensions directory (Cline, Roo Code, Kilo Code, Continue, Amazon Q, GitHub Copilot), or when the current repository carries its config directory — evidence the *team* uses it even if this machine never has. Detection is pure `exists()` checks: nothing is executed, nothing is written. Each detected row shows whether this repository's rules are current, stale, or missing, and the exact `--agent` command that writes them.
+- **`--detected`**: writes rules for every editor on that report into the current repository in one pass — the batch form of `--agent`. Like `--agent`, it must be run from a repository root, and it conflicts with `--agent`, `--prompt` and `--rules-file` (name one editor or take them all, not both).
+- **`--prompt <workspace|agent>`**: prints just that one onboarding prompt on its own, with no header, checkmark or fence, so it can be piped or scripted instead of read from a decorated block. Writes nothing: no `SKILL.md` export, no skill-directory install. Conflicts with `--agent`, `--rules-file` and `--detected`.
 - **`--copy`**: sends the `--prompt` output straight to the clipboard (via the platform's clipboard tool, e.g. `clip.exe` on Windows, `pbcopy` on macOS, `wl-copy`/`xclip` on Linux) instead of printing it to stdout; a line on stderr says which tool was used. Requires `--prompt`; using it alone is a usage error.
-- **`--rules-file <path>`**: upserts the same marked block the six shared-file `--agent` targets use into any path you name inside the current repository, for an editor not covered by `--agent`, one that renamed the file it reads, or a future tool that doesn't exist yet. `path` must be relative and stay inside the repository (no absolute paths, no `..` segments) and the current directory must be a Git repository root, the same rule `.git`-boundary safety applies everywhere else in dev-prune. Conflicts with `--agent`.
+- **`--rules-file <path>`**: upserts the same marked block the six shared-file `--agent` targets use into any path you name inside the current repository, for an editor not covered by `--agent`, one that renamed the file it reads, or a future tool that doesn't exist yet. `path` must be relative and stay inside the repository (no absolute paths, no `..` segments) and the current directory must be a Git repository root, the same rule `.git`-boundary safety applies everywhere else in dev-prune. Conflicts with `--agent`, `--prompt` and `--detected`.
 - **`--agent <EDITOR>`**: instead writes per-repository rules into the current repository (it must be a Git repository root), in the file that editor's agent actually reads:
 
   | Editor | File written |
@@ -1601,6 +1688,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   devp skill
   devp skill --agent cursor
   devp skill --agent agents-md
+  devp skill --detected
   devp skill --prompt agent
   devp skill --prompt agent --copy
   devp skill --rules-file .windsurfrules
@@ -1697,7 +1785,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   - **Guaranteed by the code** — the seven [safety invariants](SAFETY_INVARIANTS.md) plus the two questions asked as often as any of them: there is no telemetry endpoint, and build output is never deleted. These rows read the same on every machine. None of them has a setting or a flag behind it, and a build where one did not hold would be a bug, not a configuration.
   - **On this machine** — read live: whether the scheduler is installed, whether the Git hooks register repositories on their own, how many repositories are registered, the idle window, the managed binary's path, and the settings that widen what may happen without you asking.
   - **Binaries on this machine** — **every** copy of `dev-prune`, `devp` and `devpw` on this machine, not only the managed ones: everything on `PATH`, plus the install directory of every channel dev-prune knows about, whether or not that directory is still on `PATH`. The one currently running is marked and listed first. Each row carries the version it was built as, the package manager that put it there, its SHA-256 and a VirusTotal lookup URL for that digest. The version is read out of the file rather than by running it, so it is blank for anything built before 1.17.0; the newest copy is marked `(latest release)` when a release check has confirmed that is the newest release, and `(newest here)` when it is only the highest version on this machine. This exists because an antivirus judges the bytes on your disk, not the asset on a release page, so the only digest worth showing you is your own — and on a machine that has both a `cargo install` and an installer run, "your own" is several files of different ages. The links are lookups by hash: the digest is computed locally, the URL is printed rather than fetched, and no file is uploaded anywhere. A digest the service has never seen returns *not found*, which means unscanned — not clean. On Windows `dev-prune.exe` and `devp.exe` as shipped are one file under two names and share a digest on purpose; `devpw.exe`, the console-free build the scheduler runs, is a separate `[[bin]]` target and legitimately differs. A copy installed from a release matches the `.sha256` published beside the asset and the per-file `.zip.contents.sha256` manifest; one built by `cargo install` was compiled locally and matches nothing published. Shims are not listed — npm's `.cmd` and `.ps1` wrappers are text files that run the real executable, and a digest for one would compare against nothing. Nothing found is ever executed, only hashed. More than one copy is not a fault; [`devp uninstall`](#14-devp-uninstall---deep) lists them with the command that removes each.
-- **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`, `enable_dotnet_build`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
+- **The three settings that widen anything** are named individually rather than summed into a grade: `require_confirmation` set to `false`, `allow_manifest_rewrite`, and any [opt-in adapter](#5-devp-run-target_path) (`enable_cargo`, `enable_gradle`, `enable_maven`, `enable_swift`, `enable_dart`, `enable_mix_build`, `enable_vcpkg`, `enable_cmake_build`, `enable_dotnet_build`, `enable_godot`, `enable_unity`, `enable_unreal`, `enable_defold`, `enable_cocos`, `enable_zig`, `enable_stack`, `enable_cabal`, `enable_sbt`) — the only ones that make a *build tree* deletable. Each was switched on deliberately; [`devp config show`](#8-devp-config-action) has all of them and `devp config set <key> <value>` puts one back.
 - **No letter grade, on purpose**: `trust level: MEDIUM` tells nobody which switch to look at. The report lists the switches.
 - **Row marks**: `+` guaranteed or safe, `!` widened, blank for a neutral fact (a path, a count).
 - **Flags**:
@@ -1732,7 +1820,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```json
   {
     "schema": 1,
-    "version": "1.21.0",
+    "version": "1.22.0",
     "channel": "installer",
     "installed_by": "install.sh",
     "installed_at": "2026-08-25T09:14:02Z",
@@ -1795,11 +1883,11 @@ Executing `devp -V` prints detailed diagnostic information:
 | | | ||  _|   \ \ / /    | |_) | |_) | | | |  \| |  _|  
 | |_| || |___   \ V /     |  __/|  _ <| |_| | |\  | |___ 
 |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|
-                                                  v1.21.0 · install script
+                                                  v1.22.0 · install script
 Every dependency directory on this machine, in one command.
 Only what a lockfile can rebuild — and `devp restore --last-run` puts it back.
 
-dev-prune (devp) v1.21.0
+dev-prune (devp) v1.22.0
   Binary Aliases:  dev-prune | devp
   Author:          VKrishna04
   Repository:      https://github.com/Life-Experimentalist/dev-prune

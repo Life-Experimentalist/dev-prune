@@ -10,6 +10,15 @@
 // That puts cargo in the same class as gradle, maven and swift rather than with
 // `node_modules` and `.venv`, so it waits for the longer `build_idle_days` window and
 // nobody finds it deleted without having asked.
+//
+// Deliberately whole-directory, not surgical. cargo-sweep can trim `target/` down to
+// the artifacts the current toolchain still uses, and in a repository someone builds
+// every day that is the better tool: the warm cache survives. This adapter fires on
+// repositories idle past `build_idle_days`, where every incremental artifact is
+// already cold, and a partial `target/` would make its reported size a lie: the pass
+// says it freed N GiB and left an unbounded remainder nothing tracks. Delete all of it
+// or none of it; the two tools divide the problem by repository temperature, they do
+// not compete.
 
 use super::{BloatDir, EnforcePolicy, PackageManager, dir_size, enforce_two_tier};
 use crate::declared::{Gap, RebuildCheck, on_path};

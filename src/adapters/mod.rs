@@ -18,14 +18,18 @@
 
 pub mod bun;
 pub mod bundler;
+pub mod cabal;
 pub mod cargo_adapter;
 pub mod cmake_build;
 pub mod cocoapods;
+pub mod cocos;
 pub mod composer;
 pub mod dart;
+pub mod defold;
 pub mod deno;
 pub mod dotnet_build;
 pub mod go;
+pub mod godot;
 pub mod gradle;
 pub mod maven;
 pub mod mix;
@@ -33,15 +37,21 @@ pub mod mix_build;
 pub mod npm;
 pub mod pdm;
 pub mod pipenv;
+pub mod pixi;
 pub mod pnpm;
 pub mod poetry;
 pub mod pycache;
+pub mod sbt;
+pub mod stack;
 pub mod swift;
 pub mod terraform;
+pub mod unity;
+pub mod unreal;
 pub mod uv;
 pub mod vcpkg;
 pub mod venv;
 pub mod yarn;
+pub mod zig;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -184,7 +194,9 @@ pub trait PackageManager: Send + Sync {
     /// Whether this adapter is inert until the user enables it in settings.
     ///
     /// Adapters whose directory is compiler output answer `true` — cargo, gradle,
-    /// maven, swift, dart, mix_build, vcpkg and cmake_build. Theirs come back by
+    /// maven, swift, dart, mix_build, vcpkg, cmake_build, dotnet_build, godot,
+    /// unity, unreal, defold, cocos, zig, stack, cabal and sbt.
+    /// Theirs come back by
     /// recompiling the project, which costs far
     /// more than a dependency reinstall, so nobody should find them deleted without
     /// having asked. The engine also holds them to the longer `build_idle_days` idle
@@ -238,6 +250,7 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(pipenv::Pipenv),
         Box::new(venv::Venv),
         Box::new(pycache::Pycache),
+        Box::new(pixi::Pixi),
         Box::new(cargo_adapter::Cargo),
         Box::new(go::Go),
         Box::new(composer::Composer),
@@ -253,6 +266,15 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(vcpkg::Vcpkg),
         Box::new(cmake_build::CmakeBuild),
         Box::new(dotnet_build::DotnetBuild),
+        Box::new(godot::Godot),
+        Box::new(unity::Unity),
+        Box::new(unreal::Unreal),
+        Box::new(defold::Defold),
+        Box::new(cocos::Cocos),
+        Box::new(zig::Zig),
+        Box::new(stack::Stack),
+        Box::new(cabal::Cabal),
+        Box::new(sbt::Sbt),
     ]
 }
 
@@ -295,6 +317,33 @@ fn opt_in_enabled() -> &'static [String] {
                 }
                 if r.settings.enable_dotnet_build {
                     names.push("dotnet_build".to_string());
+                }
+                if r.settings.enable_godot {
+                    names.push("godot".to_string());
+                }
+                if r.settings.enable_unity {
+                    names.push("unity".to_string());
+                }
+                if r.settings.enable_unreal {
+                    names.push("unreal".to_string());
+                }
+                if r.settings.enable_defold {
+                    names.push("defold".to_string());
+                }
+                if r.settings.enable_cocos {
+                    names.push("cocos".to_string());
+                }
+                if r.settings.enable_zig {
+                    names.push("zig".to_string());
+                }
+                if r.settings.enable_stack {
+                    names.push("stack".to_string());
+                }
+                if r.settings.enable_cabal {
+                    names.push("cabal".to_string());
+                }
+                if r.settings.enable_sbt {
+                    names.push("sbt".to_string());
                 }
                 names
             })
@@ -345,11 +394,11 @@ pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("JavaScript", &["npm", "pnpm", "yarn", "bun", "deno"]),
     (
         "Python",
-        &["uv", "poetry", "pdm", "pipenv", "venv", "pycache"],
+        &["uv", "poetry", "pdm", "pipenv", "venv", "pycache", "pixi"],
     ),
     ("Rust", &["cargo"]),
     ("Go", &["go"]),
-    ("JVM", &["gradle", "maven"]),
+    ("JVM", &["gradle", "maven", "sbt"]),
     ("PHP", &["composer"]),
     ("Ruby", &["bundler"]),
     ("Swift & Objective-C", &["swift", "cocoapods"]),
@@ -358,6 +407,12 @@ pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("Dart & Flutter", &["dart"]),
     ("C & C++", &["vcpkg", "cmake_build"]),
     (".NET", &["dotnet_build"]),
+    ("Zig", &["zig"]),
+    ("Haskell", &["stack", "cabal"]),
+    (
+        "Game engines",
+        &["godot", "unity", "unreal", "defold", "cocos"],
+    ),
 ];
 
 /// The language group `name` belongs to, or `"Other"` if it somehow belongs to none.
@@ -415,6 +470,25 @@ pub fn detect_all_adapters(project_path: &Path) -> Vec<Box<dyn PackageManager>> 
         .map(str::to_string)
         .collect();
     detect_adapters_with(project_path, &opt_in, &[])
+}
+
+/// The opt-in adapters this directory uses that no switch has turned on.
+///
+/// A disabled opt-in adapter is invisible to the whole pass: it produces no bloat row,
+/// so nothing downstream can say "cargo would have claimed a `target/` here". The dry-run
+/// report calls this to say it once, at the moment the user is already deciding what the
+/// next pass should do. Adapters named in `disabled_adapters` are excluded: that list is
+/// an explicit "no", and recommending against it is nagging.
+pub fn detect_dormant_opt_in(project_path: &Path) -> Vec<Box<dyn PackageManager>> {
+    let enabled = opt_in_enabled();
+    let disabled = user_disabled();
+    get_all_adapters()
+        .into_iter()
+        .filter(|a| a.opt_in())
+        .filter(|a| !enabled.iter().any(|n| n == a.name()))
+        .filter(|a| !disabled.iter().any(|n| n == a.name()))
+        .filter(|a| a.detect(project_path))
+        .collect()
 }
 
 /// The body of [`detect_adapters`], with the two user-configured lists passed in.
@@ -1312,7 +1386,7 @@ pub(crate) fn python_runtime_available(tag: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-const NO_RESTORE_BINARY: [&str; 9] = [
+const NO_RESTORE_BINARY: [&str; 18] = [
     "venv",
     "gradle",
     "maven",
@@ -1322,6 +1396,15 @@ const NO_RESTORE_BINARY: [&str; 9] = [
     "cmake_build",
     "dotnet_build",
     "pycache",
+    "godot",
+    "unity",
+    "unreal",
+    "defold",
+    "cocos",
+    "zig",
+    "stack",
+    "cabal",
+    "sbt",
 ];
 
 /// Adapters whose executable is not called what the adapter is called.
@@ -1339,7 +1422,7 @@ pub fn adapter_binary(adapter: &str) -> &str {
 ///
 /// `devp doctor` naming a missing manager without saying how to get it is a finding the
 /// reader has to go and research; every other finding it prints carries its own repair.
-const INSTALL_HINTS: [(&str, &str); 17] = [
+const INSTALL_HINTS: [(&str, &str); 18] = [
     ("npm", "ships with Node.js — https://nodejs.org"),
     (
         "pnpm",
@@ -1387,6 +1470,7 @@ const INSTALL_HINTS: [(&str, &str); 17] = [
         "dart",
         "https://dart.dev/get-dart — or the Flutter SDK, which bundles it",
     ),
+    ("pixi", "https://pixi.sh/latest/installation/"),
 ];
 
 /// How to install the manager behind `adapter`, if there is a one-line answer.
@@ -1492,15 +1576,24 @@ mod tests {
         assert_eq!(
             opt_in,
             vec![
+                "cabal",
                 "cargo",
                 "cmake_build",
+                "cocos",
                 "dart",
+                "defold",
                 "dotnet_build",
+                "godot",
                 "gradle",
                 "maven",
                 "mix_build",
+                "sbt",
+                "stack",
                 "swift",
-                "vcpkg"
+                "unity",
+                "unreal",
+                "vcpkg",
+                "zig"
             ]
         );
     }
