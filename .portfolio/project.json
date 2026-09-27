@@ -21,7 +21,7 @@
 	],
 	"highlights": [
 		"Nothing is deleted until dev-prune has verified, read-only, that the lockfile can rebuild it. There is no flag that skips the check.",
-		"Knows 25 package managers rather than the obvious four: Composer, Bundler, Mix, CocoaPods and Terraform are as first-class as npm and pip.",
+		"Knows 26 adapters rather than the obvious four: Composer, Bundler, Mix, CocoaPods, Terraform and Python's __pycache__ are as first-class as npm and pip.",
 		"Restores what it removed: each prune records what it removed (a dry run records nothing), and devp restore --last-run puts back the whole of the most recent prune pass.",
 		"Sizes and clears the caches package managers keep outside project directories, and reports what docker, podman, nerdctl, finch and Apple's container are holding.",
 		"Ships as one program answering to both dev-prune and devp, on Windows, macOS and Linux, plus a windowless third build the Windows scheduled task runs.",
@@ -32,7 +32,7 @@
 		"Speaks 12 languages end to end, from the confirmation prompts to the size report."
 	],
 	"metrics": [
-		{ "label": "Package managers", "value": "25", "detail": "Each with a read-only rebuild proof; the nine build-tree adapters are opt-in." },
+		{ "label": "Adapters", "value": "26", "detail": "Each with a read-only rebuild proof; the nine build-tree adapters are opt-in." },
 		{ "label": "Cache managers", "value": "31", "detail": "Global caches sized and cleared by devp caches." },
 		{ "label": "Interface languages", "value": "12", "detail": "Prompts, reports and help, end to end." },
 		{ "label": "Editor skill targets", "value": "16", "detail": "devp skill --agent writes the right rules file for each editor." },
@@ -53,7 +53,7 @@
 			"type": "list",
 			"heading": "The parts that took the work",
 			"items": [
-				"A per-ecosystem probe for 25 package managers, each of which reports whether a lockfile is present and complete enough to rebuild.",
+				"A per-ecosystem probe for 26 adapters, each of which reports whether a lockfile is present and complete enough to rebuild.",
 				"An idle-day gate so an actively used project is skipped; --ignore-idle lifts that wait and nothing else.",
 				"An undo log that makes restore a first-class command rather than a manual reinstall.",
 				"Cache and container reporting, which covers the space that lives outside the repositories themselves.",

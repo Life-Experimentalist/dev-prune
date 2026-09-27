@@ -156,6 +156,10 @@ Some adapters sit outside it:
   structurally complete and no older than the manifest it came from (cocoapods, mix),
   or the manifest that `build/`, `target/` and `.build/` are entirely derived from is
   present and parses (gradle, maven, swift).
+- **pycache** runs no command either, for the same reason as gradle and maven: there is
+  no lockfile to check, only source to regenerate the cache from. The proof is a `.py`
+  file anywhere under the repository; with none, `__pycache__`, `.pytest_cache`,
+  `.mypy_cache` and `.ruff_cache` have nothing to be a cache of, and the prune refuses.
 
 The verification command per ecosystem, and the writing form it refuses to run for you:
 
@@ -179,6 +183,7 @@ The verification command per ecosystem, and the writing form it refuses to run f
 | gradle    | a Gradle manifest is present and readable                  | no      | *(none — nothing is executed)* |
 | maven     | `pom.xml` contains a `<project` element                     | no      | *(none — nothing is executed)* |
 | swift     | `Package.swift` declares a `Package(`                      | no      | *(none — nothing is executed)* |
+| pycache   | a `.py` file exists anywhere under the repository          | no      | *(none — nothing is executed)* |
 
 The rule behind that table: **verification never writes, and a lockfile that has drifted
 from its manifest is a refusal, not something to quietly fix.** A stale lockfile cannot
@@ -292,8 +297,8 @@ repository it was asked about or wander into dependency trees:
   configurable globally and per repository. `config set` accepts `1`–`32` and rejects
   anything outside that range; the clamp to the same range survives only as the
   backstop for a hand-edited config file.
-- **Never descends into** `node_modules`, `target`, `vendor`, `bower_components`, any
-  directory containing `pyvenv.cfg`, or any hidden directory.
+- **Never descends into** `node_modules`, `target`, `vendor`, `bower_components`,
+  `__pycache__`, any directory containing `pyvenv.cfg`, or any hidden directory.
 - **Never descends into a nested repository.** A directory containing its own `.git` is
   a submodule or a vendored checkout with its own history and its own idle state. It is
   pruned only when registered and pruned in its own right, never as part of its parent.

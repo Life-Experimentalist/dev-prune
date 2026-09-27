@@ -207,9 +207,10 @@ hand-rolled script never has:</p>
 </ul>
 
 <p>And it is not only Node: the same pass handles <code>.venv</code> for uv, Poetry, PDM,
-Pipenv and plain venv, <code>vendor/</code> for Go, Composer and Bundler,
-<code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods: twenty-five package
-managers in total, sixteen of them on by default.</p>
+Pipenv and plain venv, <code>__pycache__</code> for Python bytecode and its test
+tools' caches, <code>vendor/</code> for Go, Composer and Bundler,
+<code>deps/</code> for Mix, <code>Pods/</code> for CocoaPods: twenty-six adapters
+in total, seventeen of them on by default.</p>
 
 <h2>Which to use</h2>
 
@@ -227,7 +228,7 @@ comparison, including <code>cargo-sweep</code>, <code>rimraf</code> and the rest
       },
       {
         q: 'What is the difference between npkill and dev-prune?',
-        a: 'npkill scans for node_modules directories and lets you delete them interactively, sorted by size and last-modified date. dev-prune runs the package manager dry-run that matches each lockfile and deletes only when it exits zero, across twenty-five package managers rather than Node alone, and skips repositories that are not idle.',
+        a: 'npkill scans for node_modules directories and lets you delete them interactively, sorted by size and last-modified date. dev-prune runs the package manager dry-run that matches each lockfile and deletes only when it exits zero, across twenty-six adapters rather than Node alone, and skips repositories that are not idle.',
       },
       {
         q: 'Is there a way to delete node_modules automatically?',
@@ -715,8 +716,8 @@ you would rather be told "no" than be surprised.</strong> The differences that m
     package installed into <code>.venv</code> that <code>uv.lock</code> did not mention.
     Both would have been silently lost by any tool that deletes on a last-modified
     heuristic.</li>
-  <li><strong>Twenty-five package managers, not one.</strong> npm, pnpm, yarn, bun, Deno;
-    uv, Poetry, PDM, Pipenv, venv; Go, Composer, Bundler, Mix, CocoaPods, Terraform, all
+  <li><strong>Twenty-six adapters, not one.</strong> npm, pnpm, yarn, bun, Deno;
+    uv, Poetry, PDM, Pipenv, venv, pycache; Go, Composer, Bundler, Mix, CocoaPods, Terraform, all
     on by default. Cargo, Gradle, Maven, SwiftPM, Dart, .NET, <code>_build</code> for Mix,
     vcpkg and CMake ship disabled, because their output is a compile rather than a
     download and that is a different price.</li>
@@ -787,7 +788,7 @@ Elixir <code>deps/</code> are four more scans you will not run.</p>
 <p>Two tools cover the multi-ecosystem case. <a href="https://github.com/tbillington/kondo">kondo</a>
 keeps npkill's interactive shape: it recognises twenty-odd project types in one binary,
 shows what each costs, and deletes what you confirm. <a href="/">dev-prune</a> covers
-twenty-five package managers, but changes the shape instead: it is built to run without
+twenty-six adapters, but changes the shape instead: it is built to run without
 you, which is the next section.</p>
 
 <h2>"I want this to stop being a chore"</h2>

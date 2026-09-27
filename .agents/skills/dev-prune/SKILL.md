@@ -1,6 +1,6 @@
 ---
 name: dev-prune
-description: Use when asked to reclaim disk space, clean or prune dependency directories in any ecosystem (node_modules, .venv, target, vendor, Pods, _build, .terraform and the rest of its twenty-five package managers), restore project dependencies, size package manager caches, or diagnose the devp CLI. Covers the full dev-prune (devp) command surface, its safety rules, exit codes, and troubleshooting.
+description: Use when asked to reclaim disk space, clean or prune dependency directories in any ecosystem (node_modules, .venv, target, vendor, Pods, _build, .terraform, __pycache__ and the rest of its twenty-six adapters), restore project dependencies, size package manager caches, or diagnose the devp CLI. Covers the full dev-prune (devp) command surface, its safety rules, exit codes, and troubleshooting.
 ---
 
 # dev-prune AI Skill (`devp`)
@@ -327,6 +327,7 @@ over plain venv when `uv.lock` or `[tool.uv]` is present.
 | bun | `bun.lockb`, `bun.lock` | `node_modules` | `bun install --frozen-lockfile --dry-run --ignore-scripts` | `bun install --frozen-lockfile` |
 | uv | `uv.lock`, `[tool.uv]` | `.venv` | `uv lock --locked` | `uv sync` |
 | venv | `requirements.txt` + `pyvenv.cfg` | every dir holding `pyvenv.cfg` | `requirements.txt` lists ≥1 package and accounts for every installed package | `python -m venv .venv && pip install -r requirements.txt` |
+| pycache | `__pycache__` by name alone; `.pytest_cache`, `.mypy_cache`, `.ruff_cache` by their `CACHEDIR.TAG` | whichever of those it found | a `.py` file exists anywhere in the repository (rebuild-from-source proof) | none needed — Python, pytest, mypy or ruff regenerate it on their next run |
 | poetry | `poetry.lock`, `[tool.poetry]` | `.venv` | `poetry check --lock`, plus no installed package missing from the lockfile | `poetry install` |
 | pdm | `pdm.lock`, `[tool.pdm]` / `pdm.backend` | `.venv`, `__pypackages__` | `pdm lock --check` | `pdm install` |
 | pipenv | `Pipfile` | `.venv` (in-project installs only) | `pipenv verify` | `pipenv install --deploy` |

@@ -1135,8 +1135,8 @@ Notes you should rely on, not work around:
                 touched in a while and deletes what their package managers can
                 rebuild — <code>node_modules</code>, <code>.venv</code>,{" "}
                 <code>target</code>, <code>vendor</code> and the rest, across
-                twenty-five managers from npm and pip to Composer, Bundler,
-                Mix, CocoaPods and Terraform. Nothing is deleted until the
+                twenty-six adapters from npm and pip to Composer, Bundler,
+                Mix, CocoaPods, Terraform and Python's <code>__pycache__</code>. Nothing is deleted until the
                 package manager itself confirms a lockfile can restore it.
                 Verification is not a flag you can turn off.
               </p>
@@ -1835,7 +1835,7 @@ Notes you should rely on, not work around:
           <div className="container">
             <div className="section-header">
               <h2 className="section-title">
-                Twenty-five managers.{" "}
+                Twenty-six adapters.{" "}
                 <span className="gradient-text">
                   Any number per repository.
                 </span>
@@ -1884,8 +1884,8 @@ Notes you should rely on, not work around:
 
             <div className="info-card eco-contribute">
               <h3>
-                <Puzzle size={18} /> Twenty-six would be better than
-                twenty-five
+                <Puzzle size={18} /> Twenty-seven would be better than
+                twenty-six
               </h3>
               <p>
                 Adding a manager is deliberately small: implement one{" "}

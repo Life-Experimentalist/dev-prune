@@ -28,8 +28,8 @@ gigabytes hostage for a build you are not running.
 
 `dev-prune` finds those directories across every Git repository you register, and deletes
 them — but only after proving the exact command that puts them back would succeed. It
-knows twenty-five package managers, not just the obvious four: Composer, Bundler, Mix,
-CocoaPods and Terraform are as first-class as npm and pip. It is one Rust program,
+knows twenty-six adapters, not just the obvious four: Composer, Bundler, Mix, CocoaPods,
+Terraform and Python's `__pycache__` are as first-class as npm and pip. It is one Rust program,
 installs its own background schedule, and answers to two names you type — `dev-prune` and
 `devp` — alongside a third, windowless build, `devpw`, that exists only so the Windows
 scheduled task runs without flashing up a console.

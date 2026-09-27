@@ -174,7 +174,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   4. Pre-verifies required package manager binaries (`npm`, `pnpm`, `uv`, `cargo`, `go`, etc.).
   5. Calculates reclaimable disk space and launches interactive selection TUI (unless `-y` is passed).
   6. Enforces two-tier lockfile safety with configurable command timeout (`command_timeout_secs`).
-  7. Safely removes the directories each matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` and the rest — one set per package manager, twenty-five of them).
+  7. Safely removes the directories each matching adapter owns (`node_modules`, `.venv`, `vendor`, `Pods` and the rest — one set per adapter, twenty-six of them).
 
   **A targeted run confirms first.** `devp run <path>` prunes that one repository
   without registering it — and before deleting anything it lists every directory that
@@ -206,7 +206,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   `--except`/`--ignore-idle`, so "why did that repo not prune?" is answerable one flag
   at a time.
 
-  Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `poetry`, `pdm`,
+  Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `uv`, `venv`, `pycache`, `poetry`, `pdm`,
   `pipenv`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`, `terraform` —
   plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg` and `cmake_build`,
   which are opt-in (see below). An unrecognised name is an error

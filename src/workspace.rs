@@ -69,6 +69,7 @@ const SKIP_DIRS: &[&str] = &[
     "deps",
     "_build",
     ".build",
+    "__pycache__",
 ];
 
 /// A directory inside a repository that at least one package manager owns.
@@ -141,7 +142,11 @@ fn discover_with(
 }
 
 /// Whether the walk should descend into this entry.
-fn is_scannable(entry: &DirEntry) -> bool {
+///
+/// `pub(crate)` so [`crate::adapters::pycache`] can apply the same descent rules to its
+/// own internal walk instead of duplicating `SKIP_DIRS`, the hidden-directory rule, the
+/// `pyvenv.cfg` check and the nested-`.git` check.
+pub(crate) fn is_scannable(entry: &DirEntry) -> bool {
     // Symlinked directories report as symlinks with `follow_links(false)` and are never
     // descended, so only real directories need filtering. Files pass through untouched.
     if !entry.file_type().is_dir() {
@@ -371,6 +376,24 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         project(tmp.path(), ".github/actions/thing", &["package-lock.json"]);
         assert!(discover(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn never_descends_into_python_bytecode_caches() {
+        let tmp = TempDir::new().unwrap();
+        project(tmp.path(), ".", &["requirements.txt"]);
+        project(tmp.path(), ".venv", &["pyvenv.cfg"]);
+        // A vendored dependency cached under __pycache__ must not become a project.
+        project(
+            tmp.path(),
+            "pkg/__pycache__/some_dep",
+            &["requirements.txt"],
+        );
+
+        assert_eq!(
+            names(&discover(tmp.path())),
+            vec![(".".to_string(), vec!["venv"])]
+        );
     }
 
     #[test]

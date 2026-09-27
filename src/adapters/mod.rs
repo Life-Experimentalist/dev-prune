@@ -35,6 +35,7 @@ pub mod pdm;
 pub mod pipenv;
 pub mod pnpm;
 pub mod poetry;
+pub mod pycache;
 pub mod swift;
 pub mod terraform;
 pub mod uv;
@@ -236,6 +237,7 @@ pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
         Box::new(pdm::Pdm),
         Box::new(pipenv::Pipenv),
         Box::new(venv::Venv),
+        Box::new(pycache::Pycache),
         Box::new(cargo_adapter::Cargo),
         Box::new(go::Go),
         Box::new(composer::Composer),
@@ -341,7 +343,10 @@ pub fn is_adapter_name(name: &str) -> bool {
 /// the picker, which is the one place a user goes to find it.
 pub const ADAPTER_GROUPS: &[(&str, &[&str])] = &[
     ("JavaScript", &["npm", "pnpm", "yarn", "bun", "deno"]),
-    ("Python", &["uv", "poetry", "pdm", "pipenv", "venv"]),
+    (
+        "Python",
+        &["uv", "poetry", "pdm", "pipenv", "venv", "pycache"],
+    ),
     ("Rust", &["cargo"]),
     ("Go", &["go"]),
     ("JVM", &["gradle", "maven"]),
@@ -1307,7 +1312,7 @@ pub(crate) fn python_runtime_available(tag: &str) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-const NO_RESTORE_BINARY: [&str; 8] = [
+const NO_RESTORE_BINARY: [&str; 9] = [
     "venv",
     "gradle",
     "maven",
@@ -1316,6 +1321,7 @@ const NO_RESTORE_BINARY: [&str; 8] = [
     "vcpkg",
     "cmake_build",
     "dotnet_build",
+    "pycache",
 ];
 
 /// Adapters whose executable is not called what the adapter is called.

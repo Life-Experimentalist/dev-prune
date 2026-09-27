@@ -2,7 +2,7 @@
 
 > A Rust CLI that reclaims disk space from idle Git repositories by deleting dependency
 > and build directories — `node_modules`, `.venv`, `target`, `vendor` and whatever else
-> its twenty-five supported package managers own — but only after the project's own
+> its twenty-six supported adapters own — but only after the project's own
 > package manager confirms a lockfile can rebuild them. Apache-2.0,
 > no analytics and no diagnostics; the only network request is an opt-out release
 > check against GitHub. Windows, macOS, Linux.
@@ -557,9 +557,11 @@ directory names. Program messages themselves are English.
 
 ## Supported ecosystems
 
-Twenty-five adapters. npm, pnpm, yarn, bun (`node_modules`); deno (`node_modules`, and
+Twenty-six adapters. npm, pnpm, yarn, bun (`node_modules`); deno (`node_modules`, and
 `vendor/` when the config asked for one); uv, poetry, pdm, pipenv
-and pip/venv (`.venv`, `__pypackages__`, any directory holding `pyvenv.cfg`); go
+and pip/venv (`.venv`, `__pypackages__`, any directory holding `pyvenv.cfg`); pycache
+(`__pycache__` by name alone; `.pytest_cache`, `.mypy_cache`, `.ruff_cache` when tagged
+with a `CACHEDIR.TAG`); go
 (`vendor`); composer (`vendor`); bundler (`vendor/bundle`); cocoapods (`Pods`); mix
 (`deps`); terraform (`.terraform/providers`); and, opt-in, cargo (`target/`), gradle
 (`build/`, `.gradle/`), maven (`target/`), swift (`.build/`), dart (`.dart_tool/`),
@@ -614,7 +616,7 @@ manifest rebuilds nothing. cmake_build requires the `CMakeLists.txt` its build t
 to be readable and to actually declare a project. dotnet_build requires every project
 file in the directory to be readable and to actually declare a `<Project`.
 
-Any of the twenty-five can be switched off with `disabled_adapters`.
+Any of the twenty-six can be switched off with `disabled_adapters`.
 
 A repository may hold any number of these, at the root or up to `scan_depth` levels
 below it. Where several managers claim the same `node_modules`, the owner is chosen
