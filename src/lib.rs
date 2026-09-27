@@ -466,9 +466,32 @@ pub enum Commands {
         /// `agents-md`, `aider`, `copilot`, `gemini`, `junie`, `zed` — share a file with
         /// other tools, so dev-prune owns a marked block inside it and leaves every
         /// byte outside the markers as found. Claude Code needs no per-repo file:
-        /// plain `devp skill` installs its skill globally.
-        #[arg(long, value_enum, value_name = "EDITOR")]
+        /// plain `devp skill` installs its skill globally. Nothing below fits? Use
+        /// `--rules-file` instead of waiting on a new value to be added.
+        #[arg(
+            long,
+            value_enum,
+            value_name = "EDITOR",
+            conflicts_with_all = ["rules_file", "prompt"]
+        )]
         agent: Option<commands::skill::AgentEditor>,
+
+        /// Write the condensed rules into an exact path in the current repository, as
+        /// a marked block, for a coding agent `--agent` does not name — new, renamed,
+        /// or reading a file of its own under a different name.
+        #[arg(long, value_name = "PATH", conflicts_with_all = ["agent", "prompt"])]
+        rules_file: Option<std::path::PathBuf>,
+
+        /// Print one onboarding prompt on its own, with no header or fence, so it can
+        /// be piped straight into a clipboard tool or a file.
+        #[arg(long, value_enum, conflicts_with_all = ["agent", "rules_file"])]
+        prompt: Option<commands::skill::PromptKind>,
+
+        /// Send the prompt named by `--prompt` to the clipboard instead of only
+        /// printing it. Falls back to a pipe hint on stderr if no clipboard tool is
+        /// found on PATH; the prompt itself still reaches stdout either way.
+        #[arg(long, requires = "prompt")]
+        copy: bool,
     },
 
     /// Install whatever dev-prune integration is missing: alias, SKILL.md, Git hooks, scheduler.
@@ -1063,7 +1086,12 @@ pub fn run_cli() {
             install,
             channels,
         } => commands::update::run(offline, install, channels, cli.yes),
-        Commands::Skill { agent } => commands::skill::run(agent),
+        Commands::Skill {
+            agent,
+            rules_file,
+            prompt,
+            copy,
+        } => commands::skill::run(agent, rules_file, prompt, copy),
         Commands::Setup { status } => commands::setup::run(status),
         Commands::Doctor { path, fix } => {
             let path = path.map(|p| config::expand_tilde(&p));

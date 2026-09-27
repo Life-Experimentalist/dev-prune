@@ -1020,6 +1020,25 @@ Notes you should rely on, not work around:
   preview.
 - To undo the whole thing later: \`devp uninstall\`.`;
 
+  // Mirrors workspace_prompt() in src/commands/skill.rs — same wording `devp skill`
+  // prints, with a representative config-directory path standing in for the real one.
+  const skillWorkspacePrompt =
+    "Read the dev-prune AI skill at file://~/.config/dev-prune/SKILL.md. Then run " +
+    "`devp init --auto --dry-run`, tell me what it found, and run `devp init --auto` " +
+    "once I confirm it, to register every Git repository in my workspace.";
+
+  // Mirrors agent_prompt() in src/commands/skill.rs. Deliberately does not enumerate
+  // editors by name, for the same reason the Rust source doesn't: that list is exactly
+  // what goes stale.
+  const skillAgentPrompt =
+    "I have installed `dev-prune` on my machine. Read the skill at " +
+    "file://~/.config/dev-prune/SKILL.md. If you are Claude Code, it is already " +
+    "installed globally, from the export above. Any other coding agent should instead " +
+    "run `devp skill --agent <name>` in each repository — `devp skill --help` lists " +
+    "every `<name>`, `agents-md` covers anything that reads the shared `AGENTS.md` " +
+    "convention, and `devp skill --rules-file <path>` covers anything else, writing " +
+    "the same rules into whatever file you name.";
+
   const handleCopy = (key, text) => {
     // "Copied" only after the write actually lands — an insecure context or a
     // denied permission must not report success it never had.
@@ -2490,10 +2509,38 @@ Notes you should rely on, not work around:
                 </div>
                 <p className="muted">
                   Writes <code>SKILL.md</code> to the config directory and
-                  prints ready-to-paste onboarding prompts for Claude Code,
-                  Cursor, Windsurf, Copilot, Antigravity and anything else that
-                  reads a skill file.
+                  prints ready-to-paste onboarding prompts for whichever
+                  assistant you use. Add <code>--prompt workspace</code> or{" "}
+                  <code>--prompt agent</code> to print just one of them, bare,
+                  and <code>--copy</code> to send it straight to the
+                  clipboard instead of stdout.
                 </p>
+                <div className="ai-install-head" style={{ marginTop: "0.75rem" }}>
+                  <span className="ai-install-title">Workspace prompt</span>
+                  <CopyButton
+                    id="skill-prompt-workspace"
+                    text={skillWorkspacePrompt}
+                    copied={copiedKey}
+                    onCopy={handleCopy}
+                  />
+                </div>
+                <p className="muted" style={{ margin: "0.25rem 0 0.5rem" }}>
+                  Registers every repository already on this machine.
+                </p>
+                <pre className="ai-install-prompt">{skillWorkspacePrompt}</pre>
+                <div className="ai-install-head" style={{ marginTop: "0.75rem" }}>
+                  <span className="ai-install-title">Agent prompt</span>
+                  <CopyButton
+                    id="skill-prompt-agent"
+                    text={skillAgentPrompt}
+                    copied={copiedKey}
+                    onCopy={handleCopy}
+                  />
+                </div>
+                <p className="muted" style={{ margin: "0.25rem 0 0.5rem" }}>
+                  Onboards whatever coding agent is reading this.
+                </p>
+                <pre className="ai-install-prompt">{skillAgentPrompt}</pre>
               </div>
               <div className="info-card">
                 <h3>
@@ -2519,8 +2566,10 @@ Notes you should rely on, not work around:
                   marked block inside a file they already share. Aider is the one
                   that has to be told to read its{" "}
                   <code>CONVENTIONS.md</code> — the command says so after
-                  writing it. Run <code>devp skill --help</code> for the exact
-                  paths.
+                  writing it. This list is fixed on purpose: for anything else,{" "}
+                  <code>devp skill --rules-file &lt;path&gt;</code> writes the
+                  same marked block into any path you name. Run{" "}
+                  <code>devp skill --help</code> for the exact paths.
                 </p>
               </div>
               <div className="info-card">
@@ -2654,7 +2703,7 @@ Notes you should rely on, not work around:
                   <span className="cmd-prompt">$</span>
                   <code className="cmd-code">devp skill --agent cursor</code>
                   <CopyButton
-                    id="skill-agent"
+                    id="editors-skill-agent"
                     text="devp skill --agent cursor"
                     copied={copiedKey}
                     onCopy={handleCopy}
@@ -2663,7 +2712,7 @@ Notes you should rely on, not work around:
                 <p className="muted">
                   Writes the rules file that editor actually reads —{" "}
                   <code>.github/copilot-instructions.md</code>,{" "}
-                  <code>.cursor/rules/</code>, <code>CLAUDE.md</code>,{" "}
+                  <code>.cursor/rules/</code>, <code>AGENTS.md</code>,{" "}
                   <code>.junie/guidelines.md</code> and the rest — so an agent
                   working in the repository knows what dev-prune will and will
                   not delete before it suggests anything.

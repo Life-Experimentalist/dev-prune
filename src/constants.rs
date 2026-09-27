@@ -824,6 +824,22 @@ pub const COPILOT_INSTRUCTIONS_FILE: &str = ".github/copilot-instructions.md";
 pub const RULES_BLOCK_START: &str = "<!-- dev-prune:rules:start -->";
 pub const RULES_BLOCK_END: &str = "<!-- dev-prune:rules:end -->";
 
+/// Windows clipboard command that `devp skill --copy` shells out to. Also reachable
+/// from WSL, since `clip.exe` sits on PATH there too.
+pub const CLIPBOARD_COMMAND_WINDOWS: &str = "clip.exe";
+
+/// macOS clipboard command that `devp skill --copy` shells out to.
+pub const CLIPBOARD_COMMAND_MACOS: &str = "pbcopy";
+
+/// Linux clipboard commands `devp skill --copy` tries in order, before falling back to
+/// [`CLIPBOARD_COMMAND_WINDOWS`] for WSL. Each pairs the binary with the arguments that
+/// target the clipboard proper rather than the X11 primary-selection buffer.
+pub const CLIPBOARD_COMMANDS_LINUX: &[(&str, &[&str])] = &[
+    ("wl-copy", &[]),
+    ("xclip", &["-selection", "clipboard"]),
+    ("xsel", &["--clipboard", "--input"]),
+];
+
 /// The phrase Git uses when it refuses a working tree owned by another account.
 ///
 /// Matched against Git's own stderr rather than parsed: the message is twelve lines

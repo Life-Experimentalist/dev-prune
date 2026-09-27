@@ -3,7 +3,9 @@
 
 /// AI Agent Skill exporter & onboarding prompt generator.
 use anyhow::{Context, Result};
+use clap::ValueEnum;
 use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::config::Registry;
 use crate::output;
@@ -18,6 +20,11 @@ pub const EMBEDDED_RULES_MD: &str = include_str!("../../.agents/rules/dev-prune.
 ///
 /// Claude Code is deliberately absent: its skill installs globally (`devp skill`,
 /// `devp setup`), so there is nothing to write into individual repositories.
+///
+/// This list is frozen by design: a coding agent it does not name yet, one that has
+/// renamed its convention, or one that has been discontinued is not a reason to keep
+/// adding and removing variants here forever. `--rules-file <path>` writes the same
+/// rules into any path the user names, so nothing is blocked on this enum changing.
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 pub enum AgentEditor {
     /// `.cursor/rules/dev-prune.mdc`
@@ -109,26 +116,89 @@ impl AgentEditor {
     }
 }
 
-/// Run `devp skill` to export SKILL.md and display AI Agent onboarding prompts, or
-/// `devp skill --agent <editor>` to write per-repository rules for one editor.
-pub fn run(agent: Option<AgentEditor>) -> Result<()> {
+/// Which onboarding prompt `--prompt` prints on its own, with no header or fence — so
+/// it is pipeable straight into a clipboard tool or a file.
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+pub enum PromptKind {
+    /// Onboard Claude Code: read the skill, then scan and register the workspace.
+    Workspace,
+    /// Onboard any other coding agent, via `--agent` or `--rules-file`.
+    Agent,
+}
+
+impl PromptKind {
+    /// The exact value `--prompt` takes for this kind, so a hint that names the flag
+    /// cannot drift from what clap actually accepts.
+    fn flag_value(self) -> String {
+        self.to_possible_value()
+            .expect("PromptKind has no skipped variants")
+            .get_name()
+            .to_string()
+    }
+}
+
+/// The prompt that onboards Claude Code itself: read the skill, then scan and
+/// register the workspace. Dry-run first — an agent that skips straight to `--auto`
+/// would register directories the user never meant to hand it.
+fn workspace_prompt(skill_path: &str) -> String {
+    format!(
+        "Read the dev-prune AI skill at file://{skill_path}. Then run \
+         `devp init --auto --dry-run`, tell me what it found, and run `devp init --auto` \
+         once I confirm it, to register every Git repository in my workspace."
+    )
+}
+
+/// The prompt that onboards any other coding agent. Deliberately does not enumerate
+/// which ones by name — that list is exactly what goes stale.
+fn agent_prompt(skill_path: &str) -> String {
+    format!(
+        "I have installed `dev-prune` on my machine. Read the skill at file://{skill_path}. \
+         If you are Claude Code, it is already installed globally, from the export above. \
+         Any other coding agent should instead run `devp skill --agent <name>` in each \
+         repository — `devp skill --help` lists every `<name>`, `agents-md` covers anything \
+         that reads the shared `AGENTS.md` convention, and `devp skill --rules-file <path>` \
+         covers anything else, writing the same rules into whatever file you name."
+    )
+}
+
+/// Run `devp skill` to export SKILL.md and display AI Agent onboarding prompts,
+/// `devp skill --agent <editor>` to write per-repository rules for one editor,
+/// `devp skill --rules-file <path>` to write them into an exact path instead, or
+/// `devp skill --prompt <kind> [--copy]` to print one prompt on its own.
+pub fn run(
+    agent: Option<AgentEditor>,
+    rules_file: Option<PathBuf>,
+    prompt: Option<PromptKind>,
+    copy: bool,
+) -> Result<()> {
     if let Some(editor) = agent {
         return write_agent_rules(editor);
     }
-    output::print_header("dev-prune AI Agent Skill Integration");
+    if let Some(path) = rules_file {
+        return write_rules_to_path(&path);
+    }
+    if let Some(kind) = prompt {
+        let skill_path = output::clean_path(&skill_md_path()?);
+        let text = match kind {
+            PromptKind::Workspace => workspace_prompt(&skill_path),
+            PromptKind::Agent => agent_prompt(&skill_path),
+        };
+        if copy {
+            match copy_to_clipboard(&text) {
+                Ok(tool) => eprintln!("Copied to the clipboard, via {tool}."),
+                Err(()) => eprintln!(
+                    "No clipboard tool found on PATH — pipe it yourself: `devp skill \
+                     --prompt {} | <your clipboard command>`.",
+                    kind.flag_value()
+                ),
+            }
+        }
+        println!("{text}");
+        return Ok(());
+    }
 
-    // The export is the command's one job — claiming success over a swallowed write
-    // error would leave the user pointing an agent at a file that is not there.
-    let skill_path = {
-        let config_dir =
-            Registry::config_dir().context("could not resolve the config directory")?;
-        fs::create_dir_all(&config_dir)
-            .with_context(|| format!("could not create {}", output::clean_path(&config_dir)))?;
-        let target = config_dir.join("SKILL.md");
-        fs::write(&target, EMBEDDED_SKILL_MD)
-            .with_context(|| format!("could not write {}", output::clean_path(&target)))?;
-        output::clean_path(&target)
-    };
+    output::print_header("dev-prune AI Agent Skill Integration");
+    let skill_path = export_skill_md()?;
 
     output::print_success(&format!("Bundled SKILL.md exported to `{skill_path}`"));
 
@@ -160,21 +230,43 @@ pub fn run(agent: Option<AgentEditor>) -> Result<()> {
     println!();
     output::print_info("Prompt 1: Initial Workspace Discovery & Onboarding");
     println!("```markdown");
-    println!(
-        "Read the dev-prune AI skill at file://{skill_path} and run `devp init` to scan, register, and onboard all Git repositories in my workspace."
-    );
+    println!("{}", workspace_prompt(&skill_path));
+    println!("```");
+    println!();
+    output::print_info("Prompt 2: Onboard Any Other Coding Agent");
+    println!("```markdown");
+    println!("{}", agent_prompt(&skill_path));
     println!("```");
     println!();
     output::print_info(
-        "Prompt 2: Universal Skill Import (Antigravity, Claude Code, Cursor, Windsurf, Copilot, OpenClaw)",
+        "`devp skill --prompt workspace` or `--prompt agent` prints either one on its \
+         own; add `--copy` to send it straight to the clipboard.",
     );
-    println!("```markdown");
-    println!(
-        "I have installed `dev-prune` on my machine. Read the skill at file://{skill_path} and import it into your agent skills folder so you can autonomously maintain lockfiles and prune bloat directories."
-    );
-    println!("```");
 
     Ok(())
+}
+
+/// Where SKILL.md lives, without writing it — `--prompt` needs the path but must not
+/// have side effects of its own.
+fn skill_md_path() -> Result<PathBuf> {
+    Ok(Registry::config_dir()
+        .context("could not resolve the config directory")?
+        .join("SKILL.md"))
+}
+
+/// Writes SKILL.md into the config directory and returns its cleaned display path.
+///
+/// The export is the command's one job — claiming success over a swallowed write
+/// error would leave the user pointing an agent at a file that is not there.
+fn export_skill_md() -> Result<String> {
+    let target = skill_md_path()?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("could not create {}", output::clean_path(parent)))?;
+    }
+    fs::write(&target, EMBEDDED_SKILL_MD)
+        .with_context(|| format!("could not write {}", output::clean_path(&target)))?;
+    Ok(output::clean_path(&target))
 }
 
 /// Write the condensed rules into the current repository, in `editor`'s format.
@@ -217,6 +309,48 @@ fn write_agent_rules(editor: AgentEditor) -> Result<()> {
     Ok(())
 }
 
+/// Write the condensed rules into `path`, at an exact location rather than one of the
+/// editors [`AgentEditor`] already knows — the escape hatch for a coding agent this
+/// list does not name yet, one that renamed its convention, or one that has been
+/// discontinued, none of which should have to wait on a new dev-prune release.
+///
+/// Always a marked block: an arbitrary path is as likely to belong to the user as to
+/// dev-prune, so this makes the same safe assumption [`Style::MarkedBlock`] makes for
+/// every editor above that shares its file with other tools.
+fn write_rules_to_path(path: &Path) -> Result<()> {
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+    {
+        anyhow::bail!(
+            "`--rules-file` takes a path inside the repository — `{}` would write \
+             outside it.",
+            path.display()
+        );
+    }
+
+    let cwd = std::env::current_dir().context("could not read the current directory")?;
+    if !crate::scanner::is_git_repo(&cwd) {
+        anyhow::bail!(
+            "`--rules-file` writes rules into a repository, and the current directory \
+             is not one. Run it from the repository root."
+        );
+    }
+
+    let target = cwd.join(path);
+    let existing = fs::read_to_string(&target).unwrap_or_default();
+    let content = upsert_marked_block(&existing);
+    write_rules_file(&target, &content)?;
+
+    output::print_success(&format!("Rules written: {}", output::clean_path(&target)));
+    output::print_info(
+        "Commit the file if the whole team's agents should have it; it is inert data \
+         and safe to share.",
+    );
+    Ok(())
+}
+
 /// Replace dev-prune's marked block in `existing`, or append one — leaving every
 /// byte outside the markers exactly as found.
 fn upsert_marked_block(existing: &str) -> String {
@@ -244,13 +378,72 @@ fn upsert_marked_block(existing: &str) -> String {
     }
 }
 
-fn write_rules_file(target: &std::path::Path, content: &str) -> Result<()> {
+fn write_rules_file(target: &Path, content: &str) -> Result<()> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("could not create {}", output::clean_path(parent)))?;
     }
     fs::write(target, content)
         .with_context(|| format!("could not write {}", output::clean_path(target)))
+}
+
+/// The clipboard commands to try, in order, on this platform.
+fn clipboard_candidates() -> Vec<(&'static str, &'static [&'static str])> {
+    use crate::constants as c;
+    match std::env::consts::OS {
+        "windows" => vec![(c::CLIPBOARD_COMMAND_WINDOWS, [].as_slice())],
+        "macos" => vec![(c::CLIPBOARD_COMMAND_MACOS, [].as_slice())],
+        // Anything else is assumed Unix-like; clip.exe is the WSL fallback, tried last.
+        _ => c::CLIPBOARD_COMMANDS_LINUX
+            .iter()
+            .copied()
+            .chain(std::iter::once((
+                c::CLIPBOARD_COMMAND_WINDOWS,
+                [].as_slice(),
+            )))
+            .collect(),
+    }
+}
+
+/// Shells out to whatever clipboard tool the platform has, returning its name on
+/// success. `Err(())` means none was found on PATH — the caller still has `text` to
+/// print itself, so nothing is lost, only the copy.
+///
+/// A crate like `arboard` would do this without a subprocess, but dev-prune ships
+/// musl-static Linux binaries and its test suite runs on headless CI runners with no
+/// X11 or Wayland session — a native clipboard dependency risks breaking both for a
+/// feature that is not essential. Shelling out costs nothing when the tool is missing:
+/// the attempt just fails and the next candidate is tried.
+fn copy_to_clipboard(text: &str) -> Result<&'static str, ()> {
+    for (cmd, args) in clipboard_candidates() {
+        if try_clipboard_command(cmd, args, text) {
+            return Ok(cmd);
+        }
+    }
+    Err(())
+}
+
+fn try_clipboard_command(cmd: &str, args: &[&str], text: &str) -> bool {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let Ok(mut child) = Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let Some(mut stdin) = child.stdin.take() else {
+        return false;
+    };
+    if stdin.write_all(text.as_bytes()).is_err() {
+        return false;
+    }
+    drop(stdin);
+    child.wait().map(|status| status.success()).unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -304,5 +497,29 @@ mod tests {
         assert_eq!(once, twice, "a second write duplicated the block");
         assert!(once.starts_with(theirs));
         assert_eq!(once.matches(crate::constants::RULES_BLOCK_START).count(), 1);
+    }
+
+    #[test]
+    fn every_agent_value_is_named_in_the_ide_integration_doc() {
+        // Keeps the enum and the doc table from drifting apart. It cannot and does not
+        // claim to verify the paths against each vendor's own docs — that part is a
+        // manual policy, described in docs/IDE_INTEGRATION.md itself.
+        let doc = include_str!("../../docs/IDE_INTEGRATION.md");
+        for editor in AgentEditor::value_variants() {
+            let name = editor.to_possible_value().expect("no skipped variants");
+            let needle = format!("`{}`", name.get_name());
+            assert!(
+                doc.contains(&needle),
+                "docs/IDE_INTEGRATION.md's table does not mention `--agent {}`",
+                name.get_name()
+            );
+        }
+    }
+
+    #[test]
+    fn clipboard_has_a_command_to_try_on_every_platform() {
+        let candidates = clipboard_candidates();
+        assert!(!candidates.is_empty(), "no clipboard command to try");
+        assert!(candidates.iter().all(|(cmd, _)| !cmd.is_empty()));
     }
 }

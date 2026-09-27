@@ -220,6 +220,11 @@ The first ten own their file outright. The last six share one with other tools, 
 dev-prune writes only inside its `<!-- dev-prune:rules:start -->`…`<!-- dev-prune:rules:end -->`
 markers — a re-run replaces that block and leaves every byte outside it as found.
 
+Not on this list? `devp skill --rules-file <path>` writes the same marked block into
+any path inside the repository, for an editor this table does not name yet, one that
+renamed the file it reads, or one that reads a file of its own by a different
+convention entirely. It needs no code change and no new release.
+
 Aider is the exception to the rule that writing the file is enough. It reads
 `CONVENTIONS.md` only when told to, so `devp skill --agent aider` prints the wiring
 the file still needs: `read: CONVENTIONS.md` in `.aider.conf.yml`, or
@@ -230,7 +235,14 @@ Claude Code is deliberately absent from that table: its skill installs globally
 (`devp skill`, `devp setup`), so there is nothing to write per repository. It has a
 section of its own [below](#claude-code-the-plugin-marketplace).
 
-**Contributing a new editor** is four small changes in
+**This table is frozen by design.** `AgentEditor` does not grow every time an editor
+ships, renames what its agent reads, or gets discontinued — chasing that treadmill
+forever is exactly what `--rules-file` exists to avoid. For any editor not listed
+above, point it at `devp skill --rules-file <path>` and it is onboarded today, with no
+code change and no wait for a release.
+
+A dedicated `--agent` value is still worth adding when an editor is popular enough
+that naming it directly is worth the ongoing upkeep. That is four small changes in
 [`src/commands/skill.rs`](../src/commands/skill.rs) and
 [`src/constants.rs`](../src/constants.rs):
 
@@ -245,10 +257,24 @@ section of its own [below](#claude-code-the-plugin-marketplace).
    markers.
 4. Mention the new value in `SKILL_LONG` in `src/help.rs` and in
    [`docs/CLI_REFERENCE.md`](CLI_REFERENCE.md) §13 — plus `site/public/llms.txt` and
-   the skill's own `SKILL.md`, which restate the list.
+   the skill's own `SKILL.md`, which restate the list. A unit test in
+   `src/commands/skill.rs` (`every_agent_value_is_named_in_the_ide_integration_doc`)
+   fails `cargo test` if a variant's name is missing from this page, so a forgotten row
+   here is caught before it ships — it does not check the other three files, or that
+   the row is still true.
 
 If the editor instead reads the cross-tool `AGENTS.md` convention, no code is needed —
 it is already covered by `--agent agents-md`.
+
+### Keeping this table accurate
+
+The unit test above only catches drift between the `AgentEditor` enum and this page,
+not between this page and reality. Whether `cursor` still reads
+`.cursor/rules/dev-prune.mdc`, for instance, is not something dev-prune can check
+automatically: nothing here polls Cursor's changelog. That verification is manual and
+honest about it, not a scheduled job pretending to cover it. If a row on this page
+turns out to be stale, that is a bug: open one, or send a PR correcting the row and
+the constant it comes from.
 
 ---
 

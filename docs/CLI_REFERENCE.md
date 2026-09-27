@@ -1549,8 +1549,11 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 13. `devp skill [--agent <EDITOR>]`
-- **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory, installs it into any detected on-disk agent skills directory (`~/.claude/skills/dev-prune/` — the same install `devp setup` performs automatically), and displays ready-to-copy AI Agent onboarding prompts for assistants without a skills directory (Gemini Antigravity, Cursor, Windsurf, Copilot, OpenClaw).
+### 13. `devp skill [--agent <EDITOR>] [--prompt <KIND>] [--copy] [--rules-file <path>]`
+- **Description**: Exports [`SKILL.md`](../.agents/skills/dev-prune/SKILL.md) into the config directory, installs it into any detected on-disk agent skills directory (`~/.claude/skills/dev-prune/` — the same install `devp setup` performs automatically), and displays ready-to-copy AI Agent onboarding prompts for whichever assistant you use.
+- **`--prompt <workspace|agent>`**: prints just that one onboarding prompt on its own, with no header, checkmark or fence, so it can be piped or scripted instead of read from a decorated block. Writes nothing: no `SKILL.md` export, no skill-directory install. Conflicts with `--agent` and `--rules-file`.
+- **`--copy`**: sends the `--prompt` output straight to the clipboard (via the platform's clipboard tool, e.g. `clip.exe` on Windows, `pbcopy` on macOS, `wl-copy`/`xclip` on Linux) instead of printing it to stdout; a line on stderr says which tool was used. Requires `--prompt`; using it alone is a usage error.
+- **`--rules-file <path>`**: upserts the same marked block the six shared-file `--agent` targets use into any path you name inside the current repository, for an editor not covered by `--agent`, one that renamed the file it reads, or a future tool that doesn't exist yet. `path` must be relative and stay inside the repository (no absolute paths, no `..` segments) and the current directory must be a Git repository root, the same rule `.git`-boundary safety applies everywhere else in dev-prune. Conflicts with `--agent`.
 - **`--agent <EDITOR>`**: instead writes per-repository rules into the current repository (it must be a Git repository root), in the file that editor's agent actually reads:
 
   | Editor | File written |
@@ -1572,12 +1575,15 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   | `aider` | `CONVENTIONS.md` — as a marked block. Aider is the one target that does not read its file by finding it: add `read: CONVENTIONS.md` to `.aider.conf.yml`, or start it with `aider --read CONVENTIONS.md`. Writing the file prints that instruction |
   | `agents-md` | `AGENTS.md` — as a marked block; the cross-tool convention Codex, Jules, Amp, OpenCode and others read |
 
-  The six shared files (`agents-md`, `aider`, `copilot`, `gemini`, `junie`, `zed`) are edited inside dev-prune's `<!-- dev-prune:rules:start -->`…`<!-- dev-prune:rules:end -->` markers only: a re-run replaces the block, and every byte outside the markers is left exactly as found. The rules file is inert data and safe to commit if the whole team's agents should have it. Claude Code is deliberately not in the list — its skill installs globally, so there is nothing to write per repository.
+  The six shared files (`agents-md`, `aider`, `copilot`, `gemini`, `junie`, `zed`) are edited inside dev-prune's `<!-- dev-prune:rules:start -->`…`<!-- dev-prune:rules:end -->` markers only: a re-run replaces the block, and every byte outside the markers is left exactly as found. The rules file is inert data and safe to commit if the whole team's agents should have it. Claude Code is deliberately not in the list — its skill installs globally, so there is nothing to write per repository. This table is frozen on purpose: see [`docs/IDE_INTEGRATION.md`](IDE_INTEGRATION.md) for why, and use `--rules-file` for anything not listed.
 - **Examples**:
   ```bash
   devp skill
   devp skill --agent cursor
   devp skill --agent agents-md
+  devp skill --prompt agent
+  devp skill --prompt agent --copy
+  devp skill --rules-file .windsurfrules
   ```
 
 ---

@@ -712,6 +712,147 @@ fn skill_agent_with_an_unknown_editor_is_a_usage_error() {
 }
 
 // ---------------------------------------------------------------------------
+// skill --prompt / --copy / --rules-file
+// ---------------------------------------------------------------------------
+
+#[test]
+fn skill_prompt_workspace_is_bare_and_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let out = devp(&config)
+        .args(["skill", "--prompt", "workspace"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains("devp init --auto"), "{stdout}");
+    // No header, no checkmark, no fence: just the prompt text, fit to pipe or redirect.
+    assert!(!stdout.contains("Onboarding Prompts"), "{stdout}");
+    assert!(!stdout.contains("```"), "{stdout}");
+    assert!(!stdout.contains('\u{2713}'), "{stdout}");
+    // `--prompt` only resolves where SKILL.md would live; it never exports it.
+    assert!(!config.join("SKILL.md").exists());
+}
+
+#[test]
+fn skill_prompt_agent_is_bare_and_writes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let out = devp(&config)
+        .args(["skill", "--prompt", "agent"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains("--rules-file"), "{stdout}");
+    assert!(!stdout.contains("```"), "{stdout}");
+    assert!(!config.join("SKILL.md").exists());
+}
+
+#[test]
+fn skill_prompt_and_agent_together_is_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let out = devp(&config)
+        .args(["skill", "--prompt", "agent", "--agent", "cursor"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn skill_copy_without_prompt_is_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let out = devp(&config).args(["skill", "--copy"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn skill_rules_file_and_agent_together_is_a_usage_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let out = devp(&config)
+        .args([
+            "skill",
+            "--rules-file",
+            ".windsurfrules",
+            "--agent",
+            "cursor",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn skill_rules_file_writes_a_marked_block_and_is_idempotent() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+
+    let run = || {
+        devp(&config)
+            .args(["skill", "--rules-file", ".windsurfrules"])
+            .current_dir(&repo)
+            .output()
+            .unwrap()
+    };
+    assert!(run().status.success());
+    let first = fs::read_to_string(repo.join(".windsurfrules")).unwrap();
+    assert!(first.contains("<!-- dev-prune:rules:start -->"), "{first}");
+    assert!(first.contains("devp run --dry-run"), "{first}");
+
+    // A second run replaces the block instead of stacking another copy.
+    assert!(run().status.success());
+    let second = fs::read_to_string(repo.join(".windsurfrules")).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(second.matches("<!-- dev-prune:rules:start -->").count(), 1);
+}
+
+#[test]
+fn skill_rules_file_outside_a_repository_is_an_error() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let not_a_repo = tmp.path().join("plain");
+    fs::create_dir_all(&not_a_repo).unwrap();
+
+    let out = devp(&config)
+        .args(["skill", "--rules-file", ".windsurfrules"])
+        .current_dir(&not_a_repo)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(!not_a_repo.join(".windsurfrules").exists());
+}
+
+#[test]
+fn skill_rules_file_cannot_escape_the_repository() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("repo");
+    git_repo(&repo);
+
+    let traversal = devp(&config)
+        .args(["skill", "--rules-file", "../escape.md"])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(!traversal.status.success());
+    assert!(!tmp.path().join("escape.md").exists());
+
+    let outside = tmp.path().join("outside.md");
+    let absolute = devp(&config)
+        .args(["skill", "--rules-file", outside.to_str().unwrap()])
+        .current_dir(&repo)
+        .output()
+        .unwrap();
+    assert!(!absolute.status.success());
+    assert!(!outside.exists());
+}
+
+// ---------------------------------------------------------------------------
 // auto_config and doctor --fix on repo configs
 // ---------------------------------------------------------------------------
 

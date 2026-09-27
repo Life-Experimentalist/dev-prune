@@ -742,8 +742,9 @@ Teach your AI assistant this tool. Exports SKILL.md — the full agent-facing ma
 every command, the JSON contracts, the safety invariants, the troubleshooting tree — \
 into the config directory, installs it into any detected agent skills directory \
 (`~/.claude/skills/dev-prune/`, the same install `devp setup` performs), and prints \
-ready-to-copy onboarding prompts for assistants without one (Gemini Antigravity, \
-Cursor, Windsurf, Copilot, OpenClaw).
+ready-to-copy onboarding prompts for whichever assistant you use. `--prompt <workspace|agent>` \
+prints just one of those prompts on its own, bare, for scripting or piping; add \
+`--copy` to send it straight to the clipboard instead of stdout.
 
 `--agent <EDITOR>` instead writes per-repository rules into the current repository, in \
 the file that editor's agent reads. Ten editors get a file of their own — cursor, \
@@ -755,13 +756,20 @@ share a file with other tools, so dev-prune owns a marked block inside it: agent
 editor does not read by finding it — writing it prints the `read: CONVENTIONS.md` line \
 that makes Aider load it). Every byte outside the markers is left as found. \
 `devp skill --help` lists each value with its exact path. Claude Code needs no \
-per-repository file — its skill installs globally.";
+per-repository file — its skill installs globally. This list is fixed on purpose: for \
+any other, renamed, or future agent, `--rules-file <path>` upserts the same marked \
+block into a path you name, so onboarding a new tool never waits on a dev-prune release.";
 
 pub const SKILL_EXAMPLES: &str = "\
 EXAMPLES:
   devp skill                      Export SKILL.md, print onboarding prompts
   devp skill --agent cursor       Write .cursor/rules/dev-prune.mdc here
-  devp skill --agent agents-md    Upsert the marked block in AGENTS.md";
+  devp skill --agent agents-md    Upsert the marked block in AGENTS.md
+  devp skill --prompt agent       Print just the onboarding prompt, bare, to stdout
+  devp skill --prompt agent --copy
+                                  Copy that prompt to the clipboard instead
+  devp skill --rules-file .windsurfrules
+                                  Upsert the marked block into any path you name";
 
 pub const SETUP_LONG: &str = "\
 Install whatever integration is missing and leave the rest alone: the `devp` alias, \

@@ -420,9 +420,15 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   `devp config recommended [--with-cautious]` applies the recommended tier in one
   non-interactive command
 - `devp setup [--status]` — install any missing integration; `--status` only reports
-- `devp skill [--agent <editor>]` — export `SKILL.md` and install it into a detected
-  agent skills directory (`~/.claude/skills/dev-prune/`); prints onboarding prompts for
-  agents without one. `--agent` writes per-repository rules for one editor instead.
+- `devp skill [--agent <editor>] [--prompt <workspace|agent>] [--copy] [--rules-file <path>]`
+  — export `SKILL.md` and install it into a detected agent skills directory
+  (`~/.claude/skills/dev-prune/`); prints onboarding prompts for whichever assistant you
+  use. `--prompt` prints just one of those prompts, bare, with no header or fence, for
+  scripting or piping; add `--copy` to send it to the clipboard instead of stdout.
+  `--agent` writes per-repository rules for one editor instead. This list is fixed on
+  purpose — `--rules-file <path>` upserts the same marked block into any path you name,
+  for an editor not listed here, one that renamed the file it reads, or one that does not
+  exist yet, with no code change and no release wait.
   Ten write a file of their own: cursor (`.cursor/rules/dev-prune.mdc`), windsurf
   (`.windsurf/rules/`), antigravity (`.agent/rules/`), cline (`.clinerules/`), roo
   (`.roo/rules/`), kilocode (`.kilocode/rules/`), continue (`.continue/rules/`),
