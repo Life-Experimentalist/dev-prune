@@ -337,6 +337,10 @@ pub enum Commands {
         /// Write the JSON document to a file. Bare, it goes to your documents folder.
         #[arg(long, value_name = "PATH", num_args = 0..=1)]
         export: Option<Option<std::path::PathBuf>>,
+
+        /// Show high score records (Gold, Silver, Bronze for single repository cleanups and total passes).
+        #[arg(long, conflicts_with_all = ["pass", "export"])]
+        scores: bool,
     },
 
     /// Show lifetime space reclaimed, recent prune passes, and the biggest repositories.
@@ -828,6 +832,12 @@ fn normalize_args() -> Vec<String> {
         normalized.insert(1, "config".to_string());
     }
 
+    // Map `devp scores [ARGS...]` -> `devp history --scores [ARGS...]`
+    if normalized[1] == "scores" {
+        normalized[1] = "history".to_string();
+        normalized.insert(2, "--scores".to_string());
+    }
+
     // Map `devp status [PATH] daemon` -> `devp config daemon [PATH] status`
     // Map `devp status [PATH] hook`   -> `devp config hook [PATH] status`
     //
@@ -896,6 +906,21 @@ pub fn run_cli() {
     restore_sigpipe();
 
     let args = normalize_args();
+
+    // The scheduler's preferred registration points at devpw.exe, the GUI-subsystem
+    // twin, which never gets a console at all. But the fallback registration, written
+    // when the twin is missing beside the binary, names this console-subsystem exe,
+    // and Windows has already opened a window for it by the time this line runs. All
+    // FreeConsole can do is close that window again, shortening the flash rather than
+    // preventing it; it costs nothing, because Task Scheduler discards console output
+    // anyway. Detaching from stdout is safe for the same reason.
+    #[cfg(windows)]
+    if args.iter().any(|a| a == "--daemon") {
+        unsafe {
+            windows_sys::Win32::System::Console::FreeConsole();
+        }
+    }
+
     if auto_setup_allowed(&args) {
         setup::auto_setup_if_due();
     }
@@ -975,12 +1000,14 @@ pub fn run_cli() {
             all,
             json,
             export,
+            scores,
         } => commands::history::run(&commands::history::HistoryArgs {
             pass,
             limit,
             all,
             json,
             export,
+            scores,
         }),
         Commands::Stats { json } => commands::stats::run(json),
         Commands::Completions { shell } => commands::completions::run(shell),

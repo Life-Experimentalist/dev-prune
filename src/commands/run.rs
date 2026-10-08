@@ -336,7 +336,7 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
             PruneStatus::ConfigError(e) => {
                 output::print_error(&format!(
                     "{clean} skipped — its .devprune.json could not be read:\n    {}\n    \
-                     Fix it, or run `devp config {clean} --update` to reset it.",
+                     Fix it, or run `devp config project {clean} --update` to reset it.",
                     e.trim()
                 ));
             }
@@ -521,6 +521,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     }
 
     let mut registry = Registry::load()?;
+
+    // Auto-heal moved repositories (e.g. moved to Archive) and purge dead ephemeral AI worktrees.
+    let healed = registry.heal_dead_and_moved_repositories();
+    if healed > 0 {
+        let _ = registry.save();
+    }
 
     // A repository `git init` created fires no Git hook and so never registered itself.
     // Picking it up here is what keeps `devp run` from reporting "No repositories
@@ -774,6 +780,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         if blocked.is_empty() && left_alone.is_empty() && missing.is_empty() && orphaned.is_empty()
         {
             output::print_info(i18n::t("run.nothing"));
+            crate::commands::update::maybe_auto_update(&registry);
             return Ok(());
         }
         output::print_info(i18n::t("run.nothing.bloat"));
@@ -781,6 +788,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         report_left_alone(&left_alone);
         report_missing(&missing);
         report_orphaned(&orphaned);
+        crate::commands::update::maybe_auto_update(&registry);
         return fail_if_blocked(&blocked);
     }
 
@@ -1001,7 +1009,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                             e.trim()
                         ));
                         output::print_info(&format!(
-                            "  Fix command:       devp config {clean_p} --update"
+                            "  Fix command:       devp config project {clean_p} --update"
                         ));
                     }
                 }
@@ -1070,6 +1078,11 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         ],
     ));
 
+    // After the pass, never before it: an upgrade mid-run would swap the binary out
+    // from under the work the user actually asked for. Running it before the error bail
+    // ensures workspace errors do not prevent the tool itself from receiving bug fixes.
+    crate::commands::update::maybe_auto_update(&registry);
+
     if error_count > 0 {
         output::print_warning(&i18n::tf(
             "run.not_pruned",
@@ -1095,10 +1108,6 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         // Exit non-zero so a scheduled or scripted run surfaces the failure.
         anyhow::bail!("{error_count} repositories could not be pruned.");
     }
-
-    // After the pass, never before it: an upgrade mid-run would swap the binary out
-    // from under the work the user actually asked for.
-    crate::commands::update::maybe_auto_update(&registry);
 
     Ok(())
 }
@@ -1241,7 +1250,7 @@ fn report_blocked(blocked: &[PruneResult]) {
                     e.trim()
                 ));
                 output::print_info(&format!(
-                    "  Fix command:       devp config {clean_p} --update"
+                    "  Fix command:       devp config project {clean_p} --update"
                 ));
             }
             PruneStatus::LockfileError(e) => report_lockfile_failure(result, e),

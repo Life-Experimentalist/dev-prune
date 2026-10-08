@@ -415,7 +415,16 @@ fn install_directly(
     // overwriting a shim breaks the shim manager, and writing into `/nix/store` or
     // `/usr/bin` desyncs a store this tool cannot correct. Its copy is left alone too.
     let replace_exe_dir = primary != exe && exe.is_file() && !manager_owns_exe_dir(channel);
-    for path in companion_copies(primary, managed.is_some(), exe, replace_exe_dir) {
+    let mut also = companion_copies(primary, managed.is_some(), exe, replace_exe_dir);
+    let mut skip = also.clone();
+    skip.push(primary.to_path_buf());
+    let cargo_bin = cargo_bin_dir(managed);
+    let cargo_copies = cargo_bin
+        .as_deref()
+        .map(|bin| cargo_channel_copies(bin, latest, &skip))
+        .unwrap_or_default();
+    also.extend(cargo_copies.iter().cloned());
+    for path in also {
         if let Err(e) = install_bytes_at(&bytes, &path) {
             output::print_warning(&format!(
                 "The managed copy is now v{latest}, but {} could not be replaced ({e:#}). Until it \
@@ -438,7 +447,24 @@ fn install_directly(
         if replace_exe_dir && let Some(dir) = exe.parent() {
             dirs.push(dir);
         }
+        // Only when its console copies were just moved forward: a cargo directory whose
+        // copies were skipped as already current or newer gets no twin from an older
+        // release either.
+        if !cargo_copies.is_empty()
+            && let Some(dir) = cargo_bin.as_deref()
+        {
+            dirs.push(dir);
+        }
         reconcile_windowless_twins(latest, &dirs);
+    }
+
+    if !cargo_copies.is_empty()
+        && let Some(resync) = Channel::Cargo.upgrade_command()
+    {
+        output::print_info(&format!(
+            "The cargo-installed copies were replaced too. Cargo's own record still lists \
+             the version it installed; `{resync}` brings that record forward."
+        ));
     }
 
     // Still worth running for the copy `get_exe_path` resolves when that is neither
@@ -511,6 +537,60 @@ fn companion_copies(
         }
     }
     also
+}
+
+/// Cargo's `bin` directory, when the copies there are cargo's own.
+///
+/// `CARGO_HOME` first, as cargo itself resolves it. The channel check matters for a Rust
+/// toolchain installed through Scoop, whose `.cargo` sits inside Scoop's tree: that is
+/// Scoop's directory to rewrite, not this one's.
+fn cargo_bin_dir(managed: Option<&Path>) -> Option<PathBuf> {
+    let home = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".cargo")))?;
+    let bin = home.join("bin");
+    let probe = bin.join(if cfg!(windows) {
+        "dev-prune.exe"
+    } else {
+        "dev-prune"
+    });
+    (Channel::detect_at(&probe, managed) == Channel::Cargo).then_some(bin)
+}
+
+/// The `dev-prune` and `devp` files in cargo's `bin` directory that release `latest`
+/// should replace.
+///
+/// The scheduler runs the managed copy, so an unattended update has `exe == primary` and
+/// [`companion_copies`] never looks past the managed directory. The copies `cargo
+/// binstall` put on `PATH` stayed on whatever release installed them, and the `devp` the
+/// user typed kept answering with old code long after every scheduled pass had moved on.
+/// Cargo has no package directory of its own to desync, only a version record, which the
+/// note printed after the install names the command for.
+///
+/// Only files that exist, never one already in `skip`, and never one whose build stamp is
+/// already `latest` or newer: a `cargo install --path .` development build lives here
+/// too, and replacing it with an older release would be a downgrade nobody asked for. A
+/// copy with no readable stamp predates stamping and is behind by definition.
+fn cargo_channel_copies(cargo_bin: &Path, latest: &str, skip: &[PathBuf]) -> Vec<PathBuf> {
+    let names: [&str; 2] = if cfg!(windows) {
+        ["dev-prune.exe", "devp.exe"]
+    } else {
+        ["dev-prune", "devp"]
+    };
+    names
+        .iter()
+        .map(|name| cargo_bin.join(name))
+        .filter(|path| path.is_file() && !skip.contains(path))
+        .filter(|path| {
+            let stamped = fs::read(path)
+                .ok()
+                .and_then(|b| crate::commands::trust::version_from_stamp(&b));
+            !stamped
+                .as_deref()
+                .and_then(|v| compare_versions(v, latest))
+                .is_some_and(|o| o != Ordering::Less)
+        })
+        .collect()
 }
 
 /// Name the channel's own upgrade command after a direct install, for the one thing the
@@ -1339,6 +1419,59 @@ mod tests {
             companion_copies(&primary, false, &primary, false),
             vec![dir.path().join(prune)]
         );
+    }
+
+    fn stamped(version: &str) -> Vec<u8> {
+        format!("{}{version}/end", constants::VERSION_STAMP_MARK).into_bytes()
+    }
+
+    #[test]
+    fn an_update_run_by_the_managed_copy_still_reaches_the_cargo_copies() {
+        // The scheduler runs the managed copy, so exe == primary and companion_copies
+        // stops at the managed directory. The cargo pair on PATH must not be left on
+        // the release that installed it.
+        let [prune, devp] = bin_names();
+        let managed_dir = tempfile::tempdir().unwrap();
+        let cargo_bin = tempfile::tempdir().unwrap();
+        let managed = managed_dir.path().join(prune);
+        std::fs::write(&managed, stamped("1.0.0")).unwrap();
+        std::fs::write(cargo_bin.path().join(prune), stamped("1.0.0")).unwrap();
+        std::fs::write(cargo_bin.path().join(devp), b"built before stamping").unwrap();
+
+        let also = companion_copies(&managed, true, &managed, false);
+        assert!(!also.iter().any(|p| p.starts_with(cargo_bin.path())));
+
+        let mut skip = also.clone();
+        skip.push(managed.clone());
+        let cargo = cargo_channel_copies(cargo_bin.path(), "1.1.0", &skip);
+        assert_eq!(
+            cargo,
+            vec![cargo_bin.path().join(prune), cargo_bin.path().join(devp)]
+        );
+    }
+
+    #[test]
+    fn a_cargo_copy_already_current_or_newer_is_not_downgraded() {
+        // `cargo install --path .` leaves a development build here, usually ahead of
+        // the latest release.
+        let [prune, devp] = bin_names();
+        let cargo_bin = tempfile::tempdir().unwrap();
+        std::fs::write(cargo_bin.path().join(prune), stamped("1.2.0")).unwrap();
+        std::fs::write(cargo_bin.path().join(devp), stamped("1.1.0")).unwrap();
+        assert!(cargo_channel_copies(cargo_bin.path(), "1.1.0", &[]).is_empty());
+    }
+
+    #[test]
+    fn a_cargo_copy_already_being_replaced_is_not_listed_twice() {
+        // Typed from ~/.cargo/bin, the running copy's directory is the cargo one and
+        // companion_copies has both files already.
+        let [prune, devp] = bin_names();
+        let cargo_bin = tempfile::tempdir().unwrap();
+        let skip = vec![cargo_bin.path().join(prune), cargo_bin.path().join(devp)];
+        for path in &skip {
+            std::fs::write(path, stamped("1.0.0")).unwrap();
+        }
+        assert!(cargo_channel_copies(cargo_bin.path(), "1.1.0", &skip).is_empty());
     }
 
     #[test]

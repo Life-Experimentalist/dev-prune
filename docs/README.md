@@ -67,7 +67,7 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 
 ### 📊 Market Analysis & Positioning
 - **[Market Analysis & Competitive Matrix](MARKET_ANALYSIS.md)**
-  Detailed comparison of `dev-prune` against existing developer tools (`kondo`, `npkill`, `cargo-clean-all`, `pyclean`, `git clean`, `dust`/`ncdu`, `BleachBit`), a full divergence table against `kondo` — the closest neighbour, and the better tool for a supervised sweep — and a breakdown of Unique Selling Propositions (USPs).
+  Detailed comparison of `dev-prune` against existing developer tools (`kondo`, `npkill`, `cargo-clean-all`, `pyclean`, `git clean`, `dust`/`ncdu`, `BleachBit`), a full divergence table against `kondo` (the closest neighbour), and a breakdown of Unique Selling Propositions (USPs).
 - **[Roadmap](ROADMAP.md)**
   Everything that is not built yet, grouped by *why* it is not — *in flight*, *next*, *standing orders*, *on request*, *waiting on a shape*, and *not planned* split by the reason it was declined. So "we haven't done that", "ask and we will" and "we decided against that" never read the same. Distribution channels, adapter candidates, editor follow-ups, and the declined ideas with the reason attached.
 

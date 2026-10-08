@@ -758,9 +758,19 @@ fn is_in_use_error(e: &std::io::Error) -> bool {
 }
 
 /// Whether this executable is running out of a Cargo build directory.
+///
+/// A profile directory can sit deeper than `target/debug`: `--target <triple>` builds
+/// into `target/<triple>/release`, and cargo-llvm-cov into `target/llvm-cov-target/debug`.
+/// Matching only the shallow form let an uninstall run under coverage delete the
+/// binary the remaining tests were about to spawn.
 pub(crate) fn is_dev_build(exe: &Path) -> bool {
     let path = exe.to_string_lossy().replace('\\', "/");
-    path.contains("/target/debug/") || path.contains("/target/release/")
+    let parts: Vec<&str> = path.split('/').collect();
+    parts.iter().position(|p| *p == "target").is_some_and(|t| {
+        parts[t + 1..parts.len().saturating_sub(1)]
+            .iter()
+            .any(|p| *p == "debug" || *p == "release")
+    })
 }
 
 /// The install one-liner for this platform, for the goodbye message.
@@ -990,6 +1000,30 @@ fn finish_locked_removals(_files: &[PathBuf], _dirs: &[PathBuf]) -> (Vec<PathBuf
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_profile_directory_under_any_target_subdirectory_is_a_dev_build() {
+        for dev in [
+            "/repo/target/debug/dev-prune",
+            "/repo/target/release/devp",
+            "/repo/target/x86_64-pc-windows-msvc/release/dev-prune.exe",
+            "/repo/target/llvm-cov-target/debug/dev-prune",
+            "C:\\repo\\target\\llvm-cov-target\\debug\\dev-prune.exe",
+        ] {
+            assert!(is_dev_build(Path::new(dev)), "{dev} was not a dev build");
+        }
+        for installed in [
+            "/home/u/.cargo/bin/dev-prune",
+            "/opt/release/dev-prune",
+            "/home/u/target/dev-prune",
+            "/home/u/target/debug",
+        ] {
+            assert!(
+                !is_dev_build(Path::new(installed)),
+                "{installed} was a dev build"
+            );
+        }
+    }
 
     /// The sweep has to know the name the update leaves behind, or dev-prune's own
     /// debris outlives the uninstall that reported it gone.

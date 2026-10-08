@@ -4,8 +4,9 @@
 > and build directories — `node_modules`, `.venv`, `target`, `vendor` and whatever else
 > its thirty-six supported package managers own — but only after the project's own
 > package manager confirms a lockfile can rebuild them. Apache-2.0,
-> no analytics and no diagnostics; the only network request is an opt-out release
-> check against GitHub. Windows, macOS, Linux.
+> no analytics and no diagnostics; the only request it makes on its own is an
+> opt-out release check against GitHub, plus the verified download of a release it finds
+> while `auto_update` is on (the default). Windows, macOS, Linux.
 
 Version 1.23.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
@@ -191,7 +192,11 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
 - `devp status [--top N] [--drift] [--json]` — interactive dashboard; a plain table when
   there is no TTY. In the dashboard `s` cycles the sort (relevance, size, longest idle,
   name), `f` cycles the filter (all, candidates, has bloat, problems) and `/` searches
-  paths and adapter names; all three change only what is shown, never the totals. `--top N` lists only the N repositories with the most reclaimable
+  paths and adapter names; all three change only what is shown, never the totals. `Tab`
+  hides or shows the inspector pane: the selected repository's per-directory sizes, a
+  26-week commit sparkline and the largest entries inside its bloat, beside the table at
+  110 columns or wider and below it on a narrower terminal at least 34 rows tall. `i` asks,
+  then toggles `ignore` in the repository's `.devprune.json`. `--top N` lists only the N repositories with the most reclaimable
   space; the totals above the table still cover every registered repository. Above the
   table, once this machine has timed a restore with `devp restore --last-run`, `status`
   also estimates how long putting everything back would take, split by adapter; the
@@ -213,7 +218,7 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   breakdowns from 1.17.0, since they are summed from the prune log. The manager
   breakdown covers pruning only — a cache clear is not a pass — so it does not add up
   to the lifetime total, and each breakdown reports how many passes it could not count
-- `devp history [--pass N] [--limit N] [--all] [--json] [--export [PATH]]` — which pass
+- `devp history [--pass N] [--limit N] [--all] [--scores] [--json] [--export [PATH]]` — which pass
   deleted what, and what asked it to. `stats` says ten passes freed 27 GiB; this says
   that pass #2 ran at 09:14 as `devp run --daemon`, took 4.02 GiB out of two
   repositories, and names all three directories. Bare, it is one line per pass — when,
@@ -228,7 +233,12 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   `(totals only)`, and carry `detail: false` in `--json`. On a terminal the directory
   list of one pass is capped at 200 entries and says how many were left out; redirected
   or piped, nothing is elided. `--export` writes the JSON document to a file — with a
-  path, exactly that path; bare, to the user's documents folder
+  path, exactly that path; bare, to the user's documents folder. `--scores` prints the
+  record book instead of the list: the three largest single-repository cleanups and the
+  three largest whole passes ever, read from the same log, with medals on the podium
+  places. `devp scores` is the same report under a shorter name, and `--json` emits it
+  as its own document (`"command": "history --scores"`). It conflicts with `--pass` and
+  `--export` (exit `2`), and an empty log is still a report, not an error
 - `devp completions <bash|zsh|fish|powershell|elvish>` — print a shell completion script
   to stdout, generated from the same argument definition the binary parses with
 - `devp caches [--volume <VOLUME>] [--json]` — find and size every package-manager cache and store on the
@@ -571,8 +581,9 @@ with a `git clone` of possibly-untrusted code.
 - Never rewrites a lockfile during verification, by default in every ecosystem.
 - Never edits editor settings, `PATH`, or shell startup files; for editors it prints a
   snippet you paste yourself.
-- Never phones home: no analytics, no telemetry; the single network request is the
-  opt-out update check against GitHub's public releases page (no body, no identifier).
+- Never phones home: no analytics, no telemetry; the only request it makes on its own is
+  the opt-out update check against GitHub's public releases page (no body, no identifier),
+  plus the verified download of a release it finds while `auto_update` is on (the default).
 
 ## Unicode and non-English paths
 

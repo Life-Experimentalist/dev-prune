@@ -26,7 +26,7 @@ replaces it.
 
 ---
 
-## 🔒 Non-negotiable rules
+## Non-negotiable rules
 
 1. **Dry-run before deleting.** Run `devp run --dry-run` and show what would be
    reclaimed before running anything that deletes. The only exception is when the user
@@ -86,7 +86,7 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
   something else.
 - Never crosses into a nested repository; a submodule is pruned as itself or not at all.
 - Never executes anything named in a repository-tracked file. `.devprune.json` and
-  `project.devprune.json` hold inert data only, and deserialize into the same seven keys —
+  `project.devprune.json` hold inert data only, and deserialize into the same eight keys —
   so a cloned repository cannot grant itself `allow_manifest_rewrite` or name a
   post-prune command however it is configured.
 - Never touches a package-manager cache on its own. No prune pass, scheduler or Git hook
@@ -140,18 +140,19 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 
 ---
 
-## 🗺️ Command map
+## Command map
 
 | The user wants | Run |
 | :--- | :--- |
 | "how much space can I get back?" | `devp run --dry-run` |
-| "show me my repos" | `devp status` (interactive; prints a plain table when not a TTY). In the dashboard: `s` sorts, `f` filters, `/` searches — display only, the totals always cover every registered repository |
+| "show me my repos" | `devp status` (interactive; prints a plain table when not a TTY). In the dashboard: `s` sorts, `f` filters, `/` searches — display only, the totals always cover every registered repository. `Tab` hides or shows the inspector pane (per-directory sizes, a 26-week commit sparkline, the largest entries inside the bloat) |
 | "just the worst offenders" / "top 10 biggest" | `devp status --top 10` — trims the list, never the totals |
 | "how much has graphify/understand-anything left behind?" | `devp status` (the Tools line/block), or `repositories[].tools` in `--json`. Report-only: never suggest deleting `graphify-out/` or `.understand-anything/`, there is no lockfile behind either |
 | "how much has this saved me?" / "what did it clean last week?" | `devp stats` — lifetime total from pruning, a separate one from `devp caches clear <manager>`, a third from `devp caches clear <engine>`, prune passes, the last pass, and the repositories that gave back the most. The three are never added: they cost a reinstall, a re-download everywhere, and a full image pull respectively |
 | "which package manager is costing me the most?" / "is the scheduler actually running?" | `devp stats` again — its last two sections break the same reclaims down by package manager and by what started each pass (`manual`, `scheduled`, `dashboard`). A `scheduled` line at zero passes means nothing has run unattended; check `devp status daemon` |
 | "which pass deleted what?" / "what did the scheduled run take last night?" / "why is my node_modules gone?" | `devp history` — one line per pass: when, what started it (`manual`, `scheduled`, `dashboard`), how much, how many directories and repositories. `devp history --pass 1` opens one in full: the exact command line that ran it and every directory removed, grouped by repository. This is the command that answers "was that me or the daemon?" — and the only one that can, because nothing else records the trigger |
 | "give me the whole history to look at" / "export what it has been doing" | `devp history --export` writes the JSON document to the user's documents folder, `--export <path>` to exactly where they say. Prefer `devp history --json` when *you* are the reader; prefer `--export` when the user wants a file. The per-pass detail list is capped at 200 entries on a terminal and never when redirected, so `devp history --all > passes.txt` is complete |
+| "what are my biggest cleanups?" / "show me the high scores" / "leaderboard" | `devp scores` (same report as `devp history --scores`; `--json` for a document): the all-time three largest single-repository cleanups and three largest whole passes, medals on the top three of each, read from the same pass log as `devp history` |
 | "add tab completion" | `devp completions <bash\|zsh\|fish\|powershell\|elvish>` — prints the script to stdout; the user redirects it |
 | "clean up" / "free space" | `devp run --dry-run`, then `devp run -y` |
 | "clean this project" | `devp run . -y` |
@@ -180,9 +181,9 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
 | "track this repo" | `devp link .` |
 | "stop tracking this" | `devp unlink .` |
 | "the registry is full of folders I deleted" | `devp unlink --missing` — clears every entry whose directory is gone |
-| "I moved a repo and it lost its history" | `devp link <new path>` — matching root commits let it adopt the old entry |
+| "I moved a repo and it lost its history" | Usually nothing to do: the next `devp status`, `devp run` or `devp doctor` heals it. An entry whose directory is gone follows the repository into a sibling `Archive/`-style directory, or anywhere its root commit proves it is the same repository, keeping its stats; a deleted AI-agent worktree entry is dropped; a bare name match alone never merges. If it was moved somewhere heal cannot prove: `devp link <new path>` — matching root commits let it adopt the old entry |
 | "undo that" | `devp undo` (reverts the last `init` or `link`) |
-| "never touch this repo" | create `ignore.devprune.json` in its root, or press `i` in `devp status`. A bulk scan will not even register it |
+| "never touch this repo" | create `ignore.devprune.json` in its root, or press `i` in `devp status` and confirm with `y`. A bulk scan will not even register it |
 | "what's my config?" | `devp config show` |
 | "change a setting" | `devp config set idle_days 30` |
 | "is the background stuff working?" | `devp setup --status` |
@@ -217,7 +218,7 @@ Shorthands: `devp hook`, `devp daemon` and `devp icon` are the `config` subcomma
 the same name, and `install` / `uninstall` / `on` / `off` work wherever `enable` /
 `disable` does. A misspelled action is rejected, not silently treated as `status`.
 
-## 🔢 Exit codes
+## Exit codes
 
 | Code | Meaning | What you should do |
 | :---: | :--- | :--- |
@@ -229,10 +230,10 @@ A run in which any repository failed exits `1` even if others succeeded.
 
 ---
 
-## 🔌 Machine-readable output — prefer this over parsing the human report
+## Machine-readable output: prefer this over parsing the human report
 
 `devp run --json`, `devp status --json`, `devp stats --json`, `devp history --json`,
-`devp caches --json` and `devp trust --json` each
+`devp scores --json`, `devp caches --json` and `devp trust --json` each
 emit **one** JSON document on stdout and nothing else; warnings go to stderr. `--json`
 implies non-interactive, so it never blocks on a prompt. `status --json` and
 `stats --json` change nothing at all, not even the registry file. (When a human runs
@@ -258,6 +259,7 @@ devp trust --json           # what the tool guarantees, what this machine has sw
 devp status --drift --json  # unrecorded packages per environment, with the record command
 devp history --json         # every recorded pass: trigger, argv, and each directory removed
 devp history --pass 1 --json  # just the most recent one, still numbered `pass: 1`
+devp scores --json          # leaderboard of top 3 single-repo cleanups and top 3 total runs
 ```
 
 `stats` reports history, `status` reports opportunity — reach for `stats` when the user
@@ -314,7 +316,7 @@ The fields worth reading first:
 the second is why a repository *is or is not* a candidate. Both are stable and lowercase
 snake_case; the human wording above them is not, so never match on it.
 
-## 🎛️ Narrowing a pass
+## Narrowing a pass
 
 | Flag | Effect |
 | :--- | :--- |
@@ -324,7 +326,7 @@ snake_case; the human wording above them is not, so never match on it.
 
 ---
 
-## 🧩 One repository, many projects
+## One repository, many projects
 
 A repository is not assumed to be one project. dev-prune walks the root and up to six
 levels below it, and every directory a package manager recognises is verified and pruned
@@ -345,7 +347,7 @@ When npm, pnpm, yarn and bun all claim the same `node_modules`, one owner is cho
 inside the installed tree, else the most recently written lockfile. For Python, uv wins
 over plain venv when `uv.lock` or `[tool.uv]` is present.
 
-## 📦 Adapters
+## Adapters
 
 | Ecosystem | Detected by | Deletes | Verified with | Restored with |
 | :--- | :--- | :--- | :--- | :--- |
@@ -416,7 +418,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 `go mod tidy`, …) runs in exactly two cases: no lockfile exists at all, or the user set
 `allow_manifest_rewrite true`.
 
-## 📄 Configuration
+## Configuration
 
 **Global** (`devp config get|set|show`) — in `%APPDATA%\dev-prune` on Windows,
 `~/Library/Application Support/dev-prune` on macOS, `$XDG_CONFIG_HOME/dev-prune` on Linux:
@@ -593,7 +595,7 @@ than falling back to defaults — the unreadable file may have been the one sayi
 `"ignore": true`. `devp doctor --fix` repairs the personal file by renaming it aside; it
 reports a broken `project.devprune.json` and leaves it for `git checkout`.
 
-## 🤖 Background automation
+## Background automation
 
 The integrations install themselves: at install time, and again on the first command
 after an upgrade if anything went missing. `devp setup` is that same pass run by hand,
@@ -698,7 +700,7 @@ the current one before writing a new one or the user loses the rest of their cho
 
 ---
 
-## 🩺 Troubleshooting decision tree
+## Troubleshooting decision tree
 
 Start with `devp doctor` for the installation, or `devp doctor <path>` for one repository
 — it runs every check in the table below at once, changes nothing, and ends by naming the
@@ -732,7 +734,7 @@ specific symptom the report named.
 | Automation came back after uninstall | The first-run question was answered yes again — uninstalling clears the recorded answer, so nothing reinstalls without a new one | Decline the walkthrough when asked, or `devp config set auto_setup false` |
 | A bloat directory was skipped silently | It is a symlink or junction | Expected and deliberate — it points at storage the repository does not own |
 
-## 🧭 Recipes
+## Recipes
 
 **Audit a machine's reclaimable space, safely:**
 ```bash
@@ -766,7 +768,7 @@ devp doctor .        # this repository: why it would or would not be pruned
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 Read these when the answer is not above. Local paths work in a checkout; the URLs work
 anywhere.

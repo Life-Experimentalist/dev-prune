@@ -8,8 +8,10 @@
 // and adapters. Users can also select candidates and trigger a prune pass
 // directly from this view.
 
+use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -138,6 +140,42 @@ struct StatusApp<'a> {
     notice: Option<String>,
     /// Set to true when the user toggles ignore config in .devprune.json or presence of ignore.devprune.json so caller can reload.
     pub should_reload: bool,
+    /// On by default because the table only has room for one number per repository, and
+    /// "why is this one so big" needs the breakdown. Tab hides it for anyone who wants the
+    /// full-width table back.
+    pub show_inspector: bool,
+    /// Whether the last frame had room to draw the inspector. `show_inspector` is only
+    /// the wish; on a small terminal nobody would see what the worker collected.
+    inspector_drawn: bool,
+    /// What the inspector shows beyond the status scan, per index into `repos`. Filled
+    /// lazily by a worker thread, because a commit histogram and a walk of every bloat
+    /// directory cost far too much to collect for eighty repositories up front.
+    details: HashMap<usize, InspectorDetail>,
+    /// The repository whose details a worker is collecting now. One at a time: holding
+    /// the arrow key down the list would otherwise start a disk walk per row passed.
+    inflight: Option<usize>,
+    detail_tx: mpsc::Sender<(usize, InspectorDetail)>,
+    detail_rx: mpsc::Receiver<(usize, InspectorDetail)>,
+    /// A pending `i`: the repository and whether the keypress would ignore it (`true`) or
+    /// stop ignoring it. `i` changes what every later pass is allowed to delete, and it
+    /// sits one key away from `j` and `k`, so it waits for a `y`.
+    pending_ignore: Option<(usize, bool)>,
+}
+
+/// How many weeks of commits the inspector's histogram covers: half a year shows whether
+/// a repository was abandoned or is just quiet this month.
+const HISTOGRAM_WEEKS: usize = 26;
+
+/// How many of the largest entries inside the bloat directories the inspector lists.
+const LARGEST_ENTRIES: usize = 5;
+
+/// The inspector's figures that the status scan does not collect.
+struct InspectorDetail {
+    /// Commits per week, oldest first. `None` when git would not read the history.
+    weekly_commits: Option<Vec<u32>>,
+    /// The largest top-level entries inside the bloat directories, largest first, each
+    /// named `<bloat dir>/<entry>`.
+    largest: Vec<(String, u64)>,
 }
 
 /// Why this repository cannot be checked for pruning, or `None` if it can be.
@@ -170,6 +208,7 @@ impl<'a> StatusApp<'a> {
         let selected = vec![false; repos.len()];
         let mut table_state = TableState::default();
         table_state.select(Some(0));
+        let (detail_tx, detail_rx) = mpsc::channel();
         let mut app = Self {
             repos,
             view: Vec::new(),
@@ -183,6 +222,13 @@ impl<'a> StatusApp<'a> {
             confirmed_indices: None,
             notice: None,
             should_reload: false,
+            show_inspector: true,
+            inspector_drawn: false,
+            details: HashMap::new(),
+            inflight: None,
+            detail_tx,
+            detail_rx,
+            pending_ignore: None,
         };
         app.rebuild_view();
         app
@@ -360,6 +406,132 @@ impl<'a> StatusApp<'a> {
     fn selectable_count(&self) -> usize {
         self.repos.iter().filter(|r| refusal(r).is_none()).count()
     }
+
+    /// Store whatever the worker finished, and start one for the highlighted repository
+    /// if nothing is running and its details are not known yet. Called once per loop
+    /// turn, so the inspector fills in on the next redraw without blocking a keypress.
+    fn pump_details(&mut self) {
+        while let Ok((idx, detail)) = self.detail_rx.try_recv() {
+            self.details.insert(idx, detail);
+            if self.inflight == Some(idx) {
+                self.inflight = None;
+            }
+        }
+        if !self.inspector_drawn || self.inflight.is_some() {
+            return;
+        }
+        let Some(idx) = self.cursor_repo() else {
+            return;
+        };
+        let repo = &self.repos[idx];
+        if self.details.contains_key(&idx) || matches!(repo.reason, SkipReason::PathMissing) {
+            return;
+        }
+        let path = repo.path.clone();
+        let dirs: Vec<(String, PathBuf)> = repo
+            .bloat_dirs
+            .iter()
+            .map(|b| (b.name.clone(), b.path.clone()))
+            .collect();
+        let tx = self.detail_tx.clone();
+        self.inflight = Some(idx);
+        std::thread::spawn(move || {
+            let detail = InspectorDetail {
+                weekly_commits: weekly_commits(&path),
+                largest: largest_entries(&dirs, LARGEST_ENTRIES),
+            };
+            // The receiver is gone once the user quits or the view reloads; the
+            // answer is simply no longer wanted.
+            let _ = tx.send((idx, detail));
+        });
+    }
+}
+
+/// Commits per week over the last [`HISTOGRAM_WEEKS`] weeks, oldest first, or `None` when
+/// git will not read the repository.
+fn weekly_commits(repo: &Path) -> Option<Vec<u32>> {
+    let output = crate::scanner::git::git_in(repo)
+        .args([
+            "log",
+            &format!("--since={HISTOGRAM_WEEKS}.weeks"),
+            "--format=%ct",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stamps: Vec<i64> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .collect();
+    Some(bucket_by_week(
+        &stamps,
+        chrono::Utc::now().timestamp(),
+        HISTOGRAM_WEEKS,
+    ))
+}
+
+/// Count `stamps` (Unix seconds) into `weeks` week-long buckets ending at `now`, oldest
+/// bucket first. Anything outside the window is dropped, including a commit dated in the
+/// future by a skewed clock.
+fn bucket_by_week(stamps: &[i64], now: i64, weeks: usize) -> Vec<u32> {
+    const WEEK: i64 = 7 * 24 * 60 * 60;
+    let mut buckets = vec![0u32; weeks];
+    for &t in stamps {
+        if t > now {
+            continue;
+        }
+        let age = ((now - t) / WEEK) as usize;
+        if age < weeks {
+            buckets[weeks - 1 - age] += 1;
+        }
+    }
+    buckets
+}
+
+/// One character per bucket, scaled to the busiest one. An empty week is a dot rather
+/// than the lowest bar, so a quiet week cannot be mistaken for a week with one commit.
+fn sparkline(counts: &[u32]) -> String {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let max = counts.iter().copied().max().unwrap_or(0);
+    counts
+        .iter()
+        .map(|&c| {
+            if c == 0 {
+                '·'
+            } else {
+                let step = ((c as u64 * (BARS.len() as u64 - 1)) / max as u64) as usize;
+                BARS[step]
+            }
+        })
+        .collect()
+}
+
+/// The `n` largest top-level entries across `dirs`, largest first. Top level only: inside
+/// `node_modules` that is one line per package, which is the level a person can act on.
+/// Symlinked entries are not followed, the same as every other size in this tool.
+fn largest_entries(dirs: &[(String, PathBuf)], n: usize) -> Vec<(String, u64)> {
+    let mut entries: Vec<(String, u64)> = Vec::new();
+    for (name, dir) in dirs {
+        let Ok(read) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in read.flatten() {
+            let size = match entry.file_type() {
+                Ok(t) if t.is_dir() => crate::adapters::dir_size(&entry.path()),
+                Ok(t) if t.is_file() => entry.metadata().map(|m| m.len()).unwrap_or(0),
+                _ => 0,
+            };
+            entries.push((
+                format!("{name}/{}", entry.file_name().to_string_lossy()),
+                size,
+            ));
+        }
+    }
+    entries.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    entries.truncate(n);
+    entries
 }
 
 /// Split the reclaimable total into what a prune would free *now* and everything.
@@ -448,6 +620,7 @@ fn run_status_loop(
     app: &mut StatusApp,
 ) -> Result<()> {
     loop {
+        app.pump_details();
         terminal.draw(|frame| render_ui(frame, app))?;
 
         if event::poll(Duration::from_millis(100))?
@@ -462,6 +635,19 @@ fn run_status_loop(
                 && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('C'))
             {
                 return Ok(());
+            }
+            // Only `y` or Enter confirms. Every other key cancels, so a stray keypress can
+            // never be the one that changes what a pass may delete.
+            if let Some((idx, would_ignore)) = app.pending_ignore.take() {
+                if matches!(
+                    key.code,
+                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter
+                ) {
+                    apply_ignore_toggle(&app.repos[idx], would_ignore)?;
+                    app.should_reload = true;
+                    return Ok(());
+                }
+                continue;
             }
             // While the query line is open every printable key is text, not a command.
             // Checked before the command table below, because otherwise typing `q` in a
@@ -545,7 +731,8 @@ fn run_status_loop(
                     // that had failed to open. Say which it is.
                     app.notice = (armed == 0).then(|| {
                         if app.view.iter().any(|&i| refusal(&app.repos[i]).is_none()) {
-                            "No repository is past the idle threshold — press [Space] \n                             to select one you are still working in."
+                            "No repository is past the idle threshold — press [Space] \
+                             to select one you are still working in."
                                 .to_string()
                         } else {
                             "Nothing here can be pruned — press [f] to widen the filter."
@@ -554,63 +741,11 @@ fn run_status_loop(
                     });
                 }
                 KeyCode::Char('i') | KeyCode::Char('I') => {
-                    // Toggle ignore in .devprune.json on the current repo
-                    if let Some(idx) = app.cursor_repo() {
-                        let repo = &app.repos[idx];
-                        // A missing repository has no directory to write the config
-                        // into; propagating that write error would tear the whole TUI
-                        // down over a row that says "Path Missing" right on it.
-                        if matches!(repo.reason, SkipReason::PathMissing) {
-                            continue;
-                        }
-                        // Refuses a config that does not parse. Starting from the
-                        // defaults would have written a fresh file over the broken
-                        // one, discarding every other override it held — and the
-                        // dashboard already shows such a repo as `config_error`.
-                        let layers = crate::config::RepoConfigLayers::load(&repo.path)
-                            .map_err(|e| anyhow::anyhow!(e))
-                            .with_context(|| {
-                                format!(
-                                    "Could not toggle ignore for {}",
-                                    crate::output::clean_path(&repo.path)
-                                )
-                            })?;
-                        // A committed `project.devprune.json` that names `ignore` wins over
-                        // anything this key could write, so writing it anyway would leave
-                        // a personal file disagreeing with the row it did not change. Skip
-                        // it the same way a missing path is skipped; the help pane says
-                        // which file to edit instead.
-                        if layers.source_of("ignore") == crate::config::ConfigSource::Project {
-                            continue;
-                        }
-                        let mut per_repo = layers.personal_config().cloned().unwrap_or_default();
-                        per_repo.ignore = !per_repo.ignore;
-                        // Both writes are propagated rather than swallowed. A silent
-                        // failure here redraws the table unchanged, which reads as a
-                        // dead key; worse, a repository the user just un-ignored would
-                        // still be pruned on the next pass.
-                        per_repo.save_to_repo(&repo.path).with_context(|| {
-                            format!(
-                                "Could not write the config for {}",
-                                crate::output::clean_path(&repo.path)
-                            )
-                        })?;
-
-                        // The legacy marker file still counts as "ignored", so it has
-                        // to go for the toggle to mean anything.
-                        let legacy_ignore = repo.path.join(crate::constants::DEVPRUNE_IGNORE_FILE);
-                        if legacy_ignore.exists() {
-                            std::fs::remove_file(&legacy_ignore).with_context(|| {
-                                format!(
-                                    "Could not remove {}",
-                                    crate::output::clean_path(&legacy_ignore)
-                                )
-                            })?;
-                        }
-
-                        // Signal caller to reload status
-                        app.should_reload = true;
-                        return Ok(());
+                    // Asks first; the write happens on `y`, in the branch above.
+                    if let Some(idx) = app.cursor_repo()
+                        && let Some(would_ignore) = ignore_toggle_for(&app.repos[idx])?
+                    {
+                        app.pending_ignore = Some((idx, would_ignore));
                     }
                 }
                 KeyCode::Enter => {
@@ -629,11 +764,85 @@ fn run_status_loop(
                         return Ok(());
                     }
                 }
+                KeyCode::Tab => {
+                    app.show_inspector = !app.show_inspector;
+                }
                 KeyCode::Char('q') => return Ok(()),
                 _ => {}
             }
         }
     }
+}
+
+/// What `i` would do to `repo`: `Some(true)` to ignore it, `Some(false)` to stop ignoring
+/// it, or `None` when the key has nothing it can honestly change.
+fn ignore_toggle_for(repo: &RepoStatusEntry) -> Result<Option<bool>> {
+    // A missing repository has no directory to write the config into; propagating that
+    // write error would tear the whole TUI down over a row that says "Path Missing"
+    // right on it.
+    if matches!(repo.reason, SkipReason::PathMissing) {
+        return Ok(None);
+    }
+    let (layers, per_repo) = load_personal_config(repo)?;
+    // A committed `project.devprune.json` that names `ignore` wins over anything this key
+    // could write, so writing it anyway would leave a personal file disagreeing with the
+    // row it did not change. The help pane says which file to edit instead.
+    if layers.source_of("ignore") == crate::config::ConfigSource::Project {
+        return Ok(None);
+    }
+    // The legacy marker file still counts as "ignored". Reading only the config key made
+    // `i` on such a row write `ignore: true` and delete the marker, leaving it ignored.
+    let legacy = repo.path.join(crate::constants::DEVPRUNE_IGNORE_FILE);
+    Ok(Some(!(per_repo.ignore || legacy.exists())))
+}
+
+/// Write the answer to a confirmed `i`.
+fn apply_ignore_toggle(repo: &RepoStatusEntry, ignore: bool) -> Result<()> {
+    let (_, mut per_repo) = load_personal_config(repo)?;
+    per_repo.ignore = ignore;
+    // Both writes are propagated rather than swallowed. A silent failure here redraws the
+    // table unchanged, which reads as a dead key; worse, a repository the user just
+    // un-ignored would still be pruned on the next pass.
+    per_repo.save_to_repo(&repo.path).with_context(|| {
+        format!(
+            "Could not write the config for {}",
+            crate::output::clean_path(&repo.path)
+        )
+    })?;
+    // The marker goes either way, so the config key is the one place the answer lives.
+    let legacy_ignore = repo.path.join(crate::constants::DEVPRUNE_IGNORE_FILE);
+    if legacy_ignore.exists() {
+        std::fs::remove_file(&legacy_ignore).with_context(|| {
+            format!(
+                "Could not remove {}",
+                crate::output::clean_path(&legacy_ignore)
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// The repository's config layers and its personal layer, defaults when it has none.
+///
+/// Refuses a config that does not parse. Starting from the defaults would write a fresh
+/// file over the broken one, discarding every other override it held, and the dashboard
+/// already shows such a repository as `config_error`.
+fn load_personal_config(
+    repo: &RepoStatusEntry,
+) -> Result<(
+    crate::config::RepoConfigLayers,
+    crate::config::PerRepoConfig,
+)> {
+    let layers = crate::config::RepoConfigLayers::load(&repo.path)
+        .map_err(|e| anyhow::anyhow!(e))
+        .with_context(|| {
+            format!(
+                "Could not toggle ignore for {}",
+                crate::output::clean_path(&repo.path)
+            )
+        })?;
+    let per_repo = layers.personal_config().cloned().unwrap_or_default();
+    Ok((layers, per_repo))
 }
 
 /// Three tiers, not six colours: green is actionable, red and yellow are broken, and
@@ -659,8 +868,6 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
         .constraints([
             Constraint::Length(3), // header
             Constraint::Min(5),    // table
-            // Four content lines plus the border: the keybindings, the mode-specific
-            // line, and the credit line that closes both footers.
             // Five content lines plus the border: the sort/filter/search line, the
             // keybindings, the mode-specific line, and the credit line.
             Constraint::Length(7), // footer
@@ -850,7 +1057,9 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                 Style::default()
             };
 
-            let on_dark_bg = is_selected || highlighted_row == Some(i);
+            // `row`, not `i`: the highlight is a position in the view, and comparing it to
+            // a repository index lit the wrong row whenever a sort or filter was active.
+            let on_dark_bg = is_selected || highlighted_row == Some(row);
             let path_style = if on_dark_bg {
                 Style::default().fg(Color::White)
             } else {
@@ -875,9 +1084,40 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
         })
         .collect();
 
-    let table = Table::new(
-        rows,
-        [
+    // Beside the table when there is room for both, below it on a narrow but tall
+    // terminal, and not at all when neither fits. Hiding it outright below 110 columns
+    // meant a split pane or a laptop screen never saw it, with nothing saying why.
+    let (table_area, inspector_area, compact) = if !app.show_inspector {
+        (outer[1], None, false)
+    } else if frame.area().width >= 110 {
+        let horizontal = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(outer[1]);
+        (horizontal[0], Some(horizontal[1]), true)
+    } else if outer[1].height >= 24 {
+        let vertical = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .split(outer[1]);
+        (vertical[0], Some(vertical[1]), false)
+    } else {
+        (outer[1], None, false)
+    };
+    app.inspector_drawn = inspector_area.is_some();
+
+    let table_constraints = if compact {
+        vec![
+            Constraint::Length(4),  // sel/#
+            Constraint::Min(16),    // path
+            Constraint::Length(18), // reason
+            Constraint::Length(12), // adapters
+            Constraint::Length(10), // bloat
+            Constraint::Length(0),  // last activity
+            Constraint::Length(0),  // last pruned
+        ]
+    } else {
+        vec![
             Constraint::Length(4),  // sel/#
             Constraint::Min(24),    // path
             Constraint::Length(22), // reason
@@ -885,26 +1125,32 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
             Constraint::Length(11), // bloat
             Constraint::Length(13), // last activity
             Constraint::Length(13), // last pruned
-        ],
-    )
-    .header(col_headers)
-    .block(
-        Block::default()
-            .title(" Registered Repositories ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    )
-    .row_highlight_style(
-        Style::default()
-            .bg(Color::Rgb(30, 40, 70))
-            .add_modifier(Modifier::BOLD),
-    )
-    .highlight_symbol("▶ ");
+        ]
+    };
+
+    let table = Table::new(rows, table_constraints)
+        .header(col_headers)
+        .block(
+            Block::default()
+                .title(" Registered Repositories ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        )
+        .row_highlight_style(
+            Style::default()
+                .bg(Color::Rgb(30, 40, 70))
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
 
     // The real state, not a clone: ratatui stores the computed scroll offset back into
     // it, and rendering into a throwaway copy pins the viewport to the top — the
     // moment the selection moved below the visible rows it simply left the screen.
-    frame.render_stateful_widget(table, outer[1], &mut app.table_state);
+    frame.render_stateful_widget(table, table_area, &mut app.table_state);
+
+    if let Some(insp_area) = inspector_area {
+        render_inspector(frame, insp_area, app);
+    }
 
     // ── Footer ────────────────────────────────────────────────────────────────
     let mut footer_lines = if is_prune_mode {
@@ -995,6 +1241,13 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                 ),
                 Span::raw(" Prune-Select Mode  "),
                 Span::styled(
+                    "[Tab]",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" Inspector  "),
+                Span::styled(
                     "[i]",
                     Style::default()
                         .fg(Color::Cyan)
@@ -1012,7 +1265,7 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    "toggles `ignore` in `.devprune.json` (kept out of `git status` via `.git/info/exclude`) — refreshes instantly. Inert where a committed `project.devprune.json` sets `ignore`; edit that file instead.",
+                    "asks, then toggles `ignore` in `.devprune.json` (kept out of `git status` via `.git/info/exclude`). Inert where a committed `project.devprune.json` sets `ignore`; edit that file instead.",
                     Style::default().fg(Color::DarkGray),
                 ),
             ]),
@@ -1097,6 +1350,305 @@ fn render_ui(frame: &mut Frame, app: &mut StatusApp) {
             }),
         ));
     frame.render_widget(footer, outer[2]);
+
+    if let Some((idx, would_ignore)) = app.pending_ignore {
+        let repo = &app.repos[idx];
+        let name = crate::engine::compute_display_name(&repo.path, &all_paths);
+        let (title, question) = if would_ignore {
+            (
+                " Ignore repository ",
+                format!("Ignore {name}? dev-prune leaves it alone until you un-ignore it."),
+            )
+        } else {
+            (
+                " Stop ignoring ",
+                format!(
+                    "Stop ignoring {name}? It can be pruned again once it has been idle {} days.",
+                    repo.idle_days
+                ),
+            )
+        };
+        let text = vec![
+            Line::raw(question),
+            Line::raw(""),
+            Line::from(vec![
+                Span::styled(
+                    "[y]",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(if would_ignore {
+                    " Ignore  "
+                } else {
+                    " Stop ignoring  "
+                }),
+                Span::styled("[n/Esc]", Style::default().fg(Color::Cyan)),
+                Span::raw(" Cancel"),
+            ]),
+        ];
+        let area = centered(frame.area(), 64, 7);
+        frame.render_widget(Clear, area);
+        frame.render_widget(
+            Paragraph::new(text).wrap(Wrap { trim: false }).block(
+                Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Yellow)),
+            ),
+            area,
+        );
+    }
+}
+
+/// A `width` by `height` rectangle in the middle of `area`, shrunk to fit it.
+fn centered(area: Rect, width: u16, height: u16) -> Rect {
+    let w = width.min(area.width);
+    let h = height.min(area.height);
+    Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    }
+}
+
+/// The highlighted repository in full: what the table's one number per row is made of,
+/// and the history that says whether the repository is abandoned or only quiet. Those
+/// two questions decide whether to prune, and neither fits in a table column.
+fn render_inspector(frame: &mut Frame, area: Rect, app: &StatusApp) {
+    let highlighted_row = app.table_state.selected();
+    let selected_repo = highlighted_row
+        .and_then(|row| app.view.get(row))
+        .map(|&idx| (idx, &app.repos[idx]));
+
+    let Some((idx, repo)) = selected_repo else {
+        let empty = Paragraph::new("  No repository selected.").block(
+            Block::default()
+                .title(" Repository Inspector [Tab] ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::DarkGray)),
+        );
+        frame.render_widget(empty, area);
+        return;
+    };
+    // `None` until the worker reports back; a missing path never gets a worker at all.
+    let detail = app.details.get(&idx);
+    let pending = detail.is_none() && !matches!(repo.reason, SkipReason::PathMissing);
+
+    let mut lines = Vec::new();
+
+    // ── Repository Header ──────────────────────────────────────────────
+    lines.push(Line::from(vec![
+        Span::styled(" Path: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            crate::output::clean_path(&repo.path),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    if let Some(ref id) = repo.entry.identity {
+        let short = if id.len() > 10 {
+            &id[..10]
+        } else {
+            id.as_str()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(" Git Identity: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(short, Style::default().fg(Color::Cyan)),
+        ]));
+    }
+
+    lines.push(Line::raw(""));
+
+    // ── Status & Reason ────────────────────────────────────────────────
+    let color = reason_color(&repo.reason);
+    lines.push(Line::from(vec![
+        Span::styled(" Status: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            repo.reason.to_string(),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled(" Idle Threshold: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{} days", repo.idle_days),
+            Style::default().fg(Color::White),
+        ),
+    ]));
+
+    let activity_str = repo
+        .last_activity
+        .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| "Never".to_string());
+    lines.push(Line::from(vec![
+        Span::styled(" Last Activity: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(activity_str, Style::default().fg(Color::White)),
+    ]));
+
+    let pruned_str = repo
+        .entry
+        .last_pruned_at
+        .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| "Never".to_string());
+    lines.push(Line::from(vec![
+        Span::styled(" Last Pruned: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(pruned_str, Style::default().fg(Color::White)),
+    ]));
+
+    if repo.entry.total_freed_bytes > 0 {
+        lines.push(Line::from(vec![
+            Span::styled(" Lifetime Saved: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format_bytes(repo.entry.total_freed_bytes),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    // Last Activity is one date; this shows whether that date was the tail of steady work
+    // or a single commit in an otherwise dead repository.
+    let commits: Vec<Span> = match detail.map(|d| &d.weekly_commits) {
+        Some(Some(weeks)) => vec![
+            Span::styled(sparkline(weeks), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("  {} commits", weeks.iter().sum::<u32>()),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ],
+        Some(None) => vec![Span::styled(
+            "git would not read this history",
+            Style::default().fg(Color::DarkGray),
+        )],
+        None if pending => vec![Span::styled(
+            "reading git log…",
+            Style::default().fg(Color::DarkGray),
+        )],
+        None => vec![Span::styled("—", Style::default().fg(Color::DarkGray))],
+    };
+    lines.push(Line::styled(
+        format!(" Commits, last {HISTOGRAM_WEEKS} weeks:"),
+        Style::default().fg(Color::DarkGray),
+    ));
+    let mut commit_line = vec![Span::raw("   ")];
+    commit_line.extend(commits);
+    lines.push(Line::from(commit_line));
+
+    lines.push(Line::raw(""));
+
+    // ── Detected Adapters ──────────────────────────────────────────────
+    let adapters_str = if repo.adapters.is_empty() {
+        "—".to_string()
+    } else {
+        repo.adapters.join(", ")
+    };
+    lines.push(Line::from(vec![
+        Span::styled(" Adapters: ", Style::default().fg(Color::DarkGray)),
+        Span::styled(adapters_str, Style::default().fg(Color::Yellow)),
+    ]));
+
+    lines.push(Line::raw(""));
+
+    // ── Bloat Breakdown ────────────────────────────────────────────────
+    lines.push(Line::from(vec![Span::styled(
+        " Bloat Breakdown: ",
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::UNDERLINED),
+    )]));
+
+    if repo.bloat_dirs.is_empty() {
+        lines.push(Line::styled(
+            "   (no bloat directories found)",
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else {
+        for b in &repo.bloat_dirs {
+            let shared_note = if b.shared_bytes > 0 {
+                format!(" ({} store-shared)", format_bytes(b.shared_bytes))
+            } else {
+                String::new()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   • {:<16} ", b.name),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format_bytes(b.size_bytes),
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(shared_note, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        // One directory's total says how much; this says which package is to blame,
+        // which is what decides between pruning and fixing a dependency.
+        lines.push(Line::styled(
+            " Largest inside:",
+            Style::default().fg(Color::DarkGray),
+        ));
+        match detail {
+            Some(d) if !d.largest.is_empty() => {
+                for (name, size) in &d.largest {
+                    lines.push(Line::from(vec![
+                        Span::raw(format!("   {name}  ")),
+                        Span::styled(format_bytes(*size), Style::default().fg(Color::Green)),
+                    ]));
+                }
+            }
+            Some(_) => lines.push(Line::styled(
+                "   (empty)",
+                Style::default().fg(Color::DarkGray),
+            )),
+            None => lines.push(Line::styled(
+                "   measuring…",
+                Style::default().fg(Color::DarkGray),
+            )),
+        }
+    }
+
+    if !repo.tools.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(vec![Span::styled(
+            " Tool Footprints: ",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::UNDERLINED),
+        )]));
+        for t in &repo.tools {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   • {:<16} ", t.name),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(
+                    format_bytes(t.size_bytes),
+                    Style::default().fg(Color::Magenta),
+                ),
+            ]));
+        }
+    }
+
+    let block = Block::default()
+        .title(" Repository Inspector [Tab] ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+
+    // Wrapped, because below the table the inspector gets the terminal's full width but
+    // beside it only 40%, and a long path or package name was simply cut off.
+    let paragraph = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .block(block);
+    frame.render_widget(paragraph, area);
 }
 
 // ── Plain-text fallback ──────────────────────────────────────────────────────
@@ -1506,5 +2058,80 @@ mod tests {
         assert!(app.selected[0], "alpha is a candidate");
         assert!(app.selected[3], "delta is a candidate");
         assert!(!app.selected[1], "beta is active and must be opted into");
+    }
+
+    #[test]
+    fn weeks_are_bucketed_oldest_first_and_the_window_is_strict() {
+        const WEEK: i64 = 7 * 24 * 60 * 60;
+        let now = 100 * WEEK;
+        let stamps = [
+            now,            // this week
+            now - 10,       // this week
+            now - WEEK - 1, // last week
+            now - 3 * WEEK, // outside a 3-week window
+            now + 60,       // a skewed clock in the future
+        ];
+        assert_eq!(bucket_by_week(&stamps, now, 3), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn an_empty_week_is_a_dot_and_the_busiest_is_a_full_bar() {
+        let line = sparkline(&[0, 1, 8, 4]);
+        let chars: Vec<char> = line.chars().collect();
+        assert_eq!(chars.len(), 4);
+        assert_eq!(chars[0], '·');
+        assert_ne!(chars[1], '·', "one commit must not look like none");
+        assert_eq!(chars[2], '█');
+        assert_eq!(sparkline(&[0, 0]), "··");
+    }
+
+    #[test]
+    fn largest_entries_are_sorted_labelled_and_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let modules = dir.path().join("node_modules");
+        std::fs::create_dir_all(modules.join("big")).unwrap();
+        std::fs::write(modules.join("big").join("a.bin"), vec![0u8; 4096]).unwrap();
+        std::fs::write(modules.join("small.txt"), vec![0u8; 10]).unwrap();
+        std::fs::write(modules.join("mid.txt"), vec![0u8; 100]).unwrap();
+
+        let dirs = vec![("node_modules".to_string(), modules)];
+        let top = largest_entries(&dirs, 2);
+        let names: Vec<&str> = top.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["node_modules/big", "node_modules/mid.txt"]);
+        assert!(top[0].1 >= 4096);
+    }
+
+    #[test]
+    fn i_offers_to_stop_ignoring_a_repository_held_by_the_legacy_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut repo = entry("/unused", SkipReason::Ignored, 0, 90);
+        repo.path = dir.path().to_path_buf();
+
+        assert_eq!(ignore_toggle_for(&repo).unwrap(), Some(true));
+
+        std::fs::write(
+            dir.path().join(crate::constants::DEVPRUNE_IGNORE_FILE),
+            "{}",
+        )
+        .unwrap();
+        assert_eq!(
+            ignore_toggle_for(&repo).unwrap(),
+            Some(false),
+            "the marker means it is already ignored, so `i` must un-ignore"
+        );
+
+        apply_ignore_toggle(&repo, false).unwrap();
+        assert!(
+            !dir.path()
+                .join(crate::constants::DEVPRUNE_IGNORE_FILE)
+                .exists()
+        );
+        assert_eq!(ignore_toggle_for(&repo).unwrap(), Some(true));
+    }
+
+    #[test]
+    fn i_has_nothing_to_offer_on_a_missing_path() {
+        let repo = entry("/code/gone", SkipReason::PathMissing, 0, 90);
+        assert_eq!(ignore_toggle_for(&repo).unwrap(), None);
     }
 }

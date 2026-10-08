@@ -89,7 +89,7 @@ pub const TAGLINE: &str = "Every dependency directory on this machine, in one co
 /// for six releases, which reverses an `init` or a `link` and has never put a directory
 /// back — the one promise on the first screen pointed at the wrong command.
 pub const TAGLINE_SAFETY: &str =
-    "Only what a lockfile can rebuild — and `devp restore --last-run` puts it back.";
+    "Only what a lockfile can rebuild, and `devp restore --last-run` puts it back.";
 
 /// The licence sentence under the declaration, in both wizard paths.
 ///
@@ -339,6 +339,27 @@ pub const EPHEMERAL_ANCESTORS: &[&str] = &["cache", ".cache", "Cache", "Caches",
 /// `my-temp-git-notes` are real repositories somebody named badly, and refusing to track
 /// a real workspace is the worse of the two errors.
 pub const EPHEMERAL_REPO_PREFIXES: &[&str] = &["temp_git_", "tmp_git_"];
+
+/// Path fragments that mark a registry entry as an ephemeral AI-agent worktree.
+///
+/// Claude Code, Cursor, Conductor and Aider all park their disposable worktrees under a
+/// dot-directory named like `<tool>/worktrees/<branch>`, inside the repository they
+/// belong to. Those checkouts vanish when the session ends, so a registered one whose
+/// path is gone is routine churn, not a moved project: the registry heals it by dropping
+/// the entry instead of hunting for a new location.
+///
+/// Matched against a lowercased, forward-slash-normalised path, so each fragment is
+/// spelled once with `/` separators and keeps its leading and trailing slash. The
+/// anchoring is what stops a real repository named `myclaude` or `worktrees-tool` from
+/// matching.
+pub const EPHEMERAL_WORKTREE_FRAGMENTS: &[&str] = &[
+    "/.claude/worktrees/",
+    "/.cursor/worktrees/",
+    "/.conductor/worktrees/",
+    "/.aider/worktrees/",
+    "/.agents/worktrees/",
+    "/.worktrees/",
+];
 
 /// The line prefix in a linked worktree's `.git` *file* that names its metadata
 /// directory inside the main repository (`gitdir: <main>/.git/worktrees/<name>`).

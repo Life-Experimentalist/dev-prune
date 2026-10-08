@@ -279,6 +279,12 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
             Repair::Scheduler => ("Scheduler", "run `devp daemon install` yourself"),
             Repair::WindowlessTwin => ("Scheduler binary", "run `devp update --install` yourself"),
             Repair::UnlinkMissing => {
+                if let Ok(mut reg) = Registry::load() {
+                    let healed = reg.heal_dead_and_moved_repositories();
+                    if healed > 0 {
+                        let _ = reg.save();
+                    }
+                }
                 match crate::commands::link::run_unlink_missing() {
                     Ok(()) => repaired += 1,
                     Err(e) => {
@@ -673,9 +679,10 @@ fn check_install_channel(f: &mut Findings) {
 ///
 /// dev-prune ships through five channels and each one keeps its own copy. Upgrading via
 /// `devp update --install` replaces the copy that matters — the managed one the hooks
-/// and the scheduler invoke — and deliberately leaves the channel's own file alone,
-/// because rewriting another manager's directory is how installations end up
-/// unrepairable. The cost of that choice is a stale binary sitting on `PATH`, and if it
+/// and the scheduler invoke — plus the running copy's directory and cargo's `bin`, and
+/// deliberately leaves every other channel's file alone, because rewriting another
+/// manager's directory is how installations end up unrepairable. The cost of that
+/// choice is a stale binary sitting on `PATH`, and if it
 /// comes first the user types `devp` and silently gets the old release, with every
 /// symptom pointing at dev-prune rather than at which copy answered.
 ///
@@ -723,7 +730,7 @@ fn check_other_copies(f: &mut Findings) {
         "Other copies",
         &format!(
             "{} — whichever comes first on PATH is the one `devp` runs, and \
-             `devp update --install` only replaces the managed copy.",
+             `devp update --install` leaves a copy another package manager owns alone.",
             stale.join("; ")
         ),
     );
@@ -738,15 +745,21 @@ fn check_other_copies(f: &mut Findings) {
 /// instruction to remember is the one thing the user cannot follow.
 fn stale_copy_line(path: &Path, version: (u64, u64, u64), channel: Channel) -> String {
     let (major, minor, patch) = version;
-    let remedy = match channel.uninstall_command() {
-        Some(cmd) => format!("from {}, remove with `{cmd}`", channel.label()),
+    // The upgrade comes first: a stale copy is usually one the user still wants, just on
+    // the current release, and "remove" alone sent them to uninstall the binary they type.
+    let remedy = match (channel.upgrade_command(), channel.uninstall_command()) {
+        (Some(up), Some(cmd)) => format!(
+            "from {}, upgrade with `{up}` or remove with `{cmd}`",
+            channel.label()
+        ),
+        (None, Some(cmd)) => format!("from {}, remove with `{cmd}`", channel.label()),
         // The two channels that have no manager to ask. A copy inside the managed
         // directory never reaches here — `binaries_in` skips that directory outright
         // — but a second directory shaped like the installer's still can.
-        None if channel == Channel::Installer => {
+        (_, None) if channel == Channel::Installer => {
             "left by the install script, remove with `devp uninstall`".to_string()
         }
-        None => "no package manager owns it; delete the file yourself".to_string(),
+        (_, None) => "no package manager owns it; delete the file yourself".to_string(),
     };
     format!(
         "{} (v{major}.{minor}.{patch}, {remedy})",
@@ -1432,7 +1445,7 @@ fn check_repo_basics(f: &mut Findings, path: &Path, registry: &Registry) -> Repo
         Some(e) => f.warn(
             "Registered",
             &format!(
-                "yes since {}, but disabled — `devp config {} --update`",
+                "yes since {}, but disabled — `devp config project {} --update`",
                 e.added_at.format("%Y-%m-%d"),
                 output::clean_path(path)
             ),
@@ -2018,6 +2031,10 @@ mod tests {
         );
         assert!(line.contains("v1.6.0"), "{line}");
         assert!(line.contains("cargo uninstall dev-prune"), "{line}");
+        // binstall when it is installed, a compiling `cargo install` otherwise; either
+        // way the exact command, with `--force` so cargo replaces what it already has.
+        assert!(line.contains("upgrade with `cargo "), "{line}");
+        assert!(line.contains("dev-prune --force"), "{line}");
     }
 
     #[test]

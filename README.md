@@ -54,7 +54,7 @@ mental note about which ones are safe.
 
 **Start here**&nbsp;&nbsp; [Install](#install) · [Where it is published](#every-place-it-is-published) · [Editors](#in-your-editor) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like)
 
-**How it thinks**&nbsp;&nbsp; [Why it is safe](#why-it-is-safe) · [Features](#features) · [Commands](#commands) · [Ecosystems](#supported-ecosystems) · [Monorepos](#repositories-with-more-than-one-ecosystem)
+**How it thinks**&nbsp;&nbsp; [Why it is safe](#why-it-is-safe) · [Features](#features) · [Commands](#commands) · [Ecosystems](#supported-ecosystems) · [Monorepos](#repositories-with-more-than-one-ecosystem) · [JavaScript](#if-you-write-javascript) · [Python](#if-you-write-python)
 
 **Running it**&nbsp;&nbsp; [Configuration](#configuration) · [Automation](#background-automation) · [Comparison](#how-it-compares) · [Architecture](#architecture) · [Docs](#documentation)
 
@@ -388,8 +388,13 @@ last pruned. The footer totals the repositories, how many of them are candidates
 much is reclaimable right now.
 
 With a TTY the table is interactive: `↑`/`↓` move, `p` pre-selects every candidate,
-`Space` deselects the one you are keeping, `Enter` prunes the rest, `i` toggles ignore for
-a repository, `q` exits. Without one, the same table is printed and the command exits.
+`Space` deselects the one you are keeping, `Enter` prunes the rest, `i` asks and then
+toggles ignore for a repository, `q` exits. On a terminal at least 110 columns wide an
+inspector pane sits beside the table (below it on a narrower one with the rows to spare):
+the selected repository's per-directory sizes, root-commit identity, idle window, lifetime
+space saved, a sparkline of its commits over the last 26 weeks and the largest entries
+inside its bloat. `Tab` hides and shows it. Without a TTY, the same table is printed and
+the command exits.
 
 </details>
 
@@ -578,7 +583,8 @@ process that leaves a dirty working tree is a surprise.
 | `devp run [PATH]`      | `--dry-run`, `--only`, `--skip`, `--except`, `--min-size`, `--json` | Prunes every registered repository, or one target                                                                                                                                                                                                             |
 | `devp status`          | `--top N`, `--drift`, `--json`                                      | Interactive dashboard; a plain table when there is no TTY. `--top N` shows only the N biggest repositories; `--drift` lists every environment holding packages its lockfile never recorded                                                                    |
 | `devp stats`           | `--json`                                                            | What has already been reclaimed: lifetime total from pruning, a separate lifetime total from `devp caches clear`, prune passes, the last pass, the biggest contributors, which package managers the space came from, and how many passes you typed rather than scheduled                                                        |
-| `devp history`         | `--pass N`, `--limit N`, `--all`, `--json`, `--export [PATH]`       | Which pass deleted what, and what asked it to — one line per pass, then `--pass N` for the command line that ran it and every directory it removed. `--export` writes the lot to your documents folder                                                        |
+| `devp history`         | `--pass N`, `--limit N`, `--all`, `--scores`, `--json`, `--export [PATH]` | Which pass deleted what, and what asked it to — one line per pass, `--pass N` for full details, and `--scores` for all-time records. `--export` writes the lot to your documents folder                                       |
+| `devp scores`          | `devp history --scores`, `--json`                                   | High scores leaderboard: Gold, Silver and Bronze badges for largest single-repository cleanups and single-pass record totals                                                                                                        |
 | `devp completions`     | `bash`, `zsh`, `fish`, `powershell`, `elvish`                       | Prints a shell completion script to stdout, generated from the same argument definitions the binary parses with                                                                                                                                               |
 | `devp caches`          | `clear <manager\|all>`, `--json`                                    | Sizes every package manager cache on the machine and prints the command that clears each. The report deletes nothing and nothing on a schedule ever will; `clear` empties one when you type it, after asking                                                  |
 | `devp caches docker`   | `podman`, `containers [ENGINE]` (`nerdctl`, `finch`, `container`), `--json` | What a container engine holds — images, containers, volumes, build cache — each sized, with what the engine calls reclaimable, then the prune commands. The report deletes nothing; `devp caches clear <engine>` runs the narrow ones when you name it — a volume only through `--include-volumes`, picked by name at a terminal                                     |
@@ -643,6 +649,12 @@ Adapters detect the project, verify the lockfile, and own the bloat directories:
 | **Stack** (Haskell) *(opt-in)* | `stack.yaml`                                                  | `.stack-work`                              | `stack.yaml` names its `resolver:` (or `snapshot:`)                                                               | *(rebuilt by the next `stack build`)*                     |
 | **Cabal** (Haskell) *(opt-in)* | `cabal.project`                                               | `dist-newstyle`                            | `cabal.project` declares its `packages` — a lone `*.cabal` file is never claimed                                  | *(rebuilt by the next `cabal build`)*                     |
 | **sbt** (Scala) *(opt-in)*    | `build.sbt`                                                   | `target`, `project/target`                 | `build.sbt` carries a setting, or `project/build.properties` pins `sbt.version`                                   | *(rebuilt by the next `sbt compile`)*                     |
+| **pycache** (Python)          | Python files (`*.py`, `pyproject.toml`)                       | `__pycache__`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache` | Source Python files present — safe bytecode/linter caches                           | *(regenerated automatically on next test/execution run)*  |
+| **Godot** *(opt-in)*          | `project.godot`                                               | `.godot`, `.import`                        | `project.godot` present with engine configuration                                                                  | *(re-imported automatically on next editor launch)*       |
+| **Unity** *(opt-in)*          | `ProjectSettings/ProjectVersion.txt`                          | `Library`                                  | Project version file present and readable                                                                          | *(re-imported automatically on next editor launch)*       |
+| **Unreal Engine** *(opt-in)*  | `*.uproject`                                                  | `DerivedDataCache`, `Intermediate`         | Valid `.uproject` JSON manifest present                                                                            | *(re-compiled on next project build / editor launch)*      |
+| **Defold** *(opt-in)*         | `game.project`                                                | `build`                                    | `game.project` configuration file present                                                                          | *(rebuilt by next Defold build)*                          |
+| **Cocos Creator** *(opt-in)*  | `project.json`                                                | `library`, `temp`                          | Cocos `project.json` configuration present                                                                         | *(re-imported on next Cocos editor launch)*               |
 
 A required binary that is missing is a reason to skip, never a reason to delete: if `npm`
 is not on `PATH`, the `node_modules` it owns is left exactly where it is.
@@ -753,6 +765,44 @@ strongest signal first:
 For Python, uv or Poetry takes the environment whenever it recognises the project —
 between the two, whichever one's lockfile is actually on disk wins — and the
 `requirements.txt` adapter handles everything else.
+
+### If you write JavaScript
+
+`node_modules` is usually the largest directory in a JavaScript repository, and every
+project you have stopped touching still has one. dev-prune proves the lockfile can put
+it back before deleting it (`npm ci --dry-run`, `pnpm install --frozen-lockfile
+--lockfile-only` and the rest, all read-only), and only once the repository has been
+idle for `idle_days`:
+
+```
+devp run --dry-run      # which node_modules would go, and how much each frees
+devp run -y             # delete them
+devp restore .          # back in this project: npm ci, pnpm install, yarn or bun
+```
+
+`devp restore --last-run` reinstalls everything the last pass deleted, across every
+repository it touched. A `node_modules` holding a package installed with `npm install
+--no-save` is refused rather than pruned, because the lockfile cannot bring it back;
+`devp status --drift` lists those ahead of time with the `npm install <pkg>` that
+records them. Build output such as `dist/` or `.next` is never touched.
+
+### If you write Python
+
+A `.venv` holds its own copy of every package the project installed, and a few old
+projects with machine-learning dependencies can hold several gigabytes each. dev-prune
+verifies each environment against the tool that built it (uv, Poetry, PDM, Pipenv,
+pixi, or a plain venv beside a `requirements.txt`) and refuses one holding a package
+that was `pip install`ed by hand and never recorded; `devp status --drift` names those
+and the `uv add` or `pip freeze > requirements.txt` that fixes it.
+
+`devp restore .` rebuilds the environment with the same tool (`uv sync`, `poetry
+install`, `pdm install`, and so on). `devp restore --last-run` rebuilds each one on the
+Python version it was first built with, read from its `pyvenv.cfg`, because a 3.12
+environment rebuilt on 3.14 can resolve different wheels. If that version is no longer
+installed, it asks once and prints the `uv python install` line that fixes it.
+
+`__pycache__`, `.pytest_cache`, `.mypy_cache` and `.ruff_cache` go too. They refill on
+the next import or test run, so there is nothing to restore.
 
 ---
 
@@ -987,7 +1037,7 @@ Full decision flow: [docs/BACKGROUND_AUTOMATION.md](docs/BACKGROUND_AUTOMATION.m
 
 |                                           |       `dev-prune`        |      `kondo`      | `npkill` | `cargo-clean-all` | `pyclean` |   `git clean`   | `dust` / `ncdu` | BleachBit |
 | :---------------------------------------- | :----------------------: | :---------------: | :------: | :---------------: | :-------: | :-------------: | :-------------: | :-------: |
-| Package managers                          |          **25**          | ~20 project types |   Node   |       Rust        |  Python   | untracked files |        —        | OS caches |
+| Package managers                          |          **36**          | ~20 project types |   Node   |       Rust        |  Python   | untracked files |        —        | OS caches |
 | Many projects per repository              |          **✓**           |         ✓         |    ✗     |         ✗         |     ✗     |       n/a       |       n/a       |     ✗     |
 | `.git` boundary enforced                  |          **✓**           |         ✗         |    ✗     |         ✓         |     ✗     |        ✓        |        ✗        |     ✗     |
 | Lockfile verified before deleting         |          **✓**           |         ✗         |    ✗     |         ✗         |     ✗     |        ✗        |        ✗        |     ✗     |
@@ -1082,7 +1132,9 @@ answer the file header does.
 > **No analytics, no diagnostics, no usage data** — none collected, none sent. Your
 > workspace structure, directory paths and repository names never leave the machine.
 >
-> `dev-prune` makes exactly one network request: an unauthenticated `GET` to GitHub's
-> public releases endpoint, to tell you when a newer version exists. It has no body,
-> carries no identifier, and runs at most once a week. Turn it off with `devp config set
-> update_check false`. Full detail in [docs/PRIVACY.md](docs/PRIVACY.md).
+> On its own, `dev-prune` makes one network request: an unauthenticated `GET` to
+> GitHub's public releases endpoint, to tell you when a newer version exists. It has no
+> body, carries no identifier, and runs at most once a week. Turn it off with `devp config
+> set update_check false`. Because `auto_update` is on by default, a newer release that
+> check finds is downloaded and verified at the end of a prune pass; `devp config set
+> auto_update false` leaves that to you. Full detail in [docs/PRIVACY.md](docs/PRIVACY.md).

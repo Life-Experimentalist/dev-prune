@@ -262,6 +262,18 @@ const ECOSYSTEMS = [
         <code>node_modules</code> is still counted and deleted once.
       </>
     ),
+    restore: (
+      <>
+        <strong>Coming back to a project:</strong>{" "}
+        <code>devp restore .</code> runs the owning manager's install, and{" "}
+        <code>devp restore --last-run</code> reinstalls everything the last
+        pass deleted. A <code>node_modules</code> holding a package from{" "}
+        <code>npm install --no-save</code> is refused, since the lockfile cannot
+        bring it back; <code>devp status --drift</code> lists those first.
+        Build output such as <code>dist/</code> or <code>.next</code> is never
+        touched.
+      </>
+    ),
   },
   {
     id: "eco-python",
@@ -396,6 +408,19 @@ const ECOSYSTEMS = [
         <code>PIPENV_VENV_IN_PROJECT</code>. Its default is a virtualenv in a
         shared directory under your home, keyed by a hash of the project path,
         which a repository-scoped prune has no business reaching into.
+      </>
+    ),
+    restore: (
+      <>
+        <strong>Coming back to a project:</strong>{" "}
+        <code>devp restore .</code> rebuilds the environment with the tool that
+        built it. <code>devp restore --last-run</code> rebuilds each one on the
+        Python version recorded in its <code>pyvenv.cfg</code>, and asks once
+        if that version is gone. An environment holding a hand-installed
+        package the lockfile never recorded is refused;{" "}
+        <code>devp status --drift</code> names it and the command that records
+        it. The bytecode and test-tool caches need no restore: they refill on
+        the next import or test run.
       </>
     ),
   },
@@ -956,6 +981,7 @@ function EcosystemGroup({ group }) {
         </table>
       </div>
       <p className="eco-tiebreak">{group.tieBreak}</p>
+      {group.restore && <p className="eco-tiebreak">{group.restore}</p>}
     </div>
   );
 }
@@ -1563,7 +1589,7 @@ Notes you should rely on, not work around:
                       </div>
                       <div className="term-line c-yellow">
                         [↑/↓/j/k] Navigate [s] Sort [f] Filter [/] Search [p]
-                        Prune [i] Ignore [q] Quit
+                        Prune [Tab] Inspector [i] Ignore [q] Quit
                       </div>
                       <div className="term-line c-dim">
                         <a href="/">dev-prune</a> · made with ♥ by{" "}
@@ -2354,6 +2380,17 @@ Notes you should rely on, not work around:
                   </tr>
                   <tr>
                     <td className="td-name">
+                      <code>devp scores</code>
+                    </td>
+                    <td>
+                      The record book: the three largest single-repository
+                      cleanups and the three largest whole passes ever, read
+                      from the same pass log. The long spelling is{" "}
+                      <code>devp history --scores</code>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
                       <code>devp completions &lt;shell&gt;</code>
                     </td>
                     <td>
@@ -3037,16 +3074,19 @@ Notes you should rely on, not work around:
               </Faq>
               <Faq q="Does it send anything over the network?">
                 No analytics, no diagnostics, no usage data — none collected,
-                none sent. There is exactly one request: an unauthenticated{" "}
+                none sent. On its own it makes one request: an unauthenticated{" "}
                 <code>GET</code> to GitHub's public releases page, so it can
                 tell you when a newer version is out. It has no body, carries no
                 identifier, and runs at most once a week. It is opt-out rather
                 than opt-in, because a tool that deletes directories is one
                 whose fixes you want:{" "}
                 <code>devp config set update_check false</code> switches it off,
-                and <code>devp update --offline</code> skips it once. Everything
-                else on the wire is your own package manager during verification
-                or restore.
+                and <code>devp update --offline</code> skips it once. Because{" "}
+                <code>auto_update</code> is on by default, a newer release that
+                check finds is downloaded and verified at the end of a prune
+                pass; <code>devp config set auto_update false</code> leaves that
+                to you. Everything else on the wire is your own package manager
+                during verification or restore.
               </Faq>
               <Faq q="Does it delete build output — dist/, .next/, target/?">
                 Not by default, and never on a rule of its own. A prune only

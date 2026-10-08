@@ -4,11 +4,12 @@ dev-prune collects no analytics, no diagnostics and no usage data — not locall
 remotely, not in aggregate, not anonymised. There is no opt-out to configure, because
 there is nothing to opt out of.
 
-It does make exactly one network request on its own initiative: asking GitHub what the
-latest release is. Two others exist and neither happens unless you ask for it —
-downloading a release binary when you answer yes to `devp update` or run
-`devp update --install`, and downloading the VS Code extension's `.vsix` after you say
-yes to the one-time editor-extension offer. All three are described below.
+On its own initiative it asks GitHub what the latest release is and, because
+`auto_update` is on by default, downloads that release at the end of a prune pass once
+the check has found one (`devp config set auto_update false` leaves the download to
+you). The one other request happens only when you ask for it: downloading the VS Code
+extension's `.vsix` after you say yes to the one-time editor-extension offer. All of
+them are described below.
 
 ---
 

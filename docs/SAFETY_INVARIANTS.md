@@ -101,8 +101,9 @@ is reachable only by declaration, which is checked on its own terms — see inva
 - **Abort**: verification failed *and* there is no lockfile. Nothing is deleted, and the
   command to fix it is printed.
 
-Every adapter reaches this gate through one shared helper, `enforce_two_tier` in
-[`src/adapters/mod.rs`](../src/adapters/mod.rs). It takes two command forms per
+Most lockfile-backed adapters reach this gate through one shared helper,
+`enforce_two_tier` in [`src/adapters/mod.rs`](../src/adapters/mod.rs); the rest call the
+lower-level helpers it dispatches to directly, with the same two tiers. It takes two command forms per
 ecosystem — a read-only one and a writing one — and picks between them by the rule
 below.
 
@@ -253,8 +254,9 @@ Falling back to defaults would silently discard whatever the file said — inclu
 opted out. Only the personal file is ever repaired by `devp doctor --fix`, and only by
 renaming the broken one aside; a file the user has committed is theirs to fix.
 
-Both hold **inert data only** — flags, a number, a display name. Nothing in either can
-name a command, a path to delete, or a directory to add. The shared one is why the rule
+Apart from `prunable`, which is checked rather than obeyed as described above, both hold
+**inert data only**: flags, a number, a display name. Nothing in either can name a
+command to run or a directory to add. The shared one is why the rule
 has teeth: it arrives with a `git clone`, from whoever wrote the repository. Cloning an
 untrusted repository and running `devp` on it must not be a way to execute anything, so
 the settings that widen what a pass may do — `allow_manifest_rewrite`,
@@ -298,7 +300,8 @@ repository it was asked about or wander into dependency trees:
   anything outside that range; the clamp to the same range survives only as the
   backstop for a hand-edited config file.
 - **Never descends into** `node_modules`, `target`, `vendor`, `bower_components`,
-  `__pycache__`, any directory containing `pyvenv.cfg`, or any hidden directory.
+  `__pypackages__`, `Pods`, `deps`, `_build`, `.build`, `__pycache__`, any directory
+  containing `pyvenv.cfg`, or any hidden directory.
 - **Never descends into a nested repository.** A directory containing its own `.git` is
   a submodule or a vendored checkout with its own history and its own idle state. It is
   pruned only when registered and pruned in its own right, never as part of its parent.

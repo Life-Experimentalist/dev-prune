@@ -12,6 +12,8 @@ This document defines the Low-Level Design (LLD) specification for **`dev-prune`
 
 ## 🔬 1. Crate Module Map & Visibility
 
+A partial map of the main modules. `src/` is the full list.
+
 ```
 src/
 ├── main.rs                 # Executable entry point delegating to dev_prune::run_cli()
@@ -65,6 +67,10 @@ src/
 ## 💾 2. Data Schemas & Persistence Contracts
 
 ### 2.1 Global Registry Schema (`~/.config/dev-prune/registry.json` / `%APPDATA%\dev-prune\registry.json`)
+
+An excerpt of the structs. The complete definitions are in
+[`src/config.rs`](../../src/config.rs), and every settings key is in the config table of
+[CLI_REFERENCE.md](../CLI_REFERENCE.md).
 
 ```rust
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,7 +169,13 @@ pub struct PruneRunSummary {
   "ignore": false,
   "disable_daemon": false,
   "disable_hooks": false,
-  "override_idle_days": 30
+  "override_idle_days": 30,
+  "min_size_mb": 50,
+  "scan_depth": 6,
+  "prunable": {
+    "directories": [{ "path": "generated", "rebuild": "npm run codegen" }],
+    "exclude": []
+  }
 }
 ```
 
@@ -171,7 +183,7 @@ pub struct PruneRunSummary {
 
 ## ⚙️ 3. `PackageManager` Trait Contract
 
-All ecosystem adapters in `src/adapters/` implement the [`PackageManager`](../../src/adapters/mod.rs) trait:
+All ecosystem adapters in `src/adapters/` implement the [`PackageManager`](../../src/adapters/mod.rs) trait. The core methods are below; the full trait, including `runtime_tag`, `drift` and `opt_in`, is in [ADDING_ADAPTERS.md](../ADDING_ADAPTERS.md):
 
 ```rust
 pub trait PackageManager: Send + Sync {
@@ -243,7 +255,7 @@ flowchart TD
     S3 -->|No| Keep["leave all of them —<br/>no evidence to choose on"]
     Win --> Py
     Keep --> Py
-    Py{"uv detected?"} -->|Yes| DropVenv["drop the venv adapter"]
+    Py{"uv, poetry, pdm or<br/>pipenv detected?"} -->|Yes| DropVenv["drop the venv adapter;<br/>if several, first lockfile on disk wins"]
     Py -->|No| Done
     DropVenv --> Done(["final adapter set"])
 ```
@@ -251,8 +263,10 @@ flowchart TD
 *Owner selection. Non-JS, non-Python adapters are never touched by this pass — cargo,
 go and uv can all coexist with a JS manager in the same directory.*
 
-**Python (the virtual environment)** — uv wins over the plain-venv adapter whenever it
-detects, because it has a real lockfile and can reproduce the environment exactly. The
+**Python (the virtual environment)**: uv, Poetry, PDM or Pipenv, whichever is detected,
+wins over the plain-venv adapter, because each has a real lockfile and can reproduce the
+environment exactly. If more than one is detected, the first whose lockfile (`uv.lock`,
+`poetry.lock`, `pdm.lock`, `Pipfile.lock`, in that order) is on disk owns the environment. The
 `requirements.txt` + `pyvenv.cfg` adapter takes everything else.
 
 ### 3.2 Intra-Repository Project Discovery
@@ -271,7 +285,7 @@ flowchart TD
     F1 -->|Yes| Pass["descend / pass through"]
     F1 -->|No| F2{"name starts with '.'?"}
     F2 -->|Yes| Prune["do not descend"]
-    F2 -->|No| F3{"node_modules, target,<br/>vendor, bower_components?"}
+    F2 -->|No| F3{"node_modules, target, vendor,<br/>bower_components, __pypackages__,<br/>Pods, deps, _build, .build, __pycache__?"}
     F3 -->|Yes| Prune
     F3 -->|No| F4{"contains pyvenv.cfg?"}
     F4 -->|Yes| Prune
@@ -286,8 +300,8 @@ flowchart TD
 The walk is bounded: `scan_depth` levels below the repository root — six by default,
 `devp config set scan_depth N` globally or `"scan_depth"` in a repository's
 `.devprune.json`, clamped to `MAX_SCAN_DEPTH_LIMIT` (32) — never into `node_modules` /
-`target` / `vendor` / `bower_components` / any directory containing `pyvenv.cfg` / any
-hidden directory, and never into a nested `.git` (a submodule or vendored checkout owns
+`target` / `vendor` / `bower_components` / `__pypackages__` / `Pods` / `deps` / `_build` /
+`.build` / `__pycache__` / any directory containing `pyvenv.cfg` / any hidden directory, and never into a nested `.git` (a submodule or vendored checkout owns
 its own history and idle state).
 
 Note the asymmetry at the root: `filter_entry` lets depth 0 through unconditionally, so

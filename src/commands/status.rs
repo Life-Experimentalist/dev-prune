@@ -52,6 +52,12 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     }
     let mut registry = Registry::load()?;
 
+    // Auto-heal moved repositories (e.g. moved to Archive) and purge dead ephemeral AI worktrees.
+    let healed = registry.heal_dead_and_moved_repositories();
+    if healed > 0 {
+        let _ = registry.save();
+    }
+
     // Before anything is reported: the repository the user is standing in may be one
     // `git init` created, which fires no Git hook and so has never registered itself.
     // Asking `devp status` about it is the most likely way to notice, so answer it here

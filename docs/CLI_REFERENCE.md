@@ -207,8 +207,8 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   at a time.
 
   Adapter names are `npm`, `pnpm`, `yarn`, `bun`, `deno`, `uv`, `venv`, `pycache`, `poetry`,
-  `pdm`, `pipenv`, `pixi`, `cargo`, `go`, `composer`, `bundler`, `cocoapods`, `mix`,
-  `terraform` — plus `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg`,
+  `pdm`, `pipenv`, `pixi`, `go`, `composer`, `bundler`, `cocoapods`, `mix`,
+  `terraform` — plus `cargo`, `gradle`, `maven`, `swift`, `dart`, `mix_build`, `vcpkg`,
   `cmake_build`, `dotnet_build`, `godot`, `unity`, `unreal`, `defold`, `cocos`, `zig`,
   `stack`, `cabal` and `sbt`, which are opt-in (see below). An unrecognised name is an error
   listing the valid ones rather than a silently empty pass, and `--only` and `--skip`
@@ -367,7 +367,8 @@ reads unambiguously:
   | `Space` | Toggle the current row (Prune-Select mode). Accepts any repository with something to reclaim, including an *active* one that is only short of the idle threshold; rows that a prune could not deliver say why instead |
   | `a` | Toggle every candidate on screen (Prune-Select mode). Candidates only — an active repository is checked one row at a time, because `Enter` prunes immediately |
   | `Enter` | Prune the selected repositories (Prune-Select mode) |
-  | `i` | Toggle `ignore` in the repository's `.devprune.json`; the table refreshes immediately. Inert where a committed `project.devprune.json` sets `ignore` — that file wins, so edit it instead |
+  | `i` | Ask, then toggle `ignore` in the repository's `.devprune.json`; `y` or `Enter` confirms, any other key cancels, and the table refreshes immediately. A repository held by a legacy `ignore.devprune.json` marker is offered "stop ignoring", and confirming removes the marker too. Inert where a committed `project.devprune.json` sets `ignore` — that file wins, so edit it instead |
+  | `Tab` | Hide or show the inspector pane |
   | `Esc` | Leave Prune-Select mode, or exit from the browse view |
   | `q` / `Ctrl-C` | Exit the dashboard |
 
@@ -381,6 +382,15 @@ reads unambiguously:
   checked for pruning stays checked when a filter hides it, and the counts in the header
   are always over the whole registry — so a filtered dashboard can never make a machine
   look tidier than it is.
+
+  The inspector pane shows the selected repository in full: per-directory sizes,
+  root-commit identity, idle window, last prune, lifetime space saved, detected adapters,
+  a sparkline of its commits over the last 26 weeks, and the five largest entries inside
+  its bloat directories. It sits beside the table on a terminal at least 110 columns
+  wide, below the table on a narrower one at least 34 rows tall, and is left out on
+  anything smaller. The commit history and the largest entries are read on a background
+  thread, one repository at a time and only while the pane is on screen, so moving the
+  selection never waits on a large `node_modules`.
 
   The terminal is restored on every exit path, including an error or a panic inside the view.
 
@@ -914,7 +924,7 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
     `skipped_declaration` with the reason, and nothing is deleted.
 
     Neither file can widen what dev-prune is allowed to do. Both deserialize into the
-    same seven keys, so a repository still cannot grant itself `allow_manifest_rewrite`
+    same eight keys, so a repository still cannot grant itself `allow_manifest_rewrite`
     or ask for a post-prune command — see
     [`docs/SAFETY_INVARIANTS.md`](SAFETY_INVARIANTS.md).
   - `config daemon [PATH] [enable|disable|status]`: Configure OS background scheduler globally or for workspace.
@@ -937,7 +947,7 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
 
     Both rewrite the whole `.devprune.json`, so both refuse a file that does not parse
     rather than starting from the defaults and taking every other override in it with
-    them. Fix the file, or run `devp config <PATH> --update` to reset it deliberately.
+    them. Fix the file, or run `devp config project <PATH> --update` to reset it deliberately.
 
   - `config icon`: Register `*.devprune.json` with the OS file manager and write the icon files and JSON Schema into the config directory. On Linux this is a complete registration — a `shared-mime-info` package plus hicolor icons, honoured by Nautilus, Dolphin, Thunar, Nemo and PCManFM. On Windows, Explorer resolves icons from the last extension only, so `*.devprune.json` cannot be distinguished from any other `.json` without hijacking every JSON file on the machine; the config folder gets its own icon instead. On macOS a UTI must come from an application bundle, which a single binary is not. The command also prints an editor snippet you can paste yourself — it never edits your editor settings, your PATH, or your shell startup files.
 - **Examples**:
@@ -1711,10 +1721,10 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ### 15. `devp stats [--json]`
 - **Description**: What dev-prune has actually done for you, as opposed to what it could do next. Lifetime space reclaimed, how much has been emptied out of package-manager caches, how many prune passes there have been, the most recent pass and how to undo it, the last ten passes, the ten repositories that have given back the most, which package managers those reclaims came from, and how many of the passes you typed yourself. Read-only — it touches the registry and the prune log, and nothing else.
 - **Three space figures, not one**: `Space reclaimed` is what pruning gave back, `Caches emptied` is what [`devp caches clear <manager>`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) gave back, and `Containers cleared` is what [`devp caches clear <engine>`](#devp-caches-clear-engine---dry-run---yes---json) gave back. They are never added together, because they do not cost the same to undo: one reinstall in one repository, a download in every project on the machine, and a pull of the whole layer stack. `Caches emptied` counts from **1.9.0** and `Containers cleared` from **1.17.0**; a machine that did either before upgrading starts that figure at zero.
-- **`By package manager`**: which of the two dozen adapters is actually earning its keep, ranked by lifetime bytes with the directory count beside it. Pruning only — emptying a cache is not a prune pass and never enters the log this is summed from, so the figures here do not add up to `Caches emptied` or to the lifetime total above, and the section says so under itself rather than letting the arithmetic look broken.
+- **`By package manager`**: which of the thirty-six adapters is actually earning its keep, ranked by lifetime bytes with the directory count beside it. Pruning only — emptying a cache is not a prune pass and never enters the log this is summed from, so the figures here do not add up to `Caches emptied` or to the lifetime total above, and the section says so under itself rather than letting the arithmetic look broken.
 - **`How passes start`**: the same bytes split by what started the pass — `manual`, `scheduled` or `dashboard` — with each one's share. All three print even at zero, because a `scheduled` line reading zero passes is the answer to "is the daemon doing anything", and a section that hid its empty rows would delete exactly that answer. When it does read zero, the report points at `devp status daemon`.
 - **Why it is separate from `status`**: [`devp status`](#6-devp-status---top-n---drift---json) answers "what can I reclaim right now". Folding a history report into it would put a screen of the past above the list people open it for.
-- **When a number here raises a question**, [`devp history`](#20-devp-history---pass-n---limit-n---all---json---export-path) answers it: this report says ten passes freed 27 GiB, that one says which pass, started by what, and every directory it took.
+- **When a number here raises a question**, [`devp history`](#20-devp-history---pass-n---limit-n---all---scores---json---export-path) answers it: this report says ten passes freed 27 GiB, that one says which pass, started by what, and every directory it took.
 - **A note on upgraded machines**: the lifetime total has been accumulating since 1.0.0, but the per-repository figures and the pass history are only recorded from **1.1.0** onward, and the two breakdowns from **1.17.0** — they read the prune log, which did not exist before it. A machine that pruned for months before upgrading will show a large lifetime total next to an empty "Biggest reclaims" section, and each section says how much it could not account for rather than implying nothing ever happened.
 - **Flags**:
   - `--json` — emit one machine-readable document instead of the report.
@@ -1847,7 +1857,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 
 ---
 
-### 20. `devp history [--pass N] [--limit N] [--all] [--json] [--export [PATH]]`
+### 20. `devp history [--pass N] [--limit N] [--all] [--scores] [--json] [--export [PATH]]`
 - **Description**: Which pass deleted what, and what asked it to. [`devp stats`](#15-devp-stats---json) says a number of passes freed a number of bytes; this says that pass #2 ran at 09:14 as `devp run --daemon`, took 4.02 GiB out of two repositories, and names all three directories. Read-only — it never deletes anything and never puts anything back.
 - **Two levels, on purpose**: bare `devp history` is one line per pass, because twenty passes across a workspace is thousands of directories and nobody scrolls that. `--pass N` opens one of them in full, grouped by repository, biggest repository first.
 - **What is recorded per pass**: when it ran, what started it, the exact command line, the version of dev-prune that ran it, and every directory removed with its repository, its package manager and its size.
@@ -1859,17 +1869,30 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   - `--pass N` — one pass in full. `1` is the most recent, matching the numbers in the list. A number nobody has is a usage error (exit `2`), including under `--json`, so a script cannot read an empty result as "that pass deleted nothing".
   - `--limit N` — how many passes to list. The default is the 20 most recent.
   - `--all` — list every pass the log holds.
-  - `--json` — emit the whole log as one document instead of the report. Combines with `--pass N` to emit just that one.
+  - `--scores` — the all-time records instead of the list: the three largest single-repository cleanups and the three largest whole passes, each with when it happened and what it reclaimed, read from the same log. [`devp scores`](#21-devp-scores---json) is the same command under a shorter name. Conflicts with `--pass` and `--export` (exit `2`), because a record book is not a pass to open or a log to file away.
+  - `--json` — emit the whole log as one document instead of the report. Combines with `--pass N` to emit just that one, or with `--scores` to emit the records as their own document (`"command": "history --scores"`).
   - `--export [PATH]` — write the JSON document to a file. With a path, exactly that path; with a directory, a generated filename inside it; bare, `dev-prune-history-<date>.json` in your documents folder (`~` if there is no documents folder). Combines with `--pass N` to export one pass.
 - **Exit codes**: `0` on success, including when nothing has ever been pruned. `2` for a pass number that does not exist. `1` if the export cannot be written.
 - **Examples**:
   ```bash
   devp history                          # the last 20 passes, one line each
   devp history --pass 1                 # what the most recent pass deleted
+  devp history --scores                 # leaderboard of largest cleanups
   devp history --all > passes.txt       # every pass, nothing elided
   devp history --export                 # a JSON file in your documents folder
   devp history --export ~/passes.json   # or exactly where you say
   devp history --json | jq '[.passes[] | select(.trigger == "scheduled")] | length'
+  ```
+
+---
+
+### 21. `devp scores [--json]`
+- **Description**: The record book. The all-time three largest single-repository cleanups and three largest whole passes, each with when it happened and how much came back, with medals on the podium places. It is exactly [`devp history --scores`](#20-devp-history---pass-n---limit-n---all---scores---json---export-path) under a shorter name (same pass log, same output), and like everything under `history` it is read-only.
+- **Exit codes**: `0` on success, including when nothing has ever been pruned: an empty record book is still a record book.
+- **Examples**:
+  ```bash
+  devp scores                           # the records, medals and all
+  devp scores --json                    # the same records as one JSON document
   ```
 
 ---
@@ -1885,7 +1908,7 @@ Executing `devp -V` prints detailed diagnostic information:
 |____/ |_____|   \_/      |_|   |_| \_\\___/|_| \_|_____|
                                                   v1.23.0 · install script
 Every dependency directory on this machine, in one command.
-Only what a lockfile can rebuild — and `devp restore --last-run` puts it back.
+Only what a lockfile can rebuild, and `devp restore --last-run` puts it back.
 
 dev-prune (devp) v1.23.0
   Binary Aliases:  dev-prune | devp

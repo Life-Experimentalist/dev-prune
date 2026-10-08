@@ -1563,6 +1563,178 @@ impl Registry {
             .is_some_and(|e| e.identity.is_none())
     }
 
+    /// Whether this path is an ephemeral AI-agent worktree (Claude Code, Cursor,
+    /// Conductor, Aider and kin). Those are deleted when the session that made them
+    /// ends, so a registered one that is gone from disk is churn to drop, not a
+    /// project to go looking for.
+    pub fn is_ephemeral_worktree_path(path: &Path) -> bool {
+        // One separator style before matching: registry keys carry `\` on Windows and
+        // the fragments are spelled once with `/`. The prepended slash keeps the
+        // fragments' leading-slash anchoring working even for a relative path.
+        let normalized = format!(
+            "/{}",
+            path.to_string_lossy().to_lowercase().replace('\\', "/")
+        );
+        constants::EPHEMERAL_WORKTREE_FRAGMENTS
+            .iter()
+            .any(|fragment| normalized.contains(fragment))
+    }
+
+    /// Drops registry entries for deleted ephemeral AI worktrees, and re-points or
+    /// merges entries whose repository moved on disk (an `Archive/` sweep being the
+    /// usual culprit), carrying the pruning history across. Returns how many entries
+    /// changed.
+    ///
+    /// A missing path is only ever merged or re-pointed on evidence: a matching root
+    /// commit identity, or an identity-less entry found again by name under an
+    /// `Archive` directory beside where it used to live. Anything weaker risks welding
+    /// two unrelated projects together, because a repository on an unplugged drive
+    /// also fails `exists()`, and it comes back.
+    pub fn heal_dead_and_moved_repositories(&mut self) -> usize {
+        let dead_keys: Vec<PathBuf> = self
+            .repositories
+            .keys()
+            .filter(|p| !p.exists())
+            .cloned()
+            .collect();
+
+        if dead_keys.is_empty() {
+            return 0;
+        }
+
+        let mut changes = 0;
+
+        for dead_path in dead_keys {
+            // 1. If it's an ephemeral AI worktree that was deleted, silently drop it.
+            if Self::is_ephemeral_worktree_path(&dead_path) {
+                self.repositories.remove(&dead_path);
+                self.last_added_repos.retain(|p| p != &dead_path);
+                changes += 1;
+                continue;
+            }
+
+            let Some(dead_entry) = self.repositories.get(&dead_path).cloned() else {
+                continue;
+            };
+
+            let dead_file_name = dead_path.file_name().map(|f| f.to_os_string());
+
+            // 2. Check if another live registered repository already claims the same identity or basename.
+            let mut matched_live_key: Option<PathBuf> = None;
+            for (live_path, live_entry) in &self.repositories {
+                if !live_path.exists() || *live_path == dead_path {
+                    continue;
+                }
+                // Check identity match
+                if let (Some(id_dead), Some(id_live)) = (&dead_entry.identity, &live_entry.identity)
+                    && id_dead == id_live
+                {
+                    matched_live_key = Some(live_path.clone());
+                    break;
+                }
+                // A shared basename is only a hint: it earns a merge solely when the
+                // live side can be proven to be the same repository, by reading its
+                // identity off disk. Merging on the name alone would weld two
+                // unrelated projects called `api` together, and would swallow an
+                // entry whose drive is merely unmounted the moment a same-named
+                // repository exists anywhere else in the registry.
+                if let (Some(id_dead), Some(dfn), Some(lfn)) =
+                    (&dead_entry.identity, &dead_file_name, live_path.file_name())
+                    && dfn == lfn
+                    && live_entry.identity.is_none()
+                    && crate::scanner::git::repo_identity(live_path).as_deref() == Some(id_dead)
+                {
+                    matched_live_key = Some(live_path.clone());
+                    break;
+                }
+            }
+
+            if let Some(live_key) = matched_live_key {
+                // Merge statistics from dead_entry into live_key
+                if let Some(target) = self.repositories.get_mut(&live_key) {
+                    target.total_freed_bytes =
+                        target.total_freed_bytes.max(dead_entry.total_freed_bytes);
+                    if target.last_pruned_at.is_none() {
+                        target.last_pruned_at = dead_entry.last_pruned_at;
+                    }
+                    if target.identity.is_none() {
+                        target.identity = dead_entry.identity;
+                    }
+                }
+                self.repositories.remove(&dead_path);
+                self.last_added_repos.retain(|p| p != &dead_path);
+                changes += 1;
+                continue;
+            }
+
+            // 3. Nothing registered matches, so probe the disk for where it went. The
+            // archive-convention candidates stand on their own; the sweep of every
+            // sibling directory is only worth trusting when the entry carries an
+            // identity to verify a hit against, so an identity-less entry never
+            // adopts a same-named repository that merely sits nearby.
+            let mut candidate_paths: Vec<PathBuf> = Vec::new();
+            if let (Some(fname), Some(parent)) = (&dead_file_name, dead_path.parent()) {
+                candidate_paths.push(parent.join("Archive").join(fname));
+                candidate_paths.push(parent.join("archive").join(fname));
+                candidate_paths.push(parent.join("Archived").join(fname));
+                candidate_paths.push(parent.join("archived").join(fname));
+                if let Some(grandparent) = parent.parent() {
+                    candidate_paths.push(grandparent.join("Archive").join(fname));
+                    candidate_paths.push(grandparent.join("archive").join(fname));
+                }
+                if dead_entry.identity.is_some()
+                    && let Ok(entries) = std::fs::read_dir(parent)
+                {
+                    for entry in entries.flatten() {
+                        if entry.file_type().is_ok_and(|ft| ft.is_dir()) {
+                            let sub_target = entry.path().join(fname);
+                            if !candidate_paths.contains(&sub_target) {
+                                candidate_paths.push(sub_target);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut found_candidate: Option<PathBuf> = None;
+            for cand in candidate_paths {
+                if cand.is_dir() && crate::scanner::is_git_repo(&cand) {
+                    let matches = if let Some(dead_id) = &dead_entry.identity {
+                        crate::scanner::git::repo_identity(&cand).as_deref() == Some(dead_id)
+                    } else {
+                        // No identity on record means nothing to verify, and by the
+                        // guard above every candidate left is an archive-convention
+                        // path: a same-named repository under `Archive` is the user's
+                        // own sweep, which is the one move worth trusting unverified.
+                        true
+                    };
+                    if matches {
+                        found_candidate = Some(cand);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(new_path) = found_candidate {
+                let canonical_new = canonical_key(&new_path);
+                let mut updated_entry = dead_entry;
+                if updated_entry.identity.is_none() {
+                    updated_entry.identity = crate::scanner::git::repo_identity(&new_path);
+                }
+                self.repositories.remove(&dead_path);
+                // `last_added_repos` is the batch `devp undo` unlinks. A healed entry
+                // was never added by the user's last link, so it must not become
+                // undoable: an undo after a silent heal would unlink the repository
+                // instead of reverting what the user actually did.
+                self.last_added_repos.retain(|p| p != &dead_path);
+                self.repositories.insert(canonical_new, updated_entry);
+                changes += 1;
+            }
+        }
+
+        changes
+    }
+
     /// Removes a repository from the registry. Returns `true` if it was present.
     ///
     /// A repository that has been deleted from disk cannot be canonicalised any more,
@@ -2738,5 +2910,93 @@ mod tests {
             .expect("npm alone is enough to answer for npm");
         assert_eq!(covered, 10_000_000, "cargo has never been timed here");
         assert!((secs - 10.0).abs() < 0.01, "{secs}");
+    }
+
+    #[test]
+    fn heal_removes_dead_ephemeral_ai_worktree() {
+        let mut reg = Registry::default();
+        let dead_wt = PathBuf::from("/path/to/project/.claude/worktrees/issue-42");
+        reg.repositories.insert(dead_wt.clone(), RepoEntry::new());
+        reg.last_added_repos.push(dead_wt.clone());
+
+        let healed = reg.heal_dead_and_moved_repositories();
+        assert_eq!(healed, 1);
+        assert!(!reg.repositories.contains_key(&dead_wt));
+        assert!(!reg.last_added_repos.contains(&dead_wt));
+    }
+
+    #[test]
+    fn heal_merges_moved_repository_with_existing_entry() {
+        let tmp = TempDir::new().unwrap();
+        let live_path = tmp.path().join("Archive/ActionsCounter");
+        fs::create_dir_all(&live_path).unwrap();
+
+        let dead_path = tmp.path().join("ActionsCounter"); // does not exist
+
+        let mut reg = Registry::default();
+        let mut dead_entry = RepoEntry::new();
+        dead_entry.total_freed_bytes = 42_000_000;
+        dead_entry.identity = Some("hash123".into());
+
+        let mut live_entry = RepoEntry::new();
+        live_entry.total_freed_bytes = 10_000_000;
+        live_entry.identity = Some("hash123".into());
+
+        reg.repositories.insert(dead_path.clone(), dead_entry);
+        reg.repositories.insert(live_path.clone(), live_entry);
+
+        let healed = reg.heal_dead_and_moved_repositories();
+        assert_eq!(healed, 1);
+        assert!(!reg.repositories.contains_key(&dead_path));
+        assert_eq!(reg.repositories[&live_path].total_freed_bytes, 42_000_000);
+    }
+
+    #[test]
+    fn heal_moves_dead_entry_to_archive_destination() {
+        let tmp = TempDir::new().unwrap();
+        let archive_dir = tmp.path().join("Archive/ProjectX");
+        fs::create_dir_all(archive_dir.join(".git")).unwrap();
+
+        let dead_path = tmp.path().join("ProjectX"); // missing on disk
+
+        let mut reg = Registry::default();
+        let mut dead_entry = RepoEntry::new();
+        dead_entry.total_freed_bytes = 5_000;
+
+        reg.repositories.insert(dead_path.clone(), dead_entry);
+
+        let healed = reg.heal_dead_and_moved_repositories();
+        assert_eq!(healed, 1);
+        assert!(!reg.repositories.contains_key(&dead_path));
+        let canonical_target = canonical_key(&archive_dir);
+        assert!(reg.repositories.contains_key(&canonical_target));
+        assert_eq!(reg.repositories[&canonical_target].total_freed_bytes, 5_000);
+        assert!(
+            !reg.last_added_repos.contains(&canonical_target),
+            "a healed entry must not enter the batch devp undo unlinks"
+        );
+    }
+
+    #[test]
+    fn heal_never_adopts_a_same_named_stranger_without_identity() {
+        // The hazard case: `api` on an unmounted drive fails exists(), and a different
+        // project also called `api` sits nearby. With no identity on record there is
+        // no way to tell them apart, so the dead entry must survive untouched: merging
+        // it would hand one project's history to another and lose the entry the
+        // moment the drive comes back.
+        let tmp = TempDir::new().unwrap();
+        let stranger = tmp.path().join("elsewhere/api");
+        fs::create_dir_all(stranger.join(".git")).unwrap();
+
+        let dead_path = tmp.path().join("api"); // missing on disk, identity unknown
+
+        let mut reg = Registry::default();
+        reg.repositories.insert(dead_path.clone(), RepoEntry::new());
+        reg.repositories.insert(stranger.clone(), RepoEntry::new());
+
+        let healed = reg.heal_dead_and_moved_repositories();
+        assert_eq!(healed, 0);
+        assert!(reg.repositories.contains_key(&dead_path));
+        assert!(reg.repositories.contains_key(&stranger));
     }
 }

@@ -277,10 +277,11 @@ Even though background subsystems run automatically, developers have granular co
 - **Task Name**: `DevPrune`
 - **Schedule**: Every 2 days
 - **No terminal window**: the task runs `devpw.exe`, a windowless build of the binary
-  generated locally beside the managed copy — the same relationship `pythonw.exe` has to
+  that ships beside `dev-prune.exe` in every Windows archive and is placed by
+  `cargo install`. It is the same relationship `pythonw.exe` has to
   `python.exe`. It has no console for Windows to show, so nothing flashes at the
   logged-in user, and because it still runs in your own session it keeps access to mapped
-  network drives and Dev Drives. If that build cannot be created, setup falls back to a
+  network drives and Dev Drives. If that task cannot be registered, setup falls back to a
   hidden password-less task (an S4U logon), then to a visible task, so the daemon is
   never lost. Details and diagnostics in
   [INSTALLATION_ISSUES.md §10](troubleshooting/INSTALLATION_ISSUES.md#10-a-terminal-window-flashes-briefly-after-logging-in-windows).

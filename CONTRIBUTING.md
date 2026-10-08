@@ -66,11 +66,11 @@ than load-bearing.
 
 `dev-prune` uses a simple, extensible [`PackageManager`](src/adapters/mod.rs) trait defined in [`src/adapters/mod.rs`](src/adapters/mod.rs).
 
-To add support for a new ecosystem (e.g. `maven`, `gradle`, `composer`, `mix`, `swift`):
+To add support for a new ecosystem (a package manager not yet in the adapter list in `docs/CLI_REFERENCE.md`):
 
 1. **Create module file**: Create `src/adapters/my_adapter.rs`.
 2. **Implement trait**: Implement `PackageManager` trait (`name`, `detect`, `bloat_dirs`, `enforce_lockfile`, `restore`).
-3. **Register adapter**: Add `pub mod my_adapter;` and register `Box::new(my_adapter::MyAdapter)` in `get_all_adapters()` inside `src/adapters/mod.rs`.
+3. **Register adapter**: Add `pub mod my_adapter;` and register `Box::new(my_adapter::MyAdapter)` in `get_all_adapters()` inside `src/adapters/mod.rs`, and add its name to `ADAPTER_GROUPS` in the same file (the `every_adapter_is_grouped_exactly_once` test fails without it).
 4. **Add unit tests**: Use `tempfile::TempDir` to test `detect`, `bloat_dirs`, name uniqueness, and lockfile safety.
 
 See the detailed step-by-step tutorial: **[How to Add a New Package Manager Adapter (`docs/ADDING_ADAPTERS.md`)](docs/ADDING_ADAPTERS.md)**.
@@ -137,9 +137,10 @@ npm run build
 ## 📜 Pull Request Checklist
 
 Before submitting a pull request, verify:
-- [ ] Code is formatted with `cargo fmt`
-- [ ] Lints pass clean with `cargo clippy -- -D warnings`
-- [ ] All unit and integration tests pass with `cargo test --all`
+- [ ] `cargo fmt --all -- --check` passes
+- [ ] `cargo clippy --all-targets --all-features -- -D warnings` passes
+- [ ] `cargo test --all --all-features` passes
+- [ ] `npm --prefix site run build` passes
 - [ ] New adapters or features include unit tests using `tempfile::TempDir`
 - [ ] Documentation and comments are updated to reflect code changes
 - [ ] Every new source file starts with the two-line licence header (see below)

@@ -28,6 +28,116 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It is report-only: never counted in the reclaimable total, and never a candidate for
   `devp run`.
 
+- **`devp status` opens an inspector pane** beside the table on terminals at least 110
+  columns wide: the selected repository's per-directory sizes, root-commit identity,
+  idle window, last prune, lifetime space saved and detected adapters, all in one
+  place instead of behind `devp doctor <path>`. It also draws a sparkline of the
+  repository's commits over the last 26 weeks and lists the five largest entries inside
+  its bloat directories, both read in the background so moving the selection never waits
+  on a large `node_modules`. A narrower terminal with at least 34 rows puts the pane
+  below the table instead, and `Tab` hides and shows it.
+
+- **`devp scores`** (the same report as `devp history --scores`) ranks your all-time
+  largest single-repository cleanups and largest whole passes, read from the same pass
+  log `devp history` prints, with medals on the top three of each. `--json` emits it
+  as a document with `"command": "history --scores"`.
+
+- **The registry heals itself.** `devp status`, `devp run` and `devp doctor` now
+  resolve registry entries whose directory is gone instead of warning about them
+  forever. A repository
+  that moved into a sibling `Archive/`-style directory, or anywhere else its root-commit
+  identity proves it is the same repository, keeps its lifetime statistics under the new
+  path. An entry for a deleted AI-agent worktree (`.claude/worktrees/`,
+  `.cursor/worktrees/` and kin) is dropped outright, because the session that creates
+  one deletes it when it ends. Nothing is merged on a shared directory name alone, so
+  an entry whose drive is merely unplugged stays put until the drive returns.
+
+### Changed
+
+- **`i` in `devp status` asks before it changes anything.** A small dialog names the
+  repository and what will happen; `y` or `Enter` confirms and any other key backs out.
+  A stray keypress used to rewrite `.devprune.json` on whichever row was highlighted.
+
+- **`devp update --install` and the auto-update also replace the copies cargo put on
+  `PATH`.** The scheduled pass runs the managed copy, and a copy only ever replaced itself
+  and the managed one, so `devp` typed from `~/.cargo/bin` kept answering with the
+  release that `cargo binstall` installed, however many scheduled passes had updated
+  since. The `dev-prune` and `devp` files in cargo's `bin` directory now move forward with
+  the managed copy, unless they are already the same release or newer (a `cargo install
+  --path .` development build is never downgraded). Cargo's own record of the installed
+  version is not touched, and the update says which command brings it forward.
+
+- **`devp doctor` names the upgrade command for a stale copy**, not only the uninstall
+  one. A copy on an older release is usually one you still want, on the current
+  release, and "remove with `cargo uninstall dev-prune`" pointed at deleting the binary
+  you type. The line now reads, for example, "upgrade with `cargo binstall dev-prune
+  --force` or remove with `cargo uninstall dev-prune`".
+
+- **Windows binaries no longer need the Visual C++ runtime.** They link the C runtime
+  statically, so the release zip, the install script, Scoop, npm, PyPI and WinGet all
+  run on a clean Windows install instead of failing to start with a missing
+  `VCRUNTIME140.dll`. `cargo install`
+  from crates.io still compiles against the dynamic runtime, which any machine with the
+  MSVC toolchain already has.
+
+### Fixed
+
+- A pass that found nothing eligible to prune, or stopped early on a lockfile
+  verification failure, skipped the auto-update check entirely, so an unattended
+  machine whose repositories were all clean or all active could stay on an old release
+  indefinitely. The check now runs at the end of every pass regardless of what the
+  pass found, with one deliberate exception: a `--json` pass stays out of it, because
+  that mode's stdout is a single machine-readable document and nothing else.
+
+- The windowless `devpw.exe` twin the Windows scheduled task runs is now refreshed
+  when it is stale against the running binary, so an upgrade no longer leaves the
+  scheduled task executing the previous version. And when the twin is missing and the
+  console binary runs the task instead, it detaches from its console immediately,
+  shortening the window flash.
+
+- `DEV_PRUNE_NO_TUI` now keeps every full-screen view closed, as documented. Only the
+  config wizard read it, so `devp status` and the `devp run` selector still opened
+  whenever both ends looked like a terminal, and an AI agent holding a pseudo-terminal
+  landed in a keypress loop it had no way to leave. Set the variable and both print
+  their plain output instead.
+
+- `-y` on `devp trust --fix-ownership` works in either position. `devp -y trust
+  --fix-ownership` parsed the flag and then asked anyway, and `devp trust
+  --fix-ownership -y` was a usage error.
+
+- `devp restore --last-run` puts a Go `vendor/` directory back. Restore chose between
+  `go mod vendor` and `go mod download` by checking whether `vendor/` existed, but the
+  prune had just deleted it, so a vendored repository always got `go mod download`,
+  which exits successfully without recreating anything, and the pass reported
+  "restored" over a directory that was still gone. It now rebuilds what the prune
+  recorded, and reports a failure unless `vendor/` exists afterwards.
+
+- Pressing `i` on a repository ignored through the older `ignore.devprune.json` marker
+  took two presses to un-ignore it. The first wrote `"ignore": true` and deleted the
+  marker, so the repository stayed ignored; it is now offered "stop ignoring" straight
+  away, and confirming clears both.
+
+- In `devp status`, after sorting, filtering or searching, the highlighted row's path
+  could keep the colour meant for an unhighlighted one while a different row got the
+  white text meant for the highlight, which is unreadable on a light terminal theme.
+  The highlight is now matched by its position on screen.
+
+- `devp run --help` lists `deno` and `dotnet_build` among the `--only` and `--skip`
+  names, `devp caches --help` covers every manager the report sizes, and the sample
+  output throughout the docs says MiB and GiB, which is what dev-prune prints.
+
+- When a `.devprune.json` cannot be read, `devp run`, `devp doctor` and `devp config`
+  now suggest `devp config project <PATH> --update` to reset it. The hint used to say
+  `devp config <PATH> --update`, which is a usage error, so following the advice printed
+  only clap's complaint.
+
+### For contributors
+
+- `devp uninstall` and `devp update` now recognise a development build anywhere under
+  `target/`, including `target/<triple>/release` and cargo-llvm-cov's
+  `target/llvm-cov-target/debug`. Before, an uninstall run from one of those deleted the
+  binary it was running from, so `cargo llvm-cov` failed the uninstall tests.
+
 ## [1.22.0] - 2026-09-20
 
 ### Added

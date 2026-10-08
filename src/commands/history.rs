@@ -46,12 +46,18 @@ pub struct HistoryArgs {
     pub json: bool,
     /// Write the JSON document to a file. `Some(None)` means the default location.
     pub export: Option<Option<PathBuf>>,
+    /// Show leaderboard high scores.
+    pub scores: bool,
 }
 
 /// Run the `history` command.
 pub fn run(args: &HistoryArgs) -> Result<()> {
     let registry = Registry::load()?;
     let passes = history::merged(history::load()?, &registry);
+
+    if args.scores {
+        return print_scores(&passes, args.json);
+    }
 
     // Checked once, before anything branches on the output mode: `--pass 40 --json` on
     // a machine with ten passes is the same question with no answer as `--pass 40`, and
@@ -75,6 +81,192 @@ pub fn run(args: &HistoryArgs) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// One single-cleanup record: bytes, when, and the repository's name where it is known.
+type SingleCleanup = (u64, DateTime<Utc>, Option<String>);
+/// One whole-pass record: bytes and when.
+type TotalRun = (u64, DateTime<Utc>);
+
+/// The two leaderboards behind `devp scores`: the most one repository gave back in a
+/// single pass, and the most one whole pass gave back.
+///
+/// A `Summary` pass without a directory list only yields a single-cleanup record when
+/// it touched exactly one repository, because that is the only case where the pass
+/// total and the per-repository figure are the same number. Guessing a split for the
+/// others would put invented records on the board.
+fn collect_scores(passes: &[Pass]) -> (Vec<SingleCleanup>, Vec<TotalRun>) {
+    let mut single_cleanups: Vec<(u64, DateTime<Utc>, Option<String>)> = Vec::new();
+    for pass in passes {
+        match pass {
+            Pass::Detailed(record) => {
+                let mut per_repo: std::collections::HashMap<PathBuf, u64> =
+                    std::collections::HashMap::new();
+                for d in &record.dirs {
+                    *per_repo.entry(d.repo_path.clone()).or_insert(0) += d.size_freed;
+                }
+                for (repo, bytes) in per_repo {
+                    if bytes > 0 {
+                        let name = repo.file_name().map(|f| f.to_string_lossy().to_string());
+                        single_cleanups.push((bytes, record.at, name));
+                    }
+                }
+            }
+            Pass::Summary {
+                at,
+                bytes_freed,
+                repos_touched,
+                dirs,
+                ..
+            } => {
+                if let Some(dirs) = dirs {
+                    let mut per_repo: std::collections::HashMap<PathBuf, u64> =
+                        std::collections::HashMap::new();
+                    for d in dirs {
+                        *per_repo.entry(d.repo_path.clone()).or_insert(0) += d.size_freed;
+                    }
+                    for (repo, bytes) in per_repo {
+                        if bytes > 0 {
+                            let name = repo.file_name().map(|f| f.to_string_lossy().to_string());
+                            single_cleanups.push((bytes, *at, name));
+                        }
+                    }
+                } else if *repos_touched == 1 && *bytes_freed > 0 {
+                    single_cleanups.push((*bytes_freed, *at, None));
+                }
+            }
+        }
+    }
+    single_cleanups.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+
+    let mut total_runs: Vec<(u64, DateTime<Utc>)> = passes
+        .iter()
+        .filter(|p| p.bytes_freed() > 0)
+        .map(|p| (p.bytes_freed(), p.at()))
+        .collect();
+    total_runs.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+
+    (single_cleanups, total_runs)
+}
+
+/// The document emitted by `devp scores --json` and `devp history --scores --json`.
+///
+/// The command key is spelled the way flag variants are everywhere else in the JSON
+/// contract (`status --drift`, `caches clear`): by the flag, on the command that owns
+/// the data.
+fn scores_document(
+    single_cleanups: &[(u64, DateTime<Utc>, Option<String>)],
+    total_runs: &[(u64, DateTime<Utc>)],
+) -> serde_json::Value {
+    use serde_json::json;
+    let medals = ["Gold", "Silver", "Bronze"];
+    let medals_emojis = ["🥇", "🥈", "🥉"];
+
+    let single_cleanup_json: Vec<serde_json::Value> = single_cleanups
+        .iter()
+        .take(3)
+        .enumerate()
+        .map(|(i, (bytes, date, repo))| {
+            json!({
+                "rank": i + 1,
+                "medal": medals[i],
+                "emoji": medals_emojis[i],
+                "bytes": bytes,
+                "formatted_bytes": output::format_bytes(*bytes),
+                "date": date.format("%Y-%m-%d").to_string(),
+                "repo": repo,
+            })
+        })
+        .collect();
+
+    let total_run_json: Vec<serde_json::Value> = total_runs
+        .iter()
+        .take(3)
+        .enumerate()
+        .map(|(i, (bytes, date))| {
+            json!({
+                "rank": i + 1,
+                "medal": medals[i],
+                "emoji": medals_emojis[i],
+                "bytes": bytes,
+                "formatted_bytes": output::format_bytes(*bytes),
+                "date": date.format("%Y-%m-%d").to_string(),
+            })
+        })
+        .collect();
+
+    json!({
+        "schema": crate::json::SCHEMA_VERSION,
+        "version": crate::constants::VERSION,
+        "command": "history --scores",
+        "single_cleanup": single_cleanup_json,
+        "total_run": total_run_json,
+    })
+}
+
+/// High-scores leaderboard: the best single cleanup and the best total run on record.
+pub fn print_scores(passes: &[Pass], json: bool) -> Result<()> {
+    let (single_cleanups, total_runs) = collect_scores(passes);
+
+    if json {
+        return crate::json::emit(&scores_document(&single_cleanups, &total_runs));
+    }
+
+    if single_cleanups.is_empty() && total_runs.is_empty() {
+        output::print_header("High Scores Leaderboard");
+        output::print_info(
+            "No prune passes recorded yet. Run `devp run` to earn your first cleanup badge!",
+        );
+        return Ok(());
+    }
+
+    println!();
+    println!("   {}", "──── ★ SINGLE CLEANUP ★ ────".cyan().bold());
+    if single_cleanups.is_empty() {
+        println!("     {}", "No single repository records yet".dimmed());
+    } else {
+        for (i, (bytes, date, repo)) in single_cleanups.iter().take(3).enumerate() {
+            match i {
+                0 => println!("     {}", "🥇 Gold".yellow().bold()),
+                1 => println!("     {}", "🥈 Silver".white().bold()),
+                _ => println!("     {}", "🥉 Bronze".bright_yellow().bold()),
+            }
+            let repo_tag = repo
+                .as_ref()
+                .map(|r| format!(" ({})", r).cyan().to_string())
+                .unwrap_or_default();
+            println!(
+                "         {} · {}{}",
+                output::format_bytes(*bytes).green().bold(),
+                date.format("%Y-%m-%d").to_string().dimmed(),
+                repo_tag
+            );
+            println!("   {}", "────────────────────────────".dimmed());
+        }
+    }
+
+    println!();
+    println!("   {}", "──── ★    TOTAL RUN   ★ ────".cyan().bold());
+    if total_runs.is_empty() {
+        println!("     {}", "No total run records yet".dimmed());
+    } else {
+        for (i, (bytes, date)) in total_runs.iter().take(3).enumerate() {
+            match i {
+                0 => println!("     {}", "🥇 Gold".yellow().bold()),
+                1 => println!("     {}", "🥈 Silver".white().bold()),
+                _ => println!("     {}", "🥉 Bronze".bright_yellow().bold()),
+            }
+            println!(
+                "         {} · {}",
+                output::format_bytes(*bytes).green().bold(),
+                date.format("%Y-%m-%d").to_string().dimmed()
+            );
+            println!("   {}", "────────────────────────────".dimmed());
+        }
+    }
+    println!();
+
+    Ok(())
 }
 
 /// Exit 2 for a pass number nobody has.
@@ -386,5 +578,67 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed["command"], "history");
         assert_eq!(parsed["passes"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_empty_log_still_prints_a_scores_report() {
+        assert!(print_scores(&[], false).is_ok());
+        assert!(print_scores(&[], true).is_ok());
+        let doc = scores_document(&[], &[]);
+        assert_eq!(doc["command"], "history --scores");
+        assert_eq!(doc["single_cleanup"].as_array().unwrap().len(), 0);
+        assert_eq!(doc["total_run"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn scores_rank_the_biggest_cleanup_and_the_biggest_run_first() {
+        let p1 = Pass::Detailed(PassRecord {
+            at: Utc::now(),
+            trigger: crate::history::Trigger::Manual,
+            argv: vec![],
+            version: "1.23.0".to_string(),
+            dirs: vec![
+                PrunedDir {
+                    repo_path: PathBuf::from("/repo1"),
+                    bloat_dir: "node_modules".to_string(),
+                    adapter: "npm".to_string(),
+                    size_freed: 1000,
+                    runtime: None,
+                },
+                PrunedDir {
+                    repo_path: PathBuf::from("/repo2"),
+                    bloat_dir: "target".to_string(),
+                    adapter: "cargo".to_string(),
+                    size_freed: 5000,
+                    runtime: None,
+                },
+            ],
+        });
+        // A totals-only pass that touched one repository is a single-cleanup record
+        // too: the pass total and the per-repository figure are the same number.
+        let p2 = Pass::Summary {
+            at: Utc::now(),
+            bytes_freed: 10000,
+            dirs_removed: 1,
+            repos_touched: 1,
+            dirs: None,
+        };
+        let (singles, totals) = collect_scores(&[p1, p2]);
+
+        let single_bytes: Vec<u64> = singles.iter().map(|s| s.0).collect();
+        assert_eq!(single_bytes, vec![10000, 5000, 1000]);
+        assert_eq!(singles[1].2.as_deref(), Some("repo2"));
+        assert_eq!(singles[0].2, None, "a totals-only pass names no repository");
+
+        let total_bytes: Vec<u64> = totals.iter().map(|t| t.0).collect();
+        assert_eq!(total_bytes, vec![10000, 6000]);
+
+        let doc = scores_document(&singles, &totals);
+        assert_eq!(doc["command"], "history --scores");
+        assert_eq!(doc["schema"], crate::json::SCHEMA_VERSION);
+        assert_eq!(doc["single_cleanup"][0]["rank"], 1);
+        assert_eq!(doc["single_cleanup"][0]["bytes"], 10000);
+        assert_eq!(doc["single_cleanup"][0]["medal"], "Gold");
+        assert_eq!(doc["total_run"][1]["bytes"], 6000);
     }
 }

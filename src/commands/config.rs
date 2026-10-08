@@ -2309,7 +2309,7 @@ pub fn run_global_update() -> Result<()> {
                     eprintln!("    {line}");
                 }
                 output::print_info(&format!(
-                    "Hint: fix the syntax by hand, or run `devp config {clean} --update` to \
+                    "Hint: fix the syntax by hand, or run `devp config project {clean} --update` to \
                      replace the file with a valid default."
                 ));
             }
@@ -2356,7 +2356,7 @@ pub fn run_path_config(path_str: &str, force_update: bool, team: bool) -> Result
         // The old text said "Initializing Git repo first..." and then did no such thing.
         bail!(
             "`{clean}` is not a Git repository.\n  \
-             Run `git init` there first, then `devp config {clean}` again."
+             Run `git init` there first, then `devp config project {clean}` again."
         );
     }
 
@@ -2397,7 +2397,7 @@ pub fn run_path_config(path_str: &str, force_update: bool, team: bool) -> Result
                 // Non-zero: the file this command was asked to show could not be read,
                 // and the same file is what every prune of this repo will trip over.
                 anyhow::bail!(
-                    "Run `devp config {clean} --update` to reset this file back to defaults \
+                    "Run `devp config project {clean} --update` to reset this file back to defaults \
                      (your current overrides in it are discarded)."
                 );
             }
@@ -2462,7 +2462,7 @@ fn load_workspace_config_for_write(repo_path: &Path) -> Result<PerRepoConfig> {
         Ok(None) => Ok(PerRepoConfig::default()),
         Err(e) => bail!(
             "{e}\n  \
-             Fix that file, or run `devp config {} --update` to reset it back to defaults \
+             Fix that file, or run `devp config project {} --update` to reset it back to defaults \
              (your current overrides in it are discarded).",
             output::clean_path(repo_path)
         ),

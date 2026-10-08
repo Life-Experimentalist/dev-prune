@@ -260,8 +260,8 @@ LicenseUrl: https://github.com/$repo/blob/main/LICENSE.md
 ShortDescription: Universal, lockfile-safe workspace pruner and background dependency cleaner
 Description: >-
   dev-prune reclaims disk space from Git repositories you have stopped working in by
-  deleting the dependency and build directories a lockfile can rebuild — node_modules,
-  .venv, target, vendor and the rest — and refuses to delete anything it cannot prove is
+  deleting the dependency directories a lockfile can rebuild (node_modules, .venv,
+  vendor and the rest) and refuses to delete anything it cannot prove is
   recoverable. It verifies the lockfile before it touches a directory, never crosses a
   .git boundary, never follows a symlink, and records every deletion so devp restore can
   put it back.

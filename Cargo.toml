@@ -28,6 +28,7 @@ categories = [
     "caching",
 ]
 rust-version = "1.88"
+default-run = "dev-prune"
 
 # An allowlist, not an exclude list, and deliberately so.
 #
@@ -79,6 +80,10 @@ include = [
 # for gnu or musl depending on what it finds, while the published asset is one statically
 # linked musl build that serves both.
 [package.metadata.binstall]
+# Without this, binstall's default bin-dir assumes the archive nests its binaries under
+# a `{ name }-{ target }-v{ version }/` directory and looks for them there. This
+# project's release archives put the executables at the archive root, so the default
+# finds nothing and the install fails over to a from-source build.
 bin-dir = "{ bin }{ binary-ext }"
 
 [package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]

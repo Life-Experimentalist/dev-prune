@@ -671,8 +671,8 @@ directories for a living, and no amount of rewriting changes that shape.
 
 The remaining variable is **reputation**. These classifiers weight how many machines have
 seen a file; a freshly published, unsigned binary has been seen by nobody, so it starts
-from the least trusted position and every heuristic counts for more. Code signing is
-[in progress](https://about.signpath.io/product/open-source) and will help — but a
+from the least trusted position and every heuristic counts for more. Releases are not
+code-signed; each one publishes SHA-256 checksums instead. Signing would help, but a
 certificate is not a pass mark, and signed malware is common enough that no serious engine
 treats it as one.
 

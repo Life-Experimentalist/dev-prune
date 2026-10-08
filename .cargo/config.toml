@@ -1,0 +1,21 @@
+# Copyright 2026 VKrishna04
+# SPDX-License-Identifier: Apache-2.0
+
+# Link the MSVC C runtime statically into the Windows builds.
+#
+# Dynamically linked, the executables import vcruntime140.dll, which a clean Windows
+# install does not always have. The release zip and the install scripts cannot bring it
+# along, and the WinGet manifest would have to declare the Visual C++ Redistributable as
+# a dependency to cover it. Statically linked, there is nothing to install first, for
+# every channel at once. The cost is a few hundred kilobytes per binary.
+#
+# This file is outside the crate's `include` list, so `cargo install` from crates.io
+# keeps the dynamic runtime; anyone compiling with MSVC already has it installed.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

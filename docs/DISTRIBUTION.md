@@ -12,7 +12,7 @@ Every way to install **`dev-prune`** (`devp`), what each channel actually ships,
 
 ## 🔒 Security Audit & Privacy Guarantees
 
-- **No analytics or diagnostics**: `dev-prune` never transmits workspace directory structures, repository names, user file paths, or usage data. Its single network request is a release check against GitHub's public releases page — see [PRIVACY.md](PRIVACY.md).
+- **No analytics or diagnostics**: `dev-prune` never transmits workspace directory structures, repository names, user file paths, or usage data. The only request it makes on its own is a release check against GitHub's public releases page, plus the verified download of a release it finds while `auto_update` is on (the default). See [PRIVACY.md](PRIVACY.md).
 - **Subprocess Command Injection Prevention**: All lockfile verification commands (`npm`, `pnpm`, `yarn`, `bun`, `uv`, `cargo`, `go`) execute binary targets directly via `std::process::Command` without shell expansion.
 - **Atomic State Storage**: `registry.json` is never written in place. Each update is written in full to a `.tmp` file and then renamed over the target, so an interrupted or failed write leaves the previous registry intact rather than a half-written one.
 - **Sandboxed Scope**: File operations are strictly bounded to verified Git workspaces (`.git` presence) and to the directories an adapter names by hand — `node_modules`, `.venv`, `vendor`, `Pods` and the rest. The set is fixed in the source, one entry per package manager; nothing is deleted because it matched a pattern or a `.gitignore` rule.
@@ -112,7 +112,7 @@ Every release publishes here. The channel was completed in 1.8.0, when the last 
 the eight package names were claimed; 1.6.0 and 1.7.0 published a Linux and macOS half.
 
 - The tarball **contains the binary**. There is no `postinstall` download step, so the package installs correctly under `npm ci --ignore-scripts`, behind a corporate registry mirror, and with no network access to GitHub.
-- Eight packages make that work: seven platform packages (`dev-prune-linux-x64`, `dev-prune-darwin-arm64`, `dev-prune-windows-x64`, …), each carrying one executable and declaring `os`/`cpu`, plus the `dev-prune` dispatcher that lists all seven as `optionalDependencies`. npm resolves exactly the one that matches the machine and skips the rest.
+- Eight packages make that work: seven platform packages (`dev-prune-linux-x64`, `dev-prune-darwin-arm64`, `dev-prune-windows-x64`, …), each carrying that platform's executables (one on Linux and macOS; `dev-prune.exe`, `devp.exe` and `devpw.exe` on Windows) and declaring `os`/`cpu`, plus the `dev-prune` dispatcher that lists all seven as `optionalDependencies`. npm resolves exactly the one that matches the machine and skips the rest.
 - The three Windows packages are named `dev-prune-windows-x64`, `dev-prune-windows-arm64` and `dev-prune-windows-x86` — after the release assets, not after npm's `win32`/`ia32` platform strings, which the registry refused as new names. Each one still declares `win32` and `ia32` in `os` and `cpu`, which is what npm actually resolves against, so only the name differs.
 - Both `dev-prune` and `devp` are registered as `bin` entries.
 - Every tarball carries [npm provenance](https://docs.npmjs.com/generating-provenance-statements) — a signed attestation tying it to the workflow run, commit and tag that produced it. Publishing uses npm Trusted Publishing: the workflow's OIDC token is the whole credential and no npm token exists anywhere.
@@ -140,7 +140,7 @@ crates.io hosts source, not binaries — there is no executable on the registry 
 
 **Does `cargo install` produce a faster binary tuned to your machine?** No, and it does not need to. It compiles for your host target triple with the same `[profile.release]` settings the prebuilt archives use (`lto`, `codegen-units = 1`, `opt-level = 3`), but with a *generic* CPU baseline — it does **not** pass `-C target-cpu=native`, so it does not emit instructions specific to your exact processor. The result is byte-for-byte equivalent in optimization level to the prebuilt binaries and performs the same. dev-prune spends its time waiting on the filesystem and on package-manager subprocesses, not in hot numeric loops, so a `target-cpu=native` build would not be measurably faster anyway. The practical differences from `cargo install` are only that it needs a Rust toolchain and takes minutes instead of seconds. **The prebuilt channels above already cover every supported platform; there is nothing `cargo install` reaches that they miss.**
 
-Every channel — including `cargo install` and a bare unzipped archive — is complete on its own. On Windows the windowless scheduler binary (`devpw.exe`, see [Background Automation](BACKGROUND_AUTOMATION.md)) is generated locally beside the installed binary on first setup, so no channel has to package a second executable for it.
+Every channel — including `cargo install` and a bare unzipped archive — is complete on its own. On Windows the windowless scheduler binary (`devpw.exe`, see [Background Automation](BACKGROUND_AUTOMATION.md)) is its own build target: it ships in every Windows archive, `cargo install` places it, and setup keeps the managed copy beside the managed binary.
 
 [`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes the from-source gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target — the same six archives listed above — so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
 
@@ -293,6 +293,6 @@ A release is one `git push` of one tag. Nothing is built, archived, uploaded or 
 git tag -a v1.3.0 -m "v1.3.0" && git push origin v1.3.0
 ```
 
-`.github/workflows/release.yml` then builds all six targets, verifies the tag matches `Cargo.toml` and that `CHANGELOG.md` documents it, publishes a GitHub Release whose body is that changelog section, and pushes to PyPI and crates.io (the npm job is gated off — see section 4).
+`.github/workflows/release.yml` then builds all seven targets, verifies the tag matches `Cargo.toml` and that `CHANGELOG.md` documents it, publishes a GitHub Release whose body is that changelog section, and pushes to PyPI, crates.io and npm.
 
 **[docs/RELEASING.md](RELEASING.md)** has the whole process: the credentials each registry needs, which registries review submissions (npm, PyPI and crates.io do not), what to do when a release goes wrong, and the gated channels — Homebrew, WinGet, Scoop — that are not automated because a human sits on the other side.

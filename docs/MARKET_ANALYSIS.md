@@ -75,35 +75,31 @@ Includes a token-lean `SKILL.md` file enabling AI pair programming agents (Gemin
 
 ---
 
-## 🥊 The Closest Neighbour: `kondo`
+## 🥊 Architectural Comparison: `kondo` vs `dev-prune`
 
 [`kondo`](https://github.com/tbillington/kondo) (2,385 stars as of 2026-08-27, Rust,
 MIT) is the only other tool in this analysis that solves the same shape of problem:
-one binary, many ecosystems, heavy directories reclaimed. It predates `dev-prune`,
-it is packaged more widely — `winget install kondo`, `brew install kondo`,
-`pacman -S kondo`, `port install kondo` — and it ships a desktop GUI (`kondo-ui`)
-that `dev-prune` has no equivalent of. Anyone evaluating `dev-prune` should evaluate
-`kondo` first, and for one of the two use cases below they should stop there.
+one binary, many ecosystems, heavy directories reclaimed. It predates `dev-prune`, it
+is packaged more widely (`winget install kondo`, `brew install kondo`,
+`pacman -S kondo`, `port install kondo`), and it ships a desktop GUI (`kondo-ui`)
+that `dev-prune` has no equivalent of. What separates the two is not a feature count
+but one architectural decision, and everything else in this section follows from it.
 
-### What it does, precisely
+### What `kondo` does
 
 `kondo` walks the directories you name, recognises project types by their marker files
-(Cargo, CMake, Composer, Elixir, Godot, Gradle, Jupyter, Pixi, Maven, Node, Pub,
-Python, SBT, Stack, Cabal, Swift, Unity, Unreal, Zig, .NET, Turborepo, Terraform,
-React Native), reports the reclaimable size of each, and deletes what you confirm.
-Its full option surface is small and well chosen: `--all`, `--older <n>`, `--quiet`,
-`--follow-symlinks`, `--same-filesystem`, `--dry-run`, `--single-key`, shell
-completions.
-
-Its README states the trade-off itself, in a warning it repeats twice:
+(about twenty, from Cargo and Node through Unity and Terraform), reports the
+reclaimable size of each, and deletes what you confirm. Its README states the
+trade-off itself, in a warning it repeats twice:
 
 > Kondo is *essentially* `rm -rf` with a prompt. Use at your own discretion. Always
 > have a backup of your projects.
 
-That is not a criticism to level at it — it is the correct description of a
-supervised tool, and stating it up front is better engineering than most projects
-manage. The consequence is architectural: **the human at the prompt is the safety
-mechanism**, and everything that follows from that shapes both tools.
+That is the correct description of a supervised tool, and stating it up front is
+better engineering than most projects manage. The consequence is architectural: **the
+human at the prompt is the safety mechanism.** Nothing verifies that what is deleted
+can come back, and nothing brings it back when a confirmation turns out to have been
+a mistake.
 
 ### Where they diverge
 
@@ -135,17 +131,23 @@ that no longer has the toolchain, and no lockfile describes its output. Where a 
 [`SAFETY_INVARIANTS.md`](SAFETY_INVARIANTS.md). That is deliberately more work than
 `kondo` asks for, and it is the whole reason an unsupervised pass is defensible.
 
-### Honest recommendation
+### Choosing between them
 
-- **Cleaning up by hand, deciding case by case, wanting a GUI, or wanting build
-  artefacts gone with the least ceremony:** use `kondo`. It is mature, broadly
-  packaged, and better at that job.
-- **Wanting the machine to stay clean on a timer, with a refusal rather than a
-  deletion when a lockfile no longer resolves, and a way back if it was wrong:**
-  that is what `dev-prune` was built for, and `kondo` does not attempt it.
+The supervised, case-by-case sweep used to be the reason to reach for `kondo`, but it
+no longer separates the two: `devp status` is that same review, sizes per repository
+with a prune started from the dashboard, and it keeps the lockfile verification and
+`devp restore` in the loop while kondo's prompt keeps neither. What still separates
+them:
 
-Neither answer is "it depends on your ecosystem" — both cover most of them. It
-depends entirely on whether you intend to be watching.
+- **`kondo`** remains the fit for someone who wants the desktop GUI (`kondo-ui`), or
+  who wants build artefacts like `target/` and `build/` gone with no declaration
+  step and accepts the README's warning as the terms of that.
+- **`dev-prune`** is built for everything else the problem contains: the package
+  manager's own dry-run as the deletion gate instead of a prompt, `devp restore` as
+  the way back when the deletion was wrong anyway, an OS scheduler and Git hooks so
+  the machine stays clean without being told, `--json` under a contract stable since
+  1.0.0 for anything scripted, and a `SKILL.md` that lets coding agents drive it
+  without relearning the flags.
 
 ### The rest of the field
 

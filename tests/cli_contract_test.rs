@@ -560,6 +560,31 @@ fn a_targeted_run_records_what_it_deleted() {
 }
 
 #[test]
+fn a_targeted_run_needs_no_registration() {
+    // The kondo-style use: point it at a repository it has never heard of. Making the
+    // user `devp link` first would be setup standing between them and one cleanup.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = tmp.path().join("never-linked");
+    git_repo(&repo);
+    venv_project(&repo.join("api"), 4096);
+
+    let out = devp(&config)
+        .args([
+            "--ignore-idle",
+            "run",
+            repo.to_str().unwrap(),
+            "--yes",
+            "--only",
+            "venv",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(!repo.join("api/.venv").exists(), "nothing was deleted");
+}
+
+#[test]
 fn a_targeted_run_without_yes_and_without_a_terminal_deletes_nothing() {
     let tmp = TempDir::new().unwrap();
     let (config, repo) = fixture(&tmp);
@@ -2189,4 +2214,49 @@ fn the_scheduled_pass_discovers_nothing_when_auto_setup_is_suppressed() {
         "the suppressed daemon pass registered something:\n{}",
         combined(&out)
     );
+}
+
+#[test]
+fn scores_succeeds_even_before_anything_was_ever_pruned() {
+    // An empty record book is still a record book: `0`, never a failure a script
+    // would have to special-case on a fresh machine.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).arg("scores").output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    assert!(
+        combined(&out).contains("No prune passes recorded"),
+        "{}",
+        combined(&out)
+    );
+}
+
+#[test]
+fn scores_json_is_the_history_scores_document() {
+    // `devp scores` is `devp history --scores` under a shorter name, and the JSON
+    // document says so: the `command` key carries the long spelling, so a consumer
+    // keying on it sees one document shape no matter which name produced it.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).args(["scores", "--json"]).output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    let doc = parse_json(&out);
+    assert_eq!(doc["schema"], 1);
+    assert_eq!(doc["command"], "history --scores");
+}
+
+#[test]
+fn scores_and_a_pass_number_are_a_usage_error() {
+    // The record book is not a pass to open: naming one alongside `--scores` is
+    // ambiguous, and silently preferring either reading would be wrong half the time.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["history", "--scores", "--pass", "1"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
 }

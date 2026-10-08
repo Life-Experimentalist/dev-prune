@@ -173,6 +173,19 @@ pub fn refresh_windowless_twin() {
     }
 }
 
+/// Place `shipped` at `twin` unless the twin there is the same build or a newer one.
+///
+/// For `setup`, which refreshes the managed twin from explicit paths: going through
+/// [`refresh_windowless_twin`] would resolve the managed path by calling back into the
+/// very function that is asking.
+#[cfg(target_os = "windows")]
+pub(crate) fn place_windowless_twin(
+    shipped: &std::path::Path,
+    twin: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    windows::place_windowless_twin(shipped, twin)
+}
+
 /// The binary the installed scheduler entry will actually run, when that can be read.
 ///
 /// `None` means "could not determine", never "nothing is registered" — use

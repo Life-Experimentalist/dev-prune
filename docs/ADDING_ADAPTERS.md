@@ -186,8 +186,9 @@ impl PackageManager for Gradle {
 
 `src/adapters/mod.rs` provides shared utility functions for adapter authors:
 
-- **`enforce_two_tier(lockfile, program, verify_args, write_args, cwd, policy)`**: the one
-  helper every shipped adapter uses. It picks between your two command forms:
+- **`enforce_two_tier(lockfile, program, verify_args, write_args, cwd, policy)`**: the
+  helper most lockfile-backed adapters use (npm, pnpm, yarn, uv, poetry, pdm, pipenv,
+  cargo, go, composer, bundler). It picks between your two command forms:
   - `policy.allow_rewrite` is set → run `write_args`; the user asked for repairs.
   - Otherwise, binary installed and `lockfile` exists → run `verify_args`. **Read-only.**
   - Binary installed, no lockfile → run `write_args`; there is nothing to preserve.
@@ -280,7 +281,7 @@ mod tests {
 ### Step 5: Register your adapter in `src/adapters/mod.rs`
 
 1. Add `pub mod gradle;` to top of `src/adapters/mod.rs`
-2. Add `Box::new(gradle::Gradle)` inside `get_all_adapters()`:
+2. Add `Box::new(gradle::Gradle)` inside `get_all_adapters()` (excerpt):
 
 ```rust
 pub fn get_all_adapters() -> Vec<Box<dyn PackageManager>> {
@@ -332,9 +333,10 @@ family. The existing rules are the model:
 - **JavaScript** picks a winner from the `packageManager` field in `package.json`, then
   from the bookkeeping files the installer left inside `node_modules`, then from the
   newest lockfile mtime.
-- **Python** gives uv and poetry priority over the plain-venv adapter, because they
-  have a real lockfile and can reproduce the environment exactly; between uv and
-  poetry, whichever one's lockfile is actually on disk owns the environment.
+- **Python** gives uv, Poetry, PDM and Pipenv priority over the plain-venv adapter,
+  because they have a real lockfile and can reproduce the environment exactly; when more
+  than one is detected, the first whose lockfile (`uv.lock`, `poetry.lock`, `pdm.lock`,
+  `Pipfile.lock`, in that order) is actually on disk owns the environment.
 
 The principle in both: prefer whatever evidence describes the tree **actually on disk**
 over evidence about what the project once used.

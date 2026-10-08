@@ -219,7 +219,16 @@ fn is_this_cli(path: &std::path::Path) -> bool {
 /// cannot state a version at all is replaced too — whatever it is, it is not a working
 /// build of this CLI.
 fn refresh_managed_copy_if_stale(current: &std::path::Path, managed: &std::path::Path) {
-    if !is_this_cli(current) || same_contents(managed, current) {
+    if !is_this_cli(current) {
+        return;
+    }
+    // Before the sameness check below, not after it: a managed console copy that is
+    // already current says nothing about the twin, and a machine upgraded by a release
+    // that did not refresh the twin is exactly that state.
+    #[cfg(windows)]
+    refresh_managed_twin_if_stale(current, managed);
+
+    if same_contents(managed, current) {
         return;
     }
     match (binary_version(managed), parse_version(constants::VERSION)) {
@@ -240,6 +249,28 @@ fn refresh_managed_copy_if_stale(current: &std::path::Path, managed: &std::path:
     // leaves, and has never known `*.new`, so the file would sit there until someone
     // noticed it by hand.
     let _ = fs::remove_file(&staging);
+}
+
+/// Move the managed `devpw.exe` forward from the one shipped beside the running binary.
+///
+/// The scheduled task runs the managed twin, not the managed console copy, so refreshing
+/// only the console copy left the daemon on whatever release first placed the twin, while
+/// every command typed at the prompt was current. The daemon's own refresh only runs from the
+/// once-per-version setup pass, and only with a settled task, so this closes the gap at
+/// the moment the console copy is checked.
+///
+/// Deciding staleness by asking the twin `--version` is not an option: `devpw.exe` is
+/// linked for the GUI subsystem and the call waits on it forever. The build stamp is read
+/// off the disk instead, by the same placement code the daemon uses, which also refuses
+/// to replace a newer twin with an older shipped one. Only an existing twin is refreshed;
+/// placing the first one is the scheduler install's decision.
+#[cfg(windows)]
+fn refresh_managed_twin_if_stale(current: &std::path::Path, managed: &std::path::Path) {
+    let shipped = current.with_file_name(constants::WINDOWS_WINDOWLESS_BIN);
+    let twin = managed.with_file_name(constants::WINDOWS_WINDOWLESS_BIN);
+    if shipped.is_file() && twin.is_file() {
+        let _ = daemon::place_windowless_twin(&shipped, &twin);
+    }
 }
 
 /// The `major.minor.patch` a binary reports for itself, if it can.
@@ -1985,5 +2016,68 @@ dev-prune (devp) v{v}
         record_consent_in(dir.path(), CONSENT_GRANTED);
         fs::remove_file(dir.path().join(constants::SETUP_CONSENT_FILE)).unwrap();
         assert_eq!(consent_state_in(dir.path()), SetupConsent::NeverAsked);
+    }
+
+    /// A delivery directory and a managed directory, each with a console binary and,
+    /// where a version is given, a `devpw.exe` carrying that build stamp.
+    #[cfg(windows)]
+    fn twin_dirs(
+        shipped: Option<&str>,
+        managed: Option<&str>,
+    ) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let root = tempfile::TempDir::new().unwrap();
+        let stamped = |v: &str| format!("{}{v}/end", constants::VERSION_STAMP_MARK);
+        let mut exes = Vec::new();
+        for (dir, version) in [("cargo-bin", shipped), ("managed", managed)] {
+            let dir = root.path().join(dir);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("dev-prune.exe"), "console").unwrap();
+            if let Some(v) = version {
+                fs::write(dir.join(constants::WINDOWS_WINDOWLESS_BIN), stamped(v)).unwrap();
+            }
+            exes.push(dir.join("dev-prune.exe"));
+        }
+        let managed = exes.pop().unwrap();
+        let current = exes.pop().unwrap();
+        (root, current, managed)
+    }
+
+    #[cfg(windows)]
+    fn managed_twin(managed: &std::path::Path) -> Option<String> {
+        let bytes = fs::read(managed.with_file_name(constants::WINDOWS_WINDOWLESS_BIN)).ok()?;
+        crate::commands::trust::version_from_stamp(&bytes)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_stale_managed_twin_moves_forward_with_the_delivery() {
+        let (_root, current, managed) = twin_dirs(Some("1.23.0"), Some("1.18.0"));
+        refresh_managed_twin_if_stale(&current, &managed);
+        assert_eq!(managed_twin(&managed).as_deref(), Some("1.23.0"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_newer_managed_twin_is_not_downgraded() {
+        let (_root, current, managed) = twin_dirs(Some("1.18.0"), Some("1.23.0"));
+        refresh_managed_twin_if_stale(&current, &managed);
+        assert_eq!(managed_twin(&managed).as_deref(), Some("1.23.0"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_missing_managed_twin_is_not_created() {
+        let (_root, current, managed) = twin_dirs(Some("1.23.0"), None);
+        refresh_managed_twin_if_stale(&current, &managed);
+        assert_eq!(managed_twin(&managed), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_already_current_console_copy_still_refreshes_the_twin() {
+        let (_root, current, managed) = twin_dirs(Some("1.23.0"), Some("1.18.0"));
+        assert!(same_contents(&current, &managed));
+        refresh_managed_copy_if_stale(&current, &managed);
+        assert_eq!(managed_twin(&managed).as_deref(), Some("1.23.0"));
     }
 }

@@ -277,7 +277,7 @@ fn ensure_windowless_twin(exe_path: &Path) -> Option<PathBuf> {
 /// Split out from `ensure_windowless_twin` so it can be tested against two real paths: the
 /// caller's half depends on where this process happens to be running from, which under a
 /// test harness is not something a test may assume.
-fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
+pub(super) fn place_windowless_twin(shipped: &Path, twin: &Path) -> Option<PathBuf> {
     // Running out of the managed directory already: the shipped twin *is* the twin.
     if shipped == twin {
         return Some(twin.to_path_buf());
