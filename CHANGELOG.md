@@ -5,7 +5,7 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.23.0] - 2026-09-28
+## [1.23.0] - 2026-10-09
 
 ### Added
 
@@ -51,6 +51,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.cursor/worktrees/` and kin) is dropped outright, because the session that creates
   one deletes it when it ends. Nothing is merged on a shared directory name alone, so
   an entry whose drive is merely unplugged stays put until the drive returns.
+
+- **`devp skill --prompt workspace`** (or `--prompt agent`) prints just that onboarding
+  prompt, with no header or code fence around it, so you can pipe it or paste it
+  without trimming. Add **`--copy`** and it goes straight to the clipboard instead.
+  **`devp skill --rules-file <path>`** writes the same marked rules block `--agent`
+  uses into any file you name inside the repository, for an editor `--agent` does not
+  list or one that reads a renamed file; a re-run replaces the block and leaves the
+  rest of the file alone. See [`devp skill`](docs/CLI_REFERENCE.md) in the CLI
+  reference.
 
 ### Changed
 
