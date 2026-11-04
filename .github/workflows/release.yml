@@ -637,7 +637,7 @@ jobs:
       # newer, and a job that is one Node patch away from silently losing its
       # authentication is not a job anyone will think to look at.
       - name: Use the current npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@12.2.1
 
       - name: Build the packages from the release assets
         env:
@@ -922,11 +922,25 @@ jobs:
         shell: bash
         run: sh scripts/winget-manifests.sh winget-submission
 
+      # A release tag and a hash, not `aka.ms/wingetcreate/latest`: the step after this one
+      # runs the file with a token that can open pull requests as the maintainer, so what
+      # `latest` happens to point at on release day is not something to run unchecked. The
+      # hash is the SHA-256 GitHub reports for the asset of that release. To move to a newer
+      # one, change both values together (`gh api repos/microsoft/winget-create/releases/latest`).
       - name: Install wingetcreate
         shell: pwsh
+        env:
+          WINGETCREATE_VERSION: "1.12.13.0"
+          WINGETCREATE_SHA256: "24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea"
         run: |
-          Invoke-WebRequest https://aka.ms/wingetcreate/latest `
-            -OutFile "$env:RUNNER_TEMP\wingetcreate.exe"
+          $exe = "$env:RUNNER_TEMP\wingetcreate.exe"
+          Invoke-WebRequest "https://github.com/microsoft/winget-create/releases/download/v$env:WINGETCREATE_VERSION/wingetcreate.exe" `
+            -OutFile $exe
+          $actual = (Get-FileHash -Path $exe -Algorithm SHA256).Hash
+          if ($actual -ne $env:WINGETCREATE_SHA256) {
+            Write-Error "wingetcreate.exe hash is $actual, expected $env:WINGETCREATE_SHA256"
+            exit 1
+          }
 
       # `submit` rather than `update`: `update` rewrites a manifest already in the
       # catalog, and this package's first version is still an open pull request. `submit`
