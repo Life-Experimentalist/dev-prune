@@ -104,7 +104,7 @@ uvx dev-prune status               # run once, nothing left behind
 pipx run dev-prune status
 pip install --upgrade dev-prune
 ```
-- Seven platform wheels, each a zip holding the prebuilt executable under `dev_prune-<version>.data/scripts/`. No Python runs, no compiler is invoked, and no build backend is involved — installers unpack the binaries straight into the environment's `bin`/`Scripts` directory.
+- Seven platform wheels, each a zip holding the prebuilt executable under `dev_prune-<version>.data/scripts/`. No Python runs, no compiler is invoked, and no build backend is involved: installers unpack the binaries straight into the environment's `bin`/`Scripts` directory.
 - The Linux wheels carry both `manylinux` and `musllinux` tags from the same static binary, so Debian and Alpine users are both served.
 - Uploaded through PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/): no API token exists anywhere, only a short-lived OIDC credential minted per release.
 - A `pip install` inside a virtualenv is fine: the first run copies the binary to the managed location (`%APPDATA%\dev-prune\bin` / `~/.config/dev-prune/bin`) and puts it on `PATH`, so `devp` survives the venv being deactivated or deleted. Details in [INSTALLATION_ISSUES.md §9](troubleshooting/INSTALLATION_ISSUES.md#9-pip-install-in-a-virtual-environment--what-happens-when-the-venv-goes-away).
@@ -120,7 +120,7 @@ crates.io hosts source, not binaries — there is no executable on the registry 
 
 Every channel — including `cargo install` and a bare unzipped archive — is complete on its own. On Windows the windowless scheduler binary (`devpw.exe`, see [Background Automation](BACKGROUND_AUTOMATION.md)) is its own build target: it ships in every Windows archive, `cargo install` places it, and setup keeps the managed copy beside the managed binary.
 
-[`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes the from-source gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target — the same seven archives listed above — so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
+[`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes the from-source gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target, the same seven archives listed above, so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
 
 ### 7. Homebrew (macOS & Linux)
 

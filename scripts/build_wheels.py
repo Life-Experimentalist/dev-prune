@@ -134,7 +134,7 @@ def absolutize_readme(readme: str, version: str) -> str:
     """Point every relative link and image in the README at GitHub.
 
     crates.io and npmjs.com resolve relative README links against the `repository`
-    field. PyPI does not — it renders the description as-is, so `assets/github-readme-banner.png`
+    field. PyPI does not; it renders the description as-is, so `assets/github-readme-banner.png`
     is a broken image and `docs/CLI_REFERENCE.md` is a 404 on the project page. Rewriting
     here rather than in README.md keeps the file readable in the repository, where the
     relative form is the correct one.

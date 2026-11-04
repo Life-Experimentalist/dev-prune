@@ -851,7 +851,7 @@ installing from. The one-line installer covers the same ground until someone ask
 
 ## 🔥 When a release goes wrong
 
-**A build job failed.** Nothing was published — `publish` needs all seven. Fix, then either
+**A build job failed.** Nothing was published - `publish` needs all seven. Fix, then either
 delete and re-push the tag (safe only if nobody has fetched it) or re-run the workflow
 via Actions with the same tag.
 
