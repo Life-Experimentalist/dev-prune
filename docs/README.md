@@ -23,6 +23,8 @@ Each entry says what you get from reading it.
 | [Set up with an AI assistant](AI_SETUP_PROMPT.md) | A copy-paste prompt that has Claude Code, Cursor, Copilot or any terminal-capable agent install and configure dev-prune for you. |
 | [Privacy and network policy](PRIVACY.md) | What dev-prune sends over the network (almost nothing), and how to check that yourself. |
 
+### AI pair programming
+
 AI coding assistants can read the token-efficient skill definition at
 [`.agents/skills/dev-prune/SKILL.md`](../.agents/skills/dev-prune/SKILL.md), or run
 `devp skill` to print ready-to-copy onboarding prompts.

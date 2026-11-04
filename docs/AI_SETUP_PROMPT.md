@@ -78,6 +78,6 @@ Notes you should rely on, not work around:
 
 - `devp skill` prints the embedded AI Skill and ready-to-copy onboarding prompts for
   agents that support skills — see the
-  [AI Pair Programming section](README.md#-ai-pair-programming--agent-integration).
+  [AI pair programming section](README.md#ai-pair-programming) of the docs index.
 - [CLI Command Reference](CLI_REFERENCE.md) documents every command the prompt uses.
 - [Distribution & Packaging Manual](DISTRIBUTION.md) explains each install channel.
