@@ -521,7 +521,7 @@ fallback in `devp setup` walks the release listing for the newest `vscode-v*` in
 
 ```mermaid
 flowchart TD
-    tag["git push origin v1.2.0"] --> build["build (6 matrix jobs)"]
+    tag["git push origin v1.2.0"] --> build["build (7 matrix jobs)"]
 
     subgraph checks["Pre-flight, before any compilation"]
         v1["Cargo.toml version == tag"]
@@ -536,7 +536,7 @@ flowchart TD
     pack --> hygiene["hygiene: bait-string sweep of every executable"]
     hygiene --> publish["publish: GitHub Release"]
     publish --> npm["publish-npm: 7 packages"]
-    publish --> pypi["publish-pypi: 6 wheels"]
+    publish --> pypi["publish-pypi: 7 wheels"]
     publish --> crate["publish-crate: cargo publish"]
 ```
 
@@ -709,7 +709,7 @@ a compiled CLI through them is a mainstream pattern rather than an abuse of one.
 **On npm**, the mechanism is `optionalDependencies` plus the `os` and `cpu` manifest
 fields. A thin dispatcher package lists one package per platform; npm evaluates `os`/`cpu`
 during resolution, installs the single package that matches the machine, and skips the
-other five without an error. The dispatcher's `bin` entry is a ~40-line Node launcher
+other six without an error. The dispatcher's `bin` entry is a ~40-line Node launcher
 that `require.resolve`s the real executable and `spawn`s it.
 
 This is what **esbuild**, **Biome**, **SWC**, **Turborepo**, **Prisma** and **Tailwind's
@@ -737,14 +737,9 @@ ceiling on which shared libraries a wheel may require, and a statically linked b
 requires none, so it satisfies the policy trivially while also being the literal
 musllinux case. One build serves Debian and Alpine users alike.
 
-What this buys, concretely:
-
-```bash
-uv tool install dev-prune@latest   # installs or updates, no Python project needed
-uvx dev-prune status          # run once, nothing left behind
-pipx run dev-prune status     # same, via pipx
-npx dev-prune status          # same, via npm
-```
+What this buys is a one-line install and a one-line run-once on both registries; the
+commands are in [DISTRIBUTION.md](DISTRIBUTION.md#4-npm-npm-install--g--npx--bun--pnpm--yarn)
+and [DISTRIBUTION.md](DISTRIBUTION.md#5-pypi-uv-tool-install--uvx--pipx--pip).
 
 ---
 
@@ -761,12 +756,9 @@ syntaxes, and all three install correctly while being a release out of date, whi
 none of them is maintained by hand. Pre-release tags are skipped: `brew install` and
 `scoop install` have no notion of a release channel.
 
-Both by-URL installs work today with no repository and no review:
-
-```bash
-brew install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/homebrew/dev-prune.rb
-scoop install https://raw.githubusercontent.com/Life-Experimentalist/dev-prune/main/packaging/scoop/dev-prune.json
-```
+Both by-URL installs work today with no repository and no review. The commands are in
+[DISTRIBUTION.md](DISTRIBUTION.md#7-homebrew-macos--linux) and
+[DISTRIBUTION.md](DISTRIBUTION.md#8-scoop-windows).
 
 **The named tap and bucket exist and need nothing from you.**
 [`Life-Experimentalist/homebrew-tap`](https://github.com/Life-Experimentalist/homebrew-tap)
@@ -859,7 +851,7 @@ installing from. The one-line installer covers the same ground until someone ask
 
 ## 🔥 When a release goes wrong
 
-**A build job failed.** Nothing was published — `publish` needs all six. Fix, then either
+**A build job failed.** Nothing was published — `publish` needs all seven. Fix, then either
 delete and re-push the tag (safe only if nobody has fetched it) or re-run the workflow
 via Actions with the same tag.
 
