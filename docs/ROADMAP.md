@@ -36,17 +36,19 @@ Work that is built and waiting on a party that is not this repository. Nothing h
 blocked on code, and nothing here blocks a release: every one of these channels reports
 `skipped` and the others publish without it.
 
-- **Icon-theme pull requests** for the `.devprune.json` file icon, awaiting maintainer
+- **Icon-theme pull request** for the `.devprune.json` file icon, awaiting maintainer
   review upstream:
-  [material-icon-theme#3567](https://github.com/material-extensions/vscode-material-icon-theme/pull/3567)
-  and [vscode-icons#4223](https://github.com/vscode-icons/vscode-icons/pull/4223). Icon
-  themes always win over an extension's own contribution, so this is the only route.
+  [material-icon-theme#3567](https://github.com/material-extensions/vscode-material-icon-theme/pull/3567).
+  The matching [vscode-icons#4223](https://github.com/vscode-icons/vscode-icons/pull/4223)
+  has already been merged. Icon themes always win over an extension's own contribution,
+  so this is the only route.
 - **Switching on the WinGet submission.** The release job that raises the `winget-pkgs`
   pull request is built and gated the same way npm is: it reports `skipped` until the
   `WINGET_PUBLISH` variable and the `WINGET_TOKEN` secret both exist. What is still
-  outstanding is a person signing Microsoft's CLA once and the first submission
-  ([microsoft/winget-pkgs#422809](https://github.com/microsoft/winget-pkgs/pull/422809))
-  being merged, because until that identifier is in the catalog there is nothing for
+  outstanding is a person signing Microsoft's CLA once and the first submission to be
+  merged (the open one is
+  [microsoft/winget-pkgs#449307](https://github.com/microsoft/winget-pkgs/pull/449307),
+  for 1.23.0), because until that identifier is in the catalog there is nothing for
   later versions to be a new version *of*. See [`RELEASING.md`](RELEASING.md).
 - **homebrew-core.** Plain `brew install dev-prune`, with no tap prefix. The audit weighs
   GitHub stars, forks and watchers against a bar commonly cited as roughly 75, so it opens

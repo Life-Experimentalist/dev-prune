@@ -141,13 +141,14 @@ comes from icon themes, and the way real config files get one is upstream PRs:
   add a `.devprune.json` file association (this is the icon most VS Code users see).
 - [vscode-icons](https://github.com/vscode-icons/vscode-icons) — same.
 
-Both PRs are submitted (2026-08-20) and await maintainer review:
-[material-icon-theme#3567](https://github.com/material-extensions/vscode-material-icon-theme/pull/3567)
-(leaf logo recolored to the Material palette, green A400 → cyan A400, as their
-guidelines require) and
+Both PRs were submitted on 2026-08-20.
 [vscode-icons#4223](https://github.com/vscode-icons/vscode-icons/pull/4223)
 (brand gradient kept, filed against
-[icon request #4222](https://github.com/vscode-icons/vscode-icons/issues/4222)).
+[icon request #4222](https://github.com/vscode-icons/vscode-icons/issues/4222))
+was merged on 2026-09-27.
+[material-icon-theme#3567](https://github.com/material-extensions/vscode-material-icon-theme/pull/3567)
+(leaf logo recolored to the Material palette, green A400 → cyan A400, as their
+guidelines require) still awaits maintainer review.
 
 **Status: published on both** —
 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=VKrishna04.dev-prune)

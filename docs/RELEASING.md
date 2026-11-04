@@ -789,11 +789,12 @@ bar and stays a post-popularity step.
 **WinGet** is submitted by the release, and merged by a person. `winget-pkgs` has no
 popularity requirement, but every version is a pull request a Microsoft reviewer signs
 off, so "submitted" and "installable" are days apart. The submission under review is
-[microsoft/winget-pkgs#422809](https://github.com/microsoft/winget-pkgs/pull/422809),
-opened for 1.6.0. The 1.5.0 submission before it,
-[#422665](https://github.com/microsoft/winget-pkgs/pull/422665), was closed rather than
-amended: validation had flagged the first-run self-copy, and the answer to that
-was a release, not an edit to a manifest.
+[microsoft/winget-pkgs#449307](https://github.com/microsoft/winget-pkgs/pull/449307),
+opened for 1.23.0. Two earlier ones were closed without merging:
+[#422665](https://github.com/microsoft/winget-pkgs/pull/422665) for 1.5.0, closed
+rather than amended because validation had flagged the first-run self-copy (the answer
+to that was a release, not an edit to a manifest), and
+[#422809](https://github.com/microsoft/winget-pkgs/pull/422809) for 1.6.0.
 
 The `submit-winget` job renders the manifests from the published sidecars, strips this
 repository's licence header, writes each file as UTF-8 with a BOM, and hands the
