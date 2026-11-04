@@ -103,6 +103,18 @@ The environment variables need no such rewriting, which is why they stay support
 `DEV_PRUNE_NO_AUTO_SETUP=1` in a Dockerfile or CI environment covers install time *and*
 every command after it, since dev-prune itself reads the same variable.
 
+### Re-running the installer
+
+Re-running is safe, and quiet about it. An install already at this version, with `devp`
+beside it and on `PATH`, is left exactly as it is and exits `0` without downloading
+anything. An older one is updated in place, and a newer one is not downgraded unless you
+name the version with `--version` / `-Version`. A same-version install that is missing
+`devp` or its `PATH` entry is repaired.
+
+`curl … | sh` runs in a child process, so it cannot change the `PATH` of the shell you
+typed it in: open a new terminal, or run the `export` line the installer prints. The
+PowerShell one-liner runs inside your own process and does update the current session.
+
 ### The one question the installer asks
 
 If another package manager's `dev-prune` is on your `PATH` when the script runs — a
@@ -172,17 +184,14 @@ Pre-compiled production binaries for all supported operating systems and archite
 3. **Extract & Copy Binary**: Extract `dev-prune.exe` into `$env:APPDATA\dev-prune\bin\dev-prune.exe`.
 
    Alongside the zip is a `.zip.contents.sha256` listing the digest of every file *inside*
-   it. Verify the extracted files rather than the archive — an archive's hash stops meaning
-   anything the moment you unpack it, and the unpacked files are the only ones an antivirus
-   ever looks at. Run it from Git Bash — `sha256sum` ships with Git for Windows, and is
-   what reads this format:
+   it, so you can verify the extracted files rather than the archive. Run it from Git
+   Bash, which ships `sha256sum`:
    ```bash
    sha256sum -c dev-prune-v1.23.0-windows-x64.zip.contents.sha256
    ```
-   `dev-prune.exe` and `devp.exe` share a digest on purpose — one file under two names, so a
-   scanner builds one reputation record instead of two. `devpw.exe`, the console-free build
-   the scheduled task runs, is a separate build target and legitimately differs. Later,
-   `devp trust` prints the same digests straight off your disk.
+   Why that file exists, and why `dev-prune.exe` and `devp.exe` share a digest while
+   `devpw.exe` does not, is in
+   [Distribution](DISTRIBUTION.md#3-pre-compiled-github-release-binaries).
 4. **Register in User PATH**:
    ```powershell
    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -245,11 +254,9 @@ Pre-compiled production binaries for all supported operating systems and archite
 ### 3. Linux Installation (`x86_64-unknown-linux-musl`)
 
 > **One binary per architecture, every distribution.** The Linux assets are statically
-> linked against musl, so there is no glibc version floor and no per-distribution build:
-> the same `linux-x64` file runs on Debian, Ubuntu, Fedora, RHEL, Arch, openSUSE, NixOS
-> and Alpine. Pick by CPU architecture — `linux-x64` for `x86_64`, `linux-arm64` for
-> `aarch64` (`uname -m` tells you which) — and nothing else.
-
+> linked against musl, so pick by CPU architecture only: `linux-x64` for `x86_64`,
+> `linux-arm64` for `aarch64` (`uname -m` tells you which). The reasoning is in
+> [Distribution](DISTRIBUTION.md#3-pre-compiled-github-release-binaries).
 
 1. **Download Archive**: Download `dev-prune-v1.23.0-linux-x64.tar.gz` from GitHub Releases.
 2. **Extract & Relocate Binary**:
