@@ -670,9 +670,9 @@ mod tests {
     #[test]
     fn the_windowless_command_adds_the_password_less_run_as_and_nothing_else() {
         let visible = build_install_command("dev-prune.exe", 2);
-        let windowless = build_install_command_windowless("dev-prune.exe", 2, "PC\\krish");
+        let windowless = build_install_command_windowless("dev-prune.exe", 2, "PC\\user");
         assert_eq!(windowless[..visible.len()], visible[..]);
-        assert_eq!(windowless[visible.len()..], ["/RU", "PC\\krish", "/NP"]);
+        assert_eq!(windowless[visible.len()..], ["/RU", "PC\\user", "/NP"]);
     }
 
     #[test]
