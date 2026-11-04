@@ -1,10 +1,8 @@
-# 📚 `dev-prune` Documentation Hub
+# dev-prune documentation
 
-Welcome to the central documentation index for **`dev-prune`** (`devp`), a universal, lockfile-safe workspace maintenance CLI and background dependency cleaner built in Rust (edition 2024).
-
-This documentation hub is structured according to the **Diataxis Framework** (Tutorials, How-To Guides, Technical Reference, and Explanations) to provide clear navigation for users, contributors, system administrators, and AI pair programming agents.
-
----
+Index of the documentation for **`dev-prune`** (`devp`), a lockfile-safe CLI that reclaims
+disk space from idle Git repositories. The docs are grouped by what you are trying to do.
+Each entry says what you get from reading it.
 
 <p align="center">
   <img src="../assets/github-readme-banner.png" alt="dev-prune Banner" width="800" />
@@ -12,74 +10,56 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
 
 ---
 
-## 🗺️ Documentation Directory
+## Using dev-prune
 
-### 📑 Technical Reference & Specifications
-- **[CLI Command Reference](CLI_REFERENCE.md)**
-  Complete reference for all 20 subcommands (`init`, `link`, `unlink`, `undo`, `run`, `status`, `stats`, `history`, `caches`, `config`, `trust`, `restore`, `update`, `install`, `skill`, `completions`, `setup`, `doctor`, `uninstall`, `man`), global flags (`--dry-run`, `--ignore-idle`, `-y`, `-v`, `-V`), status shortcuts, and aliases.
-- **[System Architecture Entry Point](ARCHITECTURE.md)**
-  High-level system architecture overview linking directly to HLD and LLD specifications.
-- **[High-Level Design Specification (HLD)](architecture/HLD.md)**
-  High-level system architecture, multi-layer design, data flow lifecycle, execution sequence diagrams, and diagram element breakdowns.
-- **[Low-Level Design Specification (LLD)](architecture/LLD.md)**
-  Low-level technical specification detailing crate module map (`src/`), data schemas (`registry.json`, `.devprune.json`), the `PackageManager` trait contract, multi-adapter conflict resolution, intra-repository project discovery, the atomic state file swap algorithm, binary aliasing, and CWD determinism.
-- **[Safety Invariants & Risk Mitigation](SAFETY_INVARIANTS.md)**
-  In-depth guide to the seven core safety invariants: `.git` boundary guards, two-tier lockfile pre-verification, hybrid activity solver (`git log` + source `mtime`), atomic state writes, 0ms fast-path ignore checks, symlink and junction refusal, and the nested repository boundary.
-- **[Privacy & Network Policy](PRIVACY.md)**
-  What dev-prune sends over the network (almost nothing), the single update-check request, the user-confirmed `.vsix` download, and how to verify the claims yourself.
+| Doc | What you get |
+|---|---|
+| [CLI reference](CLI_REFERENCE.md) | Every subcommand, global flag, setting, exit code and `--json` document. |
+| [Install guide](RELEASES_AND_MANUAL_INSTALL.md) | The one-liner installers and their options, manual installs of the release binaries, and building from source. |
+| [Install channels](DISTRIBUTION.md) | Every way to install (shell, PowerShell, npm, PyPI, Cargo, Homebrew, Scoop, WinGet) and what each one ships. |
+| [Background automation](BACKGROUND_AUTOMATION.md) | What `devp setup` installs: the OS schedulers (Task Scheduler, LaunchAgent, systemd timers) and the Git hooks, and how to turn them off. |
+| [Opt-in build adapters](OPT_IN_BUILD_ADAPTERS.md) | The eighteen adapters that ship switched off (compilers, build tools, game engine caches), and why they are a separate class. |
+| [IDE and editor integration](IDE_INTEGRATION.md) | Schema IntelliSense and the extension for `.devprune.json`, and the Claude Code plugin marketplace this repository doubles as. |
+| [Set up with an AI assistant](AI_SETUP_PROMPT.md) | A copy-paste prompt that has Claude Code, Cursor, Copilot or any terminal-capable agent install and configure dev-prune for you. |
+| [Privacy and network policy](PRIVACY.md) | What dev-prune sends over the network (almost nothing), and how to check that yourself. |
 
-### 🛠️ How-To & Automation Guides
-- **[GitHub Releases, DIY Manual Install & Source Build Guide](RELEASES_AND_MANUAL_INSTALL.md)**
-  Step-by-step DIY manual installation guide for pre-built release binaries (Windows ZIP, macOS Intel/Silicon, Linux x64), manual build from source instructions, quick 1-liner installer scripts, and setup verification checks.
-- **[The Opt-In Build Adapters](OPT_IN_BUILD_ADAPTERS.md)**
-  The eighteen adapters that ship switched off: compilers, build tools and game engine import caches (Cargo, Gradle, Maven, sbt, Swift, Dart, Mix, Zig, Stack, Cabal, vcpkg, CMake, .NET, Godot, Unity, Unreal, Defold, Cocos Creator). Why recompile-cost directories are a separate class, the longer `build_idle_days` window, the dry-run recommendation hint, and where surgical tools like cargo-sweep fit beside a whole-directory pass.
-- **[Background Automation & Subsystems](BACKGROUND_AUTOMATION.md)**
-  Guide to the self-installing `devp setup` pass and the two background subsystems it puts in place, including OS-native schedulers (Windows Task Scheduler, macOS LaunchAgent, Linux systemd user timers) and non-blocking Git hook auto-registration (`post-commit`, `post-checkout`, `post-merge`).
-- **[Troubleshooting Directory & Synopsis](troubleshooting/README.md)**
-  Central troubleshooting hub and sub-guides:
-  - 🚀 [Installation, PATH & Permissions](troubleshooting/INSTALLATION_ISSUES.md)
-  - 🔒 [Lockfile Sync & Ecosystem Adapter Errors](troubleshooting/LOCKFILE_AND_ADAPTERS.md)
-  - 🤖 [Background Daemon & Git Hooks](troubleshooting/DAEMON_AND_HOOKS.md)
-  - 🧹 [Uninstall, Reinstall & State Recovery](troubleshooting/UNINSTALL_AND_REINSTALL.md)
-  - ⚠️ [Registry Corruption & Edge Cases](troubleshooting/CORRUPTION_AND_EDGE_CASES.md)
-- **[Multi-Ecosystem Distribution & Packaging Manual](DISTRIBUTION.md)**
-  Every install channel and what each one actually ships: the shell and PowerShell one-liners, the seven checksummed GitHub release archives, `uv tool install`/`uvx`/`pipx`/`pip` via platform wheels, `cargo binstall` via the release archives, and `cargo install` from source.
-- **[Releasing dev-prune](RELEASING.md)**
-  The maintainer's guide: one-time registry setup and every credential the automation needs, what a tag push triggers, the changelog contract the release notes are built from, which registries review submissions (npm, PyPI and crates.io do not), why a Rust binary belongs on npm and PyPI, the gated channels (Homebrew, WinGet, Scoop, Chocolatey), and recovery when a release goes wrong.
-- **[IDE & Editor Integration](IDE_INTEGRATION.md)**
-  How `.devprune.json` gets IntelliSense and an icon in editors: the hosted JSON Schema and its drift guard, what works today with nothing installed, the extension scaffolds in `editors/`, and the Claude Code plugin marketplace this repository doubles as, and the maintainer checklists for SchemaStore, the VS Code / OpenVSX marketplaces, the JetBrains Marketplace, and the icon-theme PRs.
+### AI pair programming
 
-### 🎓 Tutorials & Contribution Guides
-- **[Adding New Ecosystem Adapters](ADDING_ADAPTERS.md)**
-  Step-by-step tutorial for implementing the `PackageManager` Rust trait to add support for new package managers (e.g. Maven, Gradle, Composer, Mix, Swift SPM) along with `tempfile` unit testing protocols.
-- **[Translating dev-prune](TRANSLATIONS.md)**
-  How the twelve language catalogues work, exactly which strings are translated and which are contract and never will be, how to add a thirteenth language with one JSON file and one line of Rust, and what the `reviewed` flag has to mean before it is set.
-- **[Re-recording the demo](../scripts/demo/README.md)**
-  How the README and landing-page clips are made: the VHS tapes, the throwaway sandbox that gets pruned, the two waits that are cut and the one setting that is changed so they are watchable, and how to re-record after a release.
-- **[Contributing Guide](../CONTRIBUTING.md)**
-  Development environment setup, code style formatting (`cargo fmt`), linting standards (`cargo clippy`), unit testing (`cargo test`), local site development, and pull request submission checklist.
+AI coding assistants can read the token-efficient skill definition at
+[`.agents/skills/dev-prune/SKILL.md`](../.agents/skills/dev-prune/SKILL.md), or run
+`devp skill` to print ready-to-copy onboarding prompts.
 
-### 💡 Explanation
-- **[Why `dev-prune` Refuses](WHY.md)**
-  The argument the tool was built from: why the hard problem is knowing which directory
-  you *cannot* delete, what an 18% refusal rate on a real 80-repository machine looked
-  like, why a confirmation prompt cannot stand in for it on a schedule, and which parts
-  of the design follow from that — the missing `--force`, build outputs staying out of
-  scope, and reading activity from `git log` rather than `mtime`.
+## Understanding how it works
 
-### 📊 Market Analysis & Positioning
-- **[Market Analysis & Competitive Matrix](MARKET_ANALYSIS.md)**
-  Detailed comparison of `dev-prune` against existing developer tools (`kondo`, `npkill`, `cargo-clean-all`, `pyclean`, `git clean`, `dust`/`ncdu`, `BleachBit`), a full divergence table against `kondo` (the closest neighbour), and a breakdown of Unique Selling Propositions (USPs).
-- **[Roadmap](ROADMAP.md)**
-  Everything that is not built yet, grouped by *why* it is not — *in flight*, *next*, *standing orders*, *on request*, *waiting on a shape*, and *not planned* split by the reason it was declined. So "we haven't done that", "ask and we will" and "we decided against that" never read the same. Distribution channels, adapter candidates, editor follow-ups, and the declined ideas with the reason attached.
+| Doc | What you get |
+|---|---|
+| [Why dev-prune refuses](WHY.md) | The argument the design came from: the hard problem is knowing which directory you cannot delete. |
+| [Safety invariants](SAFETY_INVARIANTS.md) | The seven guarantees (`.git` boundary, lockfile pre-verification, symlink refusal, atomic writes and the rest) and why each exists. |
+| [Architecture overview](ARCHITECTURE.md) | The entry point to the design docs below. |
+| [High-level design](architecture/HLD.md) | The layers, the data flow of a prune pass, and the sequence diagrams. |
+| [Low-level design](architecture/LLD.md) | The module map, the `registry.json` and `.devprune.json` schemas, the `PackageManager` trait contract and the atomic state swap. |
+| [Market analysis](MARKET_ANALYSIS.md) | How dev-prune compares with kondo, npkill, cargo-clean-all and similar tools. |
 
----
+## Contributing and releasing
 
-## 🤖 AI Pair Programming & Agent Integration
+| Doc | What you get |
+|---|---|
+| [Contributing guide](../CONTRIBUTING.md) | Environment setup, formatting, linting, tests, and the pull request checklist. |
+| [Adding an adapter](ADDING_ADAPTERS.md) | A step-by-step tutorial for supporting a new package manager, with the testing conventions. |
+| [Translating dev-prune](TRANSLATIONS.md) | How the twelve language catalogues work, which strings are translated, and how to add another language. |
+| [Re-recording the demo](../scripts/demo/README.md) | How the README and landing-page clips are made: the VHS tapes, the throwaway sandbox that gets pruned, the two waits that are cut, and how to re-record after a release. |
+| [Releasing](RELEASING.md) | The maintainer's guide: registry setup and credentials, what a tag push triggers, the changelog contract, and recovery when a release goes wrong. |
+| [Roadmap](ROADMAP.md) | What is not built yet, grouped by why: in flight, next, on request, and declined with the reason. |
 
-`dev-prune` includes a token-efficient AI Skill definition located at [`.agents/skills/dev-prune/SKILL.md`](../.agents/skills/dev-prune/SKILL.md).
+## Troubleshooting
 
-AI coding assistants (Gemini Antigravity, Claude Code, Cursor, Windsurf, Copilot, OpenClaw) can execute `devp skill` to inspect ready-to-copy AI onboarding prompts or run `devp` commands natively.
+Start at the [troubleshooting index](troubleshooting/README.md), which is organised by
+symptom. The sub-guides:
 
-- **[Set up dev-prune with an AI assistant](AI_SETUP_PROMPT.md)**
-  A copy-paste prompt that installs, verifies, and configures `dev-prune` end to end — hand it to Claude Code, Cursor, Copilot, Windsurf, or any terminal-capable agent.
+| Doc | What you get |
+|---|---|
+| [Installation, PATH and permissions](troubleshooting/INSTALLATION_ISSUES.md) | Fixes for `devp` not found, permission errors, blocked scripts on Windows, and where each package manager puts the executables. |
+| [Lockfile sync and adapter errors](troubleshooting/LOCKFILE_AND_ADAPTERS.md) | Lockfile sync failures, timeouts, a missing package manager, offline runs, and projects that were not found. |
+| [Background daemon and Git hooks](troubleshooting/DAEMON_AND_HOOKS.md) | Scheduled runs that do not fire, and hooks that are missing or in the way. |
+| [Uninstall, reinstall and state recovery](troubleshooting/UNINSTALL_AND_REINSTALL.md) | Removing every trace cleanly, and starting over. |
+| [Registry corruption and edge cases](troubleshooting/CORRUPTION_AND_EDGE_CASES.md) | A damaged registry, bad `.devprune.json` syntax, renamed workspaces, symlinks, network mounts and a full disk. |

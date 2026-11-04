@@ -28,17 +28,8 @@ curl -fsSL https://devprune.vkrishna04.me/install.sh | sh
 - Installs the pre-built binary to the platform config directory: `~/Library/Application Support/dev-prune/bin/` on macOS, `$XDG_CONFIG_HOME/dev-prune/bin/` (default `~/.config/…`) on Linux — the same directory dev-prune reads its registry from.
 - Verifies the download against the release's published SHA-256 checksum and refuses to install if it does not match or is absent.
 - Adds that directory to `PATH` in whichever of `.zshrc`, `.bashrc` and `config.fish` exist, and prints the `export` line to paste when none do. `devp` is a second copy of the binary in the same directory, not a shell alias, so it works in every shell — including ones whose startup file was never touched.
-- Runs `dev-prune setup` as its last step, installing the integrations described in [Background Automation](BACKGROUND_AUTOMATION.md). `--no-auto-setup` installs the binary and nothing else, and `devp uninstall` reverses it either way.
-- Registers **no** repositories. Which directories to track stays your decision: run `dev-prune init <dir>` yourself.
-- Asks exactly one question, and only when there is somebody to answer it: if another manager's copy is on `PATH`, whether to collapse the two by running `devp install --channel installer` from that older binary. Anything but `y` prints the command instead. `DEV_PRUNE_NO_MIGRATE_PROMPT=1`, a set `CI`, or no terminal at all skips the question and prints the command. Nothing is deleted by the script either way.
-- Writes `install.json` beside the binary as its last step — version, which script, when, and whether `devp` and the `PATH` entry came from it. `devp doctor` and `devp install` report it; nothing decides anything from it.
-- `curl … | sh` runs in a child process, so it cannot change the PATH of the shell you typed it in. Open a new terminal, or run the `export` line the installer prints. (The PowerShell one-liner *can*, and does — see below.)
-- Safe to re-run, and quiet about it. An install already at this version, with `devp` beside it and on `PATH`, is left exactly as it is and exits `0` without downloading anything; an older one is updated in place; a newer one is not downgraded unless you name the version with `--version`. A same-version install missing `devp` or its `PATH` entry is repaired. An install pinned with `devp config set version_lock true` is left alone whatever its version. `--force` downloads and writes it again regardless, including over a pin.
-- Options: `--version <tag>`, `--bin-dir <dir>`, `--no-path`, `--no-auto-setup`, `--force`, `--help`. Piping into a shell needs `-s --` to reach them:
-  ```bash
-  curl -fsSL https://devprune.vkrishna04.me/install.sh | sh -s -- --no-auto-setup
-  ```
-  The environment variables `DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1`, `DEV_PRUNE_NO_AUTO_SETUP=1` and `DEV_PRUNE_FORCE=1` do the same and work with the plain one-liner. An option wins over its variable. `DEV_PRUNE_NO_MIGRATE_PROMPT=1` has no option of its own and suppresses the question above.
+- Runs `dev-prune setup` as its last step, installing the integrations described in [Background Automation](BACKGROUND_AUTOMATION.md), and registers **no** repositories: run `dev-prune init <dir>` yourself. `devp uninstall` reverses it.
+- Options, environment variables, the one question it can ask, what a re-run does and the install receipt are in [RELEASES_AND_MANUAL_INSTALL.md](RELEASES_AND_MANUAL_INSTALL.md#installer-options).
 
 ### 2. Windows One-Liner PowerShell Installer — **LIVE**
 ```powershell
@@ -48,21 +39,8 @@ iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex
 - Registers that directory in the User `PATH`, **and** in the current session's `$env:PATH`. `iwr … | iex` runs inside your own process, so `devp` works on the very next line you type — `iwr -useb … | iex; devp init ~/Code` behaves exactly as written.
 - Installs `devp.exe` as a second copy of the binary rather than a `$PROFILE` function, so it works in cmd, PowerShell, Git Bash, an IDE terminal and a scheduled task alike, and cannot go stale against a profile nobody re-sources.
 - Replaces a running executable safely: the old image is renamed aside before the new one is copied in, which is the only thing Windows permits while a prune pass happens to be mid-run.
-- Runs `dev-prune setup` as its last step, installing the integrations described in [Background Automation](BACKGROUND_AUTOMATION.md). `-NoAutoSetup` installs the binary and nothing else, and `devp uninstall` reverses it either way.
-- Registers **no** repositories. Run `dev-prune init <dir>` yourself.
-- Asks exactly one question, and only when there is somebody to answer it: if another manager's copy is on `PATH`, whether to collapse the two by running `devp install --channel installer` from that older binary. Anything but `y` prints the command instead. `DEV_PRUNE_NO_MIGRATE_PROMPT=1`, a set `CI`, or a host with no desktop behind it skips the question and prints the command. Nothing is deleted by the script either way.
-- Writes `install.json` beside the binary as its last step — version, which script, when, and whether `devp.exe` and the `PATH` entry came from it. `devp doctor` and `devp install` report it; nothing decides anything from it.
-- Safe to re-run, and quiet about it. An install already at this version, with `devp.exe` beside it and on the User `PATH`, is left exactly as it is and returns without downloading anything; an older one is updated in place; a newer one is not downgraded unless you name the version with `-Version`. A same-version install missing `devp.exe` or its `PATH` entry is repaired. An install pinned with `devp config set version_lock true` is left alone whatever its version. `-Force` downloads and writes it again regardless, including over a pin.
-- Parameters: `-Version <tag>`, `-BinDir <dir>`, `-NoPath`, `-NoAutoSetup`, `-Force`, `-Help`. `iwr … | iex` runs the script as a bare expression, which has nowhere to put arguments, so passing one means running it as a script block:
-  ```powershell
-  & ([scriptblock]::Create((iwr -useb https://devprune.vkrishna04.me/install.ps1))) -NoAutoSetup
-  ```
-  The environment variables `DEV_PRUNE_VERSION`, `DEV_PRUNE_BIN_DIR`, `DEV_PRUNE_NO_PATH=1`, `DEV_PRUNE_NO_AUTO_SETUP=1` and `DEV_PRUNE_FORCE=1` do the same and work with the plain one-liner. A parameter wins over its variable. `DEV_PRUNE_NO_MIGRATE_PROMPT=1` has no parameter of its own and suppresses the question above.
-- From `cmd.exe`, which has no `Invoke-WebRequest`, the same script runs through PowerShell:
-  ```bat
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "iwr -useb https://devprune.vkrishna04.me/install.ps1 | iex"
-  ```
-  The install is identical. The one thing `cmd` loses is the current-session PATH update above — a parent shell cannot inherit the environment of the child it spawned — so `devp` resolves in the next Command Prompt rather than immediately. `-ExecutionPolicy Bypass` is defensive rather than required: the policy governs script *files*, and `iwr … | iex` never creates one.
+- Runs `dev-prune setup` as its last step and registers **no** repositories, exactly as the shell installer does.
+- Parameters, the Command Prompt form, execution policy and what a re-run does are in [RELEASES_AND_MANUAL_INSTALL.md](RELEASES_AND_MANUAL_INSTALL.md#installer-options).
 
 ### 3. Pre-Compiled GitHub Release Binaries
 Seven single-binary archives are built automatically for every tagged release and attached to [GitHub Releases](https://github.com/Life-Experimentalist/dev-prune/releases), each with a `.sha256` sidecar in `sha256sum` format:
@@ -126,7 +104,7 @@ uvx dev-prune status               # run once, nothing left behind
 pipx run dev-prune status
 pip install --upgrade dev-prune
 ```
-- Six platform wheels, each a zip holding the prebuilt executable under `dev_prune-<version>.data/scripts/`. No Python runs, no compiler is invoked, and no build backend is involved — installers unpack the binaries straight into the environment's `bin`/`Scripts` directory.
+- Seven platform wheels, each a zip holding the prebuilt executable under `dev_prune-<version>.data/scripts/`. No Python runs, no compiler is invoked, and no build backend is involved: installers unpack the binaries straight into the environment's `bin`/`Scripts` directory.
 - The Linux wheels carry both `manylinux` and `musllinux` tags from the same static binary, so Debian and Alpine users are both served.
 - Uploaded through PyPI [Trusted Publishing](https://docs.pypi.org/trusted-publishers/): no API token exists anywhere, only a short-lived OIDC credential minted per release.
 - A `pip install` inside a virtualenv is fine: the first run copies the binary to the managed location (`%APPDATA%\dev-prune\bin` / `~/.config/dev-prune/bin`) and puts it on `PATH`, so `devp` survives the venv being deactivated or deleted. Details in [INSTALLATION_ISSUES.md §9](troubleshooting/INSTALLATION_ISSUES.md#9-pip-install-in-a-virtual-environment--what-happens-when-the-venv-goes-away).
@@ -142,7 +120,7 @@ crates.io hosts source, not binaries — there is no executable on the registry 
 
 Every channel — including `cargo install` and a bare unzipped archive — is complete on its own. On Windows the windowless scheduler binary (`devpw.exe`, see [Background Automation](BACKGROUND_AUTOMATION.md)) is its own build target: it ships in every Windows archive, `cargo install` places it, and setup keeps the managed copy beside the managed binary.
 
-[`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes the from-source gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target — the same six archives listed above — so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
+[`cargo binstall`](https://github.com/cargo-bins/cargo-binstall) closes the from-source gap. The `[package.metadata.binstall]` table in `Cargo.toml` names one GitHub release asset per target, the same seven archives listed above, so binstall resolves the version on crates.io, downloads the matching archive, and unpacks the executable without a toolchain. The table restates the asset names from `release.yml`; if an asset is ever renamed and the table is not, `cargo binstall` silently falls back to compiling, which is the only symptom.
 
 ### 7. Homebrew (macOS & Linux)
 
@@ -220,23 +198,9 @@ there, which is how an installation becomes unrepairable rather than merely wron
 What it does do is put its directory **first** on your PATH — prepended in the shell rc
 file on macOS and Linux, prepended in the User PATH on Windows — so `devp` afterwards is
 the copy it just installed, in this terminal and in every later one. Then it names the
-other copy and offers to collapse the two:
-
-```text
-[!] Another dev-prune is on your PATH as well:
-        /home/you/.cargo/bin/dev-prune
-    A different package manager owns that copy, so this script left it alone.
-    This directory comes first on PATH, so 'devp' is the copy in /home/you/.config/dev-prune/bin.
-    Moving it over means installing here and uninstalling there, through the
-    manager that put it there. 'devp install --channel installer' does both.
-    Do that now? [y/N]:
-```
-
-Answering `y` runs `devp install --channel installer --yes` from the *old* binary, which
-is the copy that knows which manager owns it. Anything else prints the command and moves
-on, and where there is nobody to ask — `DEV_PRUNE_NO_MIGRATE_PROMPT=1`, a set `CI`, no
-terminal attached — the question is skipped and the command printed. The script itself
-deletes nothing in any of those cases.
+other copy and offers to collapse the two. The prompt, what answering `y` runs, and when
+the question is skipped are in
+[The one question the installer asks](RELEASES_AND_MANUAL_INSTALL.md#the-one-question-the-installer-asks).
 
 So the answer to “does the one-liner work if I installed some other way first?” is yes,
 on every channel, with no uninstall step first. Say yes to the question and the two
