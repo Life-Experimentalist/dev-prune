@@ -12,8 +12,12 @@ on:
         description: "Tag to build (e.g. v1.0.0)"
         required: true
 
+# Read-only by default. A job-level `permissions` block replaces this rather than adding
+# to it, so every job that writes (the release upload, the manifest push) says so itself
+# and the build matrix, which compiles dependency code on six runners, holds a token
+# that cannot push.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
