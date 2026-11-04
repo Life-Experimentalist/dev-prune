@@ -100,13 +100,14 @@ jobs:
       # version is then rejected as a duplicate. Cheaper to refuse here.
       - name: Resolve and verify the version
         id: version
+        env:
+          REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
           set -eu
-          ref="${{ github.event.inputs.tag || github.ref_name }}"
-          case "$ref" in
-            vscode-v*) version="${ref#vscode-v}" ;;
+          case "$REF" in
+            vscode-v*) version="${REF#vscode-v}" ;;
             *)
-              echo "::error::'$ref' is not an extension tag. Extension tags are vscode-v<version>."
+              echo "::error::'$REF' is not an extension tag. Extension tags are vscode-v<version>."
               exit 1 ;;
           esac
           manifest=$(node -p "require('./editors/vscode/package.json').version")
@@ -121,7 +122,9 @@ jobs:
       # commit rather than whatever was vendored last.
       - name: Package the .vsix
         working-directory: editors/vscode
-        run: npx --yes @vscode/vsce package --out "dev-prune-vscode-${{ steps.version.outputs.version }}.vsix"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: npx --yes @vscode/vsce@4.1.0 package --out "dev-prune-vscode-${VERSION}.vsix"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -138,9 +141,11 @@ jobs:
           subject-path: editors/vscode/*.vsix
 
       - name: Build the release body from the extension changelog
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -eu
-          sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" editors/vscode/CHANGELOG.md > release-body.md
+          sh scripts/changelog-section.sh "$VERSION" editors/vscode/CHANGELOG.md > release-body.md
           cat >> release-body.md <<EOF
 
           ---
@@ -154,13 +159,13 @@ jobs:
           it if your editor cannot reach either registry:
 
           \`\`\`bash
-          code --install-extension dev-prune-vscode-${{ steps.version.outputs.version }}.vsix
+          code --install-extension dev-prune-vscode-${VERSION}.vsix
           \`\`\`
 
           (\`codium\`, \`cursor\` and \`windsurf\` accept the same flag.)
 
           \`\`\`bash
-          gh attestation verify dev-prune-vscode-${{ steps.version.outputs.version }}.vsix --repo ${{ github.repository }}
+          gh attestation verify dev-prune-vscode-${VERSION}.vsix --repo ${{ github.repository }}
           \`\`\`
 
           The extension needs the \`devp\` CLI for everything except schema validation.
