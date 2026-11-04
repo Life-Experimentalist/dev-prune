@@ -267,8 +267,8 @@ jobs:
             esac
           }
 
-          publish "the VS Code Marketplace" npx --yes @vscode/vsce publish --packagePath "$vsix"
-          publish "Open VSX" npx --yes ovsx publish "$vsix"
+          publish "the VS Code Marketplace" npx --yes @vscode/vsce@4.1.0 publish --packagePath "$vsix"
+          publish "Open VSX" npx --yes ovsx@1.3.0 publish "$vsix"
 
   # A release that creates a page and touches no marketplace is the failure this project
   # has already had once, on the CLI side, and it is invisible from the jobs list: every
