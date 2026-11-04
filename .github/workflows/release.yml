@@ -23,6 +23,61 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Cheap on purpose: no checkout, no build, a few API calls. It runs before the build
+  # matrix so that a tag nobody should be releasing from costs seconds, and every
+  # publishing job sits downstream of it.
+  #
+  # Two things are refused. A tag that does not look like `v<semver>` (this is the only
+  # place the tag text is checked before later jobs put it in file names and URLs), and
+  # a tag whose commit is not on `main`: anyone who can push a tag, or dispatch this
+  # workflow with a tag name, could otherwise ship a branch that never went through
+  # review. CI is checked for that exact commit too: a red or still-running run blocks
+  # the release. A commit CI never ran on only warns, because `ci.yml` may become
+  # manual-only and this must not turn into a permanent block when it does.
+  verify-tag:
+    name: Verify the tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check the tag is a release tag on main with a green CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -eu
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::The tag is not v<major>.<minor>.<patch>[-prerelease]." >&2
+            exit 1
+          fi
+
+          sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          echo "$TAG is $sha"
+
+          # `behind` means the tagged commit is an ancestor of main, `identical` that it
+          # is main's tip. `ahead` and `diverged` mean it carries commits main does not.
+          state=$(gh api "repos/$REPO/compare/main...$sha" --jq .status)
+          case "$state" in
+            identical|behind) echo "$sha is on main." ;;
+            *)
+              echo "::error::$TAG ($sha) is not on main (compare says: $state). Merge it to main first, then tag." >&2
+              exit 1 ;;
+          esac
+
+          runs=$(gh run list --repo "$REPO" --workflow ci.yml --commit "$sha" --json status,conclusion --limit 20)
+          total=$(printf '%s' "$runs" | jq 'length')
+          green=$(printf '%s' "$runs" | jq '[.[] | select(.conclusion == "success")] | length')
+          if [ "$green" -gt 0 ]; then
+            echo "CI passed for $sha."
+          elif [ "$total" -eq 0 ]; then
+            echo "::warning::CI has no run for $sha, so nothing proved the tests pass on this commit."
+          else
+            echo "::error::CI has $total run(s) for $sha and none succeeded (failed, cancelled or still running). Wait for it to go green, then run this workflow again." >&2
+            exit 1
+          fi
+
   # The asset names below are a contract with scripts/install.sh and scripts/install.ps1,
   # which construct the download URL as:
   #   dev-prune-v<version>-<os>-<arch>.<tar.gz|zip>
@@ -30,6 +85,7 @@ jobs:
   # breaks every one-line install until the scripts are changed to match.
   build:
     name: ${{ matrix.os_name }}-${{ matrix.arch }}
+    needs: verify-tag
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -313,7 +369,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [build, hygiene]
+    needs: [verify-tag, build, hygiene]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
