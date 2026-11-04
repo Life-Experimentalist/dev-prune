@@ -93,6 +93,13 @@ file to send — it is the same URL a person would click on the release page, an
 carries no identifier of any kind. The download is rejected unless its SHA-256 matches
 the sidecar, and nothing is written when it does not match.
 
+Unlike the release check, these downloads follow redirects. GitHub answers the URL above
+with a redirect to its asset CDN, a `release-assets.githubusercontent.com` address at
+the time of writing, and the file and its sidecar are served from there. So your IP
+address is seen by that host as well as by `github.com`. The `User-Agent` is the only
+header dev-prune sets on either request, and there is still no body, cookie or
+identifier.
+
 ---
 
 ## The extension install, if you say yes
@@ -103,8 +110,8 @@ editor's own `--install-extension` command; any download that triggers is the ed
 traffic against its own marketplace, not dev-prune's. If the editor's registry cannot
 resolve the extension (some forks' registries do not carry it), dev-prune itself
 downloads the `.vsix` from the newest extension release — two requests to
-`api.github.com/...releases`, one to list the releases and one for the file, with the
-a `User-Agent` and an `Accept: application/vnd.github+json` header and no body — and hands that file to the editor. This never happens without the explicit confirmation,
+`api.github.com/...releases`, one to list the releases and one for the file, with a
+`User-Agent` and an `Accept: application/vnd.github+json` header and no body — and hands that file to the editor. This never happens without the explicit confirmation,
 and a "no" is remembered: nothing asks twice.
 
 ---
@@ -116,12 +123,23 @@ and a "no" is remembered: nothing asks twice.
 | Registry of tracked repositories | `<config dir>/registry.json` | No |
 | Per-repository settings | `.devprune.json` in each repository | No |
 | Prune history and byte counters | `<config dir>/registry.json` | No |
+| Per-pass prune log: absolute repository paths, the directories removed, and the exact command line of each of the last 100 passes | `<config dir>/prune-log.jsonl` | No |
 | Daemon logs | `<config dir>/` | No |
 | Directory sizes and scan results | memory only | No |
 | Restore timings, per adapter | `<config dir>/registry.json` | No |
 
 `<config dir>` is `%APPDATA%\dev-prune` on Windows and `~/.config/dev-prune` elsewhere,
 overridable with `DEV_PRUNE_CONFIG_DIR`.
+
+### Check before you paste
+
+None of that leaves the machine on its own, but several commands will print it, and it
+is easy to paste it somewhere public without noticing. `devp history --export` writes the
+whole prune log to a file, and `devp history --json` prints the same document. Both carry
+the absolute path of every repository a pass touched (which usually includes your user
+name and your project names) and the command line each pass ran with. The `--json` output
+of `devp status`, `devp stats` and `devp caches` also names absolute paths. Before you
+attach any of it to a public issue, open it and remove what you do not want to share.
 
 The restore timings are the newest of those rows, so they are worth spelling out. When
 `devp restore --last-run` puts a directory back, dev-prune adds three numbers to a running
