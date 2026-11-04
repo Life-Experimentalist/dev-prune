@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a filesystem root, at your home directory (or a folder containing it), or at a link is
   now left alone and reported.
 
+- **`devp containers clear` will not act on a remote daemon.** An inherited
+  `DOCKER_HOST=ssh://...` or `tcp://...` (or `CONTAINER_HOST`) used to make "free space on
+  this machine" prune someone else's engine. The command now stops and says why. Unset the
+  variable for that command to clear the local engine.
+
 - **On Windows, a planted `node.cmd` in a repository is no longer picked up.** `cmd.exe`
   looks in the current directory before `PATH`, and the `pnpm` and `yarn` shims call
   `node` by bare name. dev-prune now sets `NoDefaultCurrentDirectoryInExePath` for the

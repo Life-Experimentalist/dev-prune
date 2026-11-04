@@ -588,6 +588,34 @@ fn parse_size(s: &str) -> Option<u64> {
     Some((value * base.powi(exponent)).round() as u64)
 }
 
+/// The value of `DOCKER_HOST` or `CONTAINER_HOST` when it names a daemon that is not on
+/// this machine. Unix sockets, named pipes and loopback addresses are local.
+fn remote_engine_host() -> Option<String> {
+    ["DOCKER_HOST", "CONTAINER_HOST"]
+        .iter()
+        .filter_map(|k| std::env::var(k).ok())
+        .find(|v| is_remote_engine_host(v))
+}
+
+fn is_remote_engine_host(value: &str) -> bool {
+    let v = value.trim().to_ascii_lowercase();
+    if v.is_empty() || v.starts_with("unix://") || v.starts_with("npipe://") {
+        return false;
+    }
+    let Some(rest) = v
+        .strip_prefix("tcp://")
+        .or_else(|| v.strip_prefix("ssh://"))
+    else {
+        return false;
+    };
+    let host = rest.rsplit('@').next().unwrap_or(rest);
+    let host = host.trim_start_matches('[');
+    !(host.starts_with("localhost")
+        || host.starts_with("127.")
+        || host.starts_with("::1]")
+        || host.starts_with("::1:"))
+}
+
 /// Kubernetes contexts on this machine that run on this machine.
 ///
 /// Read out of the kubeconfig with `kubectl config get-contexts`, which touches no
@@ -785,6 +813,16 @@ pub fn run_clear(
              to see what would go."
                 .to_string(),
         )));
+    }
+
+    // Docker and Podman obey these variables, so an inherited `DOCKER_HOST=ssh://prod`
+    // would turn "free space on this machine" into a prune of somebody else's daemon,
+    // with `--yes` and nobody looking. Only the variable is checked: a remote *context*
+    // is not visible from here, which is why the plan names the engine it is acting on.
+    if let Some(host) = remote_engine_host() {
+        return Err(anyhow::Error::new(crate::UsageError(format!(
+            "`{host}` points the container engine at another machine, and dev-prune only              clears the engines on this one. Unset DOCKER_HOST / CONTAINER_HOST for this              command, or run the prune on that machine yourself."
+        ))));
     }
 
     if !adapters::binary_available(engine.binary) {
@@ -1586,6 +1624,28 @@ pub fn print_summary(reports: &[EngineReport]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_daemon_on_another_machine_counts_as_remote() {
+        for remote in [
+            "ssh://deploy@prod.example.com",
+            "tcp://10.0.0.5:2375",
+            "TCP://build-box:2376",
+        ] {
+            assert!(is_remote_engine_host(remote), "{remote}");
+        }
+        for local in [
+            "",
+            "unix:///var/run/docker.sock",
+            "npipe:////./pipe/docker_engine",
+            "tcp://127.0.0.1:2375",
+            "tcp://localhost:2375",
+            "tcp://[::1]:2375",
+            "ssh://me@localhost",
+        ] {
+            assert!(!is_remote_engine_host(local), "{local}");
+        }
+    }
 
     #[test]
     fn no_reclaim_step_can_touch_a_volume() {
