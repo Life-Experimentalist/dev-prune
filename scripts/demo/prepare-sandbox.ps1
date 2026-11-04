@@ -54,4 +54,28 @@ devp config set build_idle_days 0
 devp config set min_size_mb 0
 devp config set recommendations false
 
-Write-Host "Sandbox ready in $Root. Registry: $env:DEV_PRUNE_CONFIG_DIR"
+# The fixture refusal.tape runs against: a project whose package.json names a dependency
+# its lockfile has never recorded, with 60 MiB of idle node_modules. It has its own config
+# directory because the main sandbox's registry is the one the demo deletes from.
+$env:DEV_PRUNE_CONFIG_DIR = Join-Path $Root 'config-refuse'
+$side = Join-Path $Root 'side-project'
+if (Test-Path $side) { Remove-Item $side -Recurse -Force }
+New-Item -ItemType Directory -Force (Join-Path $side 'node_modules\left-pad') | Out-Null
+Push-Location $side
+try {
+    git init --quiet
+    '{"name":"side-project","version":"1.0.0","dependencies":{"left-pad":"^1.3.0"}}' | Set-Content package.json -Encoding ascii
+    npm install --package-lock-only --ignore-scripts --silent
+    # Added after the lockfile was written, which is the whole point of the fixture.
+    '{"name":"side-project","version":"1.0.0","dependencies":{"left-pad":"^1.3.0","is-odd":"^3.0.1"}}' | Set-Content package.json -Encoding ascii
+    [IO.File]::WriteAllBytes((Join-Path $side 'node_modules\left-pad\blob.bin'), (New-Object byte[] (60MB)))
+    git add package.json package-lock.json
+    git -c user.name=demo -c user.email=demo@example.com commit --quiet -m init
+}
+finally { Pop-Location }
+devp link $side
+devp config set idle_days 0
+devp config set min_size_mb 0
+devp config set recommendations false
+
+Write-Host "Sandbox ready in $Root. Registries: $Root\config (demo), $Root\config-refuse (refusal)"

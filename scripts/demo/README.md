@@ -7,6 +7,7 @@ this directory. Nothing is mocked: every line on screen is output `devp` printed
 | Tape | What it shows | Runs against |
 |---|---|---|
 | [`demo.tape`](demo.tape) | `devp run` deleting a 13 GiB Rust `target/` and an npm `node_modules`, then `devp restore --last-run` | a sandbox clone, never your registry |
+| [`refusal.tape`](refusal.tape) | `devp run -y` refusing a project whose lockfile is out of sync: frees 0 B and `node_modules` stays | a second sandbox repository with its own registry; nothing is deleted, so retakes need no re-prep |
 | [`routine.tape`](routine.tape) | `devp history` and `devp stats` from a machine that has run the scheduler for weeks | the recording machine's real registry, read-only |
 | [`common.tape`](common.tape) | the window, font and colours both tapes share | n/a |
 
@@ -48,6 +49,7 @@ pwsh scripts\demo\prepare-sandbox.ps1 -TargetFrom V:\Code\ProjectCode\dev-prune\
 cd scripts\demo
 vhs demo.tape      # about 15 minutes, most of it the two cut waits
 vhs routine.tape   # about a minute
+vhs refusal.tape   # about a minute
 ```
 
 A take deletes the sandbox's `target\` and `node_modules`, so run `prepare-sandbox.ps1`
@@ -69,7 +71,7 @@ already small (about 550 KB and 420 KB) and are published as they come.
 
 | From `out/` | To | Used by |
 |---|---|---|
-| `demo.gif`, `routine.gif` | [`assets/`](../../assets/) | the root README |
+| `demo.gif`, `routine.gif`, `refusal.gif` | [`assets/`](../../assets/) | the root README |
 | `demo.webm`, `demo.mp4`, and a `demo-poster.jpg` frame | `site/public/assets/demo/` | the landing page |
 
 The poster is the dry-run summary frame, taken from the MP4:
@@ -77,6 +79,8 @@ The poster is the dry-run summary frame, taken from the MP4:
 ```powershell
 ffmpeg -y -ss 9 -i out\demo.mp4 -frames:v 1 -q:v 3 ..\..\site\public\assets\demo\demo-poster.jpg
 ```
+
+The PNGs in [`assets/screenshots/`](../../assets/screenshots/) are single frames cut the same way, with no filter. After a re-render the timestamps move, so look at a one-frame-per-second contact sheet first (`-vf "fps=1,tile=4x3"`) rather than reusing old offsets.
 
 If a re-recording ever pushes a GIF past a few megabytes, an ffmpeg palette pass
 (`fps=12`, `palettegen=max_colors=96:stats_mode=diff`, `paletteuse=dither=none`) brings it

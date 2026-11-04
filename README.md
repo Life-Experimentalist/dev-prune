@@ -562,6 +562,12 @@ exists at all, and when you have asked with `devp config set allow_manifest_rewr
 — because a pass can be started by the OS scheduler while you are away, and a background
 process that leaves a dirty working tree is a surprise.
 
+<p align="center">
+  <img src="assets/refusal.gif" width="820" alt="devp run -y in a project whose package.json names a dependency its lockfile has never recorded: npm reports the mismatch, devp frees 0 B, and node_modules is still there.">
+</p>
+
+<sub>A project whose `package.json` gained a dependency the lockfile never recorded. `node_modules` is idle and 60 MiB, and `devp run -y` still frees nothing, because the lockfile could not put it back. Recorded in a throwaway repository.</sub>
+
 ---
 
 ## Features
