@@ -54,6 +54,8 @@ This documentation hub is structured according to the **Diataxis Framework** (Tu
   Step-by-step tutorial for implementing the `PackageManager` Rust trait to add support for new package managers (e.g. Maven, Gradle, Composer, Mix, Swift SPM) along with `tempfile` unit testing protocols.
 - **[Translating dev-prune](TRANSLATIONS.md)**
   How the twelve language catalogues work, exactly which strings are translated and which are contract and never will be, how to add a thirteenth language with one JSON file and one line of Rust, and what the `reviewed` flag has to mean before it is set.
+- **[Re-recording the demo](../scripts/demo/README.md)**
+  How the README and landing-page clips are made: the VHS tapes, the throwaway sandbox that gets pruned, the two waits that are cut and the one setting that is changed so they are watchable, and how to re-record after a release.
 - **[Contributing Guide](../CONTRIBUTING.md)**
   Development environment setup, code style formatting (`cargo fmt`), linting standards (`cargo clippy`), unit testing (`cargo test`), local site development, and pull request submission checklist.
 

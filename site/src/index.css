@@ -327,6 +327,39 @@ html {
   gap: 1.25rem;
 }
 
+/* The recording already carries its own window frame and margin, so the figure adds
+   only a hairline and a shadow; a second frame around it read as a screenshot of a
+   screenshot. */
+.hero-demo-band {
+  margin-top: 3.5rem;
+}
+
+.hero-demo {
+  margin: 0 auto;
+  min-width: 0;
+  max-width: 980px;
+}
+
+.hero-demo video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-lg);
+  background: var(--term-bg);
+}
+
+.hero-demo figcaption {
+  margin-top: 0.6rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.hero-demo figcaption code {
+  color: var(--primary);
+}
+
 .hero-tail {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);

@@ -1834,6 +1834,32 @@ Notes you should rely on, not work around:
             </div>
           </div>
 
+          {/* A recording of the real binary, not the scripted tabs above it: the
+              muted loop plays itself, and the poster is what a reader with video
+              off, or a crawler, gets. It sits full-width because in the hero's
+              right column the terminal text shrank to about seven pixels.
+              scripts/demo/ re-records it. */}
+          <div className="container hero-demo-band">
+            <figure className="hero-demo">
+              <video
+                autoPlay
+                loop
+                muted
+                playsInline
+                preload="metadata"
+                poster="/assets/demo/demo-poster.jpg"
+                aria-label="Recording of devp run deleting a 13 GiB Rust target directory and a node_modules, then devp restore reinstalling the node_modules"
+              >
+                <source src="/assets/demo/demo.webm" type="video/webm" />
+                <source src="/assets/demo/demo.mp4" type="video/mp4" />
+              </video>
+              <figcaption>
+                The real binary, pruning its own 13 GiB <code>target/</code>.
+                The two long waits are cut; nothing else is edited.
+              </figcaption>
+            </figure>
+          </div>
+
           {/* The setup prompt and the headline numbers are full-width: in the
               left column they stretched it past the ledger, and on a tall,
               narrow screen the three-up stats grid broke to 2 + 1. */}

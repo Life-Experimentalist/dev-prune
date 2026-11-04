@@ -17,6 +17,10 @@ something a lockfile cannot put back.**
 
 `devp` is the same binary under a shorter name&nbsp; ·&nbsp; Windows, macOS and Linux&nbsp; ·&nbsp; Apache-2.0&nbsp; ·&nbsp; by [VKrishna04](https://vkrishna04.me)
 
+<img src="assets/demo.gif" alt="devp run deleting a 13 GiB Rust target directory and a node_modules after verifying their lockfiles, then devp restore --last-run reinstalling the node_modules" width="820" />
+
+<sub>`dev-prune` pruning its own 13 GiB `target/`, then restoring. `node_modules` is reinstalled; cargo rebuilds `target/` on your next build. The real binary, in a throwaway clone; the two long waits are cut. [How it was recorded](scripts/demo/README.md).</sub>
+
 </div>
 
 ---
@@ -355,6 +359,16 @@ devp -V                     # version, OS, architecture, config path, PATH audit
 ---
 
 ## What it looks like
+
+The clip at the top of this page is a real run: dev-prune pruning its own Rust build
+directory, then putting it back. Below, a pass that nobody typed. It is the log and the
+lifetime totals from a machine that has had the scheduler installed for weeks.
+
+<div align="center">
+
+<img src="assets/routine.gif" alt="devp history listing scheduled prune passes at 04:15 on consecutive days, then devp stats showing the lifetime total reclaimed" width="820" />
+
+</div>
 
 <details open>
 <summary><b><code>devp run --dry-run</code></b> — the plan, before anything is touched</summary>
@@ -1011,6 +1025,11 @@ LaunchAgent, or a systemd user timer — that runs a pass every `check_interval_
 non-blocking `post-commit`, `post-checkout` and `post-merge` Git hooks that register new
 repositories as you visit them. Both are reinstated after an upgrade if anything went
 missing.
+
+Once it is installed you stop typing `devp run`. The clip under [What it looks
+like](#what-it-looks-like) is what that looks like after a few weeks: scheduled passes in
+the early morning, each one logged, and the latest one undoable with `devp restore
+--last-run`.
 
 None of it arrives unasked. A machine that has never agreed opens the settings
 walkthrough on its first attended run, before anything is installed: finishing the
