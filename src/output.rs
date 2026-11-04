@@ -601,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_clean_path() {
-        assert_eq!(clean_path(r"\\?\C:\Users\krish"), r"C:\Users\krish");
+        assert_eq!(clean_path(r"\\?\C:\Users\user"), r"C:\Users\user");
         assert_eq!(
             clean_path(r"\\?\UNC\server\share\repo"),
             r"\\server\share\repo"
