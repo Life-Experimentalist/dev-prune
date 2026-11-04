@@ -2184,6 +2184,12 @@ fn run_clear_command(program: &str, args: &[&str], extra: &[String]) -> Option<S
 
 /// Delete the directory, for the managers that ship no way to ask.
 fn remove_cache_dir(path: &Path) -> Option<String> {
+    if let Some(why) = unsafe_cache_target(path) {
+        return Some(format!(
+            "{} {why}, so it was left alone.",
+            output::clean_path(path)
+        ));
+    }
     // `remove_dir_all` is not atomic, and a machine-wide cache is exactly where an
     // antivirus scan or a background build is most likely to be holding a file open.
     // The same one retry as the prune pass, for the same reason.
@@ -2196,6 +2202,25 @@ fn remove_cache_dir(path: &Path) -> Option<String> {
         // "Not found" on the retry means the first attempt did finish after all.
         .filter(|e| e.kind() != std::io::ErrorKind::NotFound)
         .map(|e| format!("{} could not be removed: {e}", output::clean_path(path)))
+}
+
+/// Cache locations come from environment variables (`GOMODCACHE`, `CCACHE_DIR` and the
+/// like), so a stray `export CCACHE_DIR=~` would otherwise turn "clear the cache" into
+/// "empty the home directory". A path that is a root, the home directory, one of its
+/// ancestors, or a link to somewhere else is not a cache dev-prune can vouch for.
+fn unsafe_cache_target(path: &Path) -> Option<&'static str> {
+    if path.parent().is_none_or(|p| p.as_os_str().is_empty()) {
+        return Some("is a filesystem root");
+    }
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Some("is a link to somewhere else");
+    }
+    let real = path.canonicalize().ok()?;
+    let home = dirs::home_dir().and_then(|h| h.canonicalize().ok())?;
+    if home.starts_with(&real) {
+        return Some("is the home directory or contains it");
+    }
+    None
 }
 
 /// Name what was left alone, and why, before naming what is about to go.
@@ -2340,6 +2365,23 @@ pub fn confirm_clear(yes: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cache_path_that_is_the_home_directory_or_a_root_is_never_deleted() {
+        let home = dirs::home_dir().expect("a home directory");
+        assert!(unsafe_cache_target(&home).is_some());
+        assert!(unsafe_cache_target(home.parent().unwrap()).is_some());
+        let root = home.ancestors().last().unwrap().to_path_buf();
+        assert!(unsafe_cache_target(&root).is_some());
+    }
+
+    #[test]
+    fn an_ordinary_cache_directory_is_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("ccache");
+        std::fs::create_dir(&cache).unwrap();
+        assert_eq!(unsafe_cache_target(&cache), None);
+    }
 
     #[test]
     fn every_probe_can_be_found_without_its_manager_installed() {
