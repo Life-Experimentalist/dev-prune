@@ -27,8 +27,25 @@ use std::process::Command;
 pub fn command<S: AsRef<OsStr>>(program: S) -> Command {
     let mut cmd = Command::new(program);
     apply_window_policy(&mut cmd);
+    keep_cwd_out_of_the_search(&mut cmd);
     cmd
 }
+
+/// Stop `cmd.exe` looking in the working directory for the programs a child launches.
+///
+/// `pnpm.cmd` and `yarn.cmd` are batch shims, and a shim that cannot find `node` beside
+/// itself runs a bare `node`. `cmd.exe` searches the current directory before `PATH`, and
+/// the current directory here is the repository being verified, so a `node.cmd` committed
+/// to a project would run the moment dev-prune asked its package manager whether a
+/// lockfile is in sync. The variable is the documented switch for exactly this; the other
+/// platforms never search the working directory, so it is a no-op there.
+#[cfg(windows)]
+fn keep_cwd_out_of_the_search(cmd: &mut Command) {
+    cmd.env("NoDefaultCurrentDirectoryInExePath", "1");
+}
+
+#[cfg(not(windows))]
+fn keep_cwd_out_of_the_search(_cmd: &mut Command) {}
 
 #[cfg(windows)]
 fn apply_window_policy(cmd: &mut Command) {
