@@ -140,8 +140,30 @@ fn check(repo_path: &Path, entry: &DeclaredDir) -> Result<Option<Target>, String
     };
     if !real.starts_with(&root) {
         return Err(format!(
-            "`{label}` is declared prunable but resolves to `{}`, outside the \
-             repository. Left alone.",
+            "`{label}` is declared prunable but resolves to `{}`, outside the              repository. Left alone.",
+            crate::output::clean_path(&real)
+        ));
+    }
+    // Inside the repository is not the same as being the directory that was named. A link
+    // or an alias partway down the path (a symlink to `.git`, or the 8.3 short name
+    // `GIT~1` on Windows) resolves somewhere that none of the string checks above ever
+    // saw, so the resolved path has to say the declared words, in order, and nothing else.
+    // The `.git` test is repeated on the resolved side for the same reason.
+    let resolved: Vec<_> = real
+        .strip_prefix(&root)
+        .map(|rel| rel.components().collect())
+        .unwrap_or_default();
+    let is_what_was_named = resolved.len() == parts.len()
+        && resolved
+            .iter()
+            .zip(&parts)
+            .all(|(got, want)| got.as_os_str().eq_ignore_ascii_case(want))
+        && !resolved
+            .iter()
+            .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"));
+    if !is_what_was_named {
+        return Err(format!(
+            "`{label}` is declared prunable but resolves to `{}`, not the path it names —              a link or alias is in the way. Left alone.",
             crate::output::clean_path(&real)
         ));
     }
@@ -183,6 +205,12 @@ fn check(repo_path: &Path, entry: &DeclaredDir) -> Result<Option<Target>, String
             "`{label}` is declared prunable, rebuilt by `{rebuild}`, but {} — refusing to \
              delete something that command cannot put back. {}",
             gap.what, gap.fix
+        ));
+    }
+
+    if !is_git_ignored(repo_path, &label)? {
+        return Err(format!(
+            "`{label}` is declared prunable but Git does not ignore it — an untracked              directory that is not ignored may hold work that exists nowhere else, and no              `rebuild` command can promise otherwise. Add it to `.gitignore` if it really              is disposable. Left alone."
         ));
     }
 
@@ -245,6 +273,34 @@ pub(crate) fn split_relative(raw: &str) -> Result<Vec<String>, String> {
         ));
     }
     Ok(parts)
+}
+
+/// Does Git ignore `label`? The test that a declaration names something the repository
+/// already treats as disposable.
+///
+/// A committed `project.devprune.json` is written by whoever wrote it, and `"rebuild":
+/// "echo not needed"` is a claim nobody can check. An untracked directory that Git does
+/// not ignore shows up in `git status`, which is what a dataset or a scratch database
+/// someone has not committed yet looks like. A directory that is ignored is one the
+/// project has already said is not its content.
+///
+/// A `git` that cannot answer is an error: "I could not check" is not "it is ignored".
+fn is_git_ignored(repo_path: &Path, label: &str) -> Result<bool, String> {
+    let output = git::git_in(repo_path)
+        .args(["check-ignore", "-q", "--", label])
+        .output()
+        .map_err(|e| {
+            format!(
+                "`{label}` is declared prunable, but `git check-ignore` could not run ({e}) —                  refusing to delete without knowing whether Git ignores it."
+            )
+        })?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(format!(
+            "`{label}` is declared prunable, but `git check-ignore` failed — refusing to              delete without knowing whether Git ignores it."
+        )),
+    }
 }
 
 /// The first Git-tracked file inside `label`, if there is one.
@@ -499,6 +555,19 @@ mod tests {
                 .output()
                 .unwrap();
         }
+        // The directories these tests declare are the sort a project ignores; a
+        // declaration for one Git does not ignore is refused, and has its own test.
+        fs::write(
+            path.join(".gitignore"),
+            "/build/
+/scratch/
+/vendor/
+/docs/
+/site/
+/gen/
+",
+        )
+        .unwrap();
         tmp
     }
 
@@ -930,6 +999,66 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_directory_git_does_not_ignore_is_refused_even_with_a_harmless_looking_rebuild() {
+        // A dataset someone has not committed yet looks exactly like this: untracked,
+        // not ignored, and in a committed file that says "echo not needed".
+        let tmp = repo();
+        let path = tmp.path();
+        fs::create_dir_all(path.join("data")).unwrap();
+        fs::write(path.join("data/measurements.db"), vec![1u8; 4096]).unwrap();
+
+        let reason = refusal(path, declared("data", "echo not needed"));
+        assert!(reason.contains("does not ignore"), "{reason}");
+        assert!(path.join("data/measurements.db").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_ancestor_cannot_stand_in_for_the_directory_that_was_named() {
+        // `x` is a link to `.git`, so `x/objects` is the object store with no `.git` and
+        // no `..` anywhere in the text of the declaration.
+        let tmp = repo();
+        let path = tmp.path();
+        std::os::unix::fs::symlink(path.join(".git"), path.join("x")).unwrap();
+        fs::write(
+            path.join(".gitignore"),
+            "x
+",
+        )
+        .unwrap();
+
+        let reason = refusal(path, declared("x/objects", "echo not needed"));
+        assert!(
+            reason.contains("not the path it names") || reason.contains("outside"),
+            "{reason}"
+        );
+        assert!(path.join(".git/objects").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_eight_dot_three_alias_for_dot_git_is_refused() {
+        // `GIT~1` is the short name NTFS gives `.git` on volumes that generate them. It
+        // contains no `.git` and no separator trick, so only the resolved path can tell.
+        let tmp = repo();
+        let path = tmp.path();
+        if !path.join("GIT~1").exists() {
+            // This volume does not generate short names, so there is no alias to test.
+            return;
+        }
+        fs::write(
+            path.join(".gitignore"),
+            "GIT~1
+",
+        )
+        .unwrap();
+
+        let reason = refusal(path, declared("GIT~1/objects", "echo not needed"));
+        assert!(reason.contains("not the path it names"), "{reason}");
+        assert!(path.join(".git/objects").exists());
     }
 
     #[test]

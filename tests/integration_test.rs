@@ -485,6 +485,13 @@ fn test_a_personal_exclusion_keeps_a_committed_declaration_from_running() {
         )
         .unwrap();
     }
+    // A declared directory has to be one Git ignores, or the pass refuses it.
+    fs::write(
+        repo.join(".gitignore"),
+        "/gen/
+",
+    )
+    .unwrap();
     git_init(&repo);
     // `echo` is the documented rebuild for a directory that needs nothing to come back,
     // and it is the one command that resolves on every platform.

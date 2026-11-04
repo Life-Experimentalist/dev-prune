@@ -2141,6 +2141,13 @@ mod tests {
         }
         std::fs::create_dir(dir.path().join("scratch")).unwrap();
         std::fs::write(dir.path().join("scratch/blob.bin"), vec![0u8; 64]).unwrap();
+        // A declared directory has to be one the project ignores.
+        std::fs::write(
+            dir.path().join(".gitignore"),
+            "/scratch/
+",
+        )
+        .unwrap();
 
         let ctx = RepoContext {
             path: dir.path().to_path_buf(),

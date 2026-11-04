@@ -667,7 +667,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
             // deleted, the exact background-pass surprise the config forbids.
             let mut deletable: Vec<(String, BloatDir)> = Vec::new();
             for (label, bd) in bloat_dirs {
-                if let Some(status) = shared_storage_refusal(&bd.path) {
+                if let Some(status) = shared_storage_refusal(repo_path, &bd.path) {
                     results.push(PruneResult {
                         repo_path: repo_path.to_path_buf(),
                         adapter_name: adapter.name().to_string(),
@@ -765,7 +765,7 @@ pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult
 /// declared by hand is no more deletable than one an adapter found.
 ///
 /// `None` means nothing here stands in the way.
-fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
+fn shared_storage_refusal(repo_path: &Path, path: &Path) -> Option<PruneStatus> {
     // A symlinked/junctioned directory points at storage we do not own — in a monorepo
     // it is usually the workspace root's real `node_modules`. Refuse rather than risk a
     // recursive delete outside the repo.
@@ -778,6 +778,22 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
              the link yourself if you really want it gone.",
             crate::output::clean_path(path)
         )));
+    }
+
+    // The leaf check above cannot see a link further up. `vendor/bundle` where `vendor`
+    // is a junction, or `.terraform/providers` where `.terraform` is a symlink, is an
+    // ordinary directory by the time the walk reaches the last component. Resolving the
+    // whole path is the only check that answers for every component at once, and it
+    // also catches an alias for `.git` (a symlink to it, or the 8.3 short name `GIT~1`
+    // on Windows), which no amount of comparing spellings can.
+    match resolved_inside(repo_path, path) {
+        Ok(()) => {}
+        Err(why) => {
+            return Some(PruneStatus::SkippedSymlink(format!(
+                "`{}` {why} — left alone.",
+                crate::output::clean_path(path)
+            )));
+        }
     }
 
     // A mount point is the same problem wearing different clothes: the name is inside
@@ -822,6 +838,27 @@ fn shared_storage_refusal(path: &Path) -> Option<PruneStatus> {
     }
 
     None
+}
+
+/// Does `path`, with every link in it followed, still sit inside `repo_path` and clear
+/// of `.git`? `Err` carries the reason, phrased to follow the path in a sentence.
+///
+/// An unresolvable path is a refusal, not a pass: "I could not tell where this points"
+/// is not evidence that it points somewhere safe.
+fn resolved_inside(repo_path: &Path, path: &Path) -> Result<(), &'static str> {
+    let (Ok(real), Ok(root)) = (path.canonicalize(), repo_path.canonicalize()) else {
+        return Err("could not be resolved to a real location");
+    };
+    let Ok(rel) = real.strip_prefix(&root) else {
+        return Err("resolves to a location outside the repository");
+    };
+    if rel
+        .components()
+        .any(|c| c.as_os_str().eq_ignore_ascii_case(".git"))
+    {
+        return Err("resolves to a location inside `.git`");
+    }
+    Ok(())
 }
 
 /// Walk a tree clearing the Windows read-only attribute so `remove_dir_all` can finish.
@@ -983,7 +1020,7 @@ fn prune_declarations(
             size_bytes: target.size_bytes,
             shared_bytes: 0,
         };
-        if let Some(status) = shared_storage_refusal(&bd.path) {
+        if let Some(status) = shared_storage_refusal(repo_path, &bd.path) {
             results.push(PruneResult {
                 repo_path: repo_path.to_path_buf(),
                 adapter_name: name.to_string(),
@@ -1062,7 +1099,7 @@ fn find_nested_git(dir: &Path) -> Option<PathBuf> {
         .follow_links(false)
         .into_iter()
         .flatten()
-        .find(|e| e.file_name() == ".git")
+        .find(|e| e.file_name().eq_ignore_ascii_case(".git"))
         .map(|e| e.into_path())
 }
 
@@ -1101,7 +1138,7 @@ fn collect_bloat(
                 // must be what `devp run` would actually delete. A junctioned
                 // `node_modules` even sizes somebody else's storage, so counting it
                 // overstates the dashboard twice over.
-                if shared_storage_refusal(&bd.path).is_some() {
+                if shared_storage_refusal(repo_path, &bd.path).is_some() {
                     continue;
                 }
                 if claimed.insert(bd.path.clone()) {
@@ -1128,7 +1165,7 @@ fn collect_bloat(
             continue;
         };
         if target.size_bytes < min_size_bytes
-            || shared_storage_refusal(&target.path).is_some()
+            || shared_storage_refusal(repo_path, &target.path).is_some()
             || !claimed.insert(target.path.clone())
         {
             continue;
