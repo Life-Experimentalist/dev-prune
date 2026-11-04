@@ -412,9 +412,6 @@ endpoints from the 512px one. It is the source for the JetBrains `pluginIcon.svg
 `IconLoader` rasterizes SVG crisply at every HiDPI factor, which the 48px PNG it
 replaced could not).
 
-The `assets/favicon/*.svg` files are still the 1024×1024 raster wrapped in an `<svg>`
-tag — fine for favicons, but anything new should start from `assets/devprune.svg`.
-
 The material-icon-theme and vscode-icons PRs (the only way `.devprune.json` gets its
 own icon in VS Code file trees, since icon themes always win over extension
 contributions) are submitted and awaiting review — see the links in the VS Code
