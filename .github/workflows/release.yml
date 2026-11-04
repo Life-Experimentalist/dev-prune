@@ -145,9 +145,10 @@ jobs:
       - name: Resolve version from tag
         id: version
         shell: bash
+        env:
+          REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          ref="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${REF#v}" >> "$GITHUB_OUTPUT"
 
       # Before the build, not after: a mismatch fails all seven matrix jobs, and there is
       # no reason to spend seven release builds discovering it. A tag that does not match
@@ -155,10 +156,12 @@ jobs:
       # against the wrong value.
       - name: Verify Cargo.toml version matches the tag
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           crate_version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-          if [ "$crate_version" != "${{ steps.version.outputs.version }}" ]; then
-            echo "Cargo.toml is $crate_version but the tag is ${{ steps.version.outputs.version }}" >&2
+          if [ "$crate_version" != "$VERSION" ]; then
+            echo "Cargo.toml is $crate_version but the tag is $VERSION" >&2
             exit 1
           fi
 
@@ -166,7 +169,9 @@ jobs:
       # a missing section should stop the release before seven builds run, not after.
       - name: Verify CHANGELOG.md documents this version
         shell: bash
-        run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > /dev/null
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sh scripts/changelog-section.sh "$VERSION" > /dev/null
 
       # The install scripts resolve the latest release dynamically but each pins a
       # fallback for offline mirrors and rate-limited CI, and the site prints the
@@ -212,8 +217,10 @@ jobs:
       - name: Package (unix)
         if: matrix.os_name != 'windows'
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          asset="dev-prune-v${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
+          asset="dev-prune-v${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
           tar -czf "$asset" -C "target/${{ matrix.target }}/release" dev-prune
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$asset" > "$asset.sha256"
@@ -225,7 +232,7 @@ jobs:
           # needs one download and one hash check; unpacking a tarball inside the binary
           # would mean compiling gzip and tar into it purely to undo what this step did.
           # The archive stays because it is what a human downloads from the release page.
-          raw="dev-prune-v${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}"
+          raw="dev-prune-v${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
           cp "target/${{ matrix.target }}/release/dev-prune" "$raw"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$raw" > "$raw.sha256"
@@ -236,6 +243,8 @@ jobs:
       - name: Package (windows)
         if: matrix.os_name == 'windows'
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           # Both names go in the archive, as two real files.
           #
@@ -271,14 +280,14 @@ jobs:
           # only the `NestedInstallerFiles` the manifest declares, so shipping it here
           # does not put a third command on PATH.
           Copy-Item "target/${{ matrix.target }}/release/devpw.exe" (Join-Path $stage 'devpw.exe')
-          $asset = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.zip"
+          $asset = "dev-prune-v${env:VERSION}-windows-${{ matrix.arch }}.zip"
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $asset
           $hash = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
           # Two spaces: the sha256sum format the install scripts parse.
           "$hash  $asset" | Out-File -FilePath "$asset.sha256" -Encoding ascii -NoNewline
 
           # Uncompressed twin for `devp update --install` — see the unix step for why.
-          $raw = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.exe"
+          $raw = "dev-prune-v${env:VERSION}-windows-${{ matrix.arch }}.exe"
           Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" $raw
           $rawHash = (Get-FileHash -Path $raw -Algorithm SHA256).Hash.ToLower()
           "$rawHash  $raw" | Out-File -FilePath "$raw.sha256" -Encoding ascii -NoNewline
@@ -287,7 +296,7 @@ jobs:
           # stale devpw.exe forward without unpacking a zip. Name is a contract with
           # `constants::windowless_release_asset_name`; a mismatch is a 404, not a test
           # failure. Same sha256sum-format sidecar as every other asset.
-          $rawW = "devpw-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.exe"
+          $rawW = "devpw-v${env:VERSION}-windows-${{ matrix.arch }}.exe"
           Copy-Item "target/${{ matrix.target }}/release/devpw.exe" $rawW
           $rawWHash = (Get-FileHash -Path $rawW -Algorithm SHA256).Hash.ToLower()
           "$rawWHash  $rawW" | Out-File -FilePath "$rawW.sha256" -Encoding ascii -NoNewline
@@ -307,7 +316,7 @@ jobs:
           # sha256sum format, so `sha256sum -c` in the unpacked directory verifies all
           # three. Not attested, for the same reason no sidecar is: it is a checksum of
           # an already-attested file.
-          $contents = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.zip.contents.sha256"
+          $contents = "dev-prune-v${env:VERSION}-windows-${{ matrix.arch }}.zip.contents.sha256"
           $lines = Get-ChildItem -Path $stage -File | Sort-Object Name | ForEach-Object {
             "$((Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           }
@@ -388,9 +397,10 @@ jobs:
 
       - name: Resolve version from tag
         id: version
+        env:
+          REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          ref="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${REF#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v8
         with:
@@ -429,7 +439,9 @@ jobs:
       # list is still appended by `generate_release_notes` below, so nothing is lost —
       # but what a reader sees first is the prose that was written deliberately.
       - name: Build the release body from CHANGELOG.md
-        run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > release-body.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sh scripts/changelog-section.sh "$VERSION" > release-body.md
 
       # GitHub renders the asset list directly under the body, and the assets are the
       # first thing a visitor reaches for — usually the wrong thing, because a raw
@@ -628,7 +640,9 @@ jobs:
         run: npm install -g npm@latest
 
       - name: Build the packages from the release assets
-        run: sh scripts/npm-prepare.sh "${{ needs.publish.outputs.version }}" dist npm-dist
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: sh scripts/npm-prepare.sh "$VERSION" dist npm-dist
 
       # Trusted publishing cannot create a name. A trusted publisher is configured on a
       # package, so a package with no versions has nowhere to hold one, and npm answers
@@ -657,9 +671,10 @@ jobs:
       # exists for.
       - name: Choose the dist-tag
         id: tag
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
         run: |
-          version="${{ needs.publish.outputs.version }}"
-          case "$version" in
+          case "$VERSION" in
             *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT" ;;
             *)   echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
           esac
@@ -727,7 +742,9 @@ jobs:
       # Deliberately into a directory of its own: the action uploads everything in the
       # target directory, and `dist/` is full of tarballs and zips that are not wheels.
       - name: Build the wheels from the release assets
-        run: python scripts/build_wheels.py "${{ needs.publish.outputs.version }}" dist wheels
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: python scripts/build_wheels.py "$VERSION" dist wheels
 
       # The METADATA in these wheels is written by hand — there is no build backend to
       # get it right. PyPI validates on upload, but by then the GitHub release exists and
