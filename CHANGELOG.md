@@ -5,6 +5,42 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.1] - 2026-11-05
+
+### Fixed
+
+- **A Windows short-name alias can no longer reach `.git`.** On NTFS volumes that keep
+  8.3 short names, `GIT~1\objects` is the same directory as `.git\objects`, and the
+  `.git` boundary only compared names. dev-prune now resolves every deletion target to its
+  real location first and refuses any that lands inside `.git`, outside the repository, or
+  anywhere other than the path that was named. Nothing was known to be hit by this; it was
+  found in a security review and closed before anyone could be.
+
+- **A symlinked or junctioned parent directory can no longer stand in for a prunable
+  one.** The link check only looked at the last path component. It now looks at where the
+  whole path really leads, for built-in adapters and for `prunable.directories` alike.
+
+- **A committed `prunable` declaration can no longer mark un-ignored files as disposable.**
+  A cloned repository could carry `"rebuild": "echo not needed"` for a directory holding
+  your own untracked data. Declared directories now have to be ignored by Git and not
+  tracked, or they are refused with the reason. If you declare one, add it to
+  `.gitignore` first.
+
+- **`devp caches clear` refuses cache paths it cannot vouch for.** Cache locations come
+  from environment variables such as `CCACHE_DIR` and `GOMODCACHE`. A value that points at
+  a filesystem root, at your home directory (or a folder containing it), or at a link is
+  now left alone and reported.
+
+- **On Windows, a planted `node.cmd` in a repository is no longer picked up.** `cmd.exe`
+  looks in the current directory before `PATH`, and the `pnpm` and `yarn` shims call
+  `node` by bare name. dev-prune now sets `NoDefaultCurrentDirectoryInExePath` for the
+  commands it starts.
+
+### For contributors
+
+- `docs/SAFETY_INVARIANTS.md` now says plainly that verification runs the package manager
+  in the repository, and that only npm and bun are passed `--ignore-scripts`.
+
 ## [1.23.0] - 2026-10-09
 
 ### Added

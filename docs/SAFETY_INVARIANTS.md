@@ -162,7 +162,12 @@ Some adapters sit outside it:
   file anywhere under the repository; with none, `__pycache__`, `.pytest_cache`,
   `.mypy_cache` and `.ruff_cache` have nothing to be a cache of, and the prune refuses.
 
-The verification command per ecosystem, and the writing form it refuses to run for you:
+The verification command per ecosystem, and the writing form it refuses to run for you.
+Verification does run the package manager that owns the lockfile, in the repository. Only
+npm and bun are told `--ignore-scripts`; the others run as they would for you, so a
+repository you do not trust can still influence a manager's resolve step. dev-prune only
+visits repositories you have worked in (the ones its git hooks registered), but treat a
+freshly cloned, unreviewed repository the way you would treat running its install command.
 
 | Ecosystem | Verification (default)                                     | Writes? | Writing form, on `allow_manifest_rewrite` or a missing lockfile |
 | :-------- | :--------------------------------------------------------- | :------ | :--- |

@@ -965,7 +965,9 @@ config file:
 this, I have no idea how to get it back" the easiest thing to write in a file that gets
 committed and cloned. If a directory genuinely needs nothing to bring it back, say so
 — `"rebuild": "echo not needed"` is a legal answer and works on every platform.
-dev-prune shows the command; it never runs it.
+dev-prune shows the command; it never runs it. The directory must also be one Git
+ignores and does not track, so a declaration alone can never make un-ignored files
+prunable; add the path to `.gitignore` if it really is disposable.
 
 Declared directories go through the ordinary pass under the adapter name `declared`, so
 they are listed by `devp status`, obey `--dry-run`, `--min-size` and `--only`, and are

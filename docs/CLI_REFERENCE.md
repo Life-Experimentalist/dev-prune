@@ -857,7 +857,10 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
 
     `rebuild` is required. If nothing has to rebuild the directory, say that —
     `"rebuild": "echo not needed"` is a legal answer and works on every platform. The
-    command must start with the tool that does the work — `npm --prefix docs run build`,
+    directory also has to be one Git ignores and does not track: a declaration cannot
+    make a tracked or un-ignored directory prunable, because "the project says it is
+    disposable" is not the same as "Git can prove nothing of yours is in it". Add the
+    path to `.gitignore` if it really is disposable. The command must start with the tool that does the work — `npm --prefix docs run build`,
     not `cd docs && npm run build` — because the first word is what gets checked against
     this machine, and a shell builtin like `cd` is refused everywhere. The rest of the
     command is checked too, wherever a manifest already in the tree can answer for it:
