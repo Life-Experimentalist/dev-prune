@@ -41,8 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `node` by bare name. dev-prune now sets `NoDefaultCurrentDirectoryInExePath` for the
   commands it starts.
 
-- **The bundled TLS library is updated to rustls 0.23.46**, which fixes four published
-  advisories (one moderate, three low) in the connection code behind `devp update`.
+- **The bundled TLS stack is updated** (rustls 0.23.46, rustls-webpki 0.103.16 and
+  webpki-roots 1.0.11). That closes four rustls advisories and two certificate-trust
+  advisories (RUSTSEC-2026-0381 and RUSTSEC-2026-0382) in the connection code behind
+  `devp update`.
 
 ### For contributors
 
