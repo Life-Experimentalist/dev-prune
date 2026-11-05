@@ -72,8 +72,9 @@
   /* Three roles, deliberately not one family doing all three work.
      Display carries the personality, body gets out of the way, and anything a
      terminal would actually print is set in the terminal's own face. Each
-     stack ends in the system font it most resembles, so a blocked or slow
-     Google Fonts request degrades to a near-miss rather than to Times. */
+     stack ends in the system font it most resembles, so a font file that is
+     slow to arrive degrades to a near-miss rather than to Times. The faces
+     are self-hosted (see main.jsx). */
   /* Every stack ends in the platform's CJK faces. None of the three Latin
      faces above carries a Han, Kana or Hangul glyph, and a repository named
      in Chinese has to render in the page's own examples — falling through to
@@ -84,7 +85,7 @@
     "Malgun Gothic", "Noto Sans CJK SC", "Noto Sans SC", "Noto Sans JP",
     "Noto Sans KR";
   --font-display:
-    "Bricolage Grotesque", "Segoe UI", -apple-system, BlinkMacSystemFont,
+    "Bricolage Grotesque Variable", "Segoe UI", -apple-system, BlinkMacSystemFont,
     var(--cjk), sans-serif;
   --font-family:
     "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
