@@ -41,8 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `node` by bare name. dev-prune now sets `NoDefaultCurrentDirectoryInExePath` for the
   commands it starts.
 
+- **The bundled TLS library is updated to rustls 0.23.46**, which fixes four published
+  advisories (one moderate, three low) in the connection code behind `devp update`.
+
 ### For contributors
 
+- The VS Code extension's icon-font tooling now resolves `glob` 14 and `minimatch` 11, so
+  `npm audit` is clean for `editors/vscode`.
 - `docs/SAFETY_INVARIANTS.md` now says plainly that verification runs the package manager
   in the repository, and that only npm and bun are passed `--ignore-scripts`.
 
