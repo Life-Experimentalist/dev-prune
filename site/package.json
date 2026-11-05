@@ -17,15 +17,15 @@
     "@fontsource/jetbrains-mono": "^5.3.0",
     "clsx": "^2.1.1",
     "framer-motion": "^13.1.1",
-    "lucide-react": "^1.37.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "lucide-react": "^1.66.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.2.5",
-    "@vitejs/plugin-react": "^6.1.1",
-    "playwright-core": "^1.56.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "playwright-core": "^1.64.1",
     "vite": "^8.3.5"
   }
 }
