@@ -12,13 +12,72 @@ on:
         description: "Tag to build (e.g. v1.0.0)"
         required: true
 
+# Read-only by default. A job-level `permissions` block replaces this rather than adding
+# to it, so every job that writes (the release upload, the manifest push) says so itself
+# and the build matrix, which compiles dependency code on six runners, holds a token
+# that cannot push.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Cheap on purpose: no checkout, no build, a few API calls. It runs before the build
+  # matrix so that a tag nobody should be releasing from costs seconds, and every
+  # publishing job sits downstream of it.
+  #
+  # Two things are refused. A tag that does not look like `v<semver>` (this is the only
+  # place the tag text is checked before later jobs put it in file names and URLs), and
+  # a tag whose commit is not on `main`: anyone who can push a tag, or dispatch this
+  # workflow with a tag name, could otherwise ship a branch that never went through
+  # review. CI is checked for that exact commit too: a red or still-running run blocks
+  # the release. A commit CI never ran on only warns, because `ci.yml` may become
+  # manual-only and this must not turn into a permanent block when it does.
+  verify-tag:
+    name: Verify the tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Check the tag is a release tag on main with a green CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -eu
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::The tag is not v<major>.<minor>.<patch>[-prerelease]." >&2
+            exit 1
+          fi
+
+          sha=$(gh api "repos/$REPO/commits/$TAG" --jq .sha)
+          echo "$TAG is $sha"
+
+          # `behind` means the tagged commit is an ancestor of main, `identical` that it
+          # is main's tip. `ahead` and `diverged` mean it carries commits main does not.
+          state=$(gh api "repos/$REPO/compare/main...$sha" --jq .status)
+          case "$state" in
+            identical|behind) echo "$sha is on main." ;;
+            *)
+              echo "::error::$TAG ($sha) is not on main (compare says: $state). Merge it to main first, then tag." >&2
+              exit 1 ;;
+          esac
+
+          runs=$(gh run list --repo "$REPO" --workflow ci.yml --commit "$sha" --json status,conclusion --limit 20)
+          total=$(printf '%s' "$runs" | jq 'length')
+          green=$(printf '%s' "$runs" | jq '[.[] | select(.conclusion == "success")] | length')
+          if [ "$green" -gt 0 ]; then
+            echo "CI passed for $sha."
+          elif [ "$total" -eq 0 ]; then
+            echo "::warning::CI has no run for $sha, so nothing proved the tests pass on this commit."
+          else
+            echo "::error::CI has $total run(s) for $sha and none succeeded (failed, cancelled or still running). Wait for it to go green, then run this workflow again." >&2
+            exit 1
+          fi
+
   # The asset names below are a contract with scripts/install.sh and scripts/install.ps1,
   # which construct the download URL as:
   #   dev-prune-v<version>-<os>-<arch>.<tar.gz|zip>
@@ -26,6 +85,7 @@ jobs:
   # breaks every one-line install until the scripts are changed to match.
   build:
     name: ${{ matrix.os_name }}-${{ matrix.arch }}
+    needs: verify-tag
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -85,9 +145,10 @@ jobs:
       - name: Resolve version from tag
         id: version
         shell: bash
+        env:
+          REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          ref="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${REF#v}" >> "$GITHUB_OUTPUT"
 
       # Before the build, not after: a mismatch fails all seven matrix jobs, and there is
       # no reason to spend seven release builds discovering it. A tag that does not match
@@ -95,10 +156,12 @@ jobs:
       # against the wrong value.
       - name: Verify Cargo.toml version matches the tag
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           crate_version="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-          if [ "$crate_version" != "${{ steps.version.outputs.version }}" ]; then
-            echo "Cargo.toml is $crate_version but the tag is ${{ steps.version.outputs.version }}" >&2
+          if [ "$crate_version" != "$VERSION" ]; then
+            echo "Cargo.toml is $crate_version but the tag is $VERSION" >&2
             exit 1
           fi
 
@@ -106,7 +169,9 @@ jobs:
       # a missing section should stop the release before seven builds run, not after.
       - name: Verify CHANGELOG.md documents this version
         shell: bash
-        run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > /dev/null
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sh scripts/changelog-section.sh "$VERSION" > /dev/null
 
       # The install scripts resolve the latest release dynamically but each pins a
       # fallback for offline mirrors and rate-limited CI, and the site prints the
@@ -152,8 +217,10 @@ jobs:
       - name: Package (unix)
         if: matrix.os_name != 'windows'
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          asset="dev-prune-v${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
+          asset="dev-prune-v${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
           tar -czf "$asset" -C "target/${{ matrix.target }}/release" dev-prune
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$asset" > "$asset.sha256"
@@ -165,7 +232,7 @@ jobs:
           # needs one download and one hash check; unpacking a tarball inside the binary
           # would mean compiling gzip and tar into it purely to undo what this step did.
           # The archive stays because it is what a human downloads from the release page.
-          raw="dev-prune-v${{ steps.version.outputs.version }}-${{ matrix.os_name }}-${{ matrix.arch }}"
+          raw="dev-prune-v${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
           cp "target/${{ matrix.target }}/release/dev-prune" "$raw"
           if command -v sha256sum >/dev/null 2>&1; then
             sha256sum "$raw" > "$raw.sha256"
@@ -176,6 +243,8 @@ jobs:
       - name: Package (windows)
         if: matrix.os_name == 'windows'
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           # Both names go in the archive, as two real files.
           #
@@ -211,14 +280,14 @@ jobs:
           # only the `NestedInstallerFiles` the manifest declares, so shipping it here
           # does not put a third command on PATH.
           Copy-Item "target/${{ matrix.target }}/release/devpw.exe" (Join-Path $stage 'devpw.exe')
-          $asset = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.zip"
+          $asset = "dev-prune-v${env:VERSION}-windows-${{ matrix.arch }}.zip"
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $asset
           $hash = (Get-FileHash -Path $asset -Algorithm SHA256).Hash.ToLower()
           # Two spaces: the sha256sum format the install scripts parse.
           "$hash  $asset" | Out-File -FilePath "$asset.sha256" -Encoding ascii -NoNewline
 
           # Uncompressed twin for `devp update --install` — see the unix step for why.
-          $raw = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.exe"
+          $raw = "dev-prune-v${env:VERSION}-windows-${{ matrix.arch }}.exe"
           Copy-Item "target/${{ matrix.target }}/release/dev-prune.exe" $raw
           $rawHash = (Get-FileHash -Path $raw -Algorithm SHA256).Hash.ToLower()
           "$rawHash  $raw" | Out-File -FilePath "$raw.sha256" -Encoding ascii -NoNewline
@@ -227,7 +296,7 @@ jobs:
           # stale devpw.exe forward without unpacking a zip. Name is a contract with
           # `constants::windowless_release_asset_name`; a mismatch is a 404, not a test
           # failure. Same sha256sum-format sidecar as every other asset.
-          $rawW = "devpw-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.exe"
+          $rawW = "devpw-v${env:VERSION}-windows-${{ matrix.arch }}.exe"
           Copy-Item "target/${{ matrix.target }}/release/devpw.exe" $rawW
           $rawWHash = (Get-FileHash -Path $rawW -Algorithm SHA256).Hash.ToLower()
           "$rawWHash  $rawW" | Out-File -FilePath "$rawW.sha256" -Encoding ascii -NoNewline
@@ -247,7 +316,7 @@ jobs:
           # sha256sum format, so `sha256sum -c` in the unpacked directory verifies all
           # three. Not attested, for the same reason no sidecar is: it is a checksum of
           # an already-attested file.
-          $contents = "dev-prune-v${{ steps.version.outputs.version }}-windows-${{ matrix.arch }}.zip.contents.sha256"
+          $contents = "dev-prune-v${env:VERSION}-windows-${{ matrix.arch }}.zip.contents.sha256"
           $lines = Get-ChildItem -Path $stage -File | Sort-Object Name | ForEach-Object {
             "$((Get-FileHash -Path $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)"
           }
@@ -309,7 +378,7 @@ jobs:
 
   publish:
     name: Publish release
-    needs: [build, hygiene]
+    needs: [verify-tag, build, hygiene]
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -328,9 +397,10 @@ jobs:
 
       - name: Resolve version from tag
         id: version
+        env:
+          REF: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          ref="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${REF#v}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/download-artifact@v8
         with:
@@ -369,7 +439,9 @@ jobs:
       # list is still appended by `generate_release_notes` below, so nothing is lost —
       # but what a reader sees first is the prose that was written deliberately.
       - name: Build the release body from CHANGELOG.md
-        run: sh scripts/changelog-section.sh "${{ steps.version.outputs.version }}" > release-body.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: sh scripts/changelog-section.sh "$VERSION" > release-body.md
 
       # GitHub renders the asset list directly under the body, and the assets are the
       # first thing a visitor reaches for — usually the wrong thing, because a raw
@@ -565,10 +637,12 @@ jobs:
       # newer, and a job that is one Node patch away from silently losing its
       # authentication is not a job anyone will think to look at.
       - name: Use the current npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@12.2.1
 
       - name: Build the packages from the release assets
-        run: sh scripts/npm-prepare.sh "${{ needs.publish.outputs.version }}" dist npm-dist
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: sh scripts/npm-prepare.sh "$VERSION" dist npm-dist
 
       # Trusted publishing cannot create a name. A trusted publisher is configured on a
       # package, so a package with no versions has nowhere to hold one, and npm answers
@@ -597,9 +671,10 @@ jobs:
       # exists for.
       - name: Choose the dist-tag
         id: tag
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
         run: |
-          version="${{ needs.publish.outputs.version }}"
-          case "$version" in
+          case "$VERSION" in
             *-*) echo "dist_tag=next" >> "$GITHUB_OUTPUT" ;;
             *)   echo "dist_tag=latest" >> "$GITHUB_OUTPUT" ;;
           esac
@@ -667,7 +742,9 @@ jobs:
       # Deliberately into a directory of its own: the action uploads everything in the
       # target directory, and `dist/` is full of tarballs and zips that are not wheels.
       - name: Build the wheels from the release assets
-        run: python scripts/build_wheels.py "${{ needs.publish.outputs.version }}" dist wheels
+        env:
+          VERSION: ${{ needs.publish.outputs.version }}
+        run: python scripts/build_wheels.py "$VERSION" dist wheels
 
       # The METADATA in these wheels is written by hand — there is no build backend to
       # get it right. PyPI validates on upload, but by then the GitHub release exists and
@@ -845,11 +922,25 @@ jobs:
         shell: bash
         run: sh scripts/winget-manifests.sh winget-submission
 
+      # A release tag and a hash, not `aka.ms/wingetcreate/latest`: the step after this one
+      # runs the file with a token that can open pull requests as the maintainer, so what
+      # `latest` happens to point at on release day is not something to run unchecked. The
+      # hash is the SHA-256 GitHub reports for the asset of that release. To move to a newer
+      # one, change both values together (`gh api repos/microsoft/winget-create/releases/latest`).
       - name: Install wingetcreate
         shell: pwsh
+        env:
+          WINGETCREATE_VERSION: "1.12.13.0"
+          WINGETCREATE_SHA256: "24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea"
         run: |
-          Invoke-WebRequest https://aka.ms/wingetcreate/latest `
-            -OutFile "$env:RUNNER_TEMP\wingetcreate.exe"
+          $exe = "$env:RUNNER_TEMP\wingetcreate.exe"
+          Invoke-WebRequest "https://github.com/microsoft/winget-create/releases/download/v$env:WINGETCREATE_VERSION/wingetcreate.exe" `
+            -OutFile $exe
+          $actual = (Get-FileHash -Path $exe -Algorithm SHA256).Hash
+          if ($actual -ne $env:WINGETCREATE_SHA256) {
+            Write-Error "wingetcreate.exe hash is $actual, expected $env:WINGETCREATE_SHA256"
+            exit 1
+          }
 
       # `submit` rather than `update`: `update` rewrites a manifest already in the
       # catalog, and this package's first version is still an open pull request. `submit`
