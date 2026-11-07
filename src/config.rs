@@ -647,6 +647,13 @@ impl InactiveRepos {
         self.drives.get(key).map(String::as_str)
     }
 
+    /// The drives involved as a person would say them: `drive E:` or `drives E:, F:`.
+    pub fn drives_phrase(&self) -> String {
+        let drives: Vec<String> = self.by_drive().into_keys().collect();
+        let noun = if drives.len() == 1 { "drive" } else { "drives" };
+        format!("{noun} {}", drives.join(", "))
+    }
+
     /// Inactive paths grouped by drive, both in sorted order.
     pub fn by_drive(&self) -> BTreeMap<String, Vec<PathBuf>> {
         let mut grouped: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
