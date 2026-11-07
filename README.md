@@ -554,7 +554,7 @@ This one is not a demo repository. It is my own laptop, with the C: drive at 98%
 
 <img src="assets/screenshots/journey/07-clear-result.png" alt="devp caches clear go after confirming, printing Freed 161.93 GiB" width="820" />
 
-<sub>After saying yes: freed 161.93 GiB. The red lines are go reporting files it could not remove (access denied, directory not empty). The drive still ended up with 169 GB free.</sub>
+<sub>After saying yes: freed 161.93 GiB. The red lines are go reporting files it could not remove (access denied, directory not empty). The drive still ended up with 169 GB free. Printing a green "Freed" next to those failures was wrong, so a clear that only partly worked now says "partly cleared" and shows what it freed.</sub>
 
 <img src="assets/screenshots/journey/10-after-c-drive-free.png" alt="Windows File Explorer showing drive C: with 169 GB free of 475 GB and a mostly empty blue usage bar" width="820" />
 
