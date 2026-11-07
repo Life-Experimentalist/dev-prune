@@ -232,6 +232,18 @@ the same name, and `install` / `uninstall` / `on` / `off` work wherever `enable`
 
 A run in which any repository failed exits `1` even if others succeeded.
 
+One devp per device. Every pass (`run`, `restore`, `unlink --missing`, hook registration)
+takes an OS advisory lock, `run.lock` in the config directory, released when the process
+ends. While another pass holds it, a scheduled `run --daemon` or a hook registration skips
+with one info line naming the holder (pid, version, since) and exits `0`; an interactive
+`run`, `restore` or `unlink --missing` prints the same facts and exits `1`, so wait for the
+other pass and run it again. Read-only commands never wait. `registry.json` carries a
+`written_by` field with the devp version that last wrote it; a devp older than that refuses to
+write and exits `1` with "registry.json was written by devp X, this is Y; update this install
+or remove it, see devp doctor". `devp doctor` lists every devp install: several distinct
+versions are a warning (exit `0`) naming each path, the scheduled task's target and the hook
+shims' target. Remove the extras yourself; devp never deletes a binary.
+
 ---
 
 ## Machine-readable output: prefer this over parsing the human report

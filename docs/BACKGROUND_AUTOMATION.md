@@ -256,6 +256,38 @@ remote mode.
 
 Ordinary mapped drives and SMB shares are not treated specially by this rule.
 
+#### One devp per device
+
+Each device has one devp. Two installs on the same machine, say an npm one and a cargo
+one, share one `registry.json` and one scheduler entry, and three things keep that from
+turning into two passes fighting over the same repositories:
+
+- **A run lock.** `run.lock` in the config directory is an operating-system file lock
+  (`LockFileEx` on Windows, `flock` elsewhere), held for the whole of `devp run`, `devp
+  restore`, `devp restore --last-run`, `devp unlink --missing`, a prune confirmed from the
+  `devp status` dashboard, and the hook-triggered registration. Because the OS owns the
+  lock, it goes away with the process that held it, however that process ended; a lock
+  file left behind by a crash blocks nothing. While it is held, the scheduled pass and the
+  git hook skip with one line naming the holder (pid, devp version, start time) and exit
+  `0`. An interactive `devp run`, `devp restore` or `devp unlink --missing` prints the
+  same facts and exits `1`, so a script does not mistake "did nothing" for "done". Read-only
+  commands (`status`, `stats`, `caches`, `doctor`, `list`) never take it and never wait for it.
+- **A registry writer stamp.** Every save records the devp version that wrote it in a
+  top-level `written_by` field. A devp that finds a newer version in that field will not
+  write: the command stops with `registry.json was written by devp X, this is Y; update
+  this install or remove it, see devp doctor` and exits `1`. Read-only commands still
+  work. An older or equal stamp, or none at all (a registry from before the field existed),
+  is overwritten and stamped as normal. Reading never rewrites the file.
+- **A duplicate-install check.** `devp doctor` finds every install on `PATH`, in the config
+  directory's `bin` folder and in the cargo, npm and pip locations. The same release in
+  several places is one information line. Different releases are a warning, with exit
+  code `0`: it lists each with its path and the command that removes it, and names which
+  one the scheduled task runs and which one the git hook shims call. devp never deletes
+  or replaces a binary itself; the removal is yours to run.
+
+Each environment has its own devp, so each has its own lock, registry and scheduler. Nothing
+here crosses from one machine, WSL distribution or virtual machine to another.
+
 ### The optional cache size limit
 
 Off by default. With `devp config set cache_auto_trim true`, the scheduled pass has one more

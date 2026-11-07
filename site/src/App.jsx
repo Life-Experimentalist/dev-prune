@@ -2692,7 +2692,11 @@ Notes you should rely on, not work around:
                     to prune"
                   </li>
                   <li>
-                    <code>1</code> — the command failed; the reason is on stderr
+                    <code>1</code> — the command failed; the reason is on
+                    stderr. An interactive <code>run</code> or{" "}
+                    <code>restore</code> exits <code>1</code> when another pass
+                    holds the run lock; a scheduled pass just skips and exits{" "}
+                    <code>0</code>
                   </li>
                   <li>
                     <code>2</code> — the arguments were not usable
@@ -3356,7 +3360,14 @@ Notes you should rely on, not work around:
                 pip, npm, cargo or uv leaves copies in several places, and the
                 one first on PATH is not always the one the scheduler and git
                 hooks invoke — doctor reports every copy it finds and the
-                version each is, plus an <em>Install receipt</em> line for a copy
+                version each is. Different versions are a warning (exit 0) that
+                names the copy the scheduled task runs and the one the hook
+                shims call; the same version in two places is only a note.
+                Each device keeps one <code>devp</code>, taking a lock so two
+                passes never overlap, and a <code>registry.json</code> written
+                by a newer one is never overwritten by an older one. Doctor also
+                prints, but never runs, the command to remove the extras. It
+                adds an <em>Install receipt</em> line for a copy
                 one of the install scripts wrote, naming its version, which
                 script wrote it and when. The one-liner asks about a copy it
                 finds rather than deleting it: answer <code>y</code> and the
