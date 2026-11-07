@@ -269,10 +269,15 @@ EXAMPLES:
 pub const CACHES_LONG: &str = "\
 Find every package-manager cache and store on the machine, size each one, and print \
 the command that clears it — largest first, with a total. On its own it deletes \
-nothing, and nothing that runs on a schedule ever will: a cache is shared by every \
-repository, so no single lockfile can prove its contents recoverable, which is the \
-bar every dev-prune deletion has to clear. Clearing one also turns the next `devp \
-restore` into a download.
+nothing. Nothing that runs on a schedule clears a cache either, with one opt-in \
+exception: with `cache_auto_trim` on, the scheduled pass empties the Go build cache \
+and the ccache cache when one is over `cache_limit_gib` (20 by default). Off unless \
+you turn it on. A cache is shared by every repository, so no single lockfile can \
+prove its contents recoverable, which is the bar every dev-prune deletion has to \
+clear. Clearing one also turns the next `devp restore` into a download.
+
+A cache past `cache_limit_gib` is marked in the report as plain information, with \
+auto trim on or off.
 
 `devp caches clear <manager>` runs the command this table prints, after showing you \
 what goes and asking.

@@ -2500,9 +2500,10 @@ Notes you should rely on, not work around:
                       alone; <code>--over-cap</code> narrows it to the managers
                       that have outgrown their <code>cache_max_gb</code>;{" "}
                       <code>--unused</code> to the ones no registered repository
-                      uses. Only ever
-                      when you type it — no pass, schedule or hook clears a
-                      cache, and Maven&rsquo;s <code>~/.m2/repository</code> is
+                      uses. Only when you type it — no
+                      hook clears a cache, and the schedule clears only the Go
+                      build and ccache caches, and only if you turn on{" "}
+                      <code>cache_auto_trim</code>. Maven&rsquo;s <code>~/.m2/repository</code> is
                       never cleared at all
                     </td>
                   </tr>
@@ -3301,6 +3302,22 @@ Notes you should rely on, not work around:
                 <code>nuget</code> and the rest — and{" "}
                 <code>devp config wizard</code> sets them as a column beside the
                 adapter checklist.
+              </Faq>
+              <Faq q="Can it keep the Go build cache from filling my drive?">
+                Yes, as an opt-in.{" "}
+                <code>devp config set cache_auto_trim true</code> lets the
+                scheduled pass empty the Go build cache or the ccache cache when
+                one is over <code>cache_limit_gib</code> &mdash; a whole number
+                of GiB, 20 by default, applied to each cache on its own. Those
+                two only, because losing them costs recompute time and nothing
+                else. The Go module cache, the download caches and anything
+                dev-prune would have to delete as a directory are never
+                trimmed. It is off by default, and nothing is measured for it
+                while it is off. <code>devp run --dry-run</code> lists what it
+                would empty and clears nothing, a partly cleared cache is
+                reported as partly cleared, and a failure never fails the pass.{" "}
+                <code>devp caches</code> marks a cache over the limit whether
+                or not auto trim is on.
               </Faq>
               <Faq q="Can I install it with npm?">
                 Yes — <code>npm install -g dev-prune</code>, or{" "}

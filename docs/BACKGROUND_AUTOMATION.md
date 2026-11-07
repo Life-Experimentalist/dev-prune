@@ -180,6 +180,24 @@ path answers "not found" rather than "unreachable": an unplugged external drive 
 unmounted share never loses an entry. If the path comes back the clock is cleared. One
 line names what was dropped. `devp unlink --missing` still clears them at once.
 
+### The optional cache size limit
+
+Off by default. With `devp config set cache_auto_trim true`, the scheduled pass has one more
+step, after the repository prune: it measures the Go build cache and the ccache cache (and
+nothing else), and empties one with its own command (`go clean -cache`, `ccache --clear`)
+when it is bigger than `cache_limit_gib` (20 by default, whole GiB, per cache). Both are
+caches whose loss costs only recompute time. The Go module cache and every download cache
+are left out on purpose, and a cache dev-prune would have to delete as a directory is never
+eligible.
+
+It runs the same code as `devp caches clear`, so a partly cleared cache is reported as
+partly cleared and the freed bytes land in "Caches emptied" in `devp stats` and `devp
+history`. A cache that will not clear is a line in the output, not a failed pass. The step
+runs inside the pass, so it sits behind the same gates as the prune, and `devp run
+--dry-run` lists what it would empty and clears nothing. While the setting is off, nothing
+is measured. See [the reference](CLI_REFERENCE.md#a-size-limit-for-the-harmless-caches)
+for the reasoning and the JSON key.
+
 ### Turning it off
 
 On a machine that never accepted the first-run walkthrough there is nothing to turn off — nothing was installed. For one that did, five switches, from narrowest to widest:

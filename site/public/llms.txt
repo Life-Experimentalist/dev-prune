@@ -254,8 +254,10 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   invisible to it. Maven prints only its own command; dev-prune will not run that one. On a
   terminal it shows the cache or repository being measured, how many are done, the elapsed
   time, and a still-working hint after ten seconds on one item; nothing is drawn under
-  `--json` or into a pipe. The report deletes nothing, and no
-  scheduler, Git hook or `devp run` ever will: a cache is shared by every project, so no
+  `--json` or into a pipe. The report deletes nothing, and no Git hook ever clears a
+  cache. The scheduler and `devp run` clear none either, except for one opt-in: with
+  `cache_auto_trim` on, the scheduled pass empties the Go build cache or the ccache cache
+  when it is over `cache_limit_gib` (20 by default). A cache is shared by every project, so no
   one lockfile can prove it recoverable, and it is what makes `devp restore` fast. This is also where the
   .NET and C/C++ *dependencies* live — machine-wide stores no one project owns — while
   their in-repository `bin/`+`obj/` and CMake `build/` trees, like Cargo `target/`,
@@ -748,6 +750,8 @@ recompiling rather than downloading: `enable_cargo` (false), `enable_gradle` (fa
 
 **Shared download caches**: `cache_max_gb` (none).
 
+**Cache size limit**: `cache_auto_trim` (false), `cache_limit_gib` (20).
+
 **Running without being asked** — what may be installed on the machine, and how
 often it may act alone: `auto_setup` (true), `auto_config` (false),
 `auto_daemon` (true), `auto_discover` (true), `check_interval_days` (2),
@@ -810,6 +814,18 @@ manager not named separately, so one entry caps all thirty-one caches, and a man
 named outright is held to its own figure rather than to both. A manager over its cap is marked in `devp caches`
 and cleared only by `devp caches clear --over-cap`; the cap itself never deletes
 anything. `devp config set cache_max_gb -` clears the map.
+
+`cache_auto_trim` (off by default) lets the scheduled pass, and a confirmed `devp run`,
+empty the Go build cache (`go clean -cache`) or the ccache cache (`ccache --clear`) when
+it is bigger than `cache_limit_gib`, a whole number of GiB, at least 1, 20 by default,
+applied to each cache on its own. Only those two: they cost recompute time and nothing
+else to rebuild. The Go module cache, every download cache and every cache that would
+have to be deleted as a directory are never trimmed. It clears through the same code as
+`devp caches clear`, so a partial clear is reported as partial and the freed bytes are
+counted in `devp stats`. `devp run --dry-run` lists what it would empty and clears
+nothing; `--json` adds a `cache_trim` key only while the setting is on. `devp caches`
+marks a cache over the limit (`over_limit` in `--json`) whether or not auto trim is on,
+and `devp doctor` mentions it as a note without changing its exit code.
 
 `language` picks which of twelve catalogues dev-prune prints its own headings and
 summary lines from: `en`, `zh` (Simplified Chinese), `hi` (Hindi), `te` (Telugu),
