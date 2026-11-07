@@ -211,6 +211,56 @@ pub fn attach_recommendations(doc: &mut Value, recommendations: &[(String, usize
     }
 }
 
+/// Add the `cache_trim` key: what the automatic cache size limit did, or would have done.
+///
+/// Additive, and present only when `cache_auto_trim` is on, so a run document from a
+/// machine that never turned it on is byte-for-byte what it was. `status` is one of
+/// `would_clear` (a dry run or an unconfirmed manual run), `cleared`, `partial` or
+/// `failed`; the last two carry `problem`, and `freed_bytes` is what was really measured
+/// to be gone, never the size it had before.
+pub fn attach_cache_trim(doc: &mut Value, trim: &crate::commands::caches::TrimResult) {
+    let caches: Vec<Value> = trim
+        .plans
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let mut obj = json!({
+                "manager": p.manager,
+                "kind": p.kind,
+                "path": clean_path(&p.path),
+                "bytes": p.bytes,
+                "command": &p.command,
+            });
+            match trim.outcomes.get(i) {
+                None => obj["status"] = json!("would_clear"),
+                Some(o) => {
+                    obj["status"] = json!(match (&o.problem, o.freed()) {
+                        (None, _) => "cleared",
+                        (Some(_), 0) => "failed",
+                        (Some(_), _) => "partial",
+                    });
+                    obj["freed_bytes"] = json!(o.freed());
+                    if let Some(problem) = &o.problem {
+                        obj["problem"] = json!(problem);
+                    }
+                }
+            }
+            obj
+        })
+        .collect();
+    if let Some(obj) = doc.as_object_mut() {
+        obj.insert(
+            "cache_trim".to_string(),
+            json!({
+                "limit_gib": trim.limit_gib,
+                "dry_run": trim.preview,
+                "freed_bytes": trim.freed(),
+                "caches": caches,
+            }),
+        );
+    }
+}
+
 /// The stable machine name for why a repository is or is not a candidate.
 fn reason_tag(reason: &SkipReason) -> &'static str {
     match reason {
@@ -611,6 +661,11 @@ pub fn caches_document(
                 obj["cap_gb"] = json!(gb);
                 obj["over_cap"] = json!(r.over_cap);
             }
+            // On every row, because `cache_limit_gib` always has a value (20 unless set).
+            // `auto_trim_eligible` says whether the scheduled pass could ever empty it,
+            // so a consumer does not have to know the allow-list to read `over_limit`.
+            obj["over_limit"] = json!(r.over_limit);
+            obj["auto_trim_eligible"] = json!(crate::commands::caches::trim_eligible(r));
             // Absent where dev-prune cannot attribute a cache to any adapter, for the same
             // reason: a `"dependents": 0` on a `pip` row would be read as "safe to clear"
             // by exactly the consumer this contract exists for.
@@ -1139,6 +1194,7 @@ mod tests {
                     note: None,
                     cap_gb: None,
                     over_cap: false,
+                    over_limit: false,
                     dependents: None,
                     extra_args: Vec::new(),
                 },
@@ -1152,6 +1208,7 @@ mod tests {
                     note: Some("hardlinked"),
                     cap_gb: None,
                     over_cap: false,
+                    over_limit: false,
                     dependents: None,
                     extra_args: Vec::new(),
                 },

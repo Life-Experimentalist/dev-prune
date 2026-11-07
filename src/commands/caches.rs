@@ -12,11 +12,14 @@
 //
 // This command finds them, sizes them, and prints the command that clears each one.
 //
-// **Nothing here ever runs on its own.** A cache is shared by every project on the
-// machine, so its contents are not something dev-prune can prove is recoverable for any
-// one repository — which is the bar every deletion in the prune path has to clear. So no
-// scheduler, no Git hook and no `devp run` will ever touch one, and `devp caches` on its
-// own still deletes nothing.
+// **Nothing here runs on its own unless `cache_auto_trim` is switched on.** A cache is
+// shared by every project on the machine, so its contents are not something dev-prune can
+// prove is recoverable for any one repository — which is the bar every deletion in the
+// prune path has to clear. So by default no scheduler, no Git hook and no `devp run` will
+// ever touch one, and `devp caches` on its own still deletes nothing. The one opt-in
+// exception is [`trim_caches`]: with `cache_auto_trim` on, the scheduled pass empties a
+// cache past `cache_limit_gib`, but only from the short [`TRIM_ALLOWED`] list of caches
+// whose loss costs nothing but a rebuild.
 //
 // `devp caches clear <manager>` exists because typing the command this report already
 // prints is the whole of what it does. It names what it is about to empty, says what
@@ -82,6 +85,13 @@ pub struct CacheReport {
     /// gigabytes" is a statement about the pair. Every row of an over-cap manager is
     /// marked, because clearing only one of them is not what the cap asked for.
     pub over_cap: bool,
+    /// Whether this one cache is bigger than `cache_limit_gib`.
+    ///
+    /// Per row, unlike [`Self::over_cap`]: the limit is about a single cache filling a
+    /// drive, and the Go build cache that motivated it sat next to a module cache that
+    /// was fine. Information only; whether anything acts on it is `cache_auto_trim`'s
+    /// business and [`trim_eligible`]'s.
+    pub over_limit: bool,
     /// How many registered repositories use this manager, or `None` where dev-prune
     /// cannot say.
     ///
@@ -786,6 +796,7 @@ pub fn run(json_output: bool, volume: Option<&str>) -> Result<()> {
 
         let mut reports = collect(spinner, reg.as_ref());
         apply_caps(&mut reports, &caps());
+        apply_limit(&mut reports, trim_settings().1);
 
         let deps = dep_tracker.as_ref().and_then(|t| {
             dependents_progress(t).run(spinner, || crate::parallel::finish(dep_started, dep_job))
@@ -1009,6 +1020,260 @@ fn apply_caps(reports: &mut [CacheReport], caps: &BTreeMap<String, u64>) {
     }
 }
 
+/// `(cache_auto_trim, cache_limit_gib)`, or the defaults when the registry cannot be read.
+///
+/// Same reasoning as [`caps`]: a preference that will not load is no reason to refuse
+/// to report sizes.
+fn trim_settings() -> (bool, u64) {
+    crate::config::Registry::load()
+        .map(|r| (r.settings.cache_auto_trim, r.settings.cache_limit_gib))
+        .unwrap_or((
+            constants::DEFAULT_CACHE_AUTO_TRIM,
+            constants::DEFAULT_CACHE_LIMIT_GIB,
+        ))
+}
+
+/// Whether a cache of `bytes` is past `limit_gib`. Exactly at the limit is not past it.
+fn past_limit(bytes: u64, limit_gib: u64) -> bool {
+    bytes > limit_gib.saturating_mul(constants::BYTES_PER_GIB)
+}
+
+/// Mark every row that is bigger than the limit on its own.
+fn apply_limit(reports: &mut [CacheReport], limit_gib: u64) {
+    for r in reports.iter_mut() {
+        r.over_limit = past_limit(r.bytes, limit_gib);
+    }
+}
+
+/// The caches the scheduled pass may empty by itself when `cache_auto_trim` is on, as
+/// `(manager, kind)`.
+///
+/// Short on purpose. A cache is here only if all three hold: the manager empties it with
+/// its own command (never a directory delete, never a refusal like Maven's), nothing needs
+/// doing by hand afterwards, and what is lost is only time that the machine can spend
+/// again without anyone's help, from sources that are on disk or in a registry.
+///
+/// * `go` `build cache`: compiled packages and test results that `go build` recomputes
+///   from the source it is handed. Needs no network and holds nothing that is not
+///   derived. It is also the cache that filled a C: drive with 159 GiB, which is why the
+///   limit exists.
+/// * `ccache` `compiler cache`: compiled objects keyed by the source and flags that
+///   produced them. A miss is a recompile, never an error, and `ccache --clear` is the
+///   tool's own plain reset.
+///
+/// Left out, with the reason, so that adding one later means arguing with this list:
+///
+/// * `go` `module cache`: refetching needs the network, and a version that has left the
+///   proxy cannot be fetched at all, so it is not pure recompute.
+/// * npm, pnpm, yarn, bun, pip, uv, poetry, pdm, conda, composer, nuget, conan, cocoapods,
+///   deno: these are download caches. A cleared one means a download, which fails offline
+///   and is slow on a poor link, and pip's also keeps wheels built locally from source,
+///   which can take much longer than a download. They stay a person's call:
+///   `devp caches clear` or `--over-cap`.
+/// * cargo, gradle, vcpkg, sccache: cleared by deleting a directory, never by the
+///   manager's own command.
+/// * maven: reported only, because its repository is an install target.
+const TRIM_ALLOWED: &[(&str, &str)] = &[("go", "build cache"), ("ccache", "compiler cache")];
+
+/// Whether the scheduled pass may empty this row once it is past the limit.
+///
+/// The [`Clear::Command`] check is repeated here although the list was written with it in
+/// mind: a refactor that moved an entry's `clear` to a directory delete would otherwise
+/// turn "the manager clears it" into "dev-prune deletes it" without anything failing.
+pub fn trim_eligible(r: &CacheReport) -> bool {
+    matches!(r.clear, Clear::Command(..)) && TRIM_ALLOWED.contains(&(r.manager, r.kind))
+}
+
+/// Which of `reports` to empty, by index. The whole decision, with nothing else in it.
+///
+/// Empty unless `enabled`. Past the limit means strictly bigger, and the limit applies to
+/// each row alone. Whatever `allowed` says, a row that is not emptied by its manager's own
+/// command is never chosen.
+fn select_trim(
+    reports: &[CacheReport],
+    enabled: bool,
+    limit_gib: u64,
+    allowed: &dyn Fn(&CacheReport) -> bool,
+) -> Vec<usize> {
+    if !enabled {
+        return Vec::new();
+    }
+    reports
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| {
+            past_limit(r.bytes, limit_gib) && matches!(r.clear, Clear::Command(..)) && allowed(r)
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// One cache the trim picked.
+pub struct TrimPlan {
+    pub manager: &'static str,
+    pub kind: &'static str,
+    pub path: PathBuf,
+    /// Size when it was measured for this decision.
+    pub bytes: u64,
+    /// The command that empties it, as `devp caches` prints it.
+    pub command: String,
+}
+
+/// What the trim step of a pass did, or would have done.
+pub struct TrimResult {
+    pub limit_gib: u64,
+    /// Nothing was run: this was a dry run, or a manual run nobody had confirmed.
+    pub preview: bool,
+    /// The preview is only because a person has to say yes first.
+    pub needs_confirmation: bool,
+    /// Every cache past the limit that the trim is allowed to empty.
+    pub plans: Vec<TrimPlan>,
+    /// What happened to each, in the same order. Empty for a preview.
+    pub outcomes: Vec<ClearOutcome>,
+}
+
+impl TrimResult {
+    pub fn freed(&self) -> u64 {
+        self.outcomes.iter().map(ClearOutcome::freed).sum()
+    }
+
+    pub fn failed(&self) -> usize {
+        self.outcomes.iter().filter(|o| o.problem.is_some()).count()
+    }
+}
+
+/// Decide, then empty what was chosen through `clear`, and credit what it freed.
+///
+/// `clear` and `record` are parameters so a test can watch exactly which rows are handed
+/// to the clearing path, and can never reach a real cache. Nothing here returns an error:
+/// a cache that would not clear is a line in the result, and the prune pass that called
+/// this has already done its work.
+fn run_trim(
+    reports: &[CacheReport],
+    limit_gib: u64,
+    preview: bool,
+    allowed: &dyn Fn(&CacheReport) -> bool,
+    clear: &dyn Fn(&CacheReport) -> ClearOutcome,
+    record: &dyn Fn(u64),
+) -> TrimResult {
+    let picked = select_trim(reports, true, limit_gib, allowed);
+    let plans = picked
+        .iter()
+        .map(|&i| {
+            let r = &reports[i];
+            TrimPlan {
+                manager: r.manager,
+                kind: r.kind,
+                path: r.path.clone(),
+                bytes: r.bytes,
+                command: r.clear_command.clone(),
+            }
+        })
+        .collect();
+    let outcomes: Vec<ClearOutcome> = if preview {
+        Vec::new()
+    } else {
+        picked.iter().map(|&i| clear(&reports[i])).collect()
+    };
+    let result = TrimResult {
+        limit_gib,
+        preview,
+        needs_confirmation: false,
+        plans,
+        outcomes,
+    };
+    if !preview {
+        record(result.freed());
+    }
+    result
+}
+
+/// The trim step of the scheduled pass.
+///
+/// `None`, without measuring anything, unless `cache_auto_trim` is on: the default pass
+/// pays nothing for a feature nobody asked for. When it is on, only the allowed probes
+/// are located and measured, through the same [`collect_from`] `devp caches` uses, and
+/// each cache past the limit is emptied by [`clear_one`], the code `devp caches clear`
+/// runs, and credited by [`record_cache_clear`].
+///
+/// `preview` is a dry run, or a run nobody has confirmed. Must be called after the pass
+/// has saved the registry: crediting the freed bytes loads and saves it again, and an
+/// older copy saved afterwards would erase the credit.
+pub fn trim_caches(preview: bool, needs_confirmation: bool, spinner: bool) -> Option<TrimResult> {
+    let settings = crate::config::Registry::load().ok()?.settings;
+    let probes: Vec<&'static Probe> = PROBES
+        .iter()
+        .filter(|p| TRIM_ALLOWED.contains(&(p.manager, p.kind)))
+        .collect();
+    trim_step(
+        settings.cache_auto_trim,
+        settings.cache_limit_gib,
+        preview,
+        needs_confirmation,
+        &|| collect_from(spinner, None, &probes),
+        &clear_one,
+        &record_cache_clear,
+    )
+}
+
+/// [`trim_caches`] with the measuring, clearing and crediting handed in, so a test can
+/// show that nothing is measured while the setting is off without a real cache in reach.
+fn trim_step(
+    enabled: bool,
+    limit_gib: u64,
+    preview: bool,
+    needs_confirmation: bool,
+    measure: &dyn Fn() -> Vec<CacheReport>,
+    clear: &dyn Fn(&CacheReport) -> ClearOutcome,
+    record: &dyn Fn(u64),
+) -> Option<TrimResult> {
+    if !enabled {
+        return None;
+    }
+    let reports = measure();
+    let mut result = run_trim(&reports, limit_gib, preview, &trim_eligible, clear, record);
+    result.needs_confirmation = preview && needs_confirmation;
+    Some(result)
+}
+
+/// Print the trim step the way `devp caches clear` prints a clear.
+pub fn print_trim(result: &TrimResult) {
+    println!();
+    output::print_header("Cache size limit");
+    if result.plans.is_empty() {
+        output::print_info(&format!(
+            "No cache the limit applies to is over {} GiB.",
+            result.limit_gib
+        ));
+        return;
+    }
+    if result.preview {
+        println!();
+        for p in &result.plans {
+            println!(
+                "  {:<30} {:>10}  would clear",
+                format!("{} {}", p.manager, p.kind),
+                output::format_bytes(p.bytes)
+            );
+            println!("  {:<30} {:>10}  via: {}", "", "", p.command);
+        }
+        println!();
+        output::print_info(&format!(
+            "Over your {} GiB limit (`cache_limit_gib`). Nothing was cleared.",
+            result.limit_gib
+        ));
+        if result.needs_confirmation {
+            output::print_info(
+                "Run `devp run --yes`, or let the scheduled pass run, to clear them.",
+            );
+        }
+        return;
+    }
+    // The same rows, the same status words and the same closing line as `caches clear`,
+    // so a failed or partial trim reads as one and never as a success.
+    print_clear_result(&result.outcomes);
+}
+
 /// The registered repositories that are actually on this disk.
 ///
 /// Two of the questions this command answers are questions about the machine's
@@ -1204,6 +1469,20 @@ fn manager_totals(reports: &[CacheReport]) -> BTreeMap<&'static str, (u64, usize
 
 /// Find and size every cache on this machine, largest first.
 fn collect(spinner: bool, reg: Option<&Registered>) -> Vec<CacheReport> {
+    let every: Vec<&Probe> = PROBES.iter().collect();
+    collect_from(spinner, reg, &every)
+}
+
+/// [`collect`] for a chosen set of probes.
+///
+/// The one finding-and-measuring path: the scheduled trim passes only the probes it may
+/// act on, so it asks a handful of managers and walks a handful of directories instead
+/// of all of them, and cannot drift into a second measurer of its own.
+fn collect_from(
+    spinner: bool,
+    reg: Option<&Registered>,
+    probes: &[&'static Probe],
+) -> Vec<CacheReport> {
     let from = query_dir();
 
     let mut seen: HashSet<PathBuf> = HashSet::new();
@@ -1214,9 +1493,9 @@ fn collect(spinner: bool, reg: Option<&Registered>) -> Vec<CacheReport> {
     // together they would hold a thread for a query while the disk sat idle, and the other
     // way round. Locating comes first and in full so that the sizing pool knows every path
     // before it starts.
-    let located = locate_all(spinner, &from);
+    let located = locate_all(spinner, &from, probes);
 
-    for (probe, path) in PROBES.iter().zip(located) {
+    for (probe, path) in probes.iter().zip(located) {
         let Some(path) = path else {
             continue;
         };
@@ -1240,6 +1519,7 @@ fn collect(spinner: bool, reg: Option<&Registered>) -> Vec<CacheReport> {
             note: probe.note,
             cap_gb: None,
             over_cap: false,
+            over_limit: false,
             dependents: None,
             extra_args: Vec::new(),
         });
@@ -1268,9 +1548,9 @@ fn collect(spinner: bool, reg: Option<&Registered>) -> Vec<CacheReport> {
 /// The cap is about the managers being asked, not the cores: each answer is a child
 /// process, and a dozen of them starting at once is slower than six on a laptop that is
 /// also being asked to walk a disk.
-fn locate_all(spinner: bool, from: &Path) -> Vec<Option<PathBuf>> {
+fn locate_all(spinner: bool, from: &Path, probes: &[&'static Probe]) -> Vec<Option<PathBuf>> {
     let tracker = output::LiveTracker::new(
-        PROBES
+        probes
             .iter()
             .map(|p| {
                 let asked = p.query.map_or_else(
@@ -1288,9 +1568,9 @@ fn locate_all(spinner: bool, from: &Path) -> Vec<Option<PathBuf>> {
         files_of: None,
         refresh: None,
     };
-    let workers = crate::parallel::clamp_workers(constants::CACHE_QUERY_CONCURRENCY, PROBES.len());
+    let workers = crate::parallel::clamp_workers(constants::CACHE_QUERY_CONCURRENCY, probes.len());
     progress.run(spinner, || {
-        crate::parallel::map_ordered(PROBES, workers, |i, probe| {
+        crate::parallel::map_ordered(probes, workers, |i, probe| {
             tracker.begin(i);
             let found = locate(probe, from);
             tracker.end(i);
@@ -1365,6 +1645,7 @@ fn volume_store_report(store: PathBuf, bytes: u64) -> CacheReport {
         note: Some(PNPM_VOLUME_NOTE),
         cap_gb: None,
         over_cap: false,
+        over_limit: false,
         dependents: None,
     }
 }
@@ -1770,6 +2051,21 @@ fn cargo_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".cargo"))
 }
 
+/// The plain-information line under a row that is past `cache_limit_gib`.
+///
+/// Shown whether or not auto trim is on: the size is true either way, and what the
+/// sentence adds is whether anything will happen to it by itself.
+fn over_limit_note(r: &CacheReport, trim_on: bool, limit_gib: u64) -> String {
+    let over = format!("over your {limit_gib} GiB cache limit");
+    match (trim_eligible(r), trim_on) {
+        (true, true) => format!("{over}; the scheduled pass empties it"),
+        (true, false) => format!(
+            "{over}; `devp config set cache_auto_trim true` lets the scheduled pass empty it"
+        ),
+        (false, _) => format!("{over}; dev-prune never empties this one by itself"),
+    }
+}
+
 fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Option<&Path>) {
     output::print_header(i18n::t("caches.header"));
 
@@ -1787,6 +2083,7 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Opti
     }
 
     println!();
+    let (trim_on, limit) = trim_settings();
     let totals = manager_totals(reports);
     // One line per manager, not per row: cargo's registry cache and its sources have the
     // same repositories behind them, and saying so twice reads as two findings.
@@ -1828,6 +2125,14 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Opti
             println!(
                 "  {:<30} {:>10}  over the {gb} GiB cap you set for {}",
                 "", "", r.manager
+            );
+        }
+        if r.over_limit {
+            println!(
+                "  {:<30} {:>10}  {}",
+                "",
+                "",
+                over_limit_note(r, trim_on, limit)
             );
         }
         if let Some(n) = r.dependents
@@ -2791,6 +3096,7 @@ mod tests {
                 note: None,
                 cap_gb: None,
                 over_cap: false,
+                over_limit: false,
                 dependents: None,
                 extra_args: Vec::new(),
             },
@@ -2804,6 +3110,7 @@ mod tests {
                 note: None,
                 cap_gb: None,
                 over_cap: false,
+                over_limit: false,
                 dependents: None,
                 extra_args: Vec::new(),
             },
@@ -2824,6 +3131,7 @@ mod tests {
             note: None,
             cap_gb: None,
             over_cap: false,
+            over_limit: false,
             dependents,
             extra_args: Vec::new(),
         }
@@ -2920,6 +3228,7 @@ mod tests {
             note: None,
             cap_gb: None,
             over_cap: false,
+            over_limit: false,
             dependents: None,
             extra_args: Vec::new(),
         });
@@ -3093,6 +3402,7 @@ mod tests {
             note: None,
             cap_gb: None,
             over_cap: false,
+            over_limit: false,
             dependents: None,
             extra_args: Vec::new(),
         });
@@ -3125,6 +3435,7 @@ mod tests {
             note: None,
             cap_gb: None,
             over_cap: false,
+            over_limit: false,
             dependents: None,
             extra_args: Vec::new(),
         }
@@ -3612,5 +3923,232 @@ mod tests {
         assert_eq!(doc["caches"][0]["cleared"], false);
         assert_eq!(doc["caches"][1]["partial"], false);
         assert_eq!(doc["summary"]["failed"], 1);
+    }
+
+    // The cache size limit deletes things on its own, so everything below uses made-up rows
+    // and a fake clear closure. Nothing here measures or empties a real cache.
+
+    /// A row that is emptied by a manager's own command, which is what the limit may touch.
+    fn command_row(manager: &'static str, kind: &'static str, gib: u64) -> CacheReport {
+        CacheReport {
+            clear: Clear::Command("fake", &["clean"]),
+            ..row(manager, kind, gib)
+        }
+    }
+
+    fn allow_all(_: &CacheReport) -> bool {
+        true
+    }
+
+    #[test]
+    fn nothing_is_selected_unless_auto_trim_is_on() {
+        let reports = [command_row("go", "build cache", 100)];
+        assert!(select_trim(&reports, false, 20, &allow_all).is_empty());
+        assert_eq!(select_trim(&reports, true, 20, &allow_all), vec![0]);
+    }
+
+    #[test]
+    fn a_cache_exactly_at_the_limit_is_left_alone_and_one_byte_over_is_not() {
+        let mut reports = [command_row("go", "build cache", 20)];
+        assert!(select_trim(&reports, true, 20, &allow_all).is_empty());
+        reports[0].bytes += 1;
+        assert_eq!(select_trim(&reports, true, 20, &allow_all), vec![0]);
+    }
+
+    #[test]
+    fn the_limit_is_per_cache_not_a_total() {
+        let reports = [
+            command_row("go", "build cache", 15),
+            command_row("ccache", "compiler cache", 15),
+        ];
+        assert!(select_trim(&reports, true, 20, &trim_eligible).is_empty());
+    }
+
+    #[test]
+    fn an_over_limit_cache_that_is_not_on_the_allow_list_is_never_selected() {
+        let reports = [
+            command_row("npm", "cache", 90),
+            command_row("pnpm", "store", 90),
+            command_row("pip", "cache", 90),
+            command_row("go", "build cache", 90),
+        ];
+        assert_eq!(select_trim(&reports, true, 20, &trim_eligible), vec![3]);
+    }
+
+    #[test]
+    fn the_go_module_cache_is_never_selected_however_large() {
+        let reports = [command_row("go", "module cache", 500)];
+        assert!(select_trim(&reports, true, 1, &trim_eligible).is_empty());
+        assert!(!trim_eligible(&reports[0]));
+    }
+
+    #[test]
+    fn a_row_the_manager_does_not_clear_itself_is_never_selected_even_if_allowed() {
+        let mut manual = command_row("maven", "local repository", 90);
+        manual.clear = Clear::Manual { why: MAVEN_MANUAL };
+        let directory = row("cargo", "registry cache", 90);
+        let reports = [manual, directory];
+        assert!(select_trim(&reports, true, 20, &allow_all).is_empty());
+    }
+
+    #[test]
+    fn every_trim_allowed_entry_is_a_probe_the_manager_clears_by_command() {
+        for (manager, kind) in TRIM_ALLOWED {
+            let probe = PROBES
+                .iter()
+                .find(|p| p.manager == *manager && p.kind == *kind)
+                .unwrap_or_else(|| panic!("{manager} {kind} is not a probe"));
+            assert!(
+                matches!(probe.clear, Clear::Command(..)),
+                "{manager} {kind} is not cleared by its manager's own command"
+            );
+            assert!(!matches!(probe.clear, Clear::Manual { .. }));
+        }
+        assert!(
+            !TRIM_ALLOWED
+                .iter()
+                .any(|(m, k)| *m == "go" && *k == "module cache")
+        );
+    }
+
+    /// Handed to `run_trim` in place of the real clearing path.
+    fn fake_outcome(r: &CacheReport, problem: Option<&str>, after: u64) -> ClearOutcome {
+        ClearOutcome {
+            manager: r.manager,
+            kind: r.kind,
+            path: r.path.clone(),
+            before: r.bytes,
+            after,
+            problem: problem.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn a_trim_clears_and_credits_only_what_is_over_the_limit() {
+        use std::cell::{Cell, RefCell};
+        let reports = [
+            command_row("go", "build cache", 30),
+            command_row("ccache", "compiler cache", 5),
+            command_row("npm", "cache", 90),
+        ];
+        let cleared = RefCell::new(Vec::new());
+        let credited = Cell::new(0u64);
+        let result = run_trim(
+            &reports,
+            20,
+            false,
+            &trim_eligible,
+            &|r| {
+                cleared.borrow_mut().push(r.manager);
+                fake_outcome(r, None, 0)
+            },
+            &|b| credited.set(credited.get() + b),
+        );
+        assert_eq!(*cleared.borrow(), vec!["go"]);
+        assert_eq!(credited.get(), 30 * crate::constants::BYTES_PER_GIB);
+        assert_eq!(result.freed(), credited.get());
+        assert_eq!(result.failed(), 0);
+    }
+
+    #[test]
+    fn a_dry_run_trim_names_the_caches_and_clears_and_credits_nothing() {
+        use std::cell::Cell;
+        let reports = [command_row("go", "build cache", 30)];
+        let calls = Cell::new(0);
+        let result = run_trim(
+            &reports,
+            20,
+            true,
+            &trim_eligible,
+            &|r| {
+                calls.set(calls.get() + 1);
+                fake_outcome(r, None, 0)
+            },
+            &|_| calls.set(calls.get() + 100),
+        );
+        assert_eq!(calls.get(), 0);
+        assert_eq!(result.plans.len(), 1);
+        assert!(result.outcomes.is_empty());
+        assert_eq!(result.freed(), 0);
+    }
+
+    #[test]
+    fn a_trim_that_fails_is_reported_as_a_failure_and_credits_only_what_went() {
+        use std::cell::Cell;
+        let reports = [
+            command_row("go", "build cache", 30),
+            command_row("ccache", "compiler cache", 40),
+        ];
+        let gib = crate::constants::BYTES_PER_GIB;
+        let credited = Cell::new(0u64);
+        let result = run_trim(
+            &reports,
+            20,
+            false,
+            &trim_eligible,
+            &|r| {
+                if r.manager == "go" {
+                    // Died half way: 10 GiB are back and the command still failed.
+                    fake_outcome(r, Some("timed out"), 20 * gib)
+                } else {
+                    fake_outcome(r, Some("not on PATH"), r.bytes)
+                }
+            },
+            &|b| credited.set(b),
+        );
+        assert_eq!(result.failed(), 2);
+        assert_eq!(credited.get(), 10 * gib);
+        assert!(result.outcomes[0].partial());
+        let (all_ok, line) = clear_summary(&result.outcomes);
+        assert!(!all_ok);
+        assert!(line.contains("did not clear completely"), "{line}");
+
+        let mut doc = serde_json::json!({});
+        crate::json::attach_cache_trim(&mut doc, &result);
+        assert_eq!(doc["cache_trim"]["caches"][0]["status"], "partial");
+        assert_eq!(doc["cache_trim"]["caches"][1]["status"], "failed");
+        assert_eq!(doc["cache_trim"]["dry_run"], false);
+    }
+
+    #[test]
+    fn the_trim_step_measures_and_clears_nothing_while_the_setting_is_off() {
+        let result = trim_step(
+            false,
+            20,
+            false,
+            false,
+            &|| panic!("measured with auto trim off"),
+            &|_| panic!("cleared with auto trim off"),
+            &|_| panic!("credited with auto trim off"),
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn the_trim_step_flags_a_preview_that_only_waits_for_a_yes() {
+        let result = trim_step(
+            true,
+            20,
+            true,
+            true,
+            &|| vec![command_row("go", "build cache", 30)],
+            &|_| panic!("a preview cleared something"),
+            &|_| panic!("a preview credited something"),
+        )
+        .unwrap();
+        assert!(result.preview && result.needs_confirmation);
+        assert_eq!(result.plans.len(), 1);
+    }
+
+    #[test]
+    fn a_row_over_the_limit_is_marked_whatever_the_allow_list_says() {
+        let mut reports = [
+            command_row("npm", "cache", 90),
+            command_row("go", "build cache", 3),
+        ];
+        apply_limit(&mut reports, 20);
+        assert!(reports[0].over_limit);
+        assert!(!reports[1].over_limit);
+        assert!(over_limit_note(&reports[0], true, 20).contains("never empties"));
     }
 }

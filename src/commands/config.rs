@@ -1084,7 +1084,10 @@ const SETTINGS: &[Setting] = &[
         get: |s| s.cache_limit_gib.to_string(),
         set: |s, v| {
             let gib: u64 = v.trim().parse().map_err(|_| {
-                anyhow::anyhow!("cache_limit_gib must be a whole number of GiB, not `{}`.", v.trim())
+                anyhow::anyhow!(
+                    "cache_limit_gib must be a whole number of GiB, not `{}`.",
+                    v.trim()
+                )
             })?;
             if gib < crate::constants::MIN_CACHE_LIMIT_GIB {
                 bail!(
@@ -2764,7 +2767,10 @@ mod tests {
     #[test]
     fn cache_trim_is_off_with_a_twenty_gib_limit_until_someone_says_otherwise() {
         let settings = Settings::default();
-        assert!(!settings.cache_auto_trim, "the feature deletes, so it starts off");
+        assert!(
+            !settings.cache_auto_trim,
+            "the feature deletes, so it starts off"
+        );
         assert_eq!(settings.cache_limit_gib, 20);
         assert_eq!(
             (find_setting("cache_auto_trim").unwrap().get)(&settings),
@@ -2795,7 +2801,10 @@ mod tests {
         assert!(set(&mut settings, "-3").is_err());
         assert!(set(&mut settings, "2.5").is_err());
         assert!(set(&mut settings, "lots").is_err());
-        assert_eq!(settings.cache_limit_gib, 20, "a refused value changes nothing");
+        assert_eq!(
+            settings.cache_limit_gib, 20,
+            "a refused value changes nothing"
+        );
         set(&mut settings, "1").unwrap();
         assert_eq!(settings.cache_limit_gib, 1);
     }
