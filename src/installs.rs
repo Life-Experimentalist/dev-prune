@@ -182,6 +182,12 @@ pub fn discover(env: &Environment, ask: &(dyn Fn(&Path) -> Option<Version> + Syn
     if let Some(running) = env.running.as_deref()
         && running.is_file()
         && owner_of_exact(&installs, running).is_none()
+        && manager_sibling(
+            &installs,
+            running,
+            new_install(running, None, env, false).channel,
+        )
+        .is_none()
     {
         let on_path_at = running.parent().and_then(|d| {
             dirs.iter()
@@ -191,12 +197,13 @@ pub fn discover(env: &Environment, ask: &(dyn Fn(&Path) -> Option<Version> + Syn
         installs.push(new_install(running, on_path_at, env, false));
     }
 
-    // Exact match only: attributing the running binary to whatever else sits in its
-    // folder would mark a stale neighbour as the one answering this command.
-    let running_idx = env
-        .running
-        .as_deref()
-        .and_then(|r| owner_of_exact(&installs, r));
+    // Exact match, or the manager's other name for the same install: attributing the
+    // running binary to whatever else sits in its folder would mark a stale neighbour as
+    // the one answering this command.
+    let running_idx = env.running.as_deref().and_then(|r| {
+        owner_of_exact(&installs, r)
+            .or_else(|| manager_sibling(&installs, r, new_install(r, None, env, false).channel))
+    });
     if let Some(i) = running_idx {
         installs[i].roles.running = true;
     }
@@ -282,7 +289,30 @@ fn add_candidate(
     if owner_of_exact(installs, &candidate).is_some() {
         return;
     }
-    installs.push(new_install(&candidate, position, env, windowless_only));
+    let install = new_install(&candidate, position, env, windowless_only);
+    if manager_sibling(installs, &candidate, install.channel).is_some() {
+        return;
+    }
+    installs.push(install);
+}
+
+/// The install already listed beside `path` when a package manager put both there.
+///
+/// `cargo install` links the `dev-prune` and `devp` targets separately, so the two files
+/// never hold the same bytes, yet they are one install and `cargo uninstall` removes
+/// both. Counting them as two copies made every cargo user look like they had a
+/// duplicate. The installer's own folder is exempt: its `devp` is a copy that a failed
+/// upgrade can leave stale, and that is worth reporting.
+fn manager_sibling(installs: &[Install], path: &Path, channel: Channel) -> Option<usize> {
+    if channel == Channel::Installer || channel == Channel::Unknown {
+        return None;
+    }
+    let dir = path.parent()?;
+    installs.iter().position(|i| {
+        !i.windowless_only
+            && i.channel == channel
+            && i.path.parent().is_some_and(|p| same_dir(p, dir))
+    })
 }
 
 fn new_install(
@@ -333,7 +363,7 @@ pub fn owner_of(installs: &[Install], target: &Path) -> Option<usize> {
     })
 }
 
-fn owner_of_exact(installs: &[Install], target: &Path) -> Option<usize> {
+pub(crate) fn owner_of_exact(installs: &[Install], target: &Path) -> Option<usize> {
     let canonical = canonical_of(target);
     installs.iter().position(|i| {
         same_dir(&i.canonical, &canonical)
@@ -527,6 +557,20 @@ mod tests {
     }
 
     #[test]
+    fn a_manager_that_links_each_name_separately_still_has_one_install() {
+        // cargo builds `dev-prune` and `devp` as two outputs, so their bytes differ.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let bin = home.join(".cargo").join("bin");
+        put(&bin, "dev-prune", b"first target");
+        put(&bin, "devp", b"second target");
+        let env = env_with(&home, &[&bin]);
+        let found = run(&env, &Asker::new(&[]));
+        assert_eq!(found.installs.len(), 1);
+        assert_eq!(found.installs[0].channel, Channel::Cargo);
+    }
+
+    #[test]
     #[cfg(unix)]
     fn one_real_file_behind_a_symlink_and_two_path_entries_is_listed_once() {
         let tmp = tempfile::tempdir().unwrap();
@@ -536,10 +580,7 @@ mod tests {
         std::os::unix::fs::symlink(&real, linked.join("devp")).unwrap();
         // The same folder spelled twice, plus a folder that only holds the link.
         let real_dir = tmp.path().join("real");
-        let env = env_with(
-            &tmp.path().join("nohome"),
-            &[&real_dir, &linked, &real_dir],
-        );
+        let env = env_with(&tmp.path().join("nohome"), &[&real_dir, &linked, &real_dir]);
         let asker = Asker::new(&[(b"binary", Some((1, 2, 3)))]);
 
         let found = run(&env, &asker);
@@ -703,7 +744,11 @@ mod tests {
     #[test]
     fn the_running_binary_is_listed_even_in_a_folder_nothing_searches() {
         let tmp = tempfile::tempdir().unwrap();
-        let dev = put(&tmp.path().join("target").join("debug"), "devp", b"dev build");
+        let dev = put(
+            &tmp.path().join("target").join("debug"),
+            "devp",
+            b"dev build",
+        );
         let mut env = env_with(&tmp.path().join("nohome"), &[]);
         env.running = Some(dev.clone());
         env.running_version = Some((1, 25, 0));

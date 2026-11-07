@@ -394,6 +394,46 @@ fn remove_binaries(
     }
 }
 
+/// Remove the install script's copy (the managed pair under `<config>/bin`) and the PATH
+/// entry or links that led to it, for `devp installs clean`.
+///
+/// This is the same removal `devp uninstall` runs, minus everything that belongs to the
+/// installation being kept: the scheduler, the git hooks, the registry, the configuration
+/// and the agent skill are all left alone. The caller has already ruled out the running
+/// binary and the kept one, so nothing here needs to protect them.
+pub(crate) fn remove_installer_copy() -> std::result::Result<(), String> {
+    let mut left_behind: Vec<String> = Vec::new();
+    let mut pending_files: Vec<PathBuf> = Vec::new();
+    let mut pending_dirs: Vec<PathBuf> = Vec::new();
+
+    // Before the binaries, as in `run`: no window where PATH names an emptied folder.
+    if let Ok(bin_dir) = setup::managed_bin_dir()
+        && let Err(e) = crate::pathenv::remove_reachability(&bin_dir)
+    {
+        output::print_error(&format!("Could not update your PATH: {e:#}"));
+        left_behind.push("the PATH entry".to_string());
+    }
+    remove_binaries(
+        false,
+        true,
+        &mut left_behind,
+        &mut pending_files,
+        &mut pending_dirs,
+    );
+    let (residue, still_installed) = finish_locked_removals(&pending_files, &pending_dirs);
+    if !residue.is_empty() {
+        report_manual_removal(&residue);
+    }
+    if still_installed {
+        left_behind.push("the binaries".to_string());
+    }
+    if left_behind.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("could not remove {}", left_behind.join(" and ")))
+    }
+}
+
 /// One copy of dev-prune found somewhere other than the managed directory.
 pub(crate) struct StrayCopy {
     pub(crate) path: PathBuf,

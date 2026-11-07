@@ -424,6 +424,20 @@ pub enum Commands {
         action: Option<CachesAction>,
     },
 
+    /// List every devp on this machine, which one runs where, and (with `clean`) remove the extras.
+    #[command(long_about = help::INSTALLS_LONG, after_long_help = help::INSTALLS_EXAMPLES)]
+    Installs {
+        /// Emit the list as one JSON document instead of the table.
+        ///
+        /// Global within `installs` so that `devp installs clean --json` reaches the
+        /// explanation that `clean` has no JSON form, instead of an unknown-flag error.
+        #[arg(long, global = true)]
+        json: bool,
+
+        #[command(subcommand)]
+        action: Option<InstallsAction>,
+    },
+
     /// Manage global settings, background daemon, Git hooks, custom icons, or per-project .devprune.json.
     #[command(long_about = help::CONFIG_LONG, after_long_help = help::CONFIG_EXAMPLES)]
     Config {
@@ -580,11 +594,24 @@ impl Commands {
             | Commands::Stats { json }
             | Commands::History { json, .. }
             | Commands::Trust { json, .. }
-            | Commands::Caches { json, .. } => *json,
+            | Commands::Caches { json, .. }
+            | Commands::Installs { json, .. } => *json,
             Commands::Link { quiet, .. } => *quiet,
             _ => false,
         }
     }
+}
+
+#[derive(Subcommand, Debug)]
+pub enum InstallsAction {
+    /// Remove the extra copies through each one's own package manager, one confirmed step at a time.
+    #[command(long_about = help::INSTALLS_CLEAN_LONG, after_long_help = help::INSTALLS_CLEAN_EXAMPLES)]
+    Clean {
+        /// The copy to keep, by the path `devp installs` shows. Without it the highest
+        /// version stays; ties go to the copy the scheduler runs, then the first on PATH.
+        #[arg(long, value_name = "PATH")]
+        keep: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -899,7 +926,10 @@ fn auto_setup_allowed(args: &[String]) -> bool {
     let subcommand = args.get(1).map(String::as_str).unwrap_or("");
     // `--json` means a program is parsing stdout; the setup report and the first-run
     // wizard would land inside the document. That invocation waits too.
-    !matches!(subcommand, "uninstall" | "setup")
+    //
+    // `installs` is read-only by promise and its job is to show the machine as it is, so
+    // a setup pass must not run first and change what it is about to report.
+    !matches!(subcommand, "uninstall" | "setup" | "installs")
         && !args
             .iter()
             .any(|a| a == "--quiet" || a == "--daemon" || a == "--json")
@@ -1071,6 +1101,17 @@ pub fn run_cli() {
             }
             None => commands::caches::run(json, volume.as_deref()),
         },
+        Commands::Installs { json, action } => match action {
+            Some(InstallsAction::Clean { .. }) if json => Err(anyhow::Error::new(UsageError(
+                "`devp installs clean` is interactive and has no JSON form. Run \
+                 `devp installs --json` for the list."
+                    .to_string(),
+            ))),
+            Some(InstallsAction::Clean { keep }) => {
+                commands::installs_clean::run(keep.as_deref(), cli.yes, cli.dry_run)
+            }
+            None => commands::installs::run(json),
+        },
         Commands::Config { action } => match action {
             Some(ConfigAction::Get { key }) => commands::config::run_get(&key),
             Some(ConfigAction::Set { key, value }) => commands::config::run_set(&key, &value),
@@ -1191,6 +1232,8 @@ mod tests {
         assert!(!auto_setup_allowed(&args(&["run", "--daemon"])));
         assert!(!auto_setup_allowed(&args(&["status", "--json"])));
         assert!(!auto_setup_allowed(&args(&["uninstall"])));
+        assert!(!auto_setup_allowed(&args(&["installs"])));
+        assert!(!auto_setup_allowed(&args(&["installs", "clean"])));
         assert!(!auto_setup_allowed(&args(&["setup"])));
     }
 }

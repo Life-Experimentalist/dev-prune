@@ -889,6 +889,76 @@ EXAMPLES:
   devp uninstall --deep           Also wipe config and per-repo .devprune.json (asks)
   devp uninstall --deep -y        Non-interactive; also confirms the stray-copy sweep";
 
+pub const INSTALLS_LONG: &str = "\
+List every devp on this machine, on PATH or not. For each one: its version, which \
+package manager or script installed it, whether and where it sits on PATH, and who \
+uses it: the copy a new shell runs, the copy the scheduler calls, and the copy the Git \
+hooks call. Read-only. It never takes the run lock and changes nothing.
+
+Under the table, one sentence appears when something is off: copies at different \
+versions, a scheduler or Git hook running a different copy than your shell, or one copy \
+hiding another on PATH. Nothing is printed for a machine with one devp.
+
+The search is bounded, and it says so. devp looks in every PATH folder and in the \
+folders the install script, cargo, Homebrew, Scoop, WinGet, npm, pnpm, yarn, bun, pip, \
+pipx and uv install into. A copy placed by hand in any other folder that is not on PATH \
+cannot be found. This command looks at this machine only: not WSL, not containers, not \
+other computers.
+
+`devp installs clean` is the way to get down to one copy.
+
+With `--json` stdout is one document: `installs` (path, canonical_path, channel, \
+version, on_path, path_position, roles, launcher_only), `scheduler_target`, \
+`hook_target`, `summary` and `note`. Exits 0 unless the search itself broke.";
+
+pub const INSTALLS_EXAMPLES: &str = "\
+EXAMPLES:
+  devp installs                   The table, and a sentence if something is off
+  devp installs --json            The same, as one JSON document
+  devp installs --json | jq -r '.installs[].path'
+                                  Just the paths
+  devp installs clean             Get down to one copy, step by step";
+
+pub const INSTALLS_CLEAN_LONG: &str = "\
+Leave one devp on the machine. One copy stays: the highest version, ties going to the \
+copy the scheduler runs and then to the first one on PATH. `--keep <path>` names a \
+different one, using a path from `devp installs`.
+
+For every other copy it shows the path, version, how it was installed and the exact \
+command, then asks y/N. Nothing runs without a yes. The command is the package \
+manager's own, so its records stay true: `cargo uninstall dev-prune`, `brew uninstall \
+dev-prune`, `npm uninstall -g dev-prune`, `bun remove -g dev-prune`, `pnpm remove -g \
+dev-prune`, `yarn global remove dev-prune`, `pip uninstall -y dev-prune`, `pipx \
+uninstall dev-prune`, `uv tool uninstall dev-prune`, `winget uninstall --id \
+VKrishna04.dev-prune`, `scoop uninstall dev-prune`. devp never deletes a file a \
+package manager owns.
+
+The install script's own copy is the one exception, because it has no manager: its \
+two files and PATH entry go through the same removal `devp uninstall` uses, and the \
+kept copy's registry, config, scheduler and Git hooks are left alone. A copy that no \
+manager claims, or one installed through a tool devp cannot drive, is described and \
+left for you to remove. A manager that is missing, asks for administrator rights or \
+fails is reported, counts as not removed, and the rest carry on. devp never asks for \
+administrator rights.
+
+When a removed copy was the one the scheduler or the Git hooks called, they are \
+pointed at the kept copy. That works when the kept copy is the one you are running; \
+otherwise the command to run from it is printed.
+
+The copy running this command is never removed, and neither is the kept one. Refuses \
+with no terminal to ask on unless `--yes` is passed. `--dry-run` prints the plan and \
+runs nothing. Like `devp installs`, it can only act on the copies it finds: a copy \
+placed by hand in a folder on no PATH cannot be found. Exits 1 if a step you \
+confirmed did not complete, 2 for a usage error.";
+
+pub const INSTALLS_CLEAN_EXAMPLES: &str = "\
+EXAMPLES:
+  devp installs clean             Keep the newest, ask about each of the others
+  devp installs clean --dry-run   The plan, and nothing run
+  devp installs clean --keep ~/.cargo/bin/devp
+                                  Keep this one, whatever its version
+  devp installs clean --yes       Confirm every step, for a script";
+
 // ---------------------------------------------------------------------------
 // The front page: how the commands are grouped, which of them stay off it, and
 // the colours the help is rendered in.
@@ -947,6 +1017,7 @@ pub const COMMAND_GROUPS: [(&str, &[(&str, &str)]); 5] = [
         &[
             ("update", "check for a newer release, and install it"),
             ("install", "move it to another package manager"),
+            ("installs", "every copy on this machine, and cleanup"),
             ("uninstall", "remove it, integration included"),
         ],
     ),
