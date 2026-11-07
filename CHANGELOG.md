@@ -57,8 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Repositories inside WSL are not touched from Windows.** A Windows `devp` that reaches
   into `\wsl$` or `\wsl.localhost` treats it as a network path with no drive identity, so
-  those paths are skipped with a line saying to install devp inside the distribution. The docs now have a "where to run devp" section covering WSL, containers,
-  SSH hosts and cloud volumes: run `devp` on the machine that holds the repositories.
+  those paths are skipped with a line saying to install devp inside the distribution.
+  The docs now have a "where to run devp" section covering WSL, containers, SSH hosts and cloud volumes: run `devp` on the machine that holds the repositories.
 
 - **An optional size limit for caches that are safe to lose.** Off by default. After
   `devp config set cache_auto_trim true`, the scheduled pass and a confirmed `devp run`
