@@ -263,14 +263,22 @@ pub fn fix_ownership(assume_yes: bool) -> Result<()> {
 /// per repository, and a prune pass would also stat every dependency directory on the
 /// machine to answer it.
 fn repositories_git_refuses(registry: &Registry) -> Vec<std::path::PathBuf> {
+    // The result is written into the user's global `safe.directory`, which makes Git trust
+    // the path. An inactive entry's path may belong to another volume, so it is never
+    // offered.
+    let inactive = registry.inactive_repos();
     let mut affected: Vec<std::path::PathBuf> = registry
         .repositories
         .keys()
-        .filter(|path| path.exists())
+        .filter(|path| !inactive.contains(path) && path.exists())
         .filter(|path| {
-            let output = crate::scanner::git::git_in(path)
-                .args(["rev-parse", "--git-dir"])
-                .output();
+            // A stalled `git` is an answer of "not known to be refused", which only means
+            // no entry is offered for it; nothing is written on a guess.
+            let output = crate::scanner::git::git_output(
+                path,
+                &["rev-parse", "--git-dir"],
+                crate::scanner::git::stall_ceiling(),
+            );
             match output {
                 Ok(out) if !out.status.success() => String::from_utf8_lossy(&out.stderr)
                     .to_lowercase()
@@ -288,9 +296,12 @@ fn repositories_git_refuses(registry: &Registry) -> Vec<std::path::PathBuf> {
 
 /// The values already in the global `safe.directory` list.
 fn configured_safe_directories() -> Vec<String> {
-    let output = crate::spawn::command("git")
-        .args(["config", "--global", "--get-all", "safe.directory"])
-        .output();
+    let mut cmd = crate::spawn::command("git");
+    cmd.args(["config", "--global", "--get-all", "safe.directory"]);
+    let output = crate::spawn::output_within(
+        cmd,
+        std::time::Duration::from_secs(constants::GIT_STALL_CEILING_SECS),
+    );
     match output {
         Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
             .lines()

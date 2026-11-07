@@ -184,7 +184,11 @@ pub fn run(paths: &[String], dry_run: bool, auto: bool) -> Result<()> {
         // The previous behaviour re-serialised `unwrap_or_default()` into every repo,
         // which silently replaced a malformed `.devprune.json` with defaults and created
         // a config plus an exclude entry in repos that never had one. Report instead.
+        let inactive = registry.inactive_repos();
         for repo in registry.repositories.keys() {
+            if inactive.contains(repo) {
+                continue;
+            }
             if let Err(e) = PerRepoConfig::load_with_diagnostics(repo) {
                 output::print_warning(&format!(
                     "{}: `.devprune.json` could not be parsed and was left untouched — {e}",
