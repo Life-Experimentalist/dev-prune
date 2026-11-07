@@ -56,7 +56,7 @@ mental note about which ones are safe.
 
 <div align="center">
 
-**Start here**&nbsp;&nbsp; [Install](#install) · [Where it is published](#every-place-it-is-published) · [Editors](#in-your-editor) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like)
+**Start here**&nbsp;&nbsp; [Install](#install) · [Where it is published](#every-place-it-is-published) · [Editors](#in-your-editor) · [60-second tour](#60-second-tour) · [What it looks like](#what-it-looks-like) · [The journey](#the-journey)
 
 **How it thinks**&nbsp;&nbsp; [Why it is safe](#why-it-is-safe) · [Features](#features) · [Commands](#commands) · [Ecosystems](#supported-ecosystems) · [Monorepos](#repositories-with-more-than-one-ecosystem) · [JavaScript](#if-you-write-javascript) · [Python](#if-you-write-python)
 
@@ -535,6 +535,34 @@ package managers are reachable, and the release-check state.
 
 
 </details>
+
+---
+
+## The journey
+
+This one is not a demo repository. It is my own laptop, with the C: drive at 98% full.
+
+<div align="center">
+
+<img src="assets/screenshots/journey/01-before-c-drive-full.png" alt="Windows File Explorer showing drive C: with 5.96 GB free of 475 GB and a red usage bar" width="820" />
+
+<sub>Before: 5.96 GB free on C:.</sub>
+
+<img src="assets/screenshots/journey/06-clear-confirm.png" alt="devp caches clear go listing a 159.15 GiB Go build cache and a 2.79 GiB module cache, 161.94 GiB in total, and asking for confirmation" width="820" />
+
+<sub>`devp caches clear go` showed where it went: a 159.15 GiB Go build cache, plus 2.79 GiB of downloaded modules.</sub>
+
+<img src="assets/screenshots/journey/07-clear-result.png" alt="devp caches clear go after confirming, printing Freed 161.93 GiB" width="820" />
+
+<sub>After saying yes: freed 161.93 GiB. The red lines are go reporting files it could not remove (access denied, directory not empty). The drive still ended up with 169 GB free.</sub>
+
+<img src="assets/screenshots/journey/10-after-c-drive-free.png" alt="Windows File Explorer showing drive C: with 169 GB free of 475 GB and a mostly empty blue usage bar" width="820" />
+
+<sub>After: 169 GB free on C:.</sub>
+
+</div>
+
+The other frames from the same session are in [`assets/screenshots/journey/`](assets/screenshots/journey/). My username and a few personal folder and account names are blurred in them.
 
 ---
 
