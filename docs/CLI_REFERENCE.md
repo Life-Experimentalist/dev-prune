@@ -143,7 +143,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 ### 3. `devp unlink [PATH]`
 - **Description**: Removes a repository from the `dev-prune` registry. Does **not** delete any workspace files on disk.
 - **Flags**:
-  - `--missing` — remove every registered path whose directory no longer exists, instead of one named repository. Clones that were deleted, drives that were reformatted and workspaces that were moved all leave entries behind; [`devp doctor`](#12-devp-doctor-path---fix) counts them in a single warning and sends you here rather than printing one `devp unlink` line per dead path. Conflicts with `PATH`. Left alone, an entry missing for 30 days is also dropped automatically by `devp run`, `devp status` and `devp doctor --fix`, but never while its drive or share is absent; this flag is the way to clear them now.
+  - `--missing` — remove every registered path whose directory no longer exists, instead of one named repository. Clones that were deleted, drives that were reformatted and workspaces that were moved all leave entries behind; [`devp doctor`](#12-devp-doctor-path---fix) counts them in a single warning and sends you here rather than printing one `devp unlink` line per dead path. Conflicts with `PATH`. Left alone, an entry missing for 30 days is also dropped automatically by `devp run`, `devp status` and `devp doctor --fix`, but never while its drive or share is absent; this flag is the way to clear them now. A repository on a drive that is not connected, or on a letter that now belongs to a different volume, is **inactive**, not gone: `--missing` leaves it in the registry and prints one line saying so. `devp unlink <path>` removes such an entry on purpose. The check runs per volume in parallel, so one slow network share does not hold up the rest.
 - **Examples**:
   ```bash
   devp unlink
@@ -353,6 +353,7 @@ reads unambiguously:
 
 ### 6. `devp status [--top N] [--drift] [--json]`
 - **Description**: Displays an interactive Ratatui terminal dashboard summarizing registered repositories, status (Candidate, Active, Ignored, No Bloat, Path Missing, Unreadable `.devprune.json`), reclaimable space, and last activity date. A repository whose `.devprune.json` does not parse is reported as such rather than as a candidate — `devp run` refuses to touch it, and the dashboard says the same thing.
+- **Inactive repositories**: a repository whose drive is not connected is **inactive**. It is not scanned and is listed after the dashboard, one group per drive (`Inactive (drive E: not connected): 3 repositories`). It is never pruned, never dropped from the registry, and never starts the 30-day missing clock; when the drive returns it is ordinary again with its history untouched. On Windows the registry records each repository's volume identity (serial number and file system) the first time it sees it, so a drive that comes back under a different letter is recognised and its entries are re-pointed with history, idle overrides and the enabled flag intact; a letter that now belongs to a different volume is inactive too, never healthy. macOS and Linux have no such identity: mount points are assumed stable, and an unmounted mount point is inactive. A repository with no recorded volume is inactive only while its drive is absent.
 - **Environment**:
   - `DEV_PRUNE_SCAN_THREADS` — overrides the status scan's thread count (clamped to 32; `1` forces a sequential scan). The automatic figure suits local disks; raise it on a network filesystem, where the scan waits on latency rather than on the CPU, and set it to `1` on a spinning disk, where fewer threads means less head thrashing and a genuinely faster scan. `devp caches` reads it too, but by default it uses only four to six threads for its walks, because those are metadata calls that more threads do not overlap.
 - **Interactive TUI Keybindings**:
@@ -1088,7 +1089,7 @@ which fits the additive contract: consumers already handle the key being absent.
 | `skipped_active` | The repository has been touched inside its idle window. |
 | `skipped_adapter_window` | The repository is idle past `idle_days`, but this adapter waits longer — `build_idle_days` for the opt-in build adapters, or its `adapter_idle_days` entry — and that window is not met yet. One row per held adapter, with `-` for the directory: nothing under it was examined. `--ignore-idle` overrides. |
 | `skipped_symlink` | The directory is (or contains) a symlink, so deleting it could reach outside the project. Left in place; `message` names the link. |
-| `skipped_declaration` | A directory named in `prunable.directories` did not pass its checks — it leaves the repository, holds Git-tracked files, or its `rebuild` command names a tool this machine does not have or a target the tool's own manifest does not define. Left in place; `message` says which. Not counted in `summary.errors`: nothing was attempted. |
+| `skipped_declaration` | A directory named in `prunable.directories` did not pass its checks — it leaves the repository, holds Git-tracked files, or its `rebuild` command names a tool this machine does not have or a target the tool's own manifest does not define, or Git did not answer the ignore and tracked-file checks within two minutes (the rest of that repository's declarations are then refused unexamined). Left in place; `message` says which. Not counted in `summary.errors`: nothing was attempted. |
 | `skipped_nested_repo` | The directory holds a git repository of its own — a vendored checkout, a pip `-e git+…` install under `.venv/src/` — so deleting it could destroy work no lockfile rebuilds. Left in place; `message` names the nested repository. Not counted in `summary.errors`: it is a permanent fact of the repository, not a failure of the pass. |
 | `ignored` | The repository sets `"ignore": true`, or has an `ignore.devprune.json`. |
 | `no_bloat` | Nothing to delete. |
@@ -1113,6 +1114,9 @@ which fits the additive contract: consumers already handle the key being absent.
   "top": 10,  // present only when --top was passed; `repositories` is trimmed, `totals` is not
   "totals": {
     "repositories": 12,
+    // Registered but on a drive that is not connected. Counted in `repositories`, and in
+    // no other total. Always present, 0 when every drive is connected.
+    "inactive_repositories": 0,
     "candidates": 3,
     "reclaimable_bytes": 4812963840,
     "historical_bytes_freed": 0,
@@ -1145,12 +1149,21 @@ which fits the additive contract: consumers already handle the key being absent.
       "tools": [{ "name": "graphify", "path": "~/Code/api/graphify-out", "bytes": 1319413760 }]
       // "error" — present only when `state` is `config_error`, carrying the parse failure
     }
-  ]
+  ],
+  // Repositories on a drive that is not connected, sorted by drive and then path. Not in
+  // `repositories`: nothing about them is known. Always present, empty when every drive
+  // is connected.
+  "inactive": [{ "path": "E:\\Code\\old-api", "drive": "E:" }]
 }
 ```
 
+`inactive` and `totals.inactive_repositories` are additive: `schema` stays `1`, and every
+existing field is unchanged. `devp run --json` leaves inactive repositories out of its rows
+and totals, the same as its human output.
+
 `state` is one of `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, or
-`config_error`. `last_activity` is the later of the last commit and the newest source file
+`config_error`. A repository on a drive that is not connected has no `state` because it
+is not in `repositories`; it appears in `inactive`. `last_activity` is the later of the last commit and the newest source file
 mtime — the same value the idle decision uses, so the two can never disagree.
 
 #### Tools
@@ -1690,7 +1703,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 ---
 
 ### 12. `devp doctor [PATH] [--fix]`
-- **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. Plain `doctor` changes nothing — no config is created, no integration installed, no package manager run — and when some of what it found is repairable, its verdict says how many findings `--fix` would mend.
+- **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. Plain `doctor` changes nothing — no config is created, no integration installed, no package manager run — and when some of what it found is repairable, its verdict says how many findings `--fix` would mend. Repositories on a drive that is not connected are reported as one `Inactive` note naming the drives; `--fix` does not write into them.
 - **Cache size limit note**: without a path, doctor also adds a "Cache size limit" note when the Go build cache or the ccache cache is over `cache_limit_gib`. It is informational: it never adds a warning and never changes the exit code.
 - **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **which package manager installed this copy, and the exact commands that upgrade and remove it through that manager** — the installers, cargo, npm, bun, pnpm, yarn, uv, pipx, pip, WinGet, Scoop or Homebrew, never a warning, because an unrecognised location is a valid way to run a binary; **the install receipt**, for a copy one of the install scripts wrote — its version, which of `install.sh` and `install.ps1` wrote it, and the date, read from `<bindir>/install.json` rather than worked out again, and simply absent for every other channel because a date belonging to a different file is worse than no date; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus every fixed directory those managers install into, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); **the windowless scheduler binary** (`devpw.exe`, Windows), checked by build stamp against the running version, because the scheduled task runs that file and a stale one silently runs old code every night, with `devp update --install` named as the fix; the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
 - **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses, what it overrides, and any key in it that dev-prune does not read (a warning, not an error — unknown keys are tolerated so a newer file never bricks an older dev-prune, which makes this the one place a typo'd key is ever pointed out), the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.

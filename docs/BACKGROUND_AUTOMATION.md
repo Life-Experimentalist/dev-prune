@@ -180,6 +180,34 @@ path answers "not found" rather than "unreachable": an unplugged external drive 
 unmounted share never loses an entry. If the path comes back the clock is cleared. One
 line names what was dropped. `devp unlink --missing` still clears them at once.
 
+A repository on a drive that is not connected is **inactive**, not missing. Every pass
+asks, once per drive, whether the drive is there; if it is not, its repositories are left
+out of the prune pass, the status scan, discovery and every write into a repository
+(config healing, `uninstall --deep`, `safe.directory`), and one line says how many were
+skipped and on which drives. They are never dropped (no clock runs, and an old
+`missing_since` is cleared), so a drive left in a drawer for a year still has its entries
+and history when it comes back, and they return to normal on their own.
+
+On Windows the registry also records each repository's volume identity (the volume serial
+number and file system, with the label for display) in `registry.json` as `volume_id` and
+`volume_label`, filled in the first time a pass sees the repository. That does two things.
+A drive that returns under a different letter is found by its identity, each of its
+inactive entries is checked against the repository on the new letter (same root commit),
+and the ones that match are re-pointed with their history, idle override and enabled flag
+intact; nothing is re-pointed on a guess, and two connected volumes with the same identity
+(a cloned drive) are never chosen between. And a letter that now belongs to a different
+volume than the one an entry was registered on is treated as inactive instead of as the
+same place, so a prune pass never reaches another drive's directories by path. Entries
+registered before this was recorded have no identity, and are inactive only while their
+drive letter is absent.
+
+macOS and Linux have no volume identity: dev-prune assumes the mount points it sees stay
+put, and an unmounted mount point makes its repositories inactive in the same way. An
+external disk that comes back mounted somewhere else is not followed there: its old
+entries stay inactive (a path on an unmounted disk is never adopted as "moved", because
+the disk may return), and linking the repository at its new location registers a fresh
+entry. `devp unlink <old path>` removes the old one on purpose.
+
 ### The optional cache size limit
 
 Off by default. With `devp config set cache_auto_trim true`, the scheduled pass has one more

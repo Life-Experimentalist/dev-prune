@@ -201,7 +201,13 @@ pub fn run(deep: bool, yes: bool) -> Result<()> {
         // on a branch the user never meant to touch, and reach their colleagues on the
         // next push.
         if let Some(reg) = registry {
+            // A deletion, so an inactive entry is skipped even when its path exists: on
+            // a reused drive letter that file belongs to another volume.
+            let inactive = reg.inactive_repos();
             for repo_path in reg.repositories.keys() {
+                if inactive.contains(repo_path) {
+                    continue;
+                }
                 let cfg_file = repo_path.join(crate::constants::PER_REPO_CONFIG_FILE);
                 if cfg_file.exists() {
                     let _ = fs::remove_file(cfg_file);

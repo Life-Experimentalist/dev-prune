@@ -77,27 +77,53 @@ pub fn git_in(repo_path: &Path) -> Command {
     cmd
 }
 
-fn stall_ceiling() -> Duration {
+pub(crate) fn stall_ceiling() -> Duration {
     Duration::from_secs(crate::constants::GIT_STALL_CEILING_SECS)
 }
+
+/// A read-only git question that outlived its ceiling and was killed.
+///
+/// A named type so a caller can tell "git never answered" from "git answered no" and fail
+/// closed on the first: a timeout must never be read as "not ignored" or "untracked".
+#[derive(Debug)]
+pub struct GitStalled {
+    repo: std::path::PathBuf,
+    secs: u64,
+}
+
+impl std::fmt::Display for GitStalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "git did not answer for `{}` within {}s (a stalled drive or a locked index?), \
+             so this repository is skipped for this pass.",
+            self.repo.display(),
+            self.secs
+        )
+    }
+}
+
+impl std::error::Error for GitStalled {}
 
 /// Run a read-only git question against `repo_path`, killing it if it stalls.
 ///
 /// The error names the repository and says what happens next, because it surfaces in
 /// the pass report as that repository's reason for being skipped: the rest of the pass
 /// carries on, and a repository whose activity could not be read is never offered as a
-/// prune candidate.
-fn git_output(repo_path: &Path, args: &[&str], ceiling: Duration) -> Result<std::process::Output> {
+/// prune candidate. A stall is a [`GitStalled`] in the error chain.
+pub(crate) fn git_output(
+    repo_path: &Path,
+    args: &[&str],
+    ceiling: Duration,
+) -> Result<std::process::Output> {
     let mut cmd = git_in(repo_path);
     cmd.args(args);
     crate::spawn::output_within(cmd, ceiling).map_err(|e| {
         if e.kind() == std::io::ErrorKind::TimedOut {
-            anyhow::anyhow!(
-                "git did not answer for `{}` within {}s (a stalled drive or a locked index?), \
-                 so this repository is skipped for this pass.",
-                repo_path.display(),
-                ceiling.as_secs()
-            )
+            anyhow::Error::new(GitStalled {
+                repo: repo_path.to_path_buf(),
+                secs: ceiling.as_secs(),
+            })
         } else {
             anyhow::Error::new(e).context(format!("Failed to execute git {}", args.join(" ")))
         }

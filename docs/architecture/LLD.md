@@ -148,6 +148,16 @@ pub struct RepoEntry {
     /// Written from 1.1.0 onward; `devp stats` ranks by it.
     #[serde(default)]
     pub total_freed_bytes: u64,
+    /// Volume identity of the drive this repository was registered on, e.g.
+    /// `win:1A2B-3C4D:NTFS`. Recorded by passes on Windows only; absent otherwise and
+    /// absent from the file when `None`, so a registry written before it existed loads
+    /// unchanged. Decides whether a drive letter is still the same volume, and finds a
+    /// drive that came back under another letter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_id: Option<String>,
+    /// The volume label at the time `volume_id` was recorded. Display only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_label: Option<String>,
 }
 
 /// One entry in `Registry::prune_history` — what a single pass deleted.

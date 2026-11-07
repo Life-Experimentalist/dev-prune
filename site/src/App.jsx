@@ -2338,7 +2338,9 @@ Notes you should rely on, not work around:
                     <td>
                       Drop every registered path whose directory no longer
                       exists, in one pass. The registry also drops one itself
-                      after 30 days of absence
+                      after 30 days of absence. Repositories on a drive that is
+                      not connected are inactive, not missing, and are left
+                      alone
                     </td>
                   </tr>
                   <tr>

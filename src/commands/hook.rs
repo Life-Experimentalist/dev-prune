@@ -121,11 +121,20 @@ pub const GIT_MISSING_HELP: &str = "`git` was not found on your PATH.\n\
 /// Everything dev-prune does is scoped to Git repositories, so this is not a degraded
 /// mode to work around — it is a stop, with an instruction attached.
 pub fn git_available() -> bool {
-    crate::spawn::command("git")
-        .arg("--version")
-        .output()
+    let mut cmd = crate::spawn::command("git");
+    cmd.arg("--version");
+    crate::spawn::output_within(cmd, git_ceiling())
         .map(|out| out.status.success())
         .unwrap_or(false)
+}
+
+/// How long a read-only `git` question about the machine's own config may take.
+///
+/// `git config --global` reads `~/.gitconfig`, which can sit on a network home directory
+/// that has stalled; an unbounded wait there hangs `devp status` and every scheduled pass
+/// behind it.
+fn git_ceiling() -> std::time::Duration {
+    std::time::Duration::from_secs(crate::constants::GIT_STALL_CEILING_SECS)
 }
 
 /// Where the global hook installation currently stands.
@@ -223,16 +232,23 @@ fn shims_missing_in(dir: &Path) -> bool {
 }
 
 /// Read the current global `core.hooksPath`, if any.
+///
+/// A stall reads as "none set" here, the same as an unreadable config always has. Only
+/// [`install`] cannot afford that answer, and it asks [`try_global_hooks_path`] instead.
 fn global_hooks_path() -> Option<String> {
-    let out = crate::spawn::command("git")
-        .args(["config", "--global", "core.hooksPath"])
-        .output()
-        .ok()?;
+    try_global_hooks_path().ok().flatten()
+}
+
+/// [`global_hooks_path`] that tells a `git` which never answered from one that said "unset".
+fn try_global_hooks_path() -> std::io::Result<Option<String>> {
+    let mut cmd = crate::spawn::command("git");
+    cmd.args(["config", "--global", "core.hooksPath"]);
+    let out = crate::spawn::output_within(cmd, git_ceiling())?;
     if !out.status.success() {
-        return None;
+        return Ok(None);
     }
     let value = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    (!value.is_empty()).then_some(value)
+    Ok((!value.is_empty()).then_some(value))
 }
 
 /// Build the hook script that registers the current repository in the background.
@@ -421,7 +437,12 @@ pub fn install_with(chain: bool) -> Result<()> {
     // `core.hooksPath` is a single global slot. Overwriting someone else's value
     // disables husky / pre-commit / lefthook in *every* repository on the machine.
     // Refuse rather than break their setup — unless asked to chain, which preserves it.
-    let previous = match global_hooks_path() {
+    // A `git` that never answers must not read as "nothing is set": that would install over
+    // someone else's hooks directory.
+    let current = try_global_hooks_path().map_err(|e| {
+        anyhow::anyhow!("`git config --global core.hooksPath` did not answer ({e}); not installing over a value that could not be read")
+    })?;
+    let previous = match current {
         Some(existing) if Path::new(&existing) != dir => {
             if !chain {
                 anyhow::bail!(

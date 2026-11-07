@@ -450,14 +450,17 @@ impl<'a> StatusApp<'a> {
 /// Commits per week over the last [`HISTOGRAM_WEEKS`] weeks, oldest first, or `None` when
 /// git will not read the repository.
 fn weekly_commits(repo: &Path) -> Option<Vec<u32>> {
-    let output = crate::scanner::git::git_in(repo)
-        .args([
+    // A stall gives no histogram rather than a view that waits on it forever.
+    let output = crate::scanner::git::git_output(
+        repo,
+        &[
             "log",
             &format!("--since={HISTOGRAM_WEEKS}.weeks"),
             "--format=%ct",
-        ])
-        .output()
-        .ok()?;
+        ],
+        crate::scanner::git::stall_ceiling(),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }

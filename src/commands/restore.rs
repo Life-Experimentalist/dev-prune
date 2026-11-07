@@ -125,6 +125,7 @@ pub fn run_last_run() -> Result<()> {
 
     let global_depth = registry.settings.scan_depth;
     let timeout = crate::adapters::command_timeout(registry.settings.command_timeout_secs);
+    let inactive = registry.inactive_repos();
     let mut attempted = 0usize;
     let mut failed = 0usize;
     // (adapter, bytes, milliseconds). Held until the pass is over rather than written as
@@ -144,6 +145,22 @@ pub fn run_last_run() -> Result<()> {
                 failed += 1;
                 output::print_error(&format!(
                     "  {} ({}): the repository no longer exists at this path",
+                    dir.adapter, dir.bloat_dir
+                ));
+            }
+            continue;
+        }
+
+        // The path can exist and still belong to another volume: a letter reused by a
+        // different drive. Rebuilding dependencies there would write into someone else's
+        // directory, so a registered repository whose drive is not the recorded one is
+        // refused, the same as a missing one.
+        if let Some(drive) = inactive.drive_of(repo_path) {
+            for dir in deleted {
+                attempted += 1;
+                failed += 1;
+                output::print_error(&format!(
+                    "  {} ({}): drive {drive} is not the one this repository was registered on",
                     dir.adapter, dir.bloat_dir
                 ));
             }

@@ -24,10 +24,13 @@ pub struct Go;
 /// answer is an error, not "no changes" — the old fail-open reading deleted a
 /// patched vendor tree precisely when git was least able to vouch for it.
 fn vendor_has_uncommitted_changes(path: &Path) -> Result<bool> {
-    let output = crate::scanner::git::git_in(path)
-        .args(["status", "--porcelain", "--", "vendor"])
-        .output()
-        .map_err(|e| anyhow!("could not run `git status` to check `vendor/`: {e}"))?;
+    // A stalled git is an error like any other that stops git vouching for `vendor/`.
+    let output = crate::scanner::git::git_output(
+        path,
+        &["status", "--porcelain", "--", "vendor"],
+        crate::scanner::git::stall_ceiling(),
+    )
+    .map_err(|e| anyhow!("could not run `git status` to check `vendor/`: {e}"))?;
     if !output.status.success() {
         return Err(anyhow!(
             "`git status` could not inspect `vendor/` for uncommitted changes: {}",

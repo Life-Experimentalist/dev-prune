@@ -532,6 +532,54 @@ pub(crate) fn report_expired_entries(expired: &[std::path::PathBuf]) {
     ));
 }
 
+/// One plain line per drive that came back under another letter, said every time: the
+/// registry rows moved, and a row changing path unannounced reads as data loss.
+pub(crate) fn report_repointed(repointed: &[(std::path::PathBuf, std::path::PathBuf)]) {
+    for (old, new) in repointed {
+        output::print_info(&format!(
+            "Found the drive of {} again at {}; its history was carried over.",
+            output::clean_path(old),
+            output::clean_path(new)
+        ));
+    }
+}
+
+/// One info line when repositories are skipped because their drive is not connected.
+///
+/// Silent otherwise. The line is informational on purpose: an unplugged backup drive is
+/// an ordinary state, not a failure, and the scheduled pass must not turn red for it.
+pub(crate) fn report_inactive_skipped(inactive: &crate::config::InactiveRepos) {
+    if inactive.is_empty() {
+        return;
+    }
+    output::print_info(&format!(
+        "Skipped {} inactive {} ({} not connected). They return to normal when the drive does.",
+        inactive.len(),
+        output::plural(inactive.len(), "repository", "repositories"),
+        inactive.drives_phrase()
+    ));
+}
+
+/// The status view's inactive groups: one per drive, each naming its repositories.
+///
+/// Kept apart from the live table so a repository on an unplugged drive is never read
+/// as having nothing to reclaim.
+pub(crate) fn print_inactive_groups(inactive: &crate::config::InactiveRepos) {
+    for (drive, paths) in inactive.by_drive() {
+        output::print_info(&format!(
+            "Inactive (drive {drive} not connected): {} {}",
+            paths.len(),
+            output::plural(paths.len(), "repository", "repositories")
+        ));
+        for path in &paths {
+            println!("    {}", output::clean_path(path));
+        }
+    }
+    if !inactive.is_empty() {
+        println!();
+    }
+}
+
 /// `devp run` — the full pass over every registered repository.
 fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if !args.json {
@@ -551,6 +599,13 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     }
     if !args.json {
         report_expired_entries(&healed.expired);
+        report_repointed(&healed.repointed);
+    }
+    // Asked for again rather than taken from `heal`: the engine below asks the same
+    // question for itself, and this is the count it will skip.
+    let inactive = registry.inactive_repos();
+    if !args.json {
+        report_inactive_skipped(&inactive);
     }
 
     // A repository `git init` created fires no Git hook and so never registered itself.
@@ -663,7 +718,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if !args.json {
         output::print_info(&format!(
             "Scanning {} registered repositories for prune candidates...",
-            registry.repo_count()
+            registry.repo_count().saturating_sub(inactive.len())
         ));
         if let Some(desc) = filter.describe() {
             output::print_info(&format!("Adapter filter: {desc}"));
@@ -1466,8 +1521,12 @@ fn report_orphaned(orphaned: &[PruneResult]) {
 fn opt_in_recommendations(registry: &Registry, except: &[String]) -> Vec<(String, usize)> {
     let mut counts: std::collections::BTreeMap<&'static str, usize> =
         std::collections::BTreeMap::new();
+    // A path on another disk's letter can exist and be a different project; a repository
+    // on a drive that is not connected is not examined at all.
+    let inactive = registry.inactive_repos();
     for (path, entry) in &registry.repositories {
         if !entry.enabled
+            || inactive.contains(path)
             || !path.exists()
             || is_excepted(path, except)
             || path.join(constants::DEVPRUNE_IGNORE_FILE).exists()
@@ -1723,9 +1782,19 @@ fn run_explain(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         by_repo.entry(r.repo_path.as_path()).or_default().push(r);
     }
 
+    let inactive = registry.inactive_repos();
     let mut repos: Vec<&std::path::PathBuf> = registry.repositories.keys().collect();
     repos.sort();
     for path in repos {
+        if let Some(drive) = inactive.drive_of(path) {
+            println!();
+            output::print_info(&output::clean_path(path));
+            println!(
+                "  • inactive: drive {drive} is not connected, so nothing here is examined \
+                 or pruned until it is"
+            );
+            continue;
+        }
         if is_excepted(path, &except) {
             println!();
             output::print_info(&output::clean_path(path));

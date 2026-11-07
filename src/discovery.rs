@@ -89,9 +89,14 @@ fn conventional_roots() -> Vec<PathBuf> {
 /// The parent directory of every registered repository, where that parent is deep enough
 /// to be a workspace rather than a home directory or a drive root.
 pub fn neighbourhood_roots(registry: &Registry) -> Vec<PathBuf> {
+    // An inactive repository's neighbourhood is not scanned: on a reused drive letter the
+    // folder exists but belongs to another volume, and registering what is found there
+    // would weld it to the wrong drive.
+    let inactive = registry.inactive_repos();
     registry
         .repositories
         .keys()
+        .filter(|repo| !inactive.contains(repo))
         .filter_map(|repo| repo.parent())
         .filter(|parent| is_scannable_root(parent))
         .map(Path::to_path_buf)

@@ -23,7 +23,9 @@
 //! None of those checks runs the rebuild command, or any part of it. Every one is a
 //! read.
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::config::{DeclaredDir, Prunable};
 use crate::scanner::git;
@@ -83,14 +85,37 @@ const SHELL_ONLY: &[&str] = &["cd", "pushd", "source", ".", "export", "set"];
 /// So is anything `prunable.exclude` names, and for the same reason. Whoever wrote the
 /// exclusion has already answered every question this module would ask about that
 /// directory — including whether to keep saying that it cannot be honoured.
+///
+/// Git is asked read-only questions here, each cut off at the stall ceiling. A `git` that
+/// never answers refuses that declaration (it is never read as "not ignored" or
+/// "untracked"), and the repository's remaining declarations are refused unexamined
+/// rather than each waiting out its own ceiling. Other repositories are unaffected.
 pub fn resolve(repo_path: &Path, declared: &Prunable) -> Vec<Declaration> {
+    resolve_within(repo_path, declared, git::stall_ceiling())
+}
+
+/// [`resolve`] with an explicit ceiling per Git call, so a test can prove the cut-off
+/// without waiting out the real one.
+fn resolve_within(repo_path: &Path, declared: &Prunable, ceiling: Duration) -> Vec<Declaration> {
     let excluded: Vec<String> = declared.exclude.iter().map(|raw| key(raw)).collect();
+    let stalled = Cell::new(false);
     let mut out = Vec::new();
     for entry in &declared.directories {
         if excluded.contains(&key(&entry.path)) {
             continue;
         }
-        match check(repo_path, entry) {
+        if stalled.get() {
+            out.push(Declaration::Refused {
+                label: entry.path.clone(),
+                reason: format!(
+                    "`{}` was not examined: Git stopped answering for this repository earlier \
+                     in this pass, so none of its declarations are checked this time. Left alone.",
+                    entry.path
+                ),
+            });
+            continue;
+        }
+        match check(repo_path, entry, ceiling, &stalled) {
             Ok(Some(target)) => out.push(Declaration::Prunable(Box::new(target))),
             Ok(None) => {}
             Err(reason) => out.push(Declaration::Refused {
@@ -114,7 +139,12 @@ pub(crate) fn key(raw: &str) -> String {
 }
 
 /// One declaration: `Ok(Some)` to delete, `Ok(None)` for absent, `Err` for refused.
-fn check(repo_path: &Path, entry: &DeclaredDir) -> Result<Option<Target>, String> {
+fn check(
+    repo_path: &Path,
+    entry: &DeclaredDir,
+    ceiling: Duration,
+    stalled: &Cell<bool>,
+) -> Result<Option<Target>, String> {
     let parts = split_relative(&entry.path)?;
     let label = parts.join("/");
     let path = parts.iter().fold(repo_path.to_path_buf(), |p, s| p.join(s));
@@ -168,7 +198,7 @@ fn check(repo_path: &Path, entry: &DeclaredDir) -> Result<Option<Target>, String
         ));
     }
 
-    if let Some(tracked) = first_tracked_file(repo_path, &label)? {
+    if let Some(tracked) = first_tracked_file(repo_path, &label, ceiling, stalled)? {
         return Err(format!(
             "`{label}` is declared prunable but Git is tracking `{tracked}` inside it — \
              refusing. A lockfile cannot rebuild a file that is in the repository \
@@ -208,7 +238,7 @@ fn check(repo_path: &Path, entry: &DeclaredDir) -> Result<Option<Target>, String
         ));
     }
 
-    if !is_git_ignored(repo_path, &label)? {
+    if !is_git_ignored(repo_path, &label, ceiling, stalled)? {
         return Err(format!(
             "`{label}` is declared prunable but Git does not ignore it — an untracked              directory that is not ignored may hold work that exists nowhere else, and no              `rebuild` command can promise otherwise. Add it to `.gitignore` if it really              is disposable. Left alone."
         ));
@@ -275,6 +305,28 @@ pub(crate) fn split_relative(raw: &str) -> Result<Vec<String>, String> {
     Ok(parts)
 }
 
+/// One read-only Git question, cut off at `ceiling`.
+///
+/// Both questions below gate a deletion, so a `git` that hangs on a stalled drive has to
+/// end the check rather than the pass. The `Err` is the end of the sentence the caller
+/// builds ("... `git ls-files` did not answer ..."); a stall also sets `stalled`, which
+/// tells [`resolve`] to stop asking Git about this repository's other declarations.
+fn ask_git(
+    repo_path: &Path,
+    args: &[&str],
+    ceiling: Duration,
+    stalled: &Cell<bool>,
+) -> Result<std::process::Output, String> {
+    git::git_output(repo_path, args, ceiling).map_err(|e| {
+        if let Some(stall) = e.downcast_ref::<git::GitStalled>() {
+            stalled.set(true);
+            format!("did not answer in time ({stall})")
+        } else {
+            format!("could not run ({e:#})")
+        }
+    })
+}
+
 /// Does Git ignore `label`? The test that a declaration names something the repository
 /// already treats as disposable.
 ///
@@ -285,15 +337,24 @@ pub(crate) fn split_relative(raw: &str) -> Result<Vec<String>, String> {
 /// project has already said is not its content.
 ///
 /// A `git` that cannot answer is an error: "I could not check" is not "it is ignored".
-fn is_git_ignored(repo_path: &Path, label: &str) -> Result<bool, String> {
-    let output = git::git_in(repo_path)
-        .args(["check-ignore", "-q", "--", label])
-        .output()
-        .map_err(|e| {
-            format!(
-                "`{label}` is declared prunable, but `git check-ignore` could not run ({e}) —                  refusing to delete without knowing whether Git ignores it."
-            )
-        })?;
+fn is_git_ignored(
+    repo_path: &Path,
+    label: &str,
+    ceiling: Duration,
+    stalled: &Cell<bool>,
+) -> Result<bool, String> {
+    let output = ask_git(
+        repo_path,
+        &["check-ignore", "-q", "--", label],
+        ceiling,
+        stalled,
+    )
+    .map_err(|why| {
+        format!(
+            "`{label}` is declared prunable, but `git check-ignore` {why}; refusing to \
+             delete without knowing whether Git ignores it."
+        )
+    })?;
     match output.status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
@@ -313,14 +374,17 @@ fn is_git_ignored(repo_path: &Path, label: &str) -> Result<bool, String> {
 ///
 /// A `git` that cannot answer is an error rather than a shrug: "I could not check" is
 /// not "there is nothing there".
-fn first_tracked_file(repo_path: &Path, label: &str) -> Result<Option<String>, String> {
-    let output = git::git_in(repo_path)
-        .args(["ls-files", "--", label])
-        .output()
-        .map_err(|e| {
+fn first_tracked_file(
+    repo_path: &Path,
+    label: &str,
+    ceiling: Duration,
+    stalled: &Cell<bool>,
+) -> Result<Option<String>, String> {
+    let output =
+        ask_git(repo_path, &["ls-files", "--", label], ceiling, stalled).map_err(|why| {
             format!(
-                "`{label}` is declared prunable, but `git ls-files` could not run ({e}) — \
-                 refusing to delete without knowing whether it holds tracked files."
+                "`{label}` is declared prunable, but `git ls-files` {why}; \
+             refusing to delete without knowing whether it holds tracked files."
             )
         })?;
     if !output.status.success() {
@@ -605,6 +669,53 @@ mod tests {
             resolve(tmp.path(), &one(declared("scratch", "echo not needed"))).pop(),
             Some(Declaration::Prunable(_))
         ));
+    }
+
+    /// A `git` that never answers is the case a timeout exists for. It must refuse the
+    /// declaration, never read as "not ignored" or "untracked", and must not make the
+    /// repository's other declarations each wait out their own ceiling.
+    #[test]
+    fn a_git_that_stalls_refuses_the_declaration_and_the_rest_of_the_repository() {
+        let tmp = repo();
+        let path = tmp.path();
+        fs::create_dir_all(path.join("scratch")).unwrap();
+        fs::create_dir_all(path.join("vendor")).unwrap();
+        let prunable = Prunable {
+            directories: vec![
+                declared("scratch", "echo not needed"),
+                declared("vendor", "echo not needed"),
+            ],
+            exclude: Vec::new(),
+        };
+
+        // A zero ceiling expires on the first poll, long before `git` has started up.
+        let outcomes = resolve_within(path, &prunable, Duration::ZERO);
+        assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+        for outcome in &outcomes {
+            assert!(
+                matches!(outcome, Declaration::Refused { .. }),
+                "a stalled git must never leave a declaration prunable: {outcome:?}"
+            );
+        }
+        let Declaration::Refused { reason, .. } = &outcomes[0] else {
+            unreachable!();
+        };
+        assert!(reason.contains("did not answer"), "{reason}");
+        let Declaration::Refused { reason, .. } = &outcomes[1] else {
+            unreachable!();
+        };
+        assert!(reason.contains("not examined"), "{reason}");
+        assert!(path.join("scratch").exists() && path.join("vendor").exists());
+
+        // The same repository with a working ceiling is prunable, so the refusals above
+        // came from the stall and from nothing else.
+        let healthy = resolve(path, &prunable);
+        assert!(
+            healthy
+                .iter()
+                .all(|d| matches!(d, Declaration::Prunable(_))),
+            "{healthy:?}"
+        );
     }
 
     #[test]

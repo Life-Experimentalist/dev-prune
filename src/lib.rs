@@ -23,6 +23,7 @@ pub mod setup;
 pub mod spawn;
 pub mod tools;
 pub mod tui;
+pub mod volume;
 pub mod workspace;
 
 use clap::{Parser, Subcommand};
