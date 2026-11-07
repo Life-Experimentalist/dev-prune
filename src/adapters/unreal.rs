@@ -38,10 +38,12 @@ fn uproject_in(path: &Path) -> Option<PathBuf> {
         .ok()?
         .flatten()
         .map(|entry| entry.path())
+        // Extension before `is_file`: the stat is only worth paying for a name that
+        // could be the manifest, not for every file in a large directory.
         .find(|p| {
-            p.is_file()
-                && p.extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("uproject"))
+            p.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("uproject"))
+                && p.is_file()
         })
 }
 
@@ -143,6 +145,48 @@ mod tests {
             .into_iter()
             .map(|b| b.name)
             .collect()
+    }
+
+    /// `uproject_in` as it was before the extension check moved ahead of `is_file`.
+    fn uproject_in_stat_first(path: &Path) -> Option<PathBuf> {
+        fs::read_dir(path)
+            .ok()?
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|p| {
+                p.is_file()
+                    && p.extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("uproject"))
+            })
+    }
+
+    #[test]
+    fn extension_first_filter_agrees_with_the_stat_first_one() {
+        // Each layout is judged by both spellings: nothing, a lookalike directory, a
+        // non-manifest file, a real manifest in each case, and a crowd of other files.
+        for names in [
+            vec![],
+            vec!["notes.txt", "uproject"],
+            vec!["Demo.UPROJECT"],
+            vec!["Demo.uproject", "other.txt"],
+        ] {
+            for dir_lookalike in [false, true] {
+                let dir = tempdir().unwrap();
+                for name in &names {
+                    fs::write(dir.path().join(name), "x").unwrap();
+                }
+                for n in 0..50 {
+                    fs::write(dir.path().join(format!("asset{n}.uasset")), "x").unwrap();
+                }
+                if dir_lookalike {
+                    fs::create_dir(dir.path().join("Fake.uproject")).unwrap();
+                }
+                let new = uproject_in(dir.path()).map(|p| p.file_name().unwrap().to_owned());
+                let old =
+                    uproject_in_stat_first(dir.path()).map(|p| p.file_name().unwrap().to_owned());
+                assert_eq!(new.is_some(), old.is_some(), "{names:?} {dir_lookalike}");
+            }
+        }
     }
 
     #[test]

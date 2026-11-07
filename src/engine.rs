@@ -1662,8 +1662,20 @@ fn clamp_scan_threads(requested: usize, total: usize) -> usize {
         .min(total.max(1))
 }
 
+/// One event in the parallel status scan, as [`get_full_status_reporting`] reports it.
+pub enum ScanStep<'a> {
+    /// A worker has begun scanning this repository.
+    Started(&'a Path),
+    /// A worker finished this repository; `done` of `total` are now complete.
+    Finished {
+        path: &'a Path,
+        done: usize,
+        total: usize,
+    },
+}
+
 pub fn get_full_status(registry: &Registry) -> Vec<RepoStatusEntry> {
-    get_full_status_reporting(registry, &|_done, _total| {})
+    get_full_status_reporting(registry, &|_step| {})
 }
 
 /// [`get_full_status`], reporting each repository as it finishes.
@@ -1673,12 +1685,12 @@ pub fn get_full_status(registry: &Registry) -> Vec<RepoStatusEntry> {
 /// before anything appeared. The callback is what lets `devp status` draw a progress bar
 /// over it instead — a dashboard that looks hung is one people kill before it renders.
 ///
-/// The callback is invoked from several threads at once, and its first argument is the
-/// number of repositories finished, not the index of this one: workers finish out of
-/// order.
+/// The callback is invoked from several threads at once. `Finished` carries the number
+/// of repositories finished, not the index of this one: workers finish out of order.
+/// `Started` is what lets the caller say which repository a slow scan is sitting in.
 pub fn get_full_status_reporting(
     registry: &Registry,
-    progress: &(dyn Fn(usize, usize) + Sync),
+    progress: &(dyn Fn(ScanStep) + Sync),
 ) -> Vec<RepoStatusEntry> {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1701,8 +1713,13 @@ pub fn get_full_status_reporting(
                 break;
             }
             let (path, reg_entry) = repos[i];
+            progress(ScanStep::Started(path));
             mine.push(status_for_repo(registry, path, reg_entry));
-            progress(done.fetch_add(1, Ordering::Relaxed) + 1, total);
+            progress(ScanStep::Finished {
+                path,
+                done: done.fetch_add(1, Ordering::Relaxed) + 1,
+                total,
+            });
         }
         mine
     };
