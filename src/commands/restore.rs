@@ -15,7 +15,16 @@ use crate::engine;
 use crate::output;
 
 /// Run the `restore` command.
+///
+/// A reinstall rewrites the directory a prune pass may be deleting, so it waits its turn
+/// behind the run lock like the pass does.
 pub fn run(path_str: &str) -> Result<()> {
+    crate::lock::run_exclusive(crate::lock::Pass::Interactive, false, || {
+        restore_path(path_str)
+    })
+}
+
+fn restore_path(path_str: &str) -> Result<()> {
     // Before `canonicalize`, which would start the distribution.
     if crate::volume::is_wsl_unc(Path::new(path_str)) {
         output::print_warning(&format!("{path_str}: {}", crate::constants::WSL_SKIP_NOTE));
@@ -103,6 +112,10 @@ pub fn run(path_str: &str) -> Result<()> {
 /// each manager's own no-op — and a `--last-run` that could only be used once would fail
 /// exactly when a partial restore made the user want to re-run it.
 pub fn run_last_run() -> Result<()> {
+    crate::lock::run_exclusive(crate::lock::Pass::Interactive, false, restore_last_run)
+}
+
+fn restore_last_run() -> Result<()> {
     let registry = Registry::load()?;
 
     let Some(last) = registry.last_prune.as_ref() else {

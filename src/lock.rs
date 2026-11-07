@@ -180,13 +180,34 @@ pub fn run_exclusive_in<T>(
                 }
                 Ok(None)
             }
-            Pass::Interactive => Err(anyhow::anyhow!(
-                "Another devp is already running a pass on this device ({}). \
-                 Wait for it to finish, then run this again.",
-                holder.describe()
-            )),
+            Pass::Interactive => Err(busy_error(&holder)),
         },
         Err(_) => body().map(Some),
+    }
+}
+
+/// The refusal an interactive caller gets when someone else holds the lock.
+fn busy_error(holder: &Holder) -> anyhow::Error {
+    anyhow::anyhow!(
+        "Another devp is already running a pass on this device ({}). \
+         Wait for it to finish, then run this again.",
+        holder.describe()
+    )
+}
+
+/// Take the lock for the rest of the caller's scope, for code whose body is too tangled
+/// to wrap in a closure (the dashboard's prune, which returns early from many places).
+///
+/// `Ok(None)` means the lock could not be used at all and the caller proceeds unguarded,
+/// for the same reason [`run_exclusive_in`] does. A busy lock is an error.
+pub fn acquire_interactive() -> Result<Option<RunLock>> {
+    let Ok(dir) = crate::config::Registry::config_dir() else {
+        return Ok(None);
+    };
+    match try_take(&dir) {
+        Ok(Taken::Held(lock)) => Ok(Some(lock)),
+        Ok(Taken::Busy(holder)) => Err(busy_error(&holder)),
+        Err(_) => Ok(None),
     }
 }
 

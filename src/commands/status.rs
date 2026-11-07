@@ -70,7 +70,13 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     // about. See `link::adopt_enclosing_repo` for the guards.
     let adopted = crate::commands::link::adopt_enclosing_repo(&mut registry);
     if adopted.is_some() {
-        registry.save()?;
+        // A registry a newer devp wrote is read as it stands: the adoption is shown for
+        // this run and not persisted, and the status report is the point of the command.
+        if let Err(e) = registry.save()
+            && e.downcast_ref::<crate::config::NewerRegistryError>().is_none()
+        {
+            return Err(e);
+        }
     }
 
     let daemon_st = crate::daemon::daemon_status()
@@ -206,6 +212,9 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                 // User confirmed a prune from within the status view. The TUI hands
                 // back paths, not indices — an `i` toggle reloads its list, and
                 // indices into the reloaded list do not address `repos` above.
+                // Taken only now, after the user has confirmed: browsing the dashboard
+                // is a read and must work while a pass runs. Held to the end of this arm.
+                let _run_lock = crate::lock::acquire_interactive()?;
                 output::print_header(i18n::t("status.header.pruning"));
 
                 let mut total_freed: u64 = 0;
