@@ -70,6 +70,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trimming off, and `devp doctor` mentions it as a note that never changes the exit code.
   The setup wizard asks, defaulting to no. `devp run --dry-run` lists what it would empty.
 
+- **Two devp copies on one machine can no longer step on each other.** The scheduled
+  task, a manual `devp run`, a git hook and `devp restore` used to be free to run at the
+  same time and overwrite each other's registry updates. Now only one pass runs at a time.
+  A scheduled pass or a hook that finds another one running prints one line naming it (pid,
+  version, start time) and exits 0; an interactive `devp run`, `devp restore` or
+  `devp unlink --missing` names the holder and exits 1, so a script does not mistake
+  "did nothing" for "done". Status, caches, doctor and the other read-only commands never
+  wait. The lock is released by the operating system if devp dies, so it never goes stale.
+
+- **An older devp refuses to overwrite a registry written by a newer one.** `registry.json`
+  records the version that last wrote it. If you still have an old copy on a scheduler or
+  hook, it stops with "registry.json was written by devp X, this is Y; update this install
+  or remove it, see devp doctor" instead of silently dropping the new fields. Reading
+  still works. Copies older than this release cannot be protected, but they only lose
+  fields that are filled in again.
+
+- **`devp doctor` warns when several versions of devp are installed.** It lists each copy
+  with its path and version, says which one the scheduled task runs and which one the git
+  hook shims call, and prints the way to remove the extras without running it. The same
+  version in several places is only an information line.
+
 ### Changed
 
 - **`devp caches` is about ten times faster on a cache-heavy machine.** The sizing walks,
@@ -111,7 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `src/volume.rs` (Windows volume identity, behind a `VolumeView` seam so tests can
   inject fake drives) and `Registry::heal_with`. `RepoEntry` gains optional `volume_id` and
   `volume_label`; `PathState` gains `Inactive`. `windows-sys` gains the
-  `Win32_System_Diagnostics_Debug` feature; no new crate.
+  `Win32_System_Diagnostics_Debug` and `Win32_System_IO` features; no new crate. The run
+  lock lives in `src/lock.rs` (`LockFileEx` on Windows, `flock` elsewhere).
 - New `src/parallel.rs` holds the shared work-stealing helper used by the cache sizing and
   the dependents lookup. `DEV_PRUNE_SCAN_THREADS` still overrides the thread count.
 - `Registry::heal` replaces the old heal pass; `heal_dead_and_moved_repositories` stays as a
