@@ -77,7 +77,10 @@ fn a_scheduled_pass_skips_while_the_lock_is_held_and_exits_zero() {
         shown.contains(&format!("pid {}", std::process::id())),
         "the holder is named: {shown}"
     );
-    assert!(shown.contains("devp "), "the holder's version is named: {shown}");
+    assert!(
+        shown.contains("devp "),
+        "the holder's version is named: {shown}"
+    );
 }
 
 #[test]
@@ -85,7 +88,10 @@ fn an_interactive_run_while_the_lock_is_held_exits_one_naming_the_holder() {
     let tmp = TempDir::new().unwrap();
     let _held = hold(tmp.path());
 
-    let out = devp(tmp.path()).args(["run", "--dry-run"]).output().unwrap();
+    let out = devp(tmp.path())
+        .args(["run", "--dry-run"])
+        .output()
+        .unwrap();
 
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
     let shown = text(&out);
@@ -108,7 +114,11 @@ fn an_interactive_restore_while_the_lock_is_held_exits_one() {
         .unwrap();
 
     assert_eq!(out.status.code(), Some(1), "{}", text(&out));
-    assert!(text(&out).contains("already running a pass"), "{}", text(&out));
+    assert!(
+        text(&out).contains("already running a pass"),
+        "{}",
+        text(&out)
+    );
 }
 
 #[test]
@@ -145,7 +155,10 @@ fn read_only_commands_run_while_the_lock_is_held() {
 fn a_finished_pass_releases_the_lock() {
     let tmp = TempDir::new().unwrap();
 
-    let out = devp(tmp.path()).args(["run", "--dry-run"]).output().unwrap();
+    let out = devp(tmp.path())
+        .args(["run", "--dry-run"])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
 
     // Taking it here proves the child let go on its way out.
@@ -161,7 +174,10 @@ fn a_lock_file_left_behind_by_a_dead_process_does_not_block_a_pass() {
     )
     .unwrap();
 
-    let out = devp(tmp.path()).args(["run", "--dry-run"]).output().unwrap();
+    let out = devp(tmp.path())
+        .args(["run", "--dry-run"])
+        .output()
+        .unwrap();
 
     assert_eq!(out.status.code(), Some(0), "{}", text(&out));
 }
@@ -172,7 +188,10 @@ fn a_registry_from_a_newer_devp_is_readable_but_not_overwritten() {
     stamp_as(tmp.path(), Some("999.0.0"));
     let before = fs::read_to_string(registry_file(tmp.path())).unwrap();
 
-    let status = devp(tmp.path()).args(["status", "--json"]).output().unwrap();
+    let status = devp(tmp.path())
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
     assert_eq!(status.status.code(), Some(0), "{}", text(&status));
 
     let set = devp(tmp.path())
