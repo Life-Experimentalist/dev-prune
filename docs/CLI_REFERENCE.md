@@ -353,7 +353,7 @@ reads unambiguously:
 ### 6. `devp status [--top N] [--drift] [--json]`
 - **Description**: Displays an interactive Ratatui terminal dashboard summarizing registered repositories, status (Candidate, Active, Ignored, No Bloat, Path Missing, Unreadable `.devprune.json`), reclaimable space, and last activity date. A repository whose `.devprune.json` does not parse is reported as such rather than as a candidate — `devp run` refuses to touch it, and the dashboard says the same thing.
 - **Environment**:
-  - `DEV_PRUNE_SCAN_THREADS` — overrides the status scan's thread count (clamped to 32; `1` forces a sequential scan). The automatic figure suits local disks; raise it on a network filesystem, where the scan waits on latency rather than on the CPU, and set it to `1` on a spinning disk, where fewer threads means less head thrashing and a genuinely faster scan.
+  - `DEV_PRUNE_SCAN_THREADS` — overrides the status scan's thread count (clamped to 32; `1` forces a sequential scan). The automatic figure suits local disks; raise it on a network filesystem, where the scan waits on latency rather than on the CPU, and set it to `1` on a spinning disk, where fewer threads means less head thrashing and a genuinely faster scan. `devp caches` reads it too, but by default it uses only four to six threads for its walks, because those are metadata calls that more threads do not overlap.
 - **Interactive TUI Keybindings**:
   | Key | Action |
   | :--- | :--- |
@@ -467,6 +467,7 @@ reads unambiguously:
 
 ### 7. `devp caches [--volume <VOLUME>] [--json]` / `devp caches clear <MANAGER>`
 - **Description**: Finds every package-manager cache and store on the machine, sizes each one, and prints the command that clears it. Largest first, with a total. On its own **it deletes nothing**, and nothing that runs on a schedule ever will; the `clear` subcommand below empties one deliberately, when you type it.
+- **Progress while it works**: on a terminal the report shows which cache or repository it is measuring now, how many are done of how many, and the elapsed time, and when one item takes longer than ten seconds the line adds a still-working hint naming it. The slow part is almost always one very large cache, and a counter that has stopped moving looks the same as a hang. The sizing and the repository counting run on several threads. Nothing is drawn under `--json` or when output is piped, so a pipe receives only the document or the table.
 - **Why the report itself never deletes**: a cache lives outside every repository and is shared by all of them, so no single lockfile can prove its contents are recoverable — which is the bar every deletion in dev-prune has to clear. It is also what makes [`devp restore`](#9-devp-restore-path---last-run) fast: clearing a cache turns the next reinstall into a download. So a cache is only ever emptied by a command you type, when you want the space more than the speed.
 - **Telling it what nothing needs any more**: beside each manager the report now says how many of your registered repositories actually use it, and what its cache works out to per repository — two repositories sharing a 12 GiB cache is 6 GiB each and worth a look, forty sharing the same 12 GiB is 300 MiB each and is the cache doing its job. A manager no registered repository uses at all is the one case where a count is enough to act on, and [`devp caches clear --unused all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly those. The count ignores whether an adapter is enabled or opted in, because the question is which managers your projects *use*, not which ones a prune pass would touch. It is shown only for the nineteen managers that are also adapter names; the other twelve — `pip`, `conda`, `nuget`, `conan`, `hex`, `playwright`, `puppeteer`, `huggingface`, `cypress`, `electron`, `ccache` and `sccache` — have no adapter of the same name, so dev-prune says nothing about them rather than guessing that `venv` feeds `pip`, or that every `node_modules` on the disk feeds the Playwright browser cache. Nothing is counted at all until at least one registered repository is on disk — an empty registry would make every cache look unused, so `--unused` refuses to run instead.
 - **Telling it how big is too big**: a download cache is a bet that re-downloading costs more than the disk it occupies, and the bet stops paying somewhere. `devp config set cache_max_gb default=10` writes that ceiling down in gibibytes — GiB, the unit the report prints — for every manager at once, and `default=10,npm=4` gives one of them a figure of its own; a manager named outright is held to its own number and not also to the default. A manager over its cap is marked in the report — the cap is measured against the manager's whole footprint, so cargo's registry cache and its unpacked sources are weighed together. **Setting one still deletes nothing.** It marks, and [`devp caches clear --over-cap all`](#devp-caches-clear-manager---over-cap---unused---dry-run---yes---json) empties exactly what is marked, when you type it. Empty by default: no cache is too big until you say what too big is. `devp config wizard` sets caps as a column beside the adapter checklist.
@@ -540,6 +541,7 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
 - **What it costs**: nothing is lost — every manager re-downloads what it needs. What goes is time, in every project on the machine, on the next install and the next [`devp restore`](#9-devp-restore-path---last-run).
 - **The one row where "re-downloads it" is not a promise**: `huggingface` is model weights, not packages. A registry hands a published version back forever; a model hub does not. A gated or now-private repository will refuse the file to the same token that fetched it last month, and a checkpoint from a revision that has since been deleted is simply gone. The re-download is also measured in tens of gigabytes rather than tens of megabytes. It is still cleared like any other row, because a cache full of models you evaluated once is exactly the directory this command exists for — but it is the one worth looking inside first, and `--dry-run` prints the path to look at.
 - **Freed size is measured, not assumed**: each cache is sized again after the clear and the report shows `before - after`, so a `prune` that kept half the store says so, and a half-failed clear reports what actually went.
+- **A clear that fails after freeing something says so**: the row reads `partly cleared`, not `not cleared`, with the manager's own message beside it (`exit code 1`, or `ended without an exit code` when it was killed), and the closing line is a warning (`Freed 1.2 GiB, but 1 cache did not clear completely.`) rather than a green `Freed` line. The exit code is `1` in both cases. In `--json` the row carries `"partial": true`.
 - **Flags**:
   - `--except <MANAGERS>` — with `all`: leave these managers out, comma-separated — `devp caches clear all --except npm,uv` is the one-time blacklist, the mirror of naming a list. With a named target it is a **usage error** (exit `2`) — a list already says exactly what to clear, so the honest spelling is dropping the name from the list. An unknown or engine name in the list is a **usage error** too (`all` never reaches an engine, so there is nothing to except).
   - `--over-cap` — narrow the selection to managers that have outgrown their `cache_max_gb` entry. `devp caches clear --over-cap all` is the whole point of the setting: it empties every cache that has grown past the ceiling you chose and leaves the rest alone. With no caps set it clears nothing and says so.
@@ -1443,8 +1445,11 @@ see [below](#devp-caches-clear-engine---json).
       "bytes_before": 2147483648,
       "bytes_after": 0,
       "freed_bytes": 2147483648,
-      "cleared": true
+      "cleared": true,
+      "partial": false
       // "error" — present only on a row that could not be cleared, with the reason
+      // "partial" — true when the row failed but the cache is smaller than it was, so
+      // `freed_bytes` is above zero beside an `error`; `cleared` stays false on that row
     }
   ],
   "kept": [
@@ -1473,7 +1478,10 @@ deliberately keep what is still referenced. With `--dry-run` the shape is the pl
 instead: `"dry_run": true`, and each row carries `bytes` and `clear_command` rather than
 a before/after pair. `kept` has the same shape in both and is usually empty — read it,
 or a Maven local repository will look like a machine that simply has none. Exit code is
-`1` if `summary.failed` is non-zero.
+`1` if `summary.failed` is non-zero. A row with `"partial": true` counts in
+`summary.failed` like any other failure, and its freed bytes are still in
+`summary.freed_bytes`, so a consumer that reads only the total sees the space that came back
+and one that reads `failed` sees that the clear did not finish.
 
 ### `devp caches clear <engine> --json`
 

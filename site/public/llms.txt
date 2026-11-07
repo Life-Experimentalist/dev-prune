@@ -250,7 +250,10 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   `devp caches clear <manager>` and, below it, the manager's own command that dev-prune
   runs for it. Both, because they are not synonyms — what dev-prune clears is added to the
   lifetime cache total in `devp stats`, and the same command typed into a terminal is
-  invisible to it. Maven prints only its own command; dev-prune will not run that one. The report deletes nothing, and no
+  invisible to it. Maven prints only its own command; dev-prune will not run that one. On a
+  terminal it shows the cache or repository being measured, how many are done, the elapsed
+  time, and a still-working hint after ten seconds on one item; nothing is drawn under
+  `--json` or into a pipe. The report deletes nothing, and no
   scheduler, Git hook or `devp run` ever will: a cache is shared by every project, so no
   one lockfile can prove it recoverable, and it is what makes `devp restore` fast. This is also where the
   .NET and C/C++ *dependencies* live — machine-wide stores no one project owns — while
@@ -388,7 +391,9 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   says why; `clear all` skips it and says so, and the `--json` documents carry it under
   `kept`. A
   manager that is not installed is reported as failed, never deleted around. The freed
-  size is measured afterwards rather than assumed. `--json` requires `--yes`; exit 1 if
+  size is measured afterwards rather than assumed. A clear that fails after freeing
+  space reads `partly cleared`, ends with a warning instead of a green `Freed` line, and
+  carries `"partial": true` in `--json` beside its `error`. `--json` requires `--yes`; exit 1 if
   any cache could not be cleared, 2 for an unknown manager name or for `maven`
 - `devp trust [--json | --fix-ownership [--yes]]` — what dev-prune is allowed to do on this machine, on one
   screen. Three sections: the guarantees the code enforces on every machine (the seven

@@ -249,7 +249,10 @@ devp stats --json           # what has already been reclaimed, and by which repo
 devp run --dry-run --json   # what a pass would do, with exact byte counts
 devp run -y --json          # do it
 devp caches --json          # every package-manager cache, sized, largest first;
-                            # each row carries .volume, the drive it sits on
+                            # each row carries .volume, the drive it sits on;
+                            # no progress text, only the document, on stdout
+                            # (on a terminal without --json it shows the cache being
+                            # measured and a still-working hint after ten seconds)
 devp caches --volume V: --json  # only that drive; .summary.volume says which, and
                             # `containers` is absent because it belongs to no drive
 devp caches containers --json  # what every installed engine holds; carries no prune command
@@ -308,6 +311,7 @@ The fields worth reading first:
 | `results[].shared_bytes` / `directories[].shared_bytes` | bytes hardlinked into a pnpm/bun store and therefore excluded from `bytes` — if the user asks why the figure is smaller than the folder size, this is the answer |
 | `summary.total_bytes` (caches) | every package-manager cache added up; `caches[].clear_command` is what the *user* runs, never you |
 | `caches[].volume` / `summary.volume` (caches) | the drive or filesystem a cache sits on (`V:\` on Windows, a mount point elsewhere) — group by it rather than re-deriving a mount table from `path`. Absent where dev-prune cannot tell. `summary.volume` appears only under `--volume`, and its presence means every figure in the document describes one drive rather than the machine |
+| `caches[].partial` (caches clear) | `true` when a clear failed after freeing space: the row has an `error`, `cleared` is `false`, and `freed_bytes` is above zero. Report both the space that came back and that the clear did not finish. Such a row counts in `summary.failed`, and the exit code is `1` |
 | `summary.freed_bytes` (caches clear, engine) | `system df` before minus after — never the sum of `steps[]`. Layers are shared, so those add up to more than the disk ever held |
 | `containers[]` (caches) / `engines[]` (caches containers) | what each container engine holds. **Never added to `summary.total_bytes`** — that figure answers "what could `devp caches clear` free", and none of this is that. An engine with `available: false` carries `reason` and *no* size keys: absent is not zero, so do not report 0 GB when dev-prune could not find out |
 | `repositories[].tools` (status) | graphify's `graphify-out/` and understand-anything's `.understand-anything/` at the repository root, each with a `name`, `path` and `bytes`. **Never added to `reclaimable_bytes`** and never a `run` candidate: neither has a lockfile proving it can be rebuilt without re-running the tool's own extraction passes, LLM calls included. Report the size; never suggest deleting it |

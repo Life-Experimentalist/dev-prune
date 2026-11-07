@@ -194,6 +194,238 @@ pub fn create_progress_bar(msg: &'static str, total: u64) -> ProgressBar {
     pb
 }
 
+const ITEM_WAITING: u8 = 0;
+const ITEM_RUNNING: u8 = 1;
+const ITEM_DONE: u8 = 2;
+
+/// Which of a pass's items are waiting, running and finished, and since when.
+///
+/// The thing a live progress line reads. Workers call [`begin`](Self::begin) and
+/// [`end`](Self::end) from any thread; the line is drawn from another, so everything here
+/// is atomic and nothing blocks.
+pub struct LiveTracker {
+    epoch: std::time::Instant,
+    /// What each item is called, and where it is, for the line that names it.
+    items: Vec<(String, String)>,
+    state: Vec<std::sync::atomic::AtomicU8>,
+    /// When each item began, in milliseconds after `epoch`.
+    begun: Vec<std::sync::atomic::AtomicU64>,
+}
+
+impl LiveTracker {
+    /// One item per `(name, detail)` pair, all waiting.
+    pub fn new(items: Vec<(String, String)>) -> Self {
+        let n = items.len();
+        Self {
+            epoch: std::time::Instant::now(),
+            items,
+            state: (0..n)
+                .map(|_| std::sync::atomic::AtomicU8::new(ITEM_WAITING))
+                .collect(),
+            begun: (0..n).map(|_| Default::default()).collect(),
+        }
+    }
+
+    pub fn begin(&self, i: usize) {
+        use std::sync::atomic::Ordering::{Relaxed, Release};
+        self.begun[i].store(self.epoch.elapsed().as_millis() as u64, Relaxed);
+        self.state[i].store(ITEM_RUNNING, Release);
+    }
+
+    pub fn end(&self, i: usize) {
+        self.state[i].store(ITEM_DONE, std::sync::atomic::Ordering::Release);
+    }
+
+    fn done(&self) -> usize {
+        self.state
+            .iter()
+            .filter(|s| s.load(std::sync::atomic::Ordering::Acquire) == ITEM_DONE)
+            .count()
+    }
+
+    /// The item that has been running longest, how long, and how many are running.
+    fn oldest_running(&self) -> Option<(usize, Duration, usize)> {
+        use std::sync::atomic::Ordering::{Acquire, Relaxed};
+        let now = self.epoch.elapsed().as_millis() as u64;
+        let mut oldest: Option<(usize, u64)> = None;
+        let mut running = 0;
+        for (i, s) in self.state.iter().enumerate() {
+            if s.load(Acquire) != ITEM_RUNNING {
+                continue;
+            }
+            running += 1;
+            let begun = self.begun[i].load(Relaxed);
+            if oldest.is_none_or(|(_, b)| begun < b) {
+                oldest = Some((i, begun));
+            }
+        }
+        oldest.map(|(i, b)| (i, Duration::from_millis(now.saturating_sub(b)), running))
+    }
+
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
+/// A live progress line over a pass whose work is spread across threads.
+pub struct LiveProgress<'a> {
+    /// What the pass is, as the first words of the line.
+    pub title: &'static str,
+    /// What the slow-item hint says it is doing: "measuring", "checking".
+    pub verb: &'static str,
+    pub tracker: &'a LiveTracker,
+    /// Files seen so far under item `i`, for the hint, when the work can count them.
+    pub files_of: Option<&'a (dyn Fn(usize) -> u64 + Sync)>,
+    /// Run before each redraw, for work that reports its progress in its own counters
+    /// rather than by calling [`LiveTracker::end`].
+    pub refresh: Option<&'a (dyn Fn() + Sync)>,
+}
+
+impl LiveProgress<'_> {
+    /// Run `work` with the line drawn under it on stderr.
+    ///
+    /// `enabled` is the caller's existing spinner switch: `--json`, a pipe and a dumb
+    /// terminal all arrive here as `false` and get no line, no thread and no cost. The
+    /// line is redrawn from a thread of its own, so a worker stuck in one slow file
+    /// system call cannot freeze it, which is the whole point of showing it.
+    pub fn run<R>(&self, enabled: bool, work: impl FnOnce() -> R) -> R {
+        if !enabled {
+            return work();
+        }
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+                .template("{spinner:.cyan} {msg}")
+                .expect("Invalid progress bar template"),
+        );
+        pb.enable_steady_tick(Duration::from_millis(80));
+        let started = std::time::Instant::now();
+        let hint_after = Duration::from_secs(crate::constants::SLOW_ITEM_HINT_SECS);
+        let stop = AtomicBool::new(false);
+
+        let result = std::thread::scope(|scope| {
+            // A refused thread only means the line keeps its last message: the work still
+            // runs and the steady tick still turns the spinner.
+            let _ = std::thread::Builder::new()
+                .name("devp-progress".to_string())
+                .spawn_scoped(scope, || {
+                    while !stop.load(Ordering::Relaxed) {
+                        pb.set_message(self.message(started.elapsed(), hint_after));
+                        std::thread::sleep(Duration::from_millis(
+                            crate::constants::PROGRESS_POLL_MILLIS,
+                        ));
+                    }
+                });
+            let result = work();
+            stop.store(true, Ordering::Relaxed);
+            result
+        });
+        pb.finish_and_clear();
+        result
+    }
+
+    /// The text of the line at this moment. Separate from the drawing so the thresholds
+    /// can be exercised without a terminal.
+    fn message(&self, elapsed: Duration, hint_after: Duration) -> String {
+        if let Some(refresh) = self.refresh {
+            refresh();
+        }
+        let oldest = self.tracker.oldest_running().map(|(i, running, count)| {
+            let (name, detail) = &self.tracker.items[i];
+            let files = self.files_of.map(|f| f(i));
+            (name.as_str(), detail.as_str(), running, count, files)
+        });
+        live_message(
+            self.title,
+            self.verb,
+            (self.tracker.done(), self.tracker.len()),
+            oldest,
+            elapsed,
+            hint_after,
+        )
+    }
+}
+
+/// Compose the progress text: the counter, what is being worked on, and after
+/// `hint_after` a plain line saying the pass is alive and harmless.
+///
+/// `oldest` is the item that has been running longest: its name, its location, how long,
+/// how many items are running in all, and how many files it has shown so far.
+fn live_message(
+    title: &str,
+    verb: &str,
+    (done, total): (usize, usize),
+    oldest: Option<(&str, &str, Duration, usize, Option<u64>)>,
+    elapsed: Duration,
+    hint_after: Duration,
+) -> String {
+    let mut out = format!("{title}  {done}/{total}  {}", format_elapsed(elapsed));
+    let Some((name, detail, running_for, running, files)) = oldest else {
+        return out;
+    };
+    out.push_str(&format!(
+        "\n  {name}  {}",
+        shorten_middle(detail, crate::constants::PROGRESS_PATH_MAX_CHARS)
+    ));
+    if running > 1 {
+        out.push_str(&format!("  (+{} more)", running - 1));
+    }
+    if running_for >= hint_after {
+        // Spelled out because the person reading it is deciding whether to kill the
+        // window, and the two facts that decide it are that nothing is changing and that
+        // stopping now loses nothing.
+        let progress = files.map_or(String::new(), |n| {
+            format!(", {} files so far", format_count_short(n))
+        });
+        out.push_str(&format!(
+            "\n  still {verb} {name}{progress}, {} s. This only reads, nothing is deleted, Ctrl-C is safe.",
+            running_for.as_secs()
+        ));
+    }
+    out
+}
+
+/// `38s`, or `1m 05s` once it passes a minute.
+fn format_elapsed(d: Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        format!("{}m {:02}s", secs / 60, secs % 60)
+    }
+}
+
+/// A file count short enough for a status line: `850`, `12k`, `1.2M`.
+fn format_count_short(n: u64) -> String {
+    match n {
+        0..=999 => n.to_string(),
+        1_000..=999_999 => format!("{}k", n / 1_000),
+        _ => format!("{:.1}M", n as f64 / 1_000_000.0),
+    }
+}
+
+/// Shorten `s` to at most `max` characters by eliding the middle, which keeps both the
+/// drive or root that says where it is and the last folders that say which one it is.
+fn shorten_middle(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max || max < 4 {
+        return s.to_string();
+    }
+    let head = (max - 1) / 3;
+    let tail = max - 1 - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
 /// Color the contents of `backtick` spans — commands, flags, filenames — so the part
 /// the user is meant to type or look for stands out from the prose around it.
 ///
@@ -664,5 +896,102 @@ mod tests {
         assert_eq!(format_seconds(61), "2m");
         assert_eq!(format_seconds(3600), "1h");
         assert_eq!(format_seconds(4500), "1h 15m");
+    }
+
+    fn tracker_of(names: &[&str]) -> LiveTracker {
+        LiveTracker::new(
+            names
+                .iter()
+                .map(|n| ((*n).to_string(), format!("/caches/{n}")))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn the_line_names_what_is_running_and_stays_quiet_before_the_threshold() {
+        let tracker = tracker_of(&["go build cache", "npm cache"]);
+        tracker.begin(0);
+        tracker.begin(1);
+        tracker.end(1);
+        let progress = LiveProgress {
+            title: "Measuring caches",
+            verb: "measuring",
+            tracker: &tracker,
+            files_of: None,
+            refresh: None,
+        };
+        let line = progress.message(Duration::from_secs(3), Duration::from_secs(10));
+        assert!(line.starts_with("Measuring caches  1/2  3s"), "{line}");
+        assert!(
+            line.contains("go build cache  /caches/go build cache"),
+            "{line}"
+        );
+        assert!(!line.contains("still"), "no hint yet: {line}");
+    }
+
+    #[test]
+    fn a_slow_item_gets_the_still_working_hint_with_a_moving_file_count() {
+        let tracker = tracker_of(&["go build cache"]);
+        tracker.begin(0);
+        let files = |_: usize| 1_234_567u64;
+        let progress = LiveProgress {
+            title: "Measuring caches",
+            verb: "measuring",
+            tracker: &tracker,
+            files_of: Some(&files),
+            refresh: None,
+        };
+        // A zero threshold stands in for waiting out the real one.
+        let line = progress.message(Duration::from_secs(38), Duration::ZERO);
+        assert!(
+            line.contains(
+                "still measuring go build cache, 1.2M files so far, 0 s. This only reads, \
+                 nothing is deleted, Ctrl-C is safe."
+            ),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn the_hint_and_the_counts_are_plain_text() {
+        assert!(
+            !live_message(
+                "t",
+                "measuring",
+                (0, 1),
+                Some(("x", "/p", Duration::from_secs(99), 3, None)),
+                Duration::from_secs(99),
+                Duration::from_secs(10),
+            )
+            .contains('\u{2014}')
+        );
+        assert_eq!(format_elapsed(Duration::from_secs(38)), "38s");
+        assert_eq!(format_elapsed(Duration::from_secs(65)), "1m 05s");
+        assert_eq!(format_count_short(850), "850");
+        assert_eq!(format_count_short(12_345), "12k");
+        assert_eq!(format_count_short(1_200_000), "1.2M");
+    }
+
+    #[test]
+    fn long_paths_keep_their_root_and_their_last_folders() {
+        let long = r"C:\Users\someone\AppData\Local\go-build\deep\er\and\deeper";
+        let short = shorten_middle(long, 24);
+        assert_eq!(short.chars().count(), 24);
+        assert!(short.starts_with("C:\\User"), "{short}");
+        assert!(short.ends_with("deeper"), "{short}");
+        assert_eq!(shorten_middle("/a/b", 24), "/a/b");
+    }
+
+    #[test]
+    fn a_disabled_line_still_runs_the_work_and_draws_nothing() {
+        let tracker = tracker_of(&["x"]);
+        let progress = LiveProgress {
+            title: "t",
+            verb: "v",
+            tracker: &tracker,
+            files_of: None,
+            refresh: None,
+        };
+        assert_eq!(progress.run(false, || 7), 7);
     }
 }

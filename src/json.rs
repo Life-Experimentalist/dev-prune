@@ -737,6 +737,7 @@ pub fn caches_clear_document(
                 "bytes_after": o.after,
                 "freed_bytes": o.freed(),
                 "cleared": o.problem.is_none(),
+                "partial": o.partial(),
             });
             if let Some(problem) = &o.problem {
                 obj["error"] = json!(problem);
