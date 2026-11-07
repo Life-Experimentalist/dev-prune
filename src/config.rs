@@ -19,6 +19,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::constants;
+use crate::volume::{SystemVolumes, VolumeView};
 
 /// Global settings that control prune behavior.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -477,6 +478,21 @@ pub struct RepoEntry {
     /// field existed, and older binaries ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub missing_since: Option<DateTime<Utc>>,
+    /// Which volume this repository's drive was when it was last seen healthy, for
+    /// example `win:1A2B-3C4D:NTFS` (see [`crate::volume`]).
+    ///
+    /// A drive letter says nothing about the disk behind it: a removable drive can come
+    /// back as another letter, and a letter can be handed to a different disk. With the
+    /// volume recorded, an entry whose letter now belongs to another disk is inactive
+    /// rather than healthy, and one whose drive returned under a new letter is
+    /// re-pointed. Absent for entries on drives with no identity (network shares, other
+    /// platforms) and for registries written before this field existed; older binaries
+    /// ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_id: Option<String>,
+    /// The volume's label when `volume_id` was recorded. Shown to people, never matched on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volume_label: Option<String>,
 }
 
 impl RepoEntry {
@@ -490,6 +506,8 @@ impl RepoEntry {
             total_freed_bytes: 0,
             identity: None,
             missing_since: None,
+            volume_id: None,
+            volume_label: None,
         }
     }
 }
@@ -497,11 +515,18 @@ impl RepoEntry {
 /// What a registered path looks like on disk right now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PathState {
-    /// The path does not exist (deleted, moved, or on a drive that is not there).
+    /// The path does not exist (deleted or moved) on a drive that is connected.
     Missing,
     /// The path exists but is no longer a working git checkout.
     Orphan,
     Healthy,
+    /// The repository's drive is not connected, or its letter now belongs to a different
+    /// volume than the one the repository was registered on.
+    ///
+    /// Nothing is known about the repository itself, so it is neither healthy nor
+    /// deleted: it is never pruned, never dropped, carries no missing-since clock, and
+    /// returns to normal on its own when the drive does.
+    Inactive,
 }
 
 /// The drive, share or mount a path lives on.
@@ -561,88 +586,170 @@ fn classify_path(path: &Path) -> PathState {
     }
 }
 
+/// What one volume root looks like right now.
+struct RootStatus {
+    present: bool,
+    /// The volume's identity, read only when the root exists.
+    identity: Option<String>,
+    label: Option<String>,
+}
+
+impl RootStatus {
+    fn read(root: &Path, view: &dyn VolumeView) -> Self {
+        if !root.exists() {
+            return Self {
+                present: false,
+                identity: None,
+                label: None,
+            };
+        }
+        Self {
+            present: true,
+            identity: view.identity_at(root),
+            label: view.label_at(root),
+        }
+    }
+
+    /// Whether an entry registered on volume `recorded` cannot be trusted to be at this
+    /// root now.
+    ///
+    /// An unreadable identity counts against the entry: a letter that used to be a local
+    /// disk and now answers with nothing is, most often, a network share or an empty
+    /// card reader, and the same relative path on it is somebody else's directory.
+    /// Without a recorded volume only the root's presence is known, as before.
+    fn leaves_inactive(&self, recorded: Option<&str>) -> bool {
+        !self.present || recorded.is_some_and(|wanted| self.identity.as_deref() != Some(wanted))
+    }
+}
+
+/// Registered repositories that are inactive, and the drive each one is on.
+#[derive(Debug, Default, Clone)]
+pub struct InactiveRepos {
+    drives: HashMap<PathBuf, String>,
+}
+
+impl InactiveRepos {
+    /// Whether the registered path `key` is inactive.
+    pub fn contains(&self, key: &Path) -> bool {
+        self.drives.contains_key(key)
+    }
+
+    pub fn len(&self) -> usize {
+        self.drives.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.drives.is_empty()
+    }
+
+    /// The drive or mount `key` is registered on, as a person would write it (`E:`).
+    pub fn drive_of(&self, key: &Path) -> Option<&str> {
+        self.drives.get(key).map(String::as_str)
+    }
+
+    /// Inactive paths grouped by drive, both in sorted order.
+    pub fn by_drive(&self) -> BTreeMap<String, Vec<PathBuf>> {
+        let mut grouped: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+        for (path, drive) in &self.drives {
+            grouped.entry(drive.clone()).or_default().push(path.clone());
+        }
+        for paths in grouped.values_mut() {
+            paths.sort();
+        }
+        grouped
+    }
+}
+
+/// A registered path and the volume it was registered on.
+type VolumeEntry = (PathBuf, Option<String>);
+
+/// Registered paths grouped by the volume they live on.
+fn group_by_volume(entries: &[VolumeEntry]) -> Vec<(PathBuf, Vec<&VolumeEntry>)> {
+    let mut grouped: BTreeMap<PathBuf, Vec<&VolumeEntry>> = BTreeMap::new();
+    for entry in entries {
+        grouped
+            .entry(volume_root(&entry.0))
+            .or_default()
+            .push(entry);
+    }
+    grouped.into_iter().collect()
+}
+
+/// One worker per volume group, so a hung network volume holds up only its own group.
+///
+/// Groups are taken off a shared cursor by [`crate::parallel::map_ordered`]: a worker
+/// stuck in one group is simply not taking more, and the others carry on.
+fn group_workers(groups: usize) -> usize {
+    crate::parallel::clamp_workers(constants::EXISTENCE_CHECK_MAX_THREADS, groups)
+}
+
+/// Which of `entries` are inactive, without touching the paths themselves.
+fn find_inactive(entries: &[VolumeEntry], view: &dyn VolumeView) -> InactiveRepos {
+    let groups = group_by_volume(entries);
+    let found = crate::parallel::map_ordered(&groups, group_workers(groups.len()), |_, group| {
+        let (root, members) = group;
+        let status = RootStatus::read(root, view);
+        let drive = crate::volume::display_root(root);
+        members
+            .iter()
+            .filter(|(_, recorded)| status.leaves_inactive(recorded.as_deref()))
+            .map(|(path, _)| (path.clone(), drive.clone()))
+            .collect::<Vec<_>>()
+    });
+    InactiveRepos {
+        drives: found.into_iter().flatten().collect(),
+    }
+}
+
 /// Existence of every registered path, computed once.
 struct Liveness {
     states: HashMap<PathBuf, PathState>,
     present_volumes: HashSet<PathBuf>,
+    roots: HashMap<PathBuf, RootStatus>,
 }
 
 impl Liveness {
-    /// Check `paths`, one worker per volume.
+    /// Check `entries` (a path and the volume it was registered on), one worker per
+    /// volume.
     ///
     /// A stat on an unreachable network path can block for many seconds; grouped by
     /// volume, that wait stalls only that volume's paths and not the healthy drives
-    /// beside it. A volume whose root is absent is not walked at all.
-    fn scan(paths: &[PathBuf]) -> Self {
-        let mut grouped: BTreeMap<PathBuf, Vec<&PathBuf>> = BTreeMap::new();
-        for path in paths {
-            grouped.entry(volume_root(path)).or_default().push(path);
-        }
-        let groups: Vec<(PathBuf, Vec<&PathBuf>)> = grouped.into_iter().collect();
-
-        fn check_group(group: &(PathBuf, Vec<&PathBuf>)) -> (bool, Vec<(PathBuf, PathState)>) {
-            let (root, members) = group;
-            if !root.exists() {
-                let gone = members
+    /// beside it. A volume that is absent, or that is now a different volume than the
+    /// one recorded, is not walked at all: its paths are inactive.
+    fn scan_entries(entries: &[VolumeEntry], view: &dyn VolumeView) -> Self {
+        let groups = group_by_volume(entries);
+        let done =
+            crate::parallel::map_ordered(&groups, group_workers(groups.len()), |_, group| {
+                let (root, members) = group;
+                let status = RootStatus::read(root, view);
+                let states: Vec<(PathBuf, PathState)> = members
                     .iter()
-                    .map(|p| ((*p).clone(), PathState::Missing))
+                    .map(|(path, recorded)| {
+                        let state = if status.leaves_inactive(recorded.as_deref()) {
+                            PathState::Inactive
+                        } else {
+                            classify_path(path)
+                        };
+                        (path.clone(), state)
+                    })
                     .collect();
-                return (false, gone);
-            }
-            let states = members
-                .iter()
-                .map(|p| ((*p).clone(), classify_path(p)))
-                .collect();
-            (true, states)
-        }
-
-        let mut done: HashMap<PathBuf, (bool, Vec<(PathBuf, PathState)>)> = HashMap::new();
-        let workers = groups.len().min(constants::EXISTENCE_CHECK_MAX_THREADS);
-        if workers > 1 {
-            let mut buckets: Vec<Vec<&(PathBuf, Vec<&PathBuf>)>> = vec![Vec::new(); workers];
-            for (i, group) in groups.iter().enumerate() {
-                buckets[i % workers].push(group);
-            }
-            std::thread::scope(|scope| {
-                let mut handles = Vec::new();
-                for bucket in &buckets {
-                    let spawned = std::thread::Builder::new().spawn_scoped(scope, move || {
-                        bucket
-                            .iter()
-                            .map(|g| (g.0.clone(), check_group(g)))
-                            .collect::<Vec<_>>()
-                    });
-                    // A refused spawn is not an error: those groups are picked up by
-                    // the serial pass below.
-                    if let Ok(handle) = spawned {
-                        handles.push(handle);
-                    }
-                }
-                for handle in handles {
-                    if let Ok(results) = handle.join() {
-                        done.extend(results);
-                    }
-                }
+                (root.clone(), status, states)
             });
-        }
-        // Serial path: one volume, a refused spawn, or a worker that panicked.
-        for group in &groups {
-            if !done.contains_key(&group.0) {
-                done.insert(group.0.clone(), check_group(group));
-            }
-        }
 
         let mut states = HashMap::new();
         let mut present_volumes = HashSet::new();
-        for (root, (present, group_states)) in done {
-            if present {
-                present_volumes.insert(root);
+        let mut roots = HashMap::new();
+        for (root, status, group_states) in done {
+            if status.present {
+                present_volumes.insert(root.clone());
             }
+            roots.insert(root, status);
             states.extend(group_states);
         }
         Self {
             states,
             present_volumes,
+            roots,
         }
     }
 
@@ -652,6 +759,11 @@ impl Liveness {
 
     fn volume_present(&self, path: &Path) -> bool {
         self.present_volumes.contains(&volume_root(path))
+    }
+
+    /// What the volume under `path` looked like during this scan.
+    fn root_of(&self, path: &Path) -> Option<&RootStatus> {
+        self.roots.get(&volume_root(path))
     }
 }
 
@@ -687,6 +799,12 @@ pub struct HealReport {
     pub healed: usize,
     /// Entries dropped because they stayed missing past the grace period.
     pub expired: Vec<PathBuf>,
+    /// Entries whose drive is not connected (or is now another volume), left in place
+    /// and untouched. Never dropped, whatever the length of the absence.
+    pub inactive: Vec<PathBuf>,
+    /// Entries whose drive came back under a different letter and were re-pointed, as
+    /// `(old path, new path)`. Also counted in `healed`.
+    pub repointed: Vec<(PathBuf, PathBuf)>,
     /// Whether anything in the registry changed and so needs saving. Wider than
     /// `healed`: starting or clearing a missing-since clock changes the file too.
     pub dirty: bool,
@@ -1701,13 +1819,27 @@ impl Registry {
 
     /// Adds a repository to the registry. Returns `true` if newly added, `false` if already present.
     pub fn add_repo(&mut self, path: PathBuf) -> bool {
+        self.add_repo_with(path, &SystemVolumes)
+    }
+
+    /// [`Registry::add_repo`] reading the repository's volume from `view`.
+    ///
+    /// Every entry is created here, so this is the one place the volume is recorded at
+    /// registration. A drive with no identity leaves both fields empty.
+    pub fn add_repo_with(&mut self, path: PathBuf, view: &dyn VolumeView) -> bool {
         // The registry is keyed by path, so `./foo`, `foo/`, and the absolute form
         // would otherwise register as three separate repositories.
         let path = canonical_key(&path);
         if self.repositories.contains_key(&path) {
             return false;
         }
-        self.repositories.insert(path, RepoEntry::new());
+        let mut entry = RepoEntry::new();
+        let root = volume_root(&path);
+        entry.volume_id = view.identity_at(&root);
+        if entry.volume_id.is_some() {
+            entry.volume_label = view.label_at(&root);
+        }
+        self.repositories.insert(path, entry);
         true
     }
 
@@ -1724,11 +1856,24 @@ impl Registry {
     /// a clone, and linked worktrees (whose `.git` is a file) share their main
     /// repository's root commit without being it.
     pub fn register_discovered(&mut self, found: Vec<PathBuf>) -> DiscoveryOutcome {
+        self.register_discovered_with(found, &SystemVolumes)
+    }
+
+    /// [`Registry::register_discovered`] reading volumes from `view`.
+    ///
+    /// An entry on a drive that is not connected is not "missing": its repository is
+    /// presumably where it always was, and a found repository with the same root commit
+    /// is a clone of it, so it is never adopted as a move.
+    pub fn register_discovered_with(
+        &mut self,
+        found: Vec<PathBuf>,
+        view: &dyn VolumeView,
+    ) -> DiscoveryOutcome {
         let mut outcome = DiscoveryOutcome::default();
         let mut fresh: Vec<PathBuf> = Vec::new();
         for repo in found {
             let key = canonical_key(&repo);
-            if self.add_repo(repo) {
+            if self.add_repo_with(repo, view) {
                 fresh.push(key);
             }
         }
@@ -1746,7 +1891,14 @@ impl Registry {
         if carriers.is_empty() {
             return outcome;
         }
-        let liveness = Liveness::scan(&carriers);
+        let carrier_entries: Vec<VolumeEntry> = carriers
+            .iter()
+            .map(|p| {
+                let recorded = self.repositories.get(p).and_then(|e| e.volume_id.clone());
+                (p.clone(), recorded)
+            })
+            .collect();
+        let liveness = Liveness::scan_entries(&carrier_entries, view);
         if !carriers
             .iter()
             .any(|p| liveness.state(p) == PathState::Missing)
@@ -1778,7 +1930,7 @@ impl Registry {
             .collect();
 
         for (path, id) in claimed {
-            if let Adoption::Moved(old) = self.adopt_moved_entry(&path, Some(id)) {
+            if let Adoption::Moved(old) = self.adopt_moved_entry_with(&path, Some(id), view) {
                 outcome.added -= 1;
                 outcome.moved.push((old, path));
             }
@@ -1799,6 +1951,21 @@ impl Registry {
     /// nothing they do can be recognised as a move; re-registering them records one, and
     /// a single `devp init ~/code` backfills the whole registry.
     pub fn adopt_moved_entry(&mut self, path: &Path, identity: Option<String>) -> Adoption {
+        self.adopt_moved_entry_with(path, identity, &SystemVolumes)
+    }
+
+    /// [`Registry::adopt_moved_entry`] reading volumes from `view`.
+    ///
+    /// Only an entry that is really gone can be adopted as moved. One on a drive that is
+    /// not connected is inactive, not gone, and stays registered: dropping it because a
+    /// clone turned up elsewhere would lose the history of a repository that returns
+    /// with its drive.
+    pub fn adopt_moved_entry_with(
+        &mut self,
+        path: &Path,
+        identity: Option<String>,
+        view: &dyn VolumeView,
+    ) -> Adoption {
         let key = canonical_key(path);
         let Some(identity) = identity else {
             return Adoption::Nothing;
@@ -1812,6 +1979,15 @@ impl Registry {
             })
             .map(|(p, _)| p.clone())
             .collect();
+        let candidates: Vec<VolumeEntry> = claimants
+            .iter()
+            .map(|p| {
+                let recorded = self.repositories.get(p).and_then(|e| e.volume_id.clone());
+                (p.clone(), recorded)
+            })
+            .collect();
+        let inactive = find_inactive(&candidates, view);
+        claimants.retain(|p| !inactive.contains(p));
         // Deterministic: two dead entries with one identity is a report, not a coin toss,
         // and the report must read the same twice.
         claimants.sort();
@@ -1892,17 +2068,39 @@ impl Registry {
     /// Existence is read once up front, volume by volume, instead of once per entry per
     /// dead entry.
     pub fn heal(&mut self, now: DateTime<Utc>) -> HealReport {
+        self.heal_with(now, &SystemVolumes)
+    }
+
+    /// [`Registry::heal`] reading volumes from `view`, so a test can stand in drives that
+    /// appear, vanish and swap letters.
+    ///
+    /// Each entry is first placed on its volume. An entry whose drive
+    /// is not connected, or whose letter now belongs to a different volume than the one
+    /// recorded for it, is inactive: it is neither checked for existence nor given a
+    /// missing-since clock, and it is never dropped. If exactly one connected volume is
+    /// the recorded one, the repository is looked for at the same relative path there
+    /// and, when it is the same repository, the entry is re-pointed with its history.
+    /// With no match, a failed check or two connected volumes of the same identity (a
+    /// cloned drive), nothing is guessed and the entry stays inactive.
+    pub fn heal_with(&mut self, now: DateTime<Utc>, view: &dyn VolumeView) -> HealReport {
         let mut report = HealReport::default();
         let mut keys: Vec<PathBuf> = self.repositories.keys().cloned().collect();
         if keys.is_empty() {
             return report;
         }
         keys.sort();
-        let liveness = Liveness::scan(&keys);
+        let entries: Vec<VolumeEntry> = keys
+            .iter()
+            .map(|k| {
+                let recorded = self.repositories.get(k).and_then(|e| e.volume_id.clone());
+                (k.clone(), recorded)
+            })
+            .collect();
+        let liveness = Liveness::scan_entries(&entries, view);
 
         let mut live: HashSet<PathBuf> = keys
             .iter()
-            .filter(|p| liveness.state(p) != PathState::Missing)
+            .filter(|p| !matches!(liveness.state(p), PathState::Missing | PathState::Inactive))
             .cloned()
             .collect();
         let dead_keys: Vec<PathBuf> = keys
@@ -1910,23 +2108,68 @@ impl Registry {
             .filter(|p| liveness.state(p) == PathState::Missing)
             .cloned()
             .collect();
+        let inactive_keys: Vec<PathBuf> = keys
+            .iter()
+            .filter(|p| liveness.state(p) == PathState::Inactive)
+            .cloned()
+            .collect();
 
-        // Orphans start or continue their clock; a healthy path forgets one.
+        let mut changes = 0;
+
+        // Inactive entries get one chance to follow their drive to a new letter; the
+        // list of mounted volumes is only read when there is someone to look for.
+        if !inactive_keys.is_empty() {
+            let mounted = view.mounted();
+            for key in inactive_keys {
+                if let Some(new_key) = self.repoint_to_returned_volume(&key, &mounted, view) {
+                    live.insert(new_key.clone());
+                    report.repointed.push((key, new_key));
+                    changes += 1;
+                    continue;
+                }
+                // Time spent unplugged never counts toward the grace period.
+                if let Some(entry) = self.repositories.get_mut(&key)
+                    && entry.missing_since.take().is_some()
+                {
+                    report.dirty = true;
+                }
+                report.inactive.push(key);
+            }
+        }
+
+        // Orphans start or continue their clock; a healthy path forgets one and learns
+        // which volume it is on.
         for path in &keys {
             match liveness.state(path) {
                 PathState::Orphan => self.note_absence(path, now, &liveness, &mut report),
                 PathState::Healthy => {
-                    if let Some(entry) = self.repositories.get_mut(path)
-                        && entry.missing_since.take().is_some()
-                    {
-                        report.dirty = true;
+                    let root = liveness.root_of(path);
+                    if let Some(entry) = self.repositories.get_mut(path) {
+                        if entry.missing_since.take().is_some() {
+                            report.dirty = true;
+                        }
+                        if let Some(status) = root
+                            && let Some(id) = &status.identity
+                        {
+                            let learned = entry.volume_id.is_none();
+                            if learned {
+                                entry.volume_id = Some(id.clone());
+                            }
+                            // The label is only shown, so a rename is followed but a
+                            // drive that cannot report one never erases what is known.
+                            if (learned || entry.volume_label != status.label)
+                                && status.label.is_some()
+                            {
+                                entry.volume_label = status.label.clone();
+                                report.dirty = true;
+                            }
+                            report.dirty |= learned;
+                        }
                     }
                 }
-                PathState::Missing => {}
+                PathState::Missing | PathState::Inactive => {}
             }
         }
-
-        let mut changes = 0;
 
         for dead_path in dead_keys {
             // 1. If it's an ephemeral AI worktree that was deleted, silently drop it.
@@ -2069,6 +2312,100 @@ impl Registry {
     /// entries merged, re-pointed or dropped as ephemeral worktrees.
     pub fn heal_dead_and_moved_repositories(&mut self) -> usize {
         self.heal(Utc::now()).healed
+    }
+
+    /// The registered repositories whose drive is not connected, or is now a different
+    /// volume than the one they were registered on.
+    ///
+    /// Read-only and cheap (one check per drive, not per repository), so every pass that
+    /// walks the registry asks it for itself rather than trusting an earlier `heal`: an
+    /// inactive repository must never be handed to the prune engine, and the drive can
+    /// disappear between the two.
+    pub fn inactive_repos(&self) -> InactiveRepos {
+        self.inactive_repos_with(&SystemVolumes)
+    }
+
+    /// [`Registry::inactive_repos`] reading volumes from `view`.
+    pub fn inactive_repos_with(&self, view: &dyn VolumeView) -> InactiveRepos {
+        let entries: Vec<VolumeEntry> = self
+            .repositories
+            .iter()
+            .map(|(path, entry)| (path.clone(), entry.volume_id.clone()))
+            .collect();
+        find_inactive(&entries, view)
+    }
+
+    /// Follow an inactive entry to the connected volume that is its recorded one.
+    ///
+    /// Returns the new key when the entry was re-pointed. Every refusal is silent and
+    /// leaves the registry as it was: a wrong re-point welds a repository's history to a
+    /// different project, which is far worse than an entry that waits.
+    fn repoint_to_returned_volume(
+        &mut self,
+        old: &Path,
+        mounted: &[(PathBuf, String)],
+        view: &dyn VolumeView,
+    ) -> Option<PathBuf> {
+        let entry = self.repositories.get(old)?;
+        let wanted = entry.volume_id.clone()?;
+        let recorded_identity = entry.identity.clone();
+
+        let mut matches = mounted.iter().filter(|(_, id)| *id == wanted);
+        let (root, _) = matches.next()?;
+        // Two connected volumes with one identity are copies of each other (a cloned
+        // drive); nothing says which holds the repository the entry is about.
+        if matches.next().is_some() {
+            return None;
+        }
+
+        let relative = old.strip_prefix(volume_root(old)).ok()?;
+        let candidate = root.join(relative);
+        if classify_path(&candidate) != PathState::Healthy {
+            return None;
+        }
+        // The same relative path on the same volume is strong evidence, and the root
+        // commit settles it. `None` (no commits, git refusing, a stalled call) is "cannot
+        // prove" and never a match.
+        if let Some(identity) = &recorded_identity
+            && crate::scanner::git::repo_identity(&candidate).as_deref() != Some(identity.as_str())
+        {
+            return None;
+        }
+
+        let new_key = canonical_key(&candidate);
+        if new_key == old {
+            return None;
+        }
+        let mut moved = self.repositories.remove(old)?;
+        moved.missing_since = None;
+        if let Some(label) = view.label_at(root) {
+            moved.volume_label = Some(label);
+        }
+        // `last_added_repos` is the batch `devp undo` unlinks; a re-pointed entry was not
+        // added by the user's last link and must not become undoable.
+        self.last_added_repos.retain(|p| p != old);
+
+        match self.repositories.get_mut(&new_key) {
+            Some(existing) => {
+                // The new location was registered on its own before the drive came
+                // back: everything the old path had earned moves onto that entry, the
+                // same way a moved repository's history does.
+                existing.added_at = existing.added_at.min(moved.added_at);
+                existing.last_pruned_at = existing.last_pruned_at.max(moved.last_pruned_at);
+                existing.override_idle_days = moved.override_idle_days;
+                existing.enabled = moved.enabled;
+                existing.total_freed_bytes =
+                    existing.total_freed_bytes.max(moved.total_freed_bytes);
+                existing.identity = existing.identity.take().or(moved.identity);
+                existing.volume_id = existing.volume_id.take().or(moved.volume_id);
+                existing.volume_label = existing.volume_label.take().or(moved.volume_label);
+                existing.missing_since = None;
+            }
+            None => {
+                self.repositories.insert(new_key.clone(), moved);
+            }
+        }
+        Some(new_key)
     }
 
     /// Start, or act on, the clock for a path that is missing or orphaned and matched
@@ -3685,11 +4022,19 @@ mod tests {
         paths.push(repo.clone());
         paths.push(tmp.path().join("deleted"));
 
-        let liveness = Liveness::scan(&paths);
+        let entries: Vec<VolumeEntry> = paths.iter().map(|p| (p.clone(), None)).collect();
+        let liveness = Liveness::scan_entries(&entries, &SystemVolumes);
 
         for path in &paths {
-            assert_eq!(liveness.state(path), classify_path(path), "{path:?}");
+            let expected = if volume_root(path).exists() {
+                classify_path(path)
+            } else {
+                PathState::Inactive
+            };
+            assert_eq!(liveness.state(path), expected, "{path:?}");
         }
+        assert_eq!(liveness.state(&paths[0]), PathState::Inactive);
+        assert_eq!(liveness.state(&paths[4]), PathState::Missing);
         assert_eq!(liveness.state(&repo), PathState::Healthy);
         assert!(liveness.volume_present(&repo));
         assert!(!liveness.volume_present(&paths[0]));
@@ -3714,5 +4059,558 @@ mod tests {
             );
             assert_eq!(volume_root(Path::new("/home/me/a")), PathBuf::from("/"));
         }
+    }
+
+    // ---- volume identity: inactive entries and drive-letter re-pointing ----
+
+    const VOL_A: &str = "win:AAAA-0001:NTFS";
+    const VOL_B: &str = "win:BBBB-0002:NTFS";
+
+    /// Drives that appear, vanish and swap letters, without any hardware.
+    ///
+    /// A directory stands in for a drive: the real drive it sits on is made to report
+    /// whatever identity the test says. A drive nobody listed reports nothing, which
+    /// keeps the tests independent of this machine's real serial numbers.
+    #[derive(Default)]
+    struct FakeVolumes {
+        ids: HashMap<String, Option<String>>,
+        labels: HashMap<String, String>,
+        mounted: Vec<(PathBuf, String)>,
+    }
+
+    impl FakeVolumes {
+        fn key(dir: &Path) -> String {
+            crate::volume::display_root(&volume_root(dir))
+        }
+
+        /// The real drive that holds `dir` reports `id` (nothing, for `None`).
+        fn drive_of(mut self, dir: &Path, id: Option<&str>) -> Self {
+            self.ids.insert(Self::key(dir), id.map(String::from));
+            self
+        }
+
+        fn labelled(mut self, dir: &Path, label: &str) -> Self {
+            self.labels.insert(Self::key(dir), label.to_string());
+            self
+        }
+
+        /// `root` is a connected volume with identity `id`.
+        fn mount(mut self, root: &Path, id: &str) -> Self {
+            self.mounted.push((root.to_path_buf(), id.to_string()));
+            self
+        }
+    }
+
+    impl VolumeView for FakeVolumes {
+        fn identity_at(&self, root: &Path) -> Option<String> {
+            // Through `volume_root` so a directory standing in for a mounted drive is
+            // answered for like the real drive it sits on.
+            self.ids.get(&Self::key(root)).cloned().flatten()
+        }
+
+        fn label_at(&self, root: &Path) -> Option<String> {
+            self.labels.get(&Self::key(root)).cloned()
+        }
+
+        fn mounted(&self) -> Vec<(PathBuf, String)> {
+            self.mounted.clone()
+        }
+    }
+
+    /// The part of `gone` below its volume root: where it would sit on another drive.
+    fn below_root(gone: &Path) -> PathBuf {
+        gone.strip_prefix(volume_root(gone)).unwrap().to_path_buf()
+    }
+
+    /// An entry registered on `volume` for the repository at `repo`, with a history worth
+    /// keeping.
+    fn entry_with_history(repo: &Path, volume: &str) -> RepoEntry {
+        let mut entry = RepoEntry::new();
+        entry.identity = crate::scanner::git::repo_identity(repo);
+        entry.volume_id = Some(volume.to_string());
+        entry.total_freed_bytes = 4242;
+        entry.override_idle_days = Some(9);
+        entry.enabled = false;
+        entry.last_pruned_at = Some(Utc::now() - chrono::Duration::days(40));
+        entry
+    }
+
+    #[test]
+    fn a_drive_returning_under_a_new_letter_is_repointed_with_its_history() {
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let new = tmp.path().join(below_root(&old));
+        real_repo(&new, "returning-drive");
+
+        let mut reg = Registry::default();
+        let mut entry = entry_with_history(&new, VOL_A);
+        entry.missing_since = Some(Utc::now() - chrono::Duration::days(3));
+        let pruned = entry.last_pruned_at;
+        let added = entry.added_at;
+        reg.repositories.insert(old.clone(), entry);
+        reg.last_added_repos.push(old.clone());
+
+        let view = FakeVolumes::default()
+            .drive_of(tmp.path(), Some(VOL_A))
+            .labelled(tmp.path(), "Backup")
+            .mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        let new_key = canonical_key(&new);
+        assert_eq!(report.repointed, vec![(old.clone(), new_key.clone())]);
+        assert!(report.inactive.is_empty());
+        assert!(report.dirty);
+        assert_eq!(reg.repositories.len(), 1);
+        assert!(!reg.repositories.contains_key(&old));
+        let carried = &reg.repositories[&new_key];
+        assert_eq!(carried.total_freed_bytes, 4242);
+        assert_eq!(carried.override_idle_days, Some(9));
+        assert!(!carried.enabled);
+        assert_eq!(carried.last_pruned_at, pruned);
+        assert_eq!(carried.added_at, added);
+        assert_eq!(carried.missing_since, None);
+        assert_eq!(carried.volume_id.as_deref(), Some(VOL_A));
+        assert_eq!(carried.volume_label.as_deref(), Some("Backup"));
+        // An undo after a silent re-point must not unlink the repository.
+        assert!(reg.last_added_repos.is_empty());
+
+        // The entry is ordinary afterwards: a second pass has nothing to report.
+        let again = reg.heal_with(Utc::now(), &view);
+        assert!(again.repointed.is_empty() && again.inactive.is_empty());
+        assert!(!again.dirty);
+        assert!(reg.repositories.contains_key(&new_key));
+        assert!(
+            new.join(".git").is_dir(),
+            "the repository itself is untouched"
+        );
+    }
+
+    #[test]
+    fn an_entry_with_no_repo_identity_follows_its_drive_on_the_path_alone() {
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let new = tmp.path().join(below_root(&old));
+        fs::create_dir_all(new.join(".git")).unwrap();
+
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.volume_id = Some(VOL_A.into());
+        reg.repositories.insert(old.clone(), entry);
+
+        let view = FakeVolumes::default().mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert_eq!(report.repointed.len(), 1);
+        assert!(reg.repositories.contains_key(&canonical_key(&new)));
+    }
+
+    #[test]
+    fn a_drive_that_returns_with_nothing_at_the_old_place_stays_inactive() {
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.volume_id = Some(VOL_A.into());
+        entry.identity = Some("0123456789abcdef0123456789abcdef01234567".into());
+        reg.repositories.insert(old.clone(), entry);
+
+        let view = FakeVolumes::default().mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert!(report.repointed.is_empty());
+        assert_eq!(report.inactive, vec![old.clone()]);
+        assert!(reg.repositories.contains_key(&old));
+    }
+
+    #[test]
+    fn a_different_repository_at_the_same_place_is_not_the_one_registered() {
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let there = tmp.path().join(below_root(&old));
+        real_repo(&there, "a-stranger-on-the-returned-drive");
+
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.volume_id = Some(VOL_A.into());
+        entry.identity = Some("0123456789abcdef0123456789abcdef01234567".into());
+        entry.total_freed_bytes = 99;
+        reg.repositories.insert(old.clone(), entry);
+
+        let view = FakeVolumes::default().mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert!(report.repointed.is_empty(), "verification failed");
+        assert_eq!(report.inactive, vec![old.clone()]);
+        assert_eq!(reg.repositories.len(), 1);
+        assert_eq!(reg.repositories[&old].total_freed_bytes, 99);
+    }
+
+    #[test]
+    fn a_repository_whose_identity_cannot_be_read_is_never_a_match() {
+        // The same code path as a git call that stalled and was cut off: `repo_identity`
+        // answers `None`. A repository with no commit gives that answer without any
+        // timing, and it must read as "cannot prove", not as a match.
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let there = tmp.path().join(below_root(&old));
+        fs::create_dir_all(&there).unwrap();
+        git_ok(&there, &["init"]);
+        assert_eq!(crate::scanner::git::repo_identity(&there), None);
+        assert_eq!(classify_path(&there), PathState::Healthy);
+
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.volume_id = Some(VOL_A.into());
+        entry.identity = Some("0123456789abcdef0123456789abcdef01234567".into());
+        reg.repositories.insert(old.clone(), entry);
+
+        let view = FakeVolumes::default().mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert!(report.repointed.is_empty());
+        assert_eq!(report.inactive, vec![old.clone()]);
+        assert!(reg.repositories.contains_key(&old));
+    }
+
+    #[test]
+    fn two_mounted_volumes_sharing_one_identity_are_never_guessed_between() {
+        let first = TempDir::new().unwrap();
+        let second = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let relative = below_root(&old);
+        real_repo(&first.path().join(&relative), "cloned-drive");
+        real_repo(&second.path().join(&relative), "cloned-drive");
+
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.volume_id = Some(VOL_A.into());
+        entry.identity = crate::scanner::git::repo_identity(&first.path().join(&relative));
+        reg.repositories.insert(old.clone(), entry);
+
+        let view = FakeVolumes::default()
+            .mount(first.path(), VOL_A)
+            .mount(second.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert!(report.repointed.is_empty());
+        assert_eq!(report.inactive, vec![old.clone()]);
+        assert_eq!(reg.repositories.len(), 1);
+        assert!(reg.repositories.contains_key(&old));
+    }
+
+    #[test]
+    fn a_letter_reused_by_another_volume_makes_the_entry_inactive_not_healthy() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("proj");
+        real_repo(&repo, "foreign-drive");
+        let key = canonical_key(&repo);
+
+        let mut reg = Registry::default();
+        reg.repositories
+            .insert(key.clone(), entry_with_history(&repo, VOL_A));
+
+        // The path exists and is a perfectly good repository, but the drive under it is
+        // not the one this entry was registered on.
+        let foreign = FakeVolumes::default().drive_of(tmp.path(), Some(VOL_B));
+        let entries = vec![(key.clone(), Some(VOL_A.to_string()))];
+        assert_eq!(
+            Liveness::scan_entries(&entries, &foreign).state(&key),
+            PathState::Inactive
+        );
+
+        let inactive = reg.inactive_repos_with(&foreign);
+        assert!(inactive.contains(&key));
+        assert_eq!(
+            inactive.drive_of(&key),
+            Some(crate::volume::display_root(&volume_root(&repo)).as_str())
+        );
+
+        let report = reg.heal_with(Utc::now() + chrono::Duration::days(365), &foreign);
+        assert_eq!(report.inactive, vec![key.clone()]);
+        assert!(report.repointed.is_empty() && report.expired.is_empty());
+        let kept = &reg.repositories[&key];
+        assert_eq!(kept.volume_id.as_deref(), Some(VOL_A), "never re-stamped");
+        assert_eq!(kept.missing_since, None);
+        assert_eq!(kept.total_freed_bytes, 4242);
+    }
+
+    #[test]
+    fn a_drive_that_reports_no_identity_under_a_recorded_one_is_inactive() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("proj");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let key = canonical_key(&repo);
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.volume_id = Some(VOL_A.into());
+        reg.repositories.insert(key.clone(), entry);
+
+        // A network share that took over the letter answers with no identity.
+        let share = FakeVolumes::default().drive_of(tmp.path(), None);
+        assert!(reg.inactive_repos_with(&share).contains(&key));
+    }
+
+    #[test]
+    fn an_unplugged_drive_makes_entries_inactive_and_they_are_never_dropped() {
+        let gone = absent_volume_paths(2);
+        let mut reg = Registry::default();
+        let mut with_id = RepoEntry::new();
+        with_id.volume_id = Some(VOL_A.into());
+        with_id.missing_since = Some(Utc::now() - chrono::Duration::days(29));
+        let mut without_id = RepoEntry::new();
+        without_id.missing_since = Some(Utc::now() - chrono::Duration::days(365));
+        reg.repositories.insert(gone[0].clone(), with_id);
+        reg.repositories.insert(gone[1].clone(), without_id);
+
+        let view = FakeVolumes::default();
+        let now = Utc::now();
+        let report = reg.heal_with(now, &view);
+        let mut listed = report.inactive.clone();
+        listed.sort();
+        let mut expected = gone.clone();
+        expected.sort();
+        assert_eq!(listed, expected);
+        assert!(report.dirty, "clearing the clock is a change to save");
+        for path in &gone {
+            assert_eq!(reg.repositories[path].missing_since, None, "{path:?}");
+        }
+
+        for days in [365, 730] {
+            let later = reg.heal_with(now + chrono::Duration::days(days), &view);
+            assert!(later.expired.is_empty());
+            assert_eq!(later.inactive.len(), 2);
+            assert!(!later.dirty, "nothing to save while the drive is away");
+            assert_eq!(reg.repositories.len(), 2);
+            for path in &gone {
+                assert_eq!(reg.repositories[path].missing_since, None);
+            }
+        }
+    }
+
+    #[test]
+    fn a_drive_that_comes_back_restores_its_entries_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("proj");
+        real_repo(&repo, "unplug-and-return");
+        let key = canonical_key(&repo);
+        let mut reg = Registry::default();
+        reg.repositories
+            .insert(key.clone(), entry_with_history(&repo, VOL_A));
+        let before = reg.repositories[&key].clone();
+
+        let unplugged = FakeVolumes::default().drive_of(tmp.path(), Some(VOL_B));
+        let away = reg.heal_with(Utc::now(), &unplugged);
+        assert_eq!(away.inactive, vec![key.clone()]);
+
+        let back = FakeVolumes::default().drive_of(tmp.path(), Some(VOL_A));
+        let report = reg.heal_with(Utc::now(), &back);
+
+        assert!(report.inactive.is_empty());
+        assert!(report.repointed.is_empty());
+        let after = &reg.repositories[&key];
+        assert_eq!(after.volume_id, before.volume_id);
+        assert_eq!(after.identity, before.identity);
+        assert_eq!(after.added_at, before.added_at);
+        assert_eq!(after.last_pruned_at, before.last_pruned_at);
+        assert_eq!(after.total_freed_bytes, before.total_freed_bytes);
+        assert_eq!(after.override_idle_days, before.override_idle_days);
+        assert_eq!(after.enabled, before.enabled);
+        assert_eq!(after.missing_since, None);
+        assert!(reg.inactive_repos_with(&back).is_empty());
+    }
+
+    #[test]
+    fn an_entry_with_no_volume_id_behaves_as_before_except_on_an_absent_root() {
+        let tmp = TempDir::new().unwrap();
+        let deleted = deleted_path(&tmp);
+        let gone = absent_volume_paths(1).remove(0);
+        let mut reg = Registry::default();
+        reg.repositories.insert(deleted.clone(), RepoEntry::new());
+        reg.repositories.insert(gone.clone(), RepoEntry::new());
+
+        let t0 = Utc::now();
+        let report = reg.heal_with(t0, &FakeVolumes::default());
+
+        // A deleted path on a connected drive still starts its clock...
+        assert_eq!(reg.repositories[&deleted].missing_since, Some(t0));
+        assert!(report.inactive == vec![gone.clone()]);
+        // ...and an absent drive is inactive instead of missing.
+        assert_eq!(reg.repositories[&gone].missing_since, None);
+
+        let late = reg.heal_with(
+            t0 + chrono::Duration::days(constants::MISSING_ENTRY_GRACE_DAYS),
+            &FakeVolumes::default(),
+        );
+        assert_eq!(late.expired, vec![deleted.clone()]);
+        assert!(reg.repositories.contains_key(&gone));
+    }
+
+    #[test]
+    fn volume_ids_are_learned_only_for_healthy_entries_on_a_drive_with_an_identity() {
+        let tmp = TempDir::new().unwrap();
+        let healthy = tmp.path().join("healthy");
+        fs::create_dir_all(healthy.join(".git")).unwrap();
+        let orphan = tmp.path().join("orphan");
+        fs::create_dir_all(&orphan).unwrap();
+        let deleted = deleted_path(&tmp);
+
+        let mut reg = Registry::default();
+        for path in [&healthy, &orphan, &deleted] {
+            reg.repositories.insert(path.clone(), RepoEntry::new());
+        }
+
+        // A drive that cannot name itself teaches nothing.
+        let nameless = FakeVolumes::default().drive_of(tmp.path(), None);
+        reg.heal_with(Utc::now(), &nameless);
+        assert_eq!(reg.repositories[&healthy].volume_id, None);
+
+        let named = FakeVolumes::default()
+            .drive_of(tmp.path(), Some(VOL_A))
+            .labelled(tmp.path(), "Backup");
+        let report = reg.heal_with(Utc::now(), &named);
+        assert!(report.dirty);
+        assert_eq!(reg.repositories[&healthy].volume_id.as_deref(), Some(VOL_A));
+        assert_eq!(
+            reg.repositories[&healthy].volume_label.as_deref(),
+            Some("Backup")
+        );
+        assert_eq!(reg.repositories[&orphan].volume_id, None);
+        assert_eq!(reg.repositories[&deleted].volume_id, None);
+
+        // A renamed drive updates the label; one that stops reporting a label keeps it.
+        let renamed = FakeVolumes::default()
+            .drive_of(tmp.path(), Some(VOL_A))
+            .labelled(tmp.path(), "Archive");
+        reg.heal_with(Utc::now(), &renamed);
+        assert_eq!(
+            reg.repositories[&healthy].volume_label.as_deref(),
+            Some("Archive")
+        );
+        let silent = FakeVolumes::default().drive_of(tmp.path(), Some(VOL_A));
+        reg.heal_with(Utc::now(), &silent);
+        assert_eq!(
+            reg.repositories[&healthy].volume_label.as_deref(),
+            Some("Archive")
+        );
+    }
+
+    #[test]
+    fn a_repoint_onto_an_already_registered_place_merges_the_history() {
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let new = tmp.path().join(below_root(&old));
+        real_repo(&new, "registered-twice");
+        let new_key = canonical_key(&new);
+
+        let mut reg = Registry::default();
+        reg.repositories
+            .insert(old.clone(), entry_with_history(&new, VOL_A));
+        let mut fresh = RepoEntry::new();
+        fresh.total_freed_bytes = 10;
+        fresh.volume_id = Some(VOL_A.into());
+        reg.repositories.insert(new_key.clone(), fresh);
+
+        let view = FakeVolumes::default()
+            .drive_of(tmp.path(), Some(VOL_A))
+            .mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert_eq!(report.repointed.len(), 1);
+        assert_eq!(reg.repositories.len(), 1);
+        let merged = &reg.repositories[&new_key];
+        assert_eq!(merged.total_freed_bytes, 4242);
+        assert_eq!(merged.override_idle_days, Some(9));
+        assert!(!merged.enabled);
+        assert!(merged.last_pruned_at.is_some());
+    }
+
+    #[test]
+    fn registry_entries_without_volume_fields_load_and_are_written_without_them() {
+        let old = r#"{"added_at":"2026-01-01T00:00:00Z","last_pruned_at":null,
+            "override_idle_days":null,"enabled":true}"#;
+        let entry: RepoEntry = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            (entry.volume_id.clone(), entry.volume_label.clone()),
+            (None, None)
+        );
+        let written = serde_json::to_string(&entry).unwrap();
+        assert!(
+            !written.contains("volume_id") && !written.contains("volume_label"),
+            "unset fields must not appear in the file: {written}"
+        );
+
+        let mut set = RepoEntry::new();
+        set.volume_id = Some(VOL_A.into());
+        set.volume_label = Some("Backup".into());
+        let round: RepoEntry = serde_json::from_str(&serde_json::to_string(&set).unwrap()).unwrap();
+        assert_eq!(round.volume_id.as_deref(), Some(VOL_A));
+        assert_eq!(round.volume_label.as_deref(), Some("Backup"));
+    }
+
+    #[test]
+    fn registering_a_repository_records_its_volume() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("proj");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let key = canonical_key(&repo);
+
+        let mut reg = Registry::default();
+        let view = FakeVolumes::default()
+            .drive_of(tmp.path(), Some(VOL_A))
+            .labelled(tmp.path(), "Backup");
+        assert!(reg.add_repo_with(repo.clone(), &view));
+        assert_eq!(reg.repositories[&key].volume_id.as_deref(), Some(VOL_A));
+        assert_eq!(
+            reg.repositories[&key].volume_label.as_deref(),
+            Some("Backup")
+        );
+
+        let mut bare = Registry::default();
+        let nameless = FakeVolumes::default().drive_of(tmp.path(), None);
+        assert!(bare.add_repo_with(repo, &nameless));
+        assert_eq!(bare.repositories[&key].volume_id, None);
+        assert_eq!(bare.repositories[&key].volume_label, None);
+    }
+
+    #[test]
+    fn a_found_clone_never_adopts_an_entry_on_an_unplugged_drive() {
+        let tmp = TempDir::new().unwrap();
+        let clone = tmp.path().join("clone");
+        real_repo(&clone, "cloned-while-away");
+        let identity = crate::scanner::git::repo_identity(&clone).unwrap();
+        let gone = absent_volume_paths(1).remove(0);
+
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.identity = Some(identity.clone());
+        entry.volume_id = Some(VOL_A.into());
+        entry.total_freed_bytes = 7;
+        reg.repositories.insert(gone.clone(), entry);
+
+        let view = FakeVolumes::default().drive_of(tmp.path(), Some(VOL_B));
+        let outcome = reg.register_discovered_with(vec![clone.clone()], &view);
+        assert!(outcome.moved.is_empty());
+        assert_eq!(outcome.added, 1);
+        assert_eq!(reg.repositories[&gone].total_freed_bytes, 7);
+
+        // The same holds for the direct adoption path used by `link` and `init`.
+        let adopted = reg.adopt_moved_entry_with(&clone, Some(identity), &view);
+        assert_eq!(adopted, Adoption::Nothing);
+        assert!(reg.repositories.contains_key(&gone));
+    }
+
+    #[test]
+    fn inactive_repositories_are_grouped_by_the_drive_they_are_on() {
+        let gone = absent_volume_paths(2);
+        let mut reg = Registry::default();
+        reg.repositories.insert(gone[0].clone(), RepoEntry::new());
+        reg.repositories
+            .insert(gone[0].with_file_name("second"), RepoEntry::new());
+        reg.repositories.insert(gone[1].clone(), RepoEntry::new());
+
+        let grouped = reg.inactive_repos_with(&FakeVolumes::default()).by_drive();
+        let mut sizes: Vec<usize> = grouped.values().map(Vec::len).collect();
+        sizes.sort();
+        assert_eq!(sizes, vec![1, 2]);
     }
 }

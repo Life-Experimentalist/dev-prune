@@ -225,6 +225,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Registry",
     # `SendMessageTimeoutW`, to broadcast `WM_SETTINGCHANGE` after that write.
     "Win32_UI_WindowsAndMessaging",
+    # `SetThreadErrorMode`, so asking an empty card-reader slot for its serial number
+    # fails quietly instead of raising the "no disk in drive" system dialog
+    # (`src/volume.rs`).
+    "Win32_System_Diagnostics_Debug",
 ] }
 
 [dev-dependencies]
