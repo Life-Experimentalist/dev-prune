@@ -1017,3 +1017,34 @@ pub const EXISTENCE_CHECK_MAX_THREADS: usize = 8;
 /// `/Volumes/Backup`). A registered path below one belongs to that mount, so an unplugged
 /// disk is recognised as an absent volume and not as a deleted directory.
 pub const UNIX_MOUNT_PARENTS: &[&str] = &["mnt", "media", "Volumes"];
+
+/// The kernel's table of the current process's mounts. Readable by any user.
+pub const LINUX_MOUNTINFO_PATH: &str = "/proc/self/mountinfo";
+
+/// Where udev links each filesystem UUID to the block device that holds it.
+pub const LINUX_BY_UUID_DIR: &str = "/dev/disk/by-uuid";
+
+/// Where udev links each filesystem label to its block device. Display only.
+pub const LINUX_BY_LABEL_DIR: &str = "/dev/disk/by-label";
+
+/// `diskutil`, by absolute path so a directory earlier on `PATH` cannot stand in for it.
+pub const MACOS_DISKUTIL_PATH: &str = "/usr/sbin/diskutil";
+
+/// Where macOS mounts every external volume.
+pub const MACOS_VOLUMES_DIR: &str = "/Volumes";
+
+/// The longest one `diskutil info` call may take, in seconds.
+///
+/// A healthy answer takes well under a second. This is a ceiling on a stalled disk
+/// subsystem so one hung query cannot wedge a pass, and it is far below
+/// [`GIT_STALL_CEILING_SECS`] because nothing here waits on the network.
+pub const VOLUME_QUERY_CEILING_SECS: u64 = 10;
+
+/// How long, in seconds, a macOS `diskutil` answer is reused while the volume's device
+/// number and creation time are unchanged.
+///
+/// Spawning `diskutil` costs tens of milliseconds, which is too much to pay per
+/// repository. The device number and the root directory's creation time are two `stat`
+/// calls and change when the disk is swapped, so the answer is reused for this long and
+/// then asked for again.
+pub const MACOS_VOLUME_CACHE_SECS: u64 = 30;

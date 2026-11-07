@@ -15,10 +15,17 @@
 //! ordinary drive-root APIs, so no raw `\\.\E:` handle is opened and no administrator
 //! rights are involved.
 //!
-//! Elsewhere there is no identity and no list of volumes. Linux and macOS mount points
-//! (`/mnt/usb`, `/Volumes/Backup`) keep their names across a replug, which is the
-//! problem letters have and mount points do not, so the mount-based logic in
-//! [`crate::config`] already covers them.
+//! On Linux the identity is `linux:<uuid>:<root>`: the filesystem UUID that udev publishes
+//! under `/dev/disk/by-uuid`, found by matching the mount's source device in
+//! `/proc/self/mountinfo`, plus the `root` field of that mount (the subtree of the
+//! filesystem that was mounted). The root is part of the identity because two btrfs
+//! subvolumes share one UUID, and a bind mount of `/data` is not the disk's top level.
+//! On macOS it is `mac:<uuid>`, the `VolumeUUID` that `diskutil info -plist` reports.
+//! Both are read without administrator rights.
+//!
+//! A filesystem that has no UUID (some FAT volumes without a serial, a network mount,
+//! tmpfs, overlay) has no identity, and a registered repository on one still just goes
+//! inactive when its mount is absent. Other Unix systems have no identity at all.
 //!
 //! The registry never calls the system directly. It takes a [`VolumeView`], so a test can
 //! stand in drives that appear, vanish and swap letters without any hardware.
@@ -92,9 +99,218 @@ pub fn display_root(root: &Path) -> String {
     }
 }
 
+#[derive(Clone)]
 struct VolumeInfo {
     identity: String,
     label: String,
+}
+
+/// The text parsers behind the Linux and macOS identities.
+///
+/// They take text and tables, never the machine, so the tests run on every OS. Each
+/// platform's `sys` module uses its own half, hence the blanket allow.
+#[allow(dead_code)]
+mod parse {
+    use super::VolumeInfo;
+    use std::path::{Path, PathBuf};
+
+    /// One line of `/proc/self/mountinfo`.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct MountEntry {
+        /// The subtree of the filesystem that is mounted here: `/` for a whole filesystem,
+        /// `/@home` for a btrfs subvolume, `/data` for a bind mount of a directory.
+        pub root: String,
+        pub mount_point: PathBuf,
+        pub fstype: String,
+        pub source: String,
+    }
+
+    /// The octal escapes the kernel writes for a space, tab, newline or backslash in a
+    /// path (`\040` for a space).
+    fn unescape_octal(field: &str) -> String {
+        let bytes = field.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\'
+                && bytes
+                    .get(i + 1..i + 4)
+                    .is_some_and(|d| d.iter().all(|b| (b'0'..=b'7').contains(b)))
+            {
+                let value = u32::from(bytes[i + 1] - b'0') * 64
+                    + u32::from(bytes[i + 2] - b'0') * 8
+                    + u32::from(bytes[i + 3] - b'0');
+                if let Ok(byte) = u8::try_from(value) {
+                    out.push(byte);
+                    i += 4;
+                    continue;
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// Every mount in `/proc/self/mountinfo` text, in file order. A line that does not
+    /// have the documented shape is skipped, never guessed at.
+    pub fn parse_mountinfo(text: &str) -> Vec<MountEntry> {
+        text.lines()
+            .filter_map(|line| {
+                let fields: Vec<&str> = line.split_whitespace().collect();
+                // id parent major:minor root mount-point options [optional...] - fstype source super
+                let dash = fields.iter().position(|f| *f == "-")?;
+                if dash < 6 || fields.len() < dash + 3 {
+                    return None;
+                }
+                Some(MountEntry {
+                    root: unescape_octal(fields[3]),
+                    mount_point: PathBuf::from(unescape_octal(fields[4])),
+                    fstype: fields[dash + 1].to_string(),
+                    source: unescape_octal(fields[dash + 2]),
+                })
+            })
+            .collect()
+    }
+
+    /// The mount whose mount point is exactly `at`. A directory that is merely inside a
+    /// mount does not count: an unmounted `/mnt/usb` is a plain directory on the system
+    /// disk, and must not borrow the system disk's identity. When mounts are stacked on
+    /// one point the last one is what the path shows.
+    pub fn mount_at<'a>(mounts: &'a [MountEntry], at: &Path) -> Option<&'a MountEntry> {
+        mounts.iter().rev().find(|m| m.mount_point == at)
+    }
+
+    /// The UUID whose by-uuid link leads to `device`. Both sides are canonical paths, so
+    /// `/dev/mapper/vg-root` and `/dev/dm-0` meet.
+    pub fn device_entry<'a>(device: &Path, table: &'a [(String, PathBuf)]) -> Option<&'a str> {
+        table
+            .iter()
+            .find(|(_, target)| target == device)
+            .map(|(name, _)| name.as_str())
+    }
+
+    /// `linux:<uuid>:<root>`. The UUID is lower-cased so a FAT serial reads the same
+    /// however udev capitalises it.
+    pub fn linux_identity(mount: &MountEntry, uuid: &str) -> String {
+        format!("linux:{}:{}", uuid.to_ascii_lowercase(), mount.root)
+    }
+
+    /// The identity of one mount, or `None` when it has no UUID to follow.
+    ///
+    /// Only a mount whose source is a block device can have one. tmpfs, overlay, proc and
+    /// every network filesystem put a name or `host:/path` there instead, so they fall
+    /// out here without a list of filesystem types to keep up to date.
+    pub fn identity_of_mount(
+        mount: &MountEntry,
+        canonical_source: Option<&Path>,
+        by_uuid: &[(String, PathBuf)],
+    ) -> Option<String> {
+        if !mount.source.starts_with("/dev/") {
+            return None;
+        }
+        let uuid = device_entry(canonical_source?, by_uuid)?;
+        Some(linux_identity(mount, uuid))
+    }
+
+    /// Every mount that has an identity, as (mount point, identity), except the system
+    /// root. A disk that is not the system disk is what can come back elsewhere.
+    pub fn mounted_volumes(
+        mounts: &[MountEntry],
+        by_uuid: &[(String, PathBuf)],
+        canonical: &dyn Fn(&str) -> Option<PathBuf>,
+    ) -> Vec<(PathBuf, String)> {
+        let mut out: Vec<(PathBuf, String)> = Vec::new();
+        for (i, mount) in mounts.iter().enumerate() {
+            if mount.mount_point == Path::new("/") {
+                continue;
+            }
+            // A mount buried under a later one on the same point is not reachable.
+            if mounts[i + 1..]
+                .iter()
+                .any(|later| later.mount_point == mount.mount_point)
+            {
+                continue;
+            }
+            let canonical_source = canonical(&mount.source);
+            if let Some(id) = identity_of_mount(mount, canonical_source.as_deref(), by_uuid) {
+                out.push((mount.mount_point.clone(), id));
+            }
+        }
+        out
+    }
+
+    /// udev writes a space or other awkward character in a `/dev/disk/by-label` name as
+    /// `\x20`.
+    pub fn unescape_udev(name: &str) -> String {
+        let bytes = name.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\'
+                && bytes.get(i + 1) == Some(&b'x')
+                && let Some(hex) = name.get(i + 2..i + 4)
+                && let Ok(byte) = u8::from_str_radix(hex, 16)
+            {
+                out.push(byte);
+                i += 4;
+                continue;
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// What `diskutil info -plist` says about one volume.
+    #[derive(Debug, Default, PartialEq, Eq)]
+    pub struct DiskutilInfo {
+        pub volume_uuid: Option<String>,
+        pub volume_name: Option<String>,
+        pub mount_point: Option<String>,
+    }
+
+    fn unescape_xml(text: &str) -> String {
+        text.replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", "\"")
+            .replace("&apos;", "'")
+            .replace("&amp;", "&")
+    }
+
+    /// The string value of the first `<key>name</key>` in a plist, scanning the text
+    /// rather than building a tree: the three keys wanted are top-level strings, and a
+    /// plist crate would be a new dependency for that.
+    fn plist_string(text: &str, name: &str) -> Option<String> {
+        let marker = format!("<key>{name}</key>");
+        let after = &text[text.find(&marker)? + marker.len()..];
+        let value = after.trim_start().strip_prefix("<string>")?;
+        let end = value.find("</string>")?;
+        Some(unescape_xml(&value[..end]))
+    }
+
+    pub fn parse_diskutil_plist(text: &str) -> DiskutilInfo {
+        DiskutilInfo {
+            volume_uuid: plist_string(text, "VolumeUUID").filter(|v| !v.is_empty()),
+            volume_name: plist_string(text, "VolumeName").filter(|v| !v.is_empty()),
+            mount_point: plist_string(text, "MountPoint").filter(|v| !v.is_empty()),
+        }
+    }
+
+    /// `mac:<uuid>` for the volume diskutil described, provided it is the volume mounted
+    /// at `root` itself. diskutil answers for the volume that holds a path it is given,
+    /// so a plain directory left behind in `/Volumes` would otherwise be reported as the
+    /// system disk. A reply that names no mount point is not trusted.
+    pub fn mac_volume(info: &DiskutilInfo, root: &Path) -> Option<VolumeInfo> {
+        let mount_point = info.mount_point.as_deref()?;
+        if Path::new(mount_point) != root {
+            return None;
+        }
+        Some(VolumeInfo {
+            identity: format!("mac:{}", info.volume_uuid.as_deref()?.to_ascii_lowercase()),
+            label: info.volume_name.clone().unwrap_or_default(),
+        })
+    }
 }
 
 #[cfg(windows)]
@@ -217,7 +433,182 @@ mod sys {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod sys {
+    use super::VolumeInfo;
+    use super::parse::{
+        MountEntry, identity_of_mount, mount_at, mounted_volumes, parse_mountinfo, unescape_udev,
+    };
+    use crate::constants;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn mounts() -> Option<Vec<MountEntry>> {
+        Some(parse_mountinfo(
+            &fs::read_to_string(constants::LINUX_MOUNTINFO_PATH).ok()?,
+        ))
+    }
+
+    /// (name, canonical device) for every link in a udev directory. Canonical on both
+    /// sides, because a mount source such as `/dev/mapper/vg-root` is itself a link.
+    fn link_table(dir: &str) -> Vec<(String, PathBuf)> {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|e| {
+                let target = fs::canonicalize(e.path()).ok()?;
+                Some((unescape_udev(&e.file_name().to_string_lossy()), target))
+            })
+            .collect()
+    }
+
+    fn canonical(source: &str) -> Option<PathBuf> {
+        fs::canonicalize(source).ok()
+    }
+
+    pub fn volume_info(root: &Path) -> Option<VolumeInfo> {
+        let mounts = mounts()?;
+        let mount = mount_at(&mounts, root)?;
+        let source = canonical(&mount.source);
+        let identity = identity_of_mount(
+            mount,
+            source.as_deref(),
+            &link_table(constants::LINUX_BY_UUID_DIR),
+        )?;
+        // The label is only shown, so a missing one falls back to the folder's name
+        // (udisks mounts a labelled disk at a folder of the same name).
+        let label = source
+            .as_deref()
+            .and_then(|s| {
+                link_table(constants::LINUX_BY_LABEL_DIR)
+                    .into_iter()
+                    .find(|(_, target)| target == s)
+                    .map(|(name, _)| name)
+            })
+            .or_else(|| root.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        Some(VolumeInfo { identity, label })
+    }
+
+    pub fn mounted() -> Vec<(PathBuf, String)> {
+        let Some(mounts) = mounts() else {
+            return Vec::new();
+        };
+        mounted_volumes(
+            &mounts,
+            &link_table(constants::LINUX_BY_UUID_DIR),
+            &|source| canonical(source),
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod sys {
+    use super::VolumeInfo;
+    use super::parse::{mac_volume, parse_diskutil_plist};
+    use crate::constants;
+    use std::collections::HashMap;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant, SystemTime};
+
+    /// What a mount root looked like when `diskutil` was last asked about it.
+    struct Cached {
+        device: u64,
+        created: SystemTime,
+        asked: Instant,
+        info: Option<VolumeInfo>,
+    }
+
+    static CACHE: Mutex<Option<HashMap<PathBuf, Cached>>> = Mutex::new(None);
+
+    /// The device number and creation time of `root`, provided it is itself a mount
+    /// point (its device differs from its parent's). Two `stat` calls.
+    ///
+    /// Neither alone is enough to notice a swapped disk: the device number is handed out
+    /// again to the next disk that appears as the same `diskN`, and a creation time can
+    /// repeat across a copy. Together they change whenever a different volume is mounted
+    /// at the same path.
+    fn mount_key(root: &Path) -> Option<(u64, SystemTime)> {
+        let meta = std::fs::metadata(root).ok()?;
+        let parent = std::fs::metadata(root.parent()?).ok()?;
+        if meta.dev() == parent.dev() {
+            return None;
+        }
+        Some((meta.dev(), meta.created().ok()?))
+    }
+
+    fn ask_diskutil(root: &Path) -> Option<VolumeInfo> {
+        let mut cmd = crate::spawn::command(constants::MACOS_DISKUTIL_PATH);
+        cmd.args(["info", "-plist"]).arg(root);
+        let out = crate::spawn::output_within(
+            cmd,
+            Duration::from_secs(constants::VOLUME_QUERY_CEILING_SECS),
+        )
+        .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        mac_volume(
+            &parse_diskutil_plist(&String::from_utf8_lossy(&out.stdout)),
+            root,
+        )
+    }
+
+    /// `diskutil` is spawned at most once per volume root per [`constants::MACOS_VOLUME_CACHE_SECS`],
+    /// not once per repository: the check before each prune calls this for every
+    /// repository on the disk, and the `stat` key above is what makes reusing the answer
+    /// safe.
+    pub fn volume_info(root: &Path) -> Option<VolumeInfo> {
+        let (device, created) = mount_key(root)?;
+        let ttl = Duration::from_secs(constants::MACOS_VOLUME_CACHE_SECS);
+        if let Ok(guard) = CACHE.lock()
+            && let Some(hit) = guard.as_ref().and_then(|c| c.get(root))
+            && hit.device == device
+            && hit.created == created
+            && hit.asked.elapsed() < ttl
+        {
+            return hit.info.clone();
+        }
+        // The lock is not held across the spawn, so a slow `diskutil` never blocks the
+        // other scan threads' cache hits.
+        let info = ask_diskutil(root);
+        if let Ok(mut guard) = CACHE.lock() {
+            guard.get_or_insert_with(HashMap::new).insert(
+                root.to_path_buf(),
+                Cached {
+                    device,
+                    created,
+                    asked: Instant::now(),
+                    info: info.clone(),
+                },
+            );
+        }
+        info
+    }
+
+    pub fn mounted() -> Vec<(PathBuf, String)> {
+        let Ok(entries) = std::fs::read_dir(constants::MACOS_VOLUMES_DIR) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            // `/Volumes/Macintosh HD` is a link to the system disk, which is not a
+            // volume that can come back somewhere else.
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter_map(|e| {
+                let path = e.path();
+                let info = volume_info(&path)?;
+                Some((path, info.identity))
+            })
+            .collect()
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 mod sys {
     use super::VolumeInfo;
     use std::path::{Path, PathBuf};
@@ -262,13 +653,206 @@ mod tests {
         assert_eq!(display_root(Path::new("/")), "/");
     }
 
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     #[test]
-    fn other_platforms_report_no_identity_and_no_volumes() {
+    fn a_path_that_is_not_a_mount_has_no_identity_and_the_identities_read_are_well_formed() {
         let view = SystemVolumes;
-        assert_eq!(view.identity_at(Path::new("/")), None);
-        assert_eq!(view.label_at(Path::new("/")), None);
-        assert!(view.mounted().is_empty());
+        // A folder that exists but is not a mount point must not borrow the system
+        // disk's identity, or an unmounted /mnt/usb would look like a healthy disk.
+        let here = std::env::current_dir().unwrap();
+        assert_eq!(view.identity_at(&here.join("no-such-mount")), None);
+        for (root, id) in view.mounted() {
+            assert!(
+                id.starts_with("linux:") || id.starts_with("mac:"),
+                "{root:?}: {id}"
+            );
+            assert_ne!(root, Path::new("/"));
+        }
+        if let Some(id) = view.identity_at(Path::new("/")) {
+            assert_eq!(view.identity_at(Path::new("/")), Some(id), "stable");
+        }
+    }
+
+    use super::parse::*;
+
+    /// A btrfs disk mounted three ways (top level, a subvolume, a bind of a folder), a
+    /// vfat stick whose label has a space, an LVM volume, a tmpfs and an NFS share.
+    const MOUNTINFO: &str = "\
+22 1 0:20 / /run rw,nosuid,nodev - tmpfs tmpfs rw,mode=755
+25 1 253:0 / / rw,relatime shared:1 - ext4 /dev/mapper/vg-root rw
+30 25 8:17 / /mnt/data rw,relatime shared:5 - btrfs /dev/sdb1 rw,subvolid=5,subvol=/
+31 25 8:17 /@home /home rw,relatime shared:6 - btrfs /dev/sdb1 rw,subvolid=256,subvol=/@home
+32 25 8:17 /projects /srv/projects rw,relatime shared:7 master:3 - btrfs /dev/sdb1 rw,subvolid=5,subvol=/
+33 25 8:33 / /media/me/My\\040Stick rw,nosuid - vfat /dev/sdc1 rw,fmask=0022
+34 25 0:45 / /mnt/ram rw - tmpfs tmpfs rw,size=1g
+35 25 0:50 / /mnt/share rw - nfs4 server:/export rw,vers=4.2
+not a mount line
+";
+
+    fn by_uuid() -> Vec<(String, PathBuf)> {
+        vec![
+            (
+                "5a3c2d7e-0001-4a64-9b9f-0123456789ab".into(),
+                "/dev/dm-0".into(),
+            ),
+            ("9F8E7D6C-btrfs-0002".into(), "/dev/sdb1".into()),
+            ("ABCD-1234".into(), "/dev/sdc1".into()),
+        ]
+    }
+
+    fn identity_at_mount(mount_point: &str) -> Option<String> {
+        let mounts = parse_mountinfo(MOUNTINFO);
+        let mount = mount_at(&mounts, Path::new(mount_point))?;
+        identity_of_mount(mount, Some(Path::new(&mount.source)), &by_uuid())
+    }
+
+    #[test]
+    fn mountinfo_lines_are_read_with_escaped_paths_and_optional_fields() {
+        let mounts = parse_mountinfo(MOUNTINFO);
+        assert_eq!(mounts.len(), 8, "the junk line is skipped");
+        let stick = mount_at(&mounts, Path::new("/media/me/My Stick")).expect("octal escape");
+        assert_eq!(stick.fstype, "vfat");
+        assert_eq!(stick.source, "/dev/sdc1");
+        let bind = mount_at(&mounts, Path::new("/srv/projects")).unwrap();
+        assert_eq!(
+            bind.root, "/projects",
+            "two optional fields before the dash"
+        );
+        assert_eq!(bind.fstype, "btrfs");
+    }
+
+    #[test]
+    fn a_btrfs_subvolume_a_bind_mount_and_the_top_level_are_three_identities_and_tmpfs_has_none() {
+        let top = identity_at_mount("/mnt/data").unwrap();
+        let subvolume = identity_at_mount("/home").unwrap();
+        let bind = identity_at_mount("/srv/projects").unwrap();
+        assert_eq!(top, "linux:9f8e7d6c-btrfs-0002:/");
+        assert_eq!(subvolume, "linux:9f8e7d6c-btrfs-0002:/@home");
+        assert_eq!(bind, "linux:9f8e7d6c-btrfs-0002:/projects");
+        assert_ne!(top, subvolume);
+        assert_ne!(top, bind);
+        assert_ne!(subvolume, bind);
+        assert_eq!(identity_at_mount("/mnt/ram"), None, "tmpfs");
+        assert_eq!(identity_at_mount("/run"), None, "tmpfs");
+        assert_eq!(identity_at_mount("/mnt/share"), None, "network filesystem");
+    }
+
+    #[test]
+    fn a_device_mapper_source_meets_its_by_uuid_link_and_a_fat_serial_is_lower_cased() {
+        // The by-uuid link is canonicalised to /dev/dm-0 while the mount names
+        // /dev/mapper/vg-root, so the caller hands in the canonical form.
+        let mounts = parse_mountinfo(MOUNTINFO);
+        let root = mount_at(&mounts, Path::new("/")).unwrap();
+        assert_eq!(
+            identity_of_mount(root, Some(Path::new("/dev/dm-0")), &by_uuid()).as_deref(),
+            Some("linux:5a3c2d7e-0001-4a64-9b9f-0123456789ab:/")
+        );
+        assert_eq!(
+            identity_at_mount("/media/me/My Stick").as_deref(),
+            Some("linux:abcd-1234:/")
+        );
+        // A source that cannot be resolved is "cannot prove", not a guess.
+        assert_eq!(identity_of_mount(root, None, &by_uuid()), None);
+    }
+
+    #[test]
+    fn a_folder_inside_a_mount_is_not_the_mount() {
+        let mounts = parse_mountinfo(MOUNTINFO);
+        assert!(mount_at(&mounts, Path::new("/mnt/data/projects")).is_none());
+        assert!(mount_at(&mounts, Path::new("/mnt/unmounted")).is_none());
+    }
+
+    #[test]
+    fn the_mounted_list_skips_the_system_root_and_mounts_without_a_uuid() {
+        let mounts = parse_mountinfo(MOUNTINFO);
+        let listed = mounted_volumes(&mounts, &by_uuid(), &|s| Some(PathBuf::from(s)));
+        let points: Vec<&Path> = listed.iter().map(|(p, _)| p.as_path()).collect();
+        assert_eq!(
+            points,
+            [
+                Path::new("/mnt/data"),
+                Path::new("/home"),
+                Path::new("/srv/projects"),
+                Path::new("/media/me/My Stick"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_mount_hidden_under_a_later_one_is_not_listed_and_the_later_one_wins() {
+        let text = "\
+30 25 8:17 / /mnt/usb rw - ext4 /dev/sdb1 rw
+31 25 8:33 / /mnt/usb rw - ext4 /dev/sdc1 rw
+";
+        let mounts = parse_mountinfo(text);
+        let table = vec![
+            ("aaaa".to_string(), PathBuf::from("/dev/sdb1")),
+            ("bbbb".to_string(), PathBuf::from("/dev/sdc1")),
+        ];
+        let listed = mounted_volumes(&mounts, &table, &|s| Some(PathBuf::from(s)));
+        assert_eq!(
+            listed,
+            [(PathBuf::from("/mnt/usb"), "linux:bbbb:/".to_string())]
+        );
+        let top = mount_at(&mounts, Path::new("/mnt/usb")).unwrap();
+        assert_eq!(top.source, "/dev/sdc1");
+    }
+
+    #[test]
+    fn udev_label_escapes_are_decoded() {
+        assert_eq!(unescape_udev(r"My\x20Stick"), "My Stick");
+        assert_eq!(unescape_udev("plain"), "plain");
+        assert_eq!(unescape_udev(r"odd\x"), r"odd\x");
+    }
+
+    const DISKUTIL: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>DeviceIdentifier</key>
+	<string>disk4s2</string>
+	<key>FilesystemName</key>
+	<string>APFS</string>
+	<key>MountPoint</key>
+	<string>/Volumes/Backup &amp; Work</string>
+	<key>VolumeName</key>
+	<string>Backup &amp; Work</string>
+	<key>VolumeUUID</key>
+	<string>6C1F4E0A-3B2D-4F55-9C0E-7A1D2B3C4D5E</string>
+	<key>Writable</key>
+	<true/>
+</dict>
+</plist>
+"#;
+
+    #[test]
+    fn a_diskutil_plist_yields_its_volume_uuid_name_and_mount_point() {
+        let info = parse_diskutil_plist(DISKUTIL);
+        assert_eq!(
+            info.volume_uuid.as_deref(),
+            Some("6C1F4E0A-3B2D-4F55-9C0E-7A1D2B3C4D5E")
+        );
+        assert_eq!(info.volume_name.as_deref(), Some("Backup & Work"));
+        let volume = mac_volume(&info, Path::new("/Volumes/Backup & Work")).unwrap();
+        assert_eq!(volume.identity, "mac:6c1f4e0a-3b2d-4f55-9c0e-7a1d2b3c4d5e");
+        assert_eq!(volume.label, "Backup & Work");
+    }
+
+    #[test]
+    fn a_diskutil_answer_for_another_mount_or_without_a_uuid_is_not_an_identity() {
+        let info = parse_diskutil_plist(DISKUTIL);
+        // A plain folder in /Volumes: diskutil answers with the volume that holds it.
+        assert!(mac_volume(&info, Path::new("/Volumes/Backup & Work 1")).is_none());
+        assert!(mac_volume(&info, Path::new("/")).is_none());
+        let no_uuid = DISKUTIL.replace("VolumeUUID", "SomethingElse");
+        assert!(
+            mac_volume(
+                &parse_diskutil_plist(&no_uuid),
+                Path::new("/Volumes/Backup & Work")
+            )
+            .is_none()
+        );
+        assert_eq!(parse_diskutil_plist("garbage"), DiskutilInfo::default());
     }
 
     #[cfg(windows)]
