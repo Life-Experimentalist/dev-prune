@@ -364,37 +364,64 @@ pub(crate) fn is_throwaway_checkout(root: &Path, repo: &Path) -> bool {
 /// these from clones that were deleted, drives that were reformatted, and workspaces that
 /// were moved; `devp doctor` counts them and sends the user here rather than printing one
 /// `devp unlink` line per entry.
+///
+/// A repository on a drive that is not connected is not "gone": the drive is in a bag
+/// somewhere and its history comes back with it. Those entries are left alone and said so.
 pub fn run_unlink_missing() -> Result<()> {
     let mut registry = Registry::load()?;
+    let scan = registry.unlink_missing_scan();
 
-    let gone: Vec<_> = registry
-        .repositories
-        .keys()
-        .filter(|p| !p.exists())
-        .cloned()
-        .collect();
+    report_inactive_left_alone(&scan.inactive);
 
-    if gone.is_empty() {
-        output::print_success("Every registered repository still exists — nothing to remove.");
+    if scan.gone.is_empty() {
+        if scan.inactive.is_empty() {
+            output::print_success(
+                "Every registered repository still exists — nothing to remove.",
+            );
+        } else {
+            output::print_info("Nothing else to remove.");
+        }
         return Ok(());
     }
 
-    for path in &gone {
-        registry.remove_repo(path);
-        output::print_info(&format!("Unlinked: {}", output::clean_path(path)));
-    }
-    // `undo` reverts the last `init`/`link` by unregistering what it added. A path in that
-    // list that no longer exists can never be reverted into anything, so leaving it there
-    // only sets `undo` up to report that it removed nothing.
-    registry.last_added_repos.retain(|p| p.exists());
+    let removed = remove_gone(&mut registry, &scan.gone);
     registry.save()?;
 
     output::print_success(&format!(
-        "Removed {} registry {} pointing at directories that no longer exist.",
-        gone.len(),
-        output::plural(gone.len(), "entry", "entries")
+        "Removed {removed} registry {} pointing at directories that no longer exist.",
+        output::plural(removed, "entry", "entries")
     ));
     Ok(())
+}
+
+/// One plain line about the entries `unlink --missing` will not touch.
+fn report_inactive_left_alone(inactive: &crate::config::InactiveRepos) {
+    if inactive.is_empty() {
+        return;
+    }
+    output::print_info(&format!(
+        "{} {} on {} that is not connected, left alone. `devp unlink <path>` removes one on purpose.",
+        inactive.len(),
+        output::plural(inactive.len(), "repository is", "repositories are"),
+        inactive.drives_phrase(),
+    ));
+}
+
+/// Drop `gone` from `registry` and return how many entries that removed.
+fn remove_gone(registry: &mut Registry, gone: &[std::path::PathBuf]) -> usize {
+    let mut removed = 0;
+    for path in gone {
+        if registry.remove_repo(path) {
+            removed += 1;
+            output::print_info(&format!("Unlinked: {}", output::clean_path(path)));
+        }
+    }
+    // `undo` reverts the last `init`/`link` by unregistering what it added. A path in that
+    // list that was just dropped can never be reverted into anything, so leaving it there
+    // only sets `undo` up to report that it removed nothing. Inactive entries stay in it:
+    // they are still registered.
+    registry.last_added_repos.retain(|p| !gone.contains(p));
+    removed
 }
 
 /// Run the `unlink` command — unregister a repository.
@@ -421,6 +448,50 @@ pub fn run_unlink(path_str: &str) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn unlink_missing_drops_deleted_entries_and_keeps_the_ones_on_an_absent_drive() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("keep.txt"), "x").unwrap();
+        let deleted = tmp.path().join("deleted-project");
+        let kept = tmp.path().join("kept");
+        std::fs::create_dir_all(kept.join(".git")).unwrap();
+        // A drive letter nothing is mounted on, or a mount point nothing is mounted at.
+        let unplugged = if cfg!(windows) {
+            ('D'..='Z')
+                .rev()
+                .map(|c| std::path::PathBuf::from(format!("{c}:\\")))
+                .find(|root| !root.exists())
+                .map(|root| root.join("devp-gone").join("proj"))
+        } else {
+            Some(std::path::PathBuf::from("/mnt/devp-absent-volume/proj"))
+        }
+        .expect("a free drive letter");
+
+        let mut registry = Registry::default();
+        for path in [&deleted, &kept, &unplugged] {
+            registry
+                .repositories
+                .insert(path.clone(), crate::config::RepoEntry::new());
+        }
+        registry.last_added_repos = vec![deleted.clone(), unplugged.clone()];
+
+        let scan = registry.unlink_missing_scan();
+        assert_eq!(scan.gone, vec![deleted.clone()]);
+        assert!(scan.inactive.contains(&unplugged));
+
+        let removed = remove_gone(&mut registry, &scan.gone);
+
+        assert_eq!(removed, 1);
+        assert!(!registry.repositories.contains_key(&deleted));
+        assert!(registry.repositories.contains_key(&kept));
+        assert!(
+            registry.repositories.contains_key(&unplugged),
+            "an entry on a drive that is not connected is never dropped"
+        );
+        // Still registered, so `undo` can still unregister it.
+        assert_eq!(registry.last_added_repos, vec![unplugged]);
+    }
 
     #[test]
     fn a_repository_under_the_temp_directory_is_recognised_as_scratch() {

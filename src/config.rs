@@ -667,6 +667,15 @@ impl InactiveRepos {
     }
 }
 
+/// What [`Registry::unlink_missing_scan`] found.
+#[derive(Debug, Default)]
+pub struct UnlinkScan {
+    /// Paths that no longer exist on a drive that is connected, sorted.
+    pub gone: Vec<PathBuf>,
+    /// Entries on a drive that is not connected: left alone.
+    pub inactive: InactiveRepos,
+}
+
 /// A registered path and the volume it was registered on.
 type VolumeEntry = (PathBuf, Option<String>);
 
@@ -2340,6 +2349,45 @@ impl Registry {
             .map(|(path, entry)| (path.clone(), entry.volume_id.clone()))
             .collect();
         find_inactive(&entries, view)
+    }
+
+    /// Split the registry for `devp unlink --missing`: the entries whose directory is gone
+    /// from a connected drive, and the ones on a drive that is not connected.
+    ///
+    /// Same volume-grouped, concurrent check as the heal pass, so one stalled network
+    /// share does not hold up the rest. Only the first list is safe to drop; the second
+    /// says nothing about the repositories, only about where they are.
+    pub fn unlink_missing_scan(&self) -> UnlinkScan {
+        self.unlink_missing_scan_with(&SystemVolumes)
+    }
+
+    /// [`Registry::unlink_missing_scan`] reading volumes from `view`.
+    pub fn unlink_missing_scan_with(&self, view: &dyn VolumeView) -> UnlinkScan {
+        let entries: Vec<VolumeEntry> = self
+            .repositories
+            .iter()
+            .map(|(path, entry)| (path.clone(), entry.volume_id.clone()))
+            .collect();
+        let liveness = Liveness::scan_entries(&entries, view);
+        let mut gone = Vec::new();
+        let mut drives = HashMap::new();
+        for (path, _) in &entries {
+            match liveness.state(path) {
+                PathState::Missing => gone.push(path.clone()),
+                PathState::Inactive => {
+                    drives.insert(
+                        path.clone(),
+                        crate::volume::display_root(&volume_root(path)),
+                    );
+                }
+                PathState::Orphan | PathState::Healthy => {}
+            }
+        }
+        gone.sort();
+        UnlinkScan {
+            gone,
+            inactive: InactiveRepos { drives },
+        }
     }
 
     /// Follow an inactive entry to the connected volume that is its recorded one.
@@ -4045,6 +4093,54 @@ mod tests {
         assert_eq!(liveness.state(&repo), PathState::Healthy);
         assert!(liveness.volume_present(&repo));
         assert!(!liveness.volume_present(&paths[0]));
+    }
+
+    #[test]
+    fn unlink_missing_scan_separates_deleted_entries_from_ones_on_an_absent_drive() {
+        let tmp = TempDir::new().unwrap();
+        let kept = tmp.path().join("kept");
+        fs::create_dir_all(kept.join(".git")).unwrap();
+        let deleted = deleted_path(&tmp);
+        let unplugged = absent_volume_paths(2);
+
+        let mut reg = Registry::default();
+        reg.repositories.insert(kept.clone(), RepoEntry::new());
+        reg.repositories.insert(deleted.clone(), RepoEntry::new());
+        for path in &unplugged {
+            // One registered on a volume it can name, one from before volumes were recorded.
+            let mut entry = RepoEntry::new();
+            if path == &unplugged[0] {
+                entry.volume_id = Some(VOL_A.into());
+            }
+            reg.repositories.insert(path.clone(), entry);
+        }
+        let view = FakeVolumes::default().drive_of(tmp.path(), Some(VOL_A));
+
+        let scan = reg.unlink_missing_scan_with(&view);
+
+        assert_eq!(scan.gone, vec![deleted.clone()]);
+        assert_eq!(scan.inactive.len(), 2);
+        for path in &unplugged {
+            assert!(scan.inactive.contains(path));
+        }
+        assert!(!scan.inactive.contains(&kept));
+    }
+
+    #[test]
+    fn a_letter_now_held_by_another_volume_is_not_a_deleted_entry_for_unlink_missing() {
+        let tmp = TempDir::new().unwrap();
+        // The path does not exist, but the drive under it is not the one it was registered on.
+        let path = deleted_path(&tmp);
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.volume_id = Some(VOL_A.into());
+        reg.repositories.insert(path.clone(), entry);
+
+        let view = FakeVolumes::default().drive_of(tmp.path(), Some(VOL_B));
+        let scan = reg.unlink_missing_scan_with(&view);
+
+        assert!(scan.gone.is_empty());
+        assert!(scan.inactive.contains(&path));
     }
 
     #[test]
