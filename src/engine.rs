@@ -25,6 +25,7 @@ use crate::config::{Registry, RepoEntry};
 use crate::constants;
 use crate::scanner;
 use crate::scanner::git;
+use crate::volume::{SystemVolumes, VolumeView};
 use crate::workspace;
 
 /// The outcome of pruning a single bloat directory.
@@ -1191,7 +1192,23 @@ fn collect_bloat(
 /// Each repository's own idle threshold applies; everything else in `opts` — the
 /// adapter filter, the size floor, dry-run and force — is shared by the whole pass.
 pub fn prune_all_with(registry: &mut Registry, opts: &PruneOptions) -> Vec<PruneResult> {
+    prune_all_with_volumes(registry, opts, &SystemVolumes)
+}
+
+/// [`prune_all_with`] reading volumes from `view`.
+///
+/// A repository on a drive that is not connected, or whose letter now belongs to a
+/// different volume, is inactive and never reaches [`prune_repo_with`]: the path may
+/// exist on the other drive, and pruning there would delete somebody else's files. Each
+/// pass asks for itself instead of trusting an earlier `heal`, because the drive can go
+/// away between the two.
+pub fn prune_all_with_volumes(
+    registry: &mut Registry,
+    opts: &PruneOptions,
+    view: &dyn VolumeView,
+) -> Vec<PruneResult> {
     let mut all_results = Vec::new();
+    let inactive = registry.inactive_repos_with(view);
 
     // Collect paths first to avoid borrow issues.
     //
@@ -1201,6 +1218,7 @@ pub fn prune_all_with(registry: &mut Registry, opts: &PruneOptions) -> Vec<Prune
     let mut repos: Vec<(PathBuf, u64, bool)> = registry
         .repositories
         .iter()
+        .filter(|(path, _)| !inactive.contains(path))
         .map(|(path, entry)| {
             let idle_days = entry
                 .override_idle_days
@@ -1694,7 +1712,14 @@ pub fn get_full_status_reporting(
 ) -> Vec<RepoStatusEntry> {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    let repos: Vec<(&PathBuf, &RepoEntry)> = registry.repositories.iter().collect();
+    // Inactive repositories are not scanned (their drive is not there to read); the
+    // caller shows them as one group from `Registry::inactive_repos`.
+    let inactive = registry.inactive_repos();
+    let repos: Vec<(&PathBuf, &RepoEntry)> = registry
+        .repositories
+        .iter()
+        .filter(|(path, _)| !inactive.contains(path))
+        .collect();
     let total = repos.len();
     let workers = scan_thread_count(total);
 
@@ -2279,6 +2304,72 @@ mod tests {
                 .iter()
                 .any(|r| matches!(r.status, PruneStatus::Disabled))
         );
+    }
+
+    /// Every drive reports one fixed identity, as if a single volume were mounted.
+    struct OneDrive(&'static str);
+
+    impl VolumeView for OneDrive {
+        fn identity_at(&self, _root: &Path) -> Option<String> {
+            Some(self.0.to_string())
+        }
+        fn label_at(&self, _root: &Path) -> Option<String> {
+            None
+        }
+        fn mounted(&self) -> Vec<(PathBuf, String)> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn prune_all_never_hands_the_engine_a_repository_on_another_volume() {
+        const REGISTERED_ON: &str = "win:AAAA-0001:NTFS";
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        create_git_repo_with_commit(&repo);
+        create_go_project(&repo);
+        let mut registry = Registry::default();
+        registry.add_repo_with(repo.clone(), &OneDrive(REGISTERED_ON));
+
+        // The registered drive is there: the pass reaches the repository.
+        let reached = prune_all_with_volumes(
+            &mut registry,
+            &PruneOptions::new(0, true, true),
+            &OneDrive(REGISTERED_ON),
+        );
+        assert!(
+            reached
+                .iter()
+                .any(|r| matches!(r.status, PruneStatus::SkippedDryRun))
+        );
+
+        // The letter now belongs to a different volume, and the same relative path exists
+        // on it: the repository there is somebody else's and must not be touched.
+        let results = prune_all_with_volumes(
+            &mut registry,
+            &PruneOptions::new(0, false, true),
+            &OneDrive("win:BBBB-0002:NTFS"),
+        );
+        assert!(results.is_empty(), "inactive: {results:?}");
+        assert!(repo.join("vendor").exists(), "nothing was deleted");
+    }
+
+    #[test]
+    fn the_status_scan_leaves_out_repositories_on_a_drive_that_is_not_connected() {
+        let gone = if cfg!(windows) {
+            ('D'..='Z')
+                .rev()
+                .find(|c| !Path::new(&format!("{c}:\\")).exists())
+                .map(|c| PathBuf::from(format!("{c}:\\devp-gone\\proj")))
+                .expect("a free drive letter")
+        } else {
+            PathBuf::from("/mnt/devp-absent-volume/proj")
+        };
+        let mut registry = Registry::default();
+        registry.repositories.insert(gone.clone(), RepoEntry::new());
+
+        assert!(get_full_status(&registry).is_empty());
+        assert!(registry.inactive_repos().contains(&gone));
     }
 
     #[test]
