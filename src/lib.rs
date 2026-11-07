@@ -13,6 +13,7 @@ pub mod engine;
 pub mod help;
 pub mod history;
 pub mod i18n;
+pub mod installs;
 pub mod json;
 pub mod lock;
 pub mod output;
