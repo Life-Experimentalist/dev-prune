@@ -1039,6 +1039,19 @@ const SETTINGS: &[Setting] = &[
         },
     },
     Setting {
+        key: "auto_follow_drives",
+        category: Category::Scope,
+        since: "1.24.0",
+        kind: Kind::Toggle,
+        help: "Re-point a registered repository when its drive comes back at a different mount point (another letter, another /media path), recognised by the disk's own identity. Off keeps the entry inactive until the drive returns to the same place. It never changes the refusal to prune a path that now holds a different disk.",
+        plain: "If a drive you unplugged comes back under a new letter or folder, dev-prune finds it again and keeps your projects. Turn this off if you would rather it waited for the drive to return to the exact same place.",
+        get: |s| s.auto_follow_drives.to_string(),
+        set: |s, v| {
+            s.auto_follow_drives = parse_bool("auto_follow_drives", v)?;
+            Ok(())
+        },
+    },
+    Setting {
         key: "cache_max_gb",
         category: Category::Caches,
         since: "1.8.0",
@@ -2791,6 +2804,25 @@ mod tests {
         assert_eq!(settings.idle_days, 30);
         assert!(!settings.cache_auto_trim);
         assert_eq!(settings.cache_limit_gib, 20);
+    }
+
+    #[test]
+    fn auto_follow_drives_round_trips_and_defaults_to_on() {
+        let mut settings = Settings::default();
+        let setting = find_setting("auto_follow_drives").unwrap();
+        assert_eq!((setting.get)(&settings), "true");
+        (setting.set)(&mut settings, "false").unwrap();
+        assert!(!settings.auto_follow_drives);
+        assert_eq!((setting.get)(&settings), "false");
+        (setting.set)(&mut settings, "true").unwrap();
+        assert!(settings.auto_follow_drives);
+        assert!((setting.set)(&mut settings, "maybe").is_err());
+
+        // A settings file written before the key existed follows drives.
+        let mut old = serde_json::to_value(Settings::default()).unwrap();
+        old.as_object_mut().unwrap().remove("auto_follow_drives");
+        let loaded: Settings = serde_json::from_value(old).unwrap();
+        assert!(loaded.auto_follow_drives);
     }
 
     #[test]

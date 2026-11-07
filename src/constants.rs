@@ -229,6 +229,11 @@ pub const DEFAULT_CACHE_LIMIT_GIB: u64 = 20;
 /// The smallest `cache_limit_gib` accepted. Zero would mean "clear it on every pass".
 pub const MIN_CACHE_LIMIT_GIB: u64 = 1;
 
+/// Whether a repository whose drive came back at another mount point is re-pointed to
+/// it. On: a disk that returns as `F:` or `/media/me/disk1` is the same disk. See
+/// `Settings::auto_follow_drives`.
+pub const DEFAULT_AUTO_FOLLOW_DRIVES: bool = true;
+
 /// Shown while `devp trust` and the configurator ask the OS about the scheduler and
 /// Git hooks, then overwritten in place. Kept here because its width is what the
 /// erase writes over, so the two must not be able to drift apart.
@@ -1048,3 +1053,10 @@ pub const VOLUME_QUERY_CEILING_SECS: u64 = 10;
 /// calls and change when the disk is swapped, so the answer is reused for this long and
 /// then asked for again.
 pub const MACOS_VOLUME_CACHE_SECS: u64 = 30;
+
+/// The login name on Unix, which desktop environments put in the mount path of a
+/// removable disk (`/media/<user>/<label>`).
+pub const USER_ENV_VAR: &str = "USER";
+
+/// The fallback for [`USER_ENV_VAR`] in sessions that only set `LOGNAME`.
+pub const LOGNAME_ENV_VAR: &str = "LOGNAME";

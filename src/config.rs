@@ -316,6 +316,16 @@ pub struct Settings {
     /// `--json`.
     #[serde(default = "default_recommendations")]
     pub recommendations: bool,
+    /// Whether a registered repository whose drive returned at a different mount point
+    /// (another letter on Windows, another path on macOS or Linux) is re-pointed to
+    /// where it is now.
+    ///
+    /// On by default. Turning it off only stops the re-pointing: an entry whose drive is
+    /// away, or whose root now holds a different volume, is still inactive and still
+    /// never pruned, and volume identities are still recorded. The entry then waits for
+    /// its own drive to return at the same place.
+    #[serde(default = "default_auto_follow_drives")]
+    pub auto_follow_drives: bool,
     /// Settings this build has never heard of, carried through a save verbatim.
     ///
     /// A registry written by a newer dev-prune can hold keys this build does not
@@ -399,6 +409,10 @@ fn default_recommendations() -> bool {
     constants::DEFAULT_RECOMMENDATIONS
 }
 
+fn default_auto_follow_drives() -> bool {
+    constants::DEFAULT_AUTO_FOLLOW_DRIVES
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -446,6 +460,7 @@ impl Default for Settings {
             cache_limit_gib: constants::DEFAULT_CACHE_LIMIT_GIB,
             language: constants::DEFAULT_LANGUAGE.to_string(),
             recommendations: constants::DEFAULT_RECOMMENDATIONS,
+            auto_follow_drives: constants::DEFAULT_AUTO_FOLLOW_DRIVES,
             unknown_keys: BTreeMap::new(),
         }
     }
@@ -555,6 +570,17 @@ enum PathState {
 /// What decides whether "the path is gone" can be believed: when this root itself is
 /// missing, the volume is unplugged or unmounted and nothing under it has been deleted.
 fn volume_root(path: &Path) -> PathBuf {
+    let user = std::env::var(constants::USER_ENV_VAR)
+        .or_else(|_| std::env::var(constants::LOGNAME_ENV_VAR))
+        .ok()
+        .filter(|u| !u.is_empty());
+    volume_root_for(path, !cfg!(windows), user.as_deref())
+}
+
+/// [`volume_root`] with the platform and the user name passed in, so the Unix rules can
+/// be tested anywhere. `user` is the login name that desktop environments put in the
+/// mount path (`/media/<user>/<label>`).
+fn volume_root_for(path: &Path, unix_rules: bool, user: Option<&str>) -> PathBuf {
     use std::path::Component;
     let mut root = PathBuf::new();
     let mut names: Vec<String> = Vec::new();
@@ -565,18 +591,24 @@ fn volume_root(path: &Path) -> PathBuf {
             Component::CurDir | Component::ParentDir => {}
         }
     }
-    if !cfg!(windows) {
-        let mount_depth = if names
-            .first()
-            .is_some_and(|n| constants::UNIX_MOUNT_PARENTS.contains(&n.as_str()))
-        {
-            2
-        } else if names.len() >= 2 && names[0] == "run" && names[1] == "media" {
-            // /run/media/<user>/<label>
-            4
-        } else {
-            0
-        };
+    if unix_rules {
+        let mount_depth =
+            if names.len() >= 3 && names[0] == "media" && user.is_some_and(|u| u == names[1]) {
+                // /media/<user>/<label>, where Ubuntu and Debian desktops mount removable
+                // disks. Without the user name `/media/<user>` would be taken for the mount
+                // and always exist, so an unplugged disk would read as a deleted project.
+                3
+            } else if names
+                .first()
+                .is_some_and(|n| constants::UNIX_MOUNT_PARENTS.contains(&n.as_str()))
+            {
+                2
+            } else if names.len() >= 2 && names[0] == "run" && names[1] == "media" {
+                // /run/media/<user>/<label>
+                4
+            } else {
+                0
+            };
         for name in names.iter().take(mount_depth) {
             root.push(name);
         }
@@ -2153,12 +2185,17 @@ impl Registry {
 
         let mut changes = 0;
 
-        // Inactive entries get one chance to follow their drive to a new letter; the
-        // list of mounted volumes is only read when there is someone to look for.
+        // Inactive entries get one chance to follow their drive to a new letter or mount
+        // point; the list of mounted volumes is only read when there is someone to look
+        // for. With `auto_follow_drives` off nothing is re-pointed, and the entries are
+        // reported inactive exactly as when no returned drive was found.
         if !inactive_keys.is_empty() {
-            let mounted = view.mounted();
+            let follow = self.settings.auto_follow_drives;
+            let mounted = if follow { view.mounted() } else { Vec::new() };
             for key in inactive_keys {
-                if let Some(new_key) = self.repoint_to_returned_volume(&key, &mounted, view) {
+                if follow
+                    && let Some(new_key) = self.repoint_to_returned_volume(&key, &mounted, view)
+                {
                     live.insert(new_key.clone());
                     report.repointed.push((key, new_key));
                     changes += 1;
@@ -2460,6 +2497,15 @@ impl Registry {
         // `last_added_repos` is the batch `devp undo` unlinks; a re-pointed entry was not
         // added by the user's last link and must not become undoable.
         self.last_added_repos.retain(|p| p != old);
+
+        // A drive that came back at a mount point `volume_root` does not recognise (a disk
+        // mounted at /srv/disk) is not identified by the root this entry will be checked
+        // against, and a recorded identity that is never read back would leave the entry
+        // inactive for good. The repository was already proved by its root commit.
+        if view.identity_at(&volume_root(&new_key)).as_deref() != Some(wanted.as_str()) {
+            moved.volume_id = None;
+            moved.volume_label = None;
+        }
 
         match self.repositories.get_mut(&new_key) {
             Some(existing) => {
@@ -4307,6 +4353,99 @@ mod tests {
             new.join(".git").is_dir(),
             "the repository itself is untouched"
         );
+    }
+
+    #[test]
+    fn with_auto_follow_drives_off_a_returning_drive_is_never_repointed() {
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let new = tmp.path().join(below_root(&old));
+        real_repo(&new, "returning-drive-off");
+
+        let mut reg = Registry::default();
+        reg.settings.auto_follow_drives = false;
+        reg.repositories
+            .insert(old.clone(), entry_with_history(&new, VOL_A));
+
+        let view = FakeVolumes::default()
+            .drive_of(tmp.path(), Some(VOL_A))
+            .mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert!(report.repointed.is_empty());
+        assert_eq!(report.inactive, vec![old.clone()]);
+        assert!(reg.repositories.contains_key(&old));
+        assert!(!reg.repositories.contains_key(&canonical_key(&new)));
+        assert_eq!(reg.repositories[&old].volume_id.as_deref(), Some(VOL_A));
+    }
+
+    #[test]
+    fn with_auto_follow_drives_off_a_reused_path_is_still_inactive() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("proj");
+        real_repo(&path, "reused-path-off");
+
+        let mut reg = Registry::default();
+        reg.settings.auto_follow_drives = false;
+        reg.repositories
+            .insert(path.clone(), entry_with_history(&path, VOL_A));
+
+        let view = FakeVolumes::default().drive_of(tmp.path(), Some(VOL_B));
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert_eq!(report.inactive, vec![path.clone()]);
+        assert!(report.repointed.is_empty());
+    }
+
+    #[test]
+    fn a_repoint_onto_a_root_that_cannot_confirm_the_drive_does_not_keep_its_id() {
+        // The id is only recorded where the real view can read it back. A landing root
+        // that reads as nothing (the system root, or a filesystem without a UUID) must
+        // not inherit an id it cannot confirm.
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let new = tmp.path().join(below_root(&old));
+        real_repo(&new, "landing-unconfirmed");
+
+        let mut reg = Registry::default();
+        reg.repositories
+            .insert(old.clone(), entry_with_history(&new, VOL_A));
+
+        let view = FakeVolumes::default().mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert_eq!(report.repointed.len(), 1);
+        assert_eq!(reg.repositories[&canonical_key(&new)].volume_id, None);
+    }
+
+    #[test]
+    fn unix_mount_roots_cover_the_desktop_automount_layouts() {
+        let user = Some("me");
+        let root = |p: &str| volume_root_for(Path::new(p), true, user);
+        assert_eq!(root("/mnt/usb/a/b"), PathBuf::from("/mnt/usb"));
+        assert_eq!(root("/Volumes/Backup/a"), PathBuf::from("/Volumes/Backup"));
+        assert_eq!(
+            root("/run/media/me/disk/a"),
+            PathBuf::from("/run/media/me/disk")
+        );
+        assert_eq!(
+            root("/media/me/disk/a/b"),
+            PathBuf::from("/media/me/disk"),
+            "Ubuntu and Debian mount under /media/<user>/<label>"
+        );
+        assert_eq!(root("/media/cdrom/a"), PathBuf::from("/media/cdrom"));
+        assert_eq!(root("/home/me/a"), PathBuf::from("/"));
+    }
+
+    #[test]
+    fn a_settings_file_from_before_the_switch_follows_drives() {
+        let mut file = serde_json::to_value(Settings::default()).unwrap();
+        file.as_object_mut().unwrap().remove("auto_follow_drives");
+        let old: Settings = serde_json::from_value(file.clone()).unwrap();
+        assert!(old.auto_follow_drives);
+        file["auto_follow_drives"] = false.into();
+        let off: Settings = serde_json::from_value(file).unwrap();
+        assert!(!off.auto_follow_drives);
     }
 
     #[test]

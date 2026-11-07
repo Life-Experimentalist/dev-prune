@@ -52,12 +52,25 @@ pub trait VolumeView: Sync {
 /// The machine's real volumes.
 pub struct SystemVolumes;
 
+/// The Unix filesystem root. Every path that is not under a mount point lives on it, so
+/// stamping it on each registered repository would record nothing useful and cost a
+/// lookup per repository; the system disk is not a drive that comes back elsewhere.
+fn is_unix_system_root(root: &Path) -> bool {
+    cfg!(unix) && root == Path::new("/")
+}
+
 impl VolumeView for SystemVolumes {
     fn identity_at(&self, root: &Path) -> Option<String> {
+        if is_unix_system_root(root) {
+            return None;
+        }
         sys::volume_info(root).map(|v| v.identity)
     }
 
     fn label_at(&self, root: &Path) -> Option<String> {
+        if is_unix_system_root(root) {
+            return None;
+        }
         sys::volume_info(root)
             .map(|v| v.label)
             .filter(|l| !l.is_empty())
