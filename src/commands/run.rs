@@ -80,10 +80,19 @@ pub fn run(args: RunArgs<'_>) -> Result<()> {
         return run_explain(&args, &filter);
     }
 
-    if let Some(target_str) = args.target_path {
-        return run_targeted(&args, &filter, target_str);
-    }
-    run_registry(&args, &filter)
+    // Held for the whole pass, dry runs included: a dry run still heals and re-saves the
+    // registry. `--explain` returned above because it touches nothing.
+    let pass = if args.daemon {
+        crate::lock::Pass::Unattended
+    } else {
+        crate::lock::Pass::Interactive
+    };
+    crate::lock::run_exclusive(pass, args.json, || {
+        if let Some(target_str) = args.target_path {
+            return run_targeted(&args, &filter, target_str);
+        }
+        run_registry(&args, &filter)
+    })
 }
 
 /// What `--ignore-idle` does and, more usefully, what it does not.

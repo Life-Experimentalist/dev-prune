@@ -243,6 +243,14 @@ reboot, full disk — leaves the previous `registry.json` untouched, and at wors
 orphaned per-PID `.tmp` file. That file is a partial write, not a backup; nothing reads
 it back, and it is safe to delete.
 
+Two things sit around this rule without changing it. Atomic writes stop a torn file but
+not a lost update, so whole passes also hold the run lock (`run.lock` in the config
+directory, released by the OS when the process ends); a second pass waits or skips rather
+than racing. And every save stamps the registry with the devp version that wrote it
+(`written_by`); a devp older than the stamp refuses to save, so an old install cannot
+rewrite a newer one's data. Neither has a bypass flag. See
+[Background Automation](BACKGROUND_AUTOMATION.md#one-devp-per-device).
+
 ---
 
 ### 5. Fast 0ms `ignore.devprune.json` & Per-Repo Settings

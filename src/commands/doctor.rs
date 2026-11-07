@@ -211,6 +211,7 @@ fn check_installation(fix: bool) -> Result<()> {
     check_install_channel(&mut f);
     check_other_copies(&mut f);
     let registry = check_configuration(&mut f);
+    check_registry_writer(&mut f);
     check_integrations(&mut f, registry.as_ref());
     check_package_managers(&mut f, registry.as_ref());
     check_registry_health(&mut f, registry.as_ref());
@@ -701,39 +702,211 @@ fn check_other_copies(f: &mut Findings) {
     );
     let copies = binaries_in(&search, managed_dir.as_deref());
 
+    let mut installs: Vec<Install> = Vec::new();
+    // The running binary states its version without a spawn. It anchors the list, so a
+    // machine with a single devp reports nothing and one with two is compared against it.
+    if let (Some(path), Some(version)) = (mine.as_deref(), setup::parse_version(constants::VERSION))
+    {
+        installs.push(Install {
+            path: path.to_path_buf(),
+            version,
+            channel: Channel::detect(),
+            running: true,
+        });
+    }
+
+    // `binaries_in` leaves the managed directory out because `check_binary` reports it,
+    // but a managed copy that is not the one running is exactly what the scheduler and the
+    // hook shims call while the user types a different one.
+    let is_running_dir = |path: &Path| {
+        mine.as_deref()
+            .and_then(Path::parent)
+            .zip(path.parent())
+            .is_some_and(|(a, b)| same_dir(a, b))
+    };
+    let managed = setup::managed_exe_path()
+        .ok()
+        .filter(|p| p.is_file() && !is_running_dir(p));
+
     // Asking each copy its own version, rather than comparing bytes: two channels can
     // hold byte-identical files of the same release, and a differing byte is just as
     // likely to be a different target triple as a different version. The question here
     // is only ever "would running this give me a different dev-prune".
-    let stale: Vec<String> = copies
+    //
+    // One install per directory: `dev-prune.exe` and `devp.exe` side by side are one
+    // install under two names, and the running binary's own directory is already listed.
+    for path in managed
         .iter()
-        .filter(|path| mine.as_deref() != Some(path.as_path()))
-        .filter_map(|path| {
-            // A file under this name that cannot state a version is left alone: it is
-            // far more likely to be something else entirely — a shell wrapper, a
-            // package-manager proxy that refuses to run under another name — than a
-            // dev-prune, and naming it would send the user to delete an unrelated file.
-            let version = setup::binary_version(path)?;
-            let ours = setup::parse_version(constants::VERSION)?;
-            (version != ours).then(|| {
-                let channel = Channel::detect_at(path, managed_dir.as_deref());
-                stale_copy_line(path, version, channel)
-            })
-        })
-        .collect();
-
-    if stale.is_empty() {
-        f.ok("Other copies", "none on PATH running a different version");
-        return;
+        .chain(copies.iter().filter(|p| !is_running_dir(p)))
+    {
+        // A file under this name that cannot state a version is left alone: it is
+        // far more likely to be something else entirely — a shell wrapper, a
+        // package-manager proxy that refuses to run under another name — than a
+        // dev-prune, and naming it would send the user to delete an unrelated file.
+        let Some(version) = setup::binary_version(path) else {
+            continue;
+        };
+        if installs.iter().any(|i| {
+            i.path
+                .parent()
+                .zip(path.parent())
+                .is_some_and(|(a, b)| same_dir(a, b))
+        }) {
+            continue;
+        }
+        installs.push(Install {
+            path: path.clone(),
+            version,
+            channel: Channel::detect_at(path, managed_dir.as_deref()),
+            running: false,
+        });
     }
-    f.warn(
-        "Other copies",
-        &format!(
-            "{} — whichever comes first on PATH is the one `devp` runs, and \
-             `devp update --install` leaves a copy another package manager owns alone.",
-            stale.join("; ")
+
+    apply_install_report(
+        f,
+        summarize_installs(
+            &installs,
+            crate::daemon::registered_exe_path().as_deref(),
+            hook::registered_exe_path().as_deref(),
         ),
     );
+}
+
+/// Say so when `registry.json` was last written by a newer devp than this one.
+///
+/// Every command that would save refuses in that case (see `Registry::save_to`), and the
+/// refusal message sends the user here. Silence from the doctor would leave them with a
+/// pointer to nowhere. A warning, never a problem: reads still work and nothing is broken.
+fn check_registry_writer(f: &mut Findings) {
+    let Ok(path) = Registry::registry_path() else {
+        return;
+    };
+    let Some(found) = Registry::written_by_at(&path) else {
+        return;
+    };
+    if let Some(line) = newer_registry_line(&found, constants::VERSION) {
+        f.warn("Registry writer", &line);
+    }
+}
+
+fn newer_registry_line(found: &str, this: &str) -> Option<String> {
+    (crate::commands::update::compare_versions(found, this) == Some(Ordering::Greater)).then(|| {
+        format!(
+            "registry.json was last written by devp {found}, this is {this}. Commands \
+                 that change it refuse until this install is updated or removed; \
+                 `devp status` and the other read-only commands still work. The \"Other \
+                 copies\" line shows where each install lives."
+        )
+    })
+}
+
+/// One devp found on the machine, as far as the "Other copies" check can tell.
+struct Install {
+    path: PathBuf,
+    version: (u64, u64, u64),
+    channel: Channel,
+    /// The binary answering this `devp doctor`.
+    running: bool,
+}
+
+/// What the install list says. Split from the printing so the wording and the counting can
+/// be tested against a list a test made up, without a machine full of package managers.
+#[derive(Debug, PartialEq, Eq)]
+enum InstallReport {
+    /// Nothing besides the running binary, or nothing that states a version.
+    Single,
+    /// Several places, one release. Worth a line, not worth a warning: they behave alike.
+    SameVersion(String),
+    /// More than one release. Each can rewrite `registry.json` and the scheduler and hooks
+    /// call only one of them, so this is the case that surprises people.
+    Mixed(String),
+}
+
+fn version_text((major, minor, patch): (u64, u64, u64)) -> String {
+    format!("v{major}.{minor}.{patch}")
+}
+
+/// Which install a path the scheduler or the hooks call belongs to, by directory: the
+/// scheduler may run the windowless twin, which sits beside an install without being one.
+fn describe_target(target: Option<&Path>, installs: &[Install]) -> String {
+    let Some(target) = target else {
+        return "could not be read".to_string();
+    };
+    let owner = installs.iter().find(|i| {
+        i.path
+            .parent()
+            .zip(target.parent())
+            .is_some_and(|(a, b)| same_dir(a, b))
+    });
+    match owner {
+        Some(i) => format!(
+            "{} ({})",
+            output::clean_path(target),
+            version_text(i.version)
+        ),
+        None => output::clean_path(target),
+    }
+}
+
+fn summarize_installs(
+    installs: &[Install],
+    scheduler: Option<&Path>,
+    hook: Option<&Path>,
+) -> InstallReport {
+    if installs.len() < 2 {
+        return InstallReport::Single;
+    }
+    let mut versions: Vec<(u64, u64, u64)> = installs.iter().map(|i| i.version).collect();
+    versions.sort_unstable();
+    versions.dedup();
+
+    if versions.len() == 1 {
+        let places: Vec<String> = installs
+            .iter()
+            .map(|i| output::clean_path(&i.path))
+            .collect();
+        return InstallReport::SameVersion(format!(
+            "{} places, all {}: {}",
+            installs.len(),
+            version_text(versions[0]),
+            places.join("; ")
+        ));
+    }
+
+    let listed: Vec<String> = installs
+        .iter()
+        .map(|i| {
+            if i.running {
+                format!(
+                    "{} ({}, running now)",
+                    output::clean_path(&i.path),
+                    version_text(i.version)
+                )
+            } else {
+                stale_copy_line(&i.path, i.version, i.channel)
+            }
+        })
+        .collect();
+    InstallReport::Mixed(format!(
+        "{} different releases installed: {}. The scheduled task runs {}; the git hook \
+         shims call {}. Keep one and remove the others through whatever installed them \
+         (the commands above); devp never deletes a binary itself. Two releases sharing \
+         one registry is how a newer one's data gets rewritten by an older one.",
+        versions.len(),
+        listed.join("; "),
+        describe_target(scheduler, installs),
+        describe_target(hook, installs),
+    ))
+}
+
+fn apply_install_report(f: &mut Findings, report: InstallReport) {
+    match report {
+        InstallReport::Single => {
+            f.ok("Other copies", "none on PATH running a different version");
+        }
+        InstallReport::SameVersion(text) => f.note("Other copies", &text),
+        InstallReport::Mixed(text) => f.warn("Other copies", &text),
+    }
 }
 
 /// One line of the "Other copies" warning: where the copy is, which release it is, and
@@ -2066,6 +2239,110 @@ fn heal_repo_configs() -> Result<usize> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn install(path: &str, version: (u64, u64, u64), channel: Channel, running: bool) -> Install {
+        Install {
+            path: PathBuf::from(path),
+            version,
+            channel,
+            running,
+        }
+    }
+
+    #[test]
+    fn two_different_releases_are_one_warning_naming_each_and_both_callers() {
+        let installs = [
+            install("/new/bin/devp", (1, 24, 0), Channel::Cargo, true),
+            install("/old/bin/devp", (1, 20, 0), Channel::Npm, false),
+        ];
+
+        let report = summarize_installs(
+            &installs,
+            Some(Path::new("/old/bin/devpw")),
+            Some(Path::new("/new/bin/devp")),
+        );
+
+        let InstallReport::Mixed(text) = report else {
+            panic!("two releases must be a warning, got {report:?}");
+        };
+        assert!(text.contains("2 different releases"), "{text}");
+        assert!(
+            text.contains("v1.24.0") && text.contains("running now"),
+            "{text}"
+        );
+        assert!(text.contains("v1.20.0") && text.contains("old"), "{text}");
+        // The scheduler line resolves the windowless twin to the install beside it, so
+        // the user can see it is the old one that keeps firing.
+        assert!(
+            text.contains("scheduled task runs")
+                && text.contains("devpw")
+                && text.contains("(v1.20.0)"),
+            "{text}"
+        );
+        assert!(text.contains("git hook shims call"), "{text}");
+        assert!(text.contains("never deletes a binary"), "{text}");
+    }
+
+    #[test]
+    fn a_mixed_install_list_is_a_warning_and_never_a_problem() {
+        let mut f = Findings::default();
+        let installs = [
+            install("/new/bin/devp", (1, 24, 0), Channel::Cargo, true),
+            install("/old/bin/devp", (1, 20, 0), Channel::Npm, false),
+        ];
+
+        apply_install_report(&mut f, summarize_installs(&installs, None, None));
+
+        assert_eq!(f.warnings.len(), 1);
+        assert!(f.problems.is_empty(), "doctor must still exit 0");
+    }
+
+    #[test]
+    fn one_release_in_several_places_is_information_only() {
+        let mut f = Findings::default();
+        let installs = [
+            install("/a/bin/devp", (1, 24, 0), Channel::Cargo, true),
+            install("/b/bin/devp", (1, 24, 0), Channel::Npm, false),
+        ];
+
+        let report = summarize_installs(&installs, None, None);
+        assert!(
+            matches!(&report, InstallReport::SameVersion(t) if t.contains("2 places") && t.contains("v1.24.0")),
+            "{report:?}"
+        );
+
+        apply_install_report(&mut f, report);
+        assert!(f.warnings.is_empty() && f.problems.is_empty());
+    }
+
+    #[test]
+    fn a_lone_install_has_nothing_to_report() {
+        let installs = [install("/a/bin/devp", (1, 24, 0), Channel::Cargo, true)];
+        assert_eq!(
+            summarize_installs(&installs, None, None),
+            InstallReport::Single
+        );
+        assert_eq!(summarize_installs(&[], None, None), InstallReport::Single);
+    }
+
+    #[test]
+    fn an_unreadable_scheduler_or_hook_target_is_said_plainly() {
+        let installs = [
+            install("/new/bin/devp", (1, 24, 0), Channel::Cargo, true),
+            install("/old/bin/devp", (1, 20, 0), Channel::Npm, false),
+        ];
+        let InstallReport::Mixed(text) = summarize_installs(&installs, None, None) else {
+            panic!("expected a warning");
+        };
+        assert!(text.contains("could not be read"), "{text}");
+    }
+
+    #[test]
+    fn the_registry_note_appears_only_for_a_newer_writer() {
+        assert!(newer_registry_line("1.25.0", "1.24.0").is_some());
+        assert!(newer_registry_line("1.24.0", "1.24.0").is_none());
+        assert!(newer_registry_line("1.23.0", "1.24.0").is_none());
+    }
 
     #[test]
     fn a_stale_copy_names_the_command_that_removes_it() {

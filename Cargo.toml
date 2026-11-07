@@ -229,6 +229,8 @@ windows-sys = { version = "0.61", features = [
     # fails quietly instead of raising the "no disk in drive" system dialog
     # (`src/volume.rs`).
     "Win32_System_Diagnostics_Debug",
+    # `OVERLAPPED`, which `LockFileEx` takes to say which byte to lock (`src/lock.rs`).
+    "Win32_System_IO",
 ] }
 
 [dev-dependencies]

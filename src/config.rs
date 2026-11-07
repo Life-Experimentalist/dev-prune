@@ -1662,6 +1662,39 @@ pub struct PruneRunSummary {
     pub repos_touched: usize,
 }
 
+/// A save was refused because `registry.json` was last written by a newer devp.
+///
+/// A type of its own so a read-only command can tell this refusal from a real I/O
+/// failure and carry on: `devp status` heals the registry in memory and tries to save it,
+/// and that attempt failing must not stop it from reporting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewerRegistryError {
+    pub found: String,
+    pub this: String,
+}
+
+impl std::fmt::Display for NewerRegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "registry.json was written by devp {}, this is {}; update this install or remove it, see devp doctor",
+            self.found, self.this
+        )
+    }
+}
+
+impl std::error::Error for NewerRegistryError {}
+
+/// The registry plus the devp version writing it. Flattened so the file keeps its
+/// existing shape and only gains one top-level key, which every older devp ignores. The
+/// field name must equal `constants::REGISTRY_WRITER_KEY`; a test pins that.
+#[derive(Serialize)]
+struct StampedRegistry<'a> {
+    written_by: &'a str,
+    #[serde(flatten)]
+    registry: &'a Registry,
+}
+
 /// The top-level registry structure persisted to disk.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Registry {
@@ -1842,8 +1875,36 @@ impl Registry {
         self.save_to(&path)
     }
 
+    /// The devp version recorded in the registry file at `path` as its last writer, if
+    /// the file exists, parses, and carries the stamp. Registries written before the
+    /// stamp existed answer `None`.
+    pub fn written_by_at(path: &Path) -> Option<String> {
+        let text = fs::read_to_string(path).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+        value
+            .get(constants::REGISTRY_WRITER_KEY)?
+            .as_str()
+            .map(str::to_string)
+    }
+
     /// Saves the registry to a specific path (for testing or custom locations).
+    ///
+    /// Refuses with [`NewerRegistryError`] when the file on disk was last written by a
+    /// newer devp than this one. A second install left on an old version would otherwise
+    /// load a registry it only half understands, drop the fields it does not know, and
+    /// write that back over the newer binary's data. Equal or older writers are
+    /// overwritten and the file is stamped with this version.
     pub fn save_to(&self, path: &Path) -> Result<()> {
+        if let Some(found) = Self::written_by_at(path)
+            && crate::commands::update::compare_versions(&found, constants::VERSION)
+                == Some(std::cmp::Ordering::Greater)
+        {
+            return Err(NewerRegistryError {
+                found,
+                this: constants::VERSION.to_string(),
+            }
+            .into());
+        }
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .with_context(|| format!("Failed to create config dir {}", parent.display()))?;
@@ -1852,8 +1913,11 @@ impl Registry {
         // same moment; with a shared `registry.json.tmp`, one process could rename the
         // other's half-written file into place as a torn, unparseable registry.
         let tmp_path = path.with_extension(format!("json.{}.tmp", std::process::id()));
-        let contents =
-            serde_json::to_string_pretty(self).context("Failed to serialize registry")?;
+        let contents = serde_json::to_string_pretty(&StampedRegistry {
+            written_by: constants::VERSION,
+            registry: self,
+        })
+        .context("Failed to serialize registry")?;
         {
             // `sync_all` before the rename, or the atomicity is only apparent: after a
             // power cut the rename can survive while the data does not, leaving the
@@ -2760,6 +2824,122 @@ mod tests {
             size_freed: 42,
             runtime: None,
         }
+    }
+
+    /// Rewrites the stamp in a registry file on disk, as another install would have.
+    fn stamp_as(path: &Path, writer: &str) {
+        let mut doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        doc[constants::REGISTRY_WRITER_KEY] = serde_json::Value::String(writer.to_string());
+        fs::write(path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_save_stamps_the_registry_with_this_version() {
+        let dir = TempDir::new().unwrap();
+        let path = test_registry_path(&dir);
+        Registry::default().save_to(&path).unwrap();
+
+        assert_eq!(
+            Registry::written_by_at(&path).as_deref(),
+            Some(constants::VERSION)
+        );
+        // The stamp is one extra top-level key; the registry still loads from it.
+        assert!(Registry::load_from(&path).is_ok());
+    }
+
+    #[test]
+    fn a_registry_stamped_by_a_newer_devp_is_not_overwritten() {
+        let dir = TempDir::new().unwrap();
+        let path = test_registry_path(&dir);
+        Registry::default().save_to(&path).unwrap();
+        stamp_as(&path, "999.0.0");
+        let before = fs::read_to_string(&path).unwrap();
+
+        let err = Registry::default().save_to(&path).unwrap_err();
+
+        let refusal = err
+            .downcast_ref::<NewerRegistryError>()
+            .expect("the refusal is the typed error");
+        assert_eq!(refusal.found, "999.0.0");
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "registry.json was written by devp 999.0.0, this is {}; update this install or remove it, see devp doctor",
+                constants::VERSION
+            )
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), before, "file untouched");
+    }
+
+    #[test]
+    fn a_registry_stamped_by_a_newer_devp_is_still_readable() {
+        let dir = TempDir::new().unwrap();
+        let path = test_registry_path(&dir);
+        let mut registry = Registry::default();
+        registry.record_cache_clear(5);
+        registry.save_to(&path).unwrap();
+        stamp_as(&path, "999.0.0");
+
+        let loaded = Registry::load_from(&path).expect("reads do not care who wrote it");
+        assert_eq!(loaded.total_cache_freed_bytes, 5);
+    }
+
+    #[test]
+    fn an_equal_or_older_stamp_is_overwritten_and_restamped() {
+        let dir = TempDir::new().unwrap();
+        let path = test_registry_path(&dir);
+        Registry::default().save_to(&path).unwrap();
+
+        for writer in [constants::VERSION, "0.0.1"] {
+            stamp_as(&path, writer);
+            Registry::default()
+                .save_to(&path)
+                .expect("not newer, so it writes");
+            assert_eq!(
+                Registry::written_by_at(&path).as_deref(),
+                Some(constants::VERSION)
+            );
+        }
+    }
+
+    #[test]
+    fn a_registry_without_the_stamp_loads_and_is_not_touched_by_loading() {
+        let dir = TempDir::new().unwrap();
+        let path = test_registry_path(&dir);
+        Registry::default().save_to(&path).unwrap();
+        let mut doc: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        doc.as_object_mut()
+            .unwrap()
+            .remove(constants::REGISTRY_WRITER_KEY);
+        let old_format = serde_json::to_string_pretty(&doc).unwrap();
+        fs::write(&path, &old_format).unwrap();
+
+        assert!(Registry::load_from(&path).is_ok());
+        assert_eq!(Registry::written_by_at(&path), None);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            old_format,
+            "a read must not rewrite the file"
+        );
+        // And the first real save adopts it.
+        Registry::default().save_to(&path).unwrap();
+        assert_eq!(
+            Registry::written_by_at(&path).as_deref(),
+            Some(constants::VERSION)
+        );
+    }
+
+    #[test]
+    fn the_stamp_field_name_matches_its_constant() {
+        let text = serde_json::to_string(&StampedRegistry {
+            written_by: "1.2.3",
+            registry: &Registry::default(),
+        })
+        .unwrap();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(doc[constants::REGISTRY_WRITER_KEY], "1.2.3");
     }
 
     #[test]

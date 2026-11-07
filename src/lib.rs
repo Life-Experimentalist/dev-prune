@@ -14,6 +14,7 @@ pub mod help;
 pub mod history;
 pub mod i18n;
 pub mod json;
+pub mod lock;
 pub mod output;
 pub mod parallel;
 pub mod pathenv;

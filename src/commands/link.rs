@@ -18,6 +18,18 @@ use crate::scanner;
 /// repository whose `.devprune.json` sets `disable_hooks` is left unregistered — that
 /// flag exists precisely to keep the hook out of a specific workspace.
 pub fn run_link(path_str: &str, quiet: bool) -> Result<()> {
+    if !quiet {
+        return link_path(path_str, quiet);
+    }
+    // The hook-triggered registration rewrites the registry unattended, so it steps aside
+    // for a running pass rather than racing it. Its output goes to stderr: the hook shim
+    // discards both streams, and `--quiet` promises nothing on stdout.
+    crate::lock::run_exclusive(crate::lock::Pass::Unattended, true, || {
+        link_path(path_str, quiet)
+    })
+}
+
+fn link_path(path_str: &str, quiet: bool) -> Result<()> {
     // Checked on the text, before `canonicalize` touches the share and starts the
     // distribution. A skip, not an error: the hook must never fail a commit over it.
     if crate::volume::is_wsl_unc(Path::new(path_str)) {
@@ -380,6 +392,10 @@ pub(crate) fn is_throwaway_checkout(root: &Path, repo: &Path) -> bool {
 /// A repository on a drive that is not connected is not "gone": the drive is in a bag
 /// somewhere and its history comes back with it. Those entries are left alone and said so.
 pub fn run_unlink_missing() -> Result<()> {
+    crate::lock::run_exclusive(crate::lock::Pass::Interactive, false, unlink_missing)
+}
+
+fn unlink_missing() -> Result<()> {
     let mut registry = Registry::load()?;
     let scan = registry.unlink_missing_scan();
 
