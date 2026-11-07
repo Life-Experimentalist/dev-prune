@@ -34,6 +34,7 @@ AI coding assistants can read the token-efficient skill definition at
 | Doc | What you get |
 |---|---|
 | [Why dev-prune refuses](WHY.md) | The argument the design came from: the hard problem is knowing which directory you cannot delete. |
+| [Case study: a 160 GiB cache](CASE_STUDY.md) | One real cleanup on a nearly full C: drive, with screenshots, what went wrong during it, and the measured speedups that followed. |
 | [Safety invariants](SAFETY_INVARIANTS.md) | The seven guarantees (`.git` boundary, lockfile pre-verification, symlink refusal, atomic writes and the rest) and why each exists. |
 | [Architecture overview](ARCHITECTURE.md) | The entry point to the design docs below. |
 | [High-level design](architecture/HLD.md) | The layers, the data flow of a prune pass, and the sequence diagrams. |

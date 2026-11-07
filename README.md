@@ -562,7 +562,7 @@ This one is not a demo repository. It is my own laptop, with the C: drive at 98%
 
 </div>
 
-The other frames from the same session are in [`assets/screenshots/journey/`](assets/screenshots/journey/). My username and a few personal folder and account names are blurred in them.
+The other frames from the same session are in [`assets/screenshots/journey/`](assets/screenshots/journey/). My username and a few personal folder and account names are blurred in them. The full story, including what went wrong during it and the speedups that followed (`devp caches` from 4 min 44 s to about 25 s), is in the [case study](docs/CASE_STUDY.md).
 
 ---
 

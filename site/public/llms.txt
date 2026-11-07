@@ -8,7 +8,7 @@
 > opt-out release check against GitHub, plus the verified download of a release it finds
 > while `auto_update` is on (the default). Windows, macOS, Linux.
 
-Version 1.23.1. Written by VKrishna04.
+Version 1.24.0. Written by VKrishna04.
 Repository: https://github.com/Life-Experimentalist/dev-prune
 Homepage: https://devprune.vkrishna04.me
 JSON Schema for `.devprune.json`: https://devprune.vkrishna04.me/schemas/v1/devprune.schema.json

@@ -5,6 +5,61 @@ All notable changes to `dev-prune` (`devp`) will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.0] - 2026-11-07
+
+### Added
+
+- **`devp caches` and `devp status` show what they are doing.** A scan that takes a
+  while now names the cache or repository it is on, counts how many are done, and after
+  ten seconds on one item says so plainly: still measuring, this only reads, nothing is
+  deleted, Ctrl-C is safe. `--json` and piped output stay clean.
+
+- **Moved repositories keep their history wherever they went.** Move a project to a
+  different folder and the next scheduled pass finds it again by its first commit and
+  re-points the old registry entry, with its freed-space total and last-pruned date, instead
+  of registering a stranger. Two clones that share a first commit are never guessed
+  between.
+
+- **Dead registry entries clean themselves up.** A path that stays missing for 30 days is
+  dropped from `registry.json`, and so is a linked worktree that `git worktree prune`
+  orphaned. Nothing on disk is touched, and an entry on an unplugged drive or an unmounted
+  share is never dropped, because that drive is only away. `devp unlink --missing` still
+  clears them at once.
+
+### Changed
+
+- **`devp caches` is about ten times faster on a cache-heavy machine.** The sizing walks,
+  the "which repositories depend on this cache" lookup and the container query now run at
+  the same time. On a laptop with 159 registered repositories and a 160 GiB Go build cache
+  it went from 4 minutes 44 seconds to 20 to 29 seconds.
+
+- **`devp status` is about 3 times faster.** Repository discovery spent most of its time
+  asking the disk the same questions once per package manager. It now asks once per
+  folder. 187 repositories went from 58 to 75 seconds down to 21 to 24 seconds (46 seconds
+  on the first, cold-cache run).
+
+- **A hung `git` can no longer wedge a scheduled pass.** Read-only Git calls now give up
+  after two minutes, skip that repository, and say which one. There is still no overall
+  time limit on a scan: a long scan that keeps making progress is never cut off.
+  `command_timeout_secs` is, and always was, the limit for each package-manager command.
+
+### Fixed
+
+- **`devp caches clear` no longer prints "Freed" next to a failure.** When a manager's own
+  clear command failed after removing part of a cache (Go on Windows reports "Access is
+  denied" for files something else holds open), the output showed "not cleared" and then a
+  green "Freed 161.93 GiB". It now shows a "partly cleared" row with what was freed and why
+  the rest stayed, prints the manager's exit code as a number, and `--json` gains a
+  `partial` field on each outcome.
+
+### For contributors
+
+- New `src/parallel.rs` holds the shared work-stealing helper used by the cache sizing and
+  the dependents lookup. `DEV_PRUNE_SCAN_THREADS` still overrides the thread count.
+- `Registry::heal` replaces the old heal pass; `heal_dead_and_moved_repositories` stays as a
+  thin wrapper. `RepoEntry` has a new optional `missing_since` field that older registries
+  simply do not have.
+
 ## [1.23.1] - 2026-11-05
 
 ### Fixed
