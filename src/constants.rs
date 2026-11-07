@@ -215,6 +215,20 @@ pub const RECOMMENDED_CACHE_CAP: &str = "default=10";
 /// One gibibyte, for turning `cache_max_gb` into the byte count a cache is measured in.
 pub const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 
+/// Whether the scheduled pass clears an over-limit cache. Off: nothing outside the
+/// repositories is deleted until someone says so. See `Settings::cache_auto_trim`.
+pub const DEFAULT_CACHE_AUTO_TRIM: bool = false;
+
+/// The per-cache size limit, in gibibytes, that `cache_auto_trim` acts on.
+///
+/// Twenty because a Go build cache that size is already more than a year of ordinary
+/// builds needs, while the incident this exists for (159 GiB on a system drive) is
+/// nearly an order of magnitude past it. Applied to each cache on its own.
+pub const DEFAULT_CACHE_LIMIT_GIB: u64 = 20;
+
+/// The smallest `cache_limit_gib` accepted. Zero would mean "clear it on every pass".
+pub const MIN_CACHE_LIMIT_GIB: u64 = 1;
+
 /// Shown while `devp trust` and the configurator ask the OS about the scheduler and
 /// Git hooks, then overwritten in place. Kept here because its width is what the
 /// erase writes over, so the two must not be able to drift apart.

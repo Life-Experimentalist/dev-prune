@@ -1061,6 +1061,41 @@ const SETTINGS: &[Setting] = &[
             Ok(())
         },
     },
+    Setting {
+        key: "cache_auto_trim",
+        category: Category::Caches,
+        since: "1.24.0",
+        kind: Kind::Toggle,
+        help: "Let the scheduled pass empty a package-manager cache that is over `cache_limit_gib`, but only the few whose manager clears them with its own command and whose loss costs nothing but a rebuild (the Go build cache, ccache). Off by default.",
+        plain: "Let dev-prune empty a cache that has grown past your size limit during its scheduled cleanup. Only caches that rebuild themselves are ever touched, and it is off unless you say yes.",
+        get: |s| s.cache_auto_trim.to_string(),
+        set: |s, v| {
+            s.cache_auto_trim = parse_bool("cache_auto_trim", v)?;
+            Ok(())
+        },
+    },
+    Setting {
+        key: "cache_limit_gib",
+        category: Category::Caches,
+        since: "1.24.0",
+        kind: Kind::Number,
+        help: "Size in GiB above which one cache counts as over your limit. Applied to each cache on its own, not to the total. `devp caches` and `devp doctor` report it; only `cache_auto_trim` acts on it.",
+        plain: "How big one cache may get before dev-prune calls it over your limit. At least 1.",
+        get: |s| s.cache_limit_gib.to_string(),
+        set: |s, v| {
+            let gib: u64 = v.trim().parse().map_err(|_| {
+                anyhow::anyhow!("cache_limit_gib must be a whole number of GiB, not `{}`.", v.trim())
+            })?;
+            if gib < crate::constants::MIN_CACHE_LIMIT_GIB {
+                bail!(
+                    "cache_limit_gib must be at least {} GiB: a limit of zero would call every cache too big the moment it exists.",
+                    crate::constants::MIN_CACHE_LIMIT_GIB
+                );
+            }
+            s.cache_limit_gib = gib;
+            Ok(())
+        },
+    },
 ];
 
 /// Parse the comma-separated adapter deny-list, rejecting names that do not exist.
@@ -2724,6 +2759,45 @@ mod tests {
             err.contains("`-`"),
             "the error names the way to clear it: {err}"
         );
+    }
+
+    #[test]
+    fn cache_trim_is_off_with_a_twenty_gib_limit_until_someone_says_otherwise() {
+        let settings = Settings::default();
+        assert!(!settings.cache_auto_trim, "the feature deletes, so it starts off");
+        assert_eq!(settings.cache_limit_gib, 20);
+        assert_eq!(
+            (find_setting("cache_auto_trim").unwrap().get)(&settings),
+            "false"
+        );
+    }
+
+    #[test]
+    fn an_old_settings_file_without_the_trim_keys_loads_unchanged() {
+        // A settings block written before these keys existed: the keys are absent, not
+        // null, and loading must fill in the defaults rather than refuse the file.
+        let mut old = serde_json::to_value(Settings::default()).unwrap();
+        let fields = old.as_object_mut().unwrap();
+        fields.remove("cache_auto_trim");
+        fields.remove("cache_limit_gib");
+        fields.insert("idle_days".into(), 30.into());
+        let settings: Settings = serde_json::from_value(old).unwrap();
+        assert_eq!(settings.idle_days, 30);
+        assert!(!settings.cache_auto_trim);
+        assert_eq!(settings.cache_limit_gib, 20);
+    }
+
+    #[test]
+    fn the_cache_limit_is_a_whole_number_of_gib_of_at_least_one() {
+        let mut settings = Settings::default();
+        let set = find_setting("cache_limit_gib").unwrap().set;
+        assert!(set(&mut settings, "0").is_err());
+        assert!(set(&mut settings, "-3").is_err());
+        assert!(set(&mut settings, "2.5").is_err());
+        assert!(set(&mut settings, "lots").is_err());
+        assert_eq!(settings.cache_limit_gib, 20, "a refused value changes nothing");
+        set(&mut settings, "1").unwrap();
+        assert_eq!(settings.cache_limit_gib, 1);
     }
 
     #[test]

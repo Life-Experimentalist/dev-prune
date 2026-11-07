@@ -278,6 +278,21 @@ pub struct Settings {
     /// until someone says what too big is.
     #[serde(default)]
     pub cache_max_gb: BTreeMap<String, u64>,
+    /// Whether the scheduled pass clears a cache that has grown past
+    /// [`Self::cache_limit_gib`].
+    ///
+    /// Off by default, and the one setting that lets dev-prune delete outside a
+    /// repository on its own. Only the caches marked for it in the probe table are ever
+    /// touched (a build cache that is pure recompute, such as Go's), and only through
+    /// the manager's own clear command. See [`crate::commands::caches::trim_caches`].
+    #[serde(default)]
+    pub cache_auto_trim: bool,
+    /// The size, in whole gibibytes, past which `cache_auto_trim` clears a cache.
+    ///
+    /// Per cache, not a total. Also what `devp caches` and `devp doctor` mark as "over
+    /// your limit", whether or not auto trim is on.
+    #[serde(default = "default_cache_limit_gib")]
+    pub cache_limit_gib: u64,
     /// Language for dev-prune's own headings and summary lines.
     ///
     /// English by default, and English wherever a translation has not reached a string
@@ -309,6 +324,10 @@ pub struct Settings {
     /// same stable-diff reason as `adapter_idle_days`.
     #[serde(flatten, default)]
     pub unknown_keys: BTreeMap<String, serde_json::Value>,
+}
+
+fn default_cache_limit_gib() -> u64 {
+    constants::DEFAULT_CACHE_LIMIT_GIB
 }
 
 fn default_build_idle_days() -> u64 {
@@ -422,6 +441,8 @@ impl Default for Settings {
             disabled_adapters: Vec::new(),
             adapter_idle_days: BTreeMap::new(),
             cache_max_gb: BTreeMap::new(),
+            cache_auto_trim: constants::DEFAULT_CACHE_AUTO_TRIM,
+            cache_limit_gib: constants::DEFAULT_CACHE_LIMIT_GIB,
             language: constants::DEFAULT_LANGUAGE.to_string(),
             recommendations: constants::DEFAULT_RECOMMENDATIONS,
             unknown_keys: BTreeMap::new(),
