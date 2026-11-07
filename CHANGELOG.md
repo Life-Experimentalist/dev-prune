@@ -98,6 +98,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the rest stayed, prints the manager's exit code as a number, and `--json` gains a
   `partial` field on each outcome.
 
+- **The one-line install now works on a fresh Mac.** On a new macOS account there is no
+  `~/.zshrc`, and the installer only edited rc files that already existed, so it finished
+  cleanly and then every new terminal said `devp: command not found` (Homebrew worked
+  because it puts the binary on a directory that is already on PATH). The installer now
+  creates the rc file of your own login shell (`~/.zshrc` for zsh, `~/.bash_profile` for
+  bash on macOS, `~/.bashrc` on Linux, `config.fish` for fish) when it is missing and adds
+  the PATH line there.
+
 ### For contributors
 
 - New `src/volume.rs` (Windows volume identity, behind a `VolumeView` seam so tests can

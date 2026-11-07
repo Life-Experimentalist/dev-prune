@@ -573,6 +573,28 @@ RC_TOUCHED=0
 PATH_ENTRY=false
 
 if [ "$NO_PATH" != "1" ]; then
+    # A fresh account has none of these files, and macOS ships zsh with no ~/.zshrc. Only
+    # editing files that already exist is how a one-line install on a new Mac finished
+    # cleanly and then reported "command not found" in every new terminal. So make sure
+    # the rc file of the user's own login shell exists; the loop below then edits it.
+    # Windows is handled through the User PATH further down.
+    if [ "$OS" != "windows" ]; then
+        case "${SHELL##*/}" in
+            zsh) _login_rc="$HOME/.zshrc" ;;
+            bash)
+                if [ "$OS" = "darwin" ]; then _login_rc="$HOME/.bash_profile"; else _login_rc="$HOME/.bashrc"; fi
+                ;;
+            fish) _login_rc="" ;;
+            *) if [ "$OS" = "darwin" ]; then _login_rc="$HOME/.zshrc"; else _login_rc=""; fi ;;
+        esac
+        if [ -n "$_login_rc" ] && [ ! -f "$_login_rc" ]; then
+            : > "$_login_rc" 2>/dev/null || true
+        fi
+        if [ "${SHELL##*/}" = "fish" ] && [ ! -f "$HOME/.config/fish/config.fish" ]; then
+            mkdir -p "$HOME/.config/fish" 2>/dev/null &&
+                : > "$HOME/.config/fish/config.fish" 2>/dev/null || true
+        fi
+    fi
     # "Already configured" means the rc file exports *this* BIN_DIR, not merely that
     # some past install left its `# dev-prune` marker: a reinstall with a different
     # --bin-dir used to match the old marker and silently leave PATH pointing at a
