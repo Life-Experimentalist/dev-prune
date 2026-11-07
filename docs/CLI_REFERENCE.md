@@ -1644,6 +1644,43 @@ newest release is newer than everything installed) and this is simply the highes
 version on the machine, and `null` otherwise. The two words are different claims on
 purpose: one is about the project, the other only about this disk.
 
+### `devp installs --json`
+
+```jsonc
+{
+  "schema": 1,
+  "version": "1.24.0",
+  "command": "installs",
+  "installs": [
+    {
+      "path": "~/.cargo/bin/dev-prune",
+      "canonical_path": "~/.cargo/bin/dev-prune",
+      "channel": "cargo",
+      "version": "1.23.0",
+      "on_path": true,
+      "path_position": 3,
+      "roles": ["shell"],
+      "launcher_only": false
+    }
+  ],
+  "scheduler_target": "~/.config/dev-prune/bin/dev-prune",
+  "hook_target": null,
+  "summary": { "count": 1, "consistent": true },
+  "note": "devp looks in every PATH folder and in ..."
+}
+```
+
+`roles` holds any of `shell` (first on `PATH`, what a new shell runs), `scheduler`, `hook`
+(the Git hook shims) and `running` (the copy that answered this command). `channel` is
+the same word `devp doctor` uses: `cargo`, `npm`, `install script` and so on, or
+`standalone` for a file no package manager claims. `version` is `null`, never `""`, for a
+copy that did not answer `--version` in time. `launcher_only` marks a lone `devpw.exe`,
+the scheduler's windowless launcher on Windows, which is evidence of an install but not
+a command anyone types. `summary.consistent` is `false` when the table would print its
+one-sentence warning. `note` states the limit of the search, and it is part of the
+document so a consumer cannot read an empty list as "nothing exists anywhere". The
+document only gains keys from here on; nothing in it is renamed or removed.
+
 Every document is emitted to stdout; diagnostics go to stderr, so `devp status --json |
 jq` is always safe. Exit codes are unchanged by `--json`.
 
@@ -1718,7 +1755,7 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
 - **Description**: One read-only pass that answers "why is this not doing what I expect". Without a path it checks the installation; with one it checks that repository and ends by naming the single reason a prune pass would or would not touch it. Plain `doctor` changes nothing — no config is created, no integration installed, no package manager run — and when some of what it found is repairable, its verdict says how many findings `--fix` would mend. Repositories on a drive that is not connected are reported as one `Inactive` note naming the drives; `--fix` does not write into them.
 - **Cache size limit note**: without a path, doctor also adds a "Cache size limit" note when the Go build cache or the ccache cache is over `cache_limit_gib`. It is informational: it never adds a warning and never changes the exit code.
 - **Without a path** it reports: version, executable location, whether `devp` sits beside it and whether that directory is on `PATH`; **which package manager installed this copy, and the exact commands that upgrade and remove it through that manager** — the installers, cargo, npm, bun, pnpm, yarn, uv, pipx, pip, WinGet, Scoop or Homebrew, never a warning, because an unrecognised location is a valid way to run a binary; **the install receipt**, for a copy one of the install scripts wrote — its version, which of `install.sh` and `install.ps1` wrote it, and the date, read from `<bindir>/install.json` rather than worked out again, and simply absent for every other channel because a date belonging to a different file is worse than no date; **any other copy of dev-prune on the machine that runs a different version** — `PATH` plus every fixed directory those managers install into, searched even when they are not on `PATH`, because a copy nobody can see is a copy nobody upgrades and the one that runs the day `PATH` changes (nothing is deleted: the manager that installed a copy is the only thing that should remove it); **the windowless scheduler binary** (`devpw.exe`, Windows), checked by build stamp against the running version, because the scheduled task runs that file and a stale one silently runs old code every night, with `devp update --install` named as the fix; the config directory and whether `registry.json` parses; every stored setting revalidated against the range its own `config set` enforces; `SKILL.md`, file icons, Git hook state, the scheduler and the three `auto_*` settings; the package-manager binaries the registered repositories actually need; the registry's own health (missing paths, unreadable per-repo configs, reclaimable totals); and the release-check state.
-- **Duplicate installs**: without a path, doctor also lists every `devp` it finds (the running one, the managed copy and those on `PATH`) with its path and version. More than one distinct version is a warning, never a failure: it names each copy, which one the scheduled task runs, which one the Git hook shims call, and the plain way to remove the extras (printed, never run, because devp does not delete a binary itself). The same version in several places is an info line only. A `registry.json` written by a newer devp than this one is a separate warning; this copy still reads it but will not write it (see [One devp per device](BACKGROUND_AUTOMATION.md#one-devp-per-device)).
+- **Duplicate installs**: without a path, doctor also lists every `devp` it finds (the running one, the managed copy and those on `PATH`) with its path and version. More than one distinct version is a warning, never a failure: it names each copy, which one the scheduled task runs, which one the Git hook shims call, and points at `devp installs` for the full list and `devp installs clean` to remove the extras (doctor itself runs nothing). The same version in several places is an info line only. A `registry.json` written by a newer devp than this one is a separate warning; this copy still reads it but will not write it (see [One devp per device](BACKGROUND_AUTOMATION.md#one-devp-per-device)).
 - **With a path** (`devp doctor .`) it reports: whether it is a Git repository, whether it is registered, any opt-out in force, whether `.devprune.json` parses, what it overrides, and any key in it that dev-prune does not read (a warning, not an error — unknown keys are tolerated so a newer file never bricks an older dev-prune, which makes this the one place a typo'd key is ever pointed out), the effective idle threshold against real activity, the effective size floor and scan depth, then every discovered project with its manager, whether the file that gates it is present, and each bloat directory's size and status.
 - **`--fix`** — diagnosis first, then treatment: run the same checks, then repair what they found. It mends *installed-but-broken* only — a stale or missing `devp` twin, a `devpw.exe` scheduler binary behind the running release (its own verified download from GitHub Releases, and the one repair that touches the network: it stands down under `DEV_PRUNE_OFFLINE` and `version_lock`), a missing `SKILL.md` export, Git hooks or a scheduler entry whose recorded binary no longer exists, a chained hook set that has drifted from the tool it forwards to, and registry entries whose repository is gone (the same cleanup as `devp unlink --missing`). Each repair is the corresponding `devp setup` pass re-run, so a repair can never do more than setup itself would; each re-checks state first, so a finding that healed in the meantime reports "already in place". It never performs a first-time install (that is `devp setup`'s job, gated by your `auto_*` settings), never touches an unreadable `registry.json` (a parse failure is for you to look at, not for a tool to guess at), and with `DEV_PRUNE_NO_AUTO_SETUP=1` set it skips every repair that writes outside the config directory, naming the command to run yourself. Problems `--fix` cannot mend are re-listed as such. Cannot be combined with a `PATH` — repository findings (not a Git repo, opted out, idle) are facts about your project, not breakage to mend.
 - **Exit codes**: `0` when everything works, warnings included — a missing scheduler should not fail a script. `1` only for something actually broken: an unreadable `registry.json`, an out-of-range setting, a registered path that no longer exists, a directory that is not a Git repository, or a `devpw.exe` behind the running release *while the scheduler is registered to run it*: that copy runs old code unattended every night, which is breakage, not a nuisance. The same drift on a twin the scheduler does not run is only a warning. `--fix` exits `0` when everything it found was repaired, `1` when any repair failed, was skipped, or was out of its reach.
@@ -1961,6 +1998,29 @@ See [Background Automation](BACKGROUND_AUTOMATION.md) for the full decision flow
   ```bash
   devp scores                           # the records, medals and all
   devp scores --json                    # the same records as one JSON document
+  ```
+
+---
+
+### 22. `devp installs [--json]` / `devp installs clean [--keep <PATH>]`
+- **Description**: Lists every devp on this machine, on `PATH` or not, with its version, how it was installed (the install script, cargo, npm, Homebrew and so on), whether and where it sits on `PATH`, and who uses it: the copy a new shell runs, the copy the scheduler calls and the copy the Git hooks call. Read-only: it never takes the run lock and changes nothing. Under the table, one plain sentence appears when something is off: copies at different versions, a scheduler or Git hook that runs a different copy than your shell, or one copy hiding another on `PATH`. A manager that links both names (cargo's `dev-prune` and `devp`) counts as one install.
+- **What it can find**: every `PATH` folder, plus the folders the install script, cargo, Homebrew, Scoop, WinGet, npm, pnpm, yarn, bun, pip, pipx and uv install into, plus `~/bin`, whether or not those are on `PATH`. A copy placed by hand in any other folder that is on no `PATH` cannot be found, and the output says so. It looks at this machine only: not WSL, not containers, not other computers.
+- **`--json`**: one document, described under [`devp installs --json`](#devp-installs---json).
+- **Exit codes**: `0` unless the search itself broke.
+- **`devp installs clean`**: leaves one devp on the machine. The copy that stays is the highest version, ties going to the copy the scheduler runs and then to the first on `PATH`; `--keep <PATH>` names a different one, using a path `devp installs` shows (anything else is a usage error). For every other copy it shows the path, version, channel and the exact command, then asks `[y/N]`; nothing runs without a yes. The commands are each package manager's own: `cargo uninstall dev-prune`, `brew uninstall dev-prune`, `npm uninstall -g dev-prune`, `bun remove -g dev-prune`, `pnpm remove -g dev-prune`, `yarn global remove dev-prune`, `pip uninstall -y dev-prune`, `pipx uninstall dev-prune`, `uv tool uninstall dev-prune`, `winget uninstall --id VKrishna04.dev-prune`, `scoop uninstall dev-prune`. devp never deletes a file a package manager owns. When two copies share one manager, the command cannot be aimed at one of them, so that copy is described and left for you.
+  - The install script's own copy has no manager, so it is removed with the same code `devp uninstall` uses, for its binary, aliases and `PATH` entry only. The kept copy's registry, config, scheduler and Git hooks are not touched.
+  - A copy no manager claims, or one installed through a tool devp cannot drive, is described with how to remove it and never deleted.
+  - A manager that is missing, asks for administrator rights, times out (five minutes) or fails is reported and counted as not removed, and the rest carry on. A manager that exits successfully while the file is still there is reported as a failure. devp never asks for administrator rights.
+  - When a removed copy was the one the scheduler or Git hooks called, they are pointed at the kept copy. That works when the kept copy is the one you are running; otherwise the command to run from it (`<kept> setup`) is printed.
+  - The copy running the command is never removed, and neither is the kept one. To remove the running copy, run `devp installs clean` from the copy you keep.
+  - Refuses (exit `2`) with no terminal to ask on unless `--yes` is passed; `--dry-run` prints the plan, asks nothing and runs nothing. It has no `--json` form. Exits `1` only when a step you confirmed did not complete.
+- **Examples**:
+  ```bash
+  devp installs
+  devp installs --json | jq -r '.installs[].path'
+  devp installs clean --dry-run
+  devp installs clean
+  devp installs clean --keep ~/.cargo/bin/devp
   ```
 
 ---

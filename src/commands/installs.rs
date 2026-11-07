@@ -54,12 +54,11 @@ fn print_report(found: &Discovery) {
     output::print_header("Copies of devp on this machine");
     println!();
     println!(
-        "  {}{}{}{}{}",
+        "  {}{}{}{}Location",
         output::pad_display("Version", 10),
         output::pad_display("Installed with", 16),
         output::pad_display("On PATH", 10),
-        output::pad_display("Used by", 34),
-        "Location"
+        output::pad_display("Used by", 34)
     );
     for install in &found.installs {
         print_row(install);

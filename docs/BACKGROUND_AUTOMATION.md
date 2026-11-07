@@ -282,8 +282,14 @@ turning into two passes fighting over the same repositories:
   directory's `bin` folder and in the cargo, npm and pip locations. The same release in
   several places is one information line. Different releases are a warning, with exit
   code `0`: it lists each with its path and the command that removes it, and names which
-  one the scheduled task runs and which one the git hook shims call. devp never deletes
-  or replaces a binary itself; the removal is yours to run.
+  one the scheduled task runs and which one the git hook shims call. `devp doctor` never
+  deletes or replaces a binary; the removal is yours to run.
+- **A way to list and remove the extras.** `devp installs` lists every copy, on `PATH` or
+  not, and says which one a new shell, the scheduler and the git hooks run. `devp installs
+  clean` keeps one copy and removes the others, one confirmed step at a time, through each
+  channel's own uninstall command; see [`CLI_REFERENCE.md`](CLI_REFERENCE.md#22-devp-installs---json--devp-installs-clean---keep-path).
+  A copy placed by hand in a folder that is on no `PATH` and in none of the folders devp
+  searches cannot be found.
 
 Each environment has its own devp, so each has its own lock, registry and scheduler. Nothing
 here crosses from one machine, WSL distribution or virtual machine to another.

@@ -2292,7 +2292,12 @@ fn installs_json_is_one_document_with_the_running_binary_in_it() {
             assert!(install.get(key).is_some(), "missing {key}: {install}");
         }
     }
-    assert_eq!(doc["summary"]["count"], installs.len());
+    // The windowless scheduler launcher is listed but is not a second copy of devp.
+    let copies = installs
+        .iter()
+        .filter(|i| i["launcher_only"] == false)
+        .count();
+    assert_eq!(doc["summary"]["count"], copies);
     // The honest limit travels with the data, not only with the help text.
     assert!(
         doc["note"].as_str().unwrap().contains("cannot be found"),
