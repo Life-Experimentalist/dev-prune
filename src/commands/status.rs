@@ -73,7 +73,8 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
         // A registry a newer devp wrote is read as it stands: the adoption is shown for
         // this run and not persisted, and the status report is the point of the command.
         if let Err(e) = registry.save()
-            && e.downcast_ref::<crate::config::NewerRegistryError>().is_none()
+            && e.downcast_ref::<crate::config::NewerRegistryError>()
+                .is_none()
         {
             return Err(e);
         }

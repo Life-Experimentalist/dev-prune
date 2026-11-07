@@ -398,7 +398,10 @@ mod tests {
             Ok(())
         });
 
-        assert!(out.expect("a skipped unattended pass is not an error").is_none());
+        assert!(
+            out.expect("a skipped unattended pass is not an error")
+                .is_none()
+        );
         assert!(!ran.get(), "the body must not run while the lock is held");
     }
 
@@ -415,7 +418,10 @@ mod tests {
         .expect_err("an interactive pass must exit non-zero");
 
         let message = format!("{err:#}");
-        assert!(message.contains(&format!("pid {}", std::process::id())), "{message}");
+        assert!(
+            message.contains(&format!("pid {}", std::process::id())),
+            "{message}"
+        );
         assert!(message.contains("Wait for it to finish"), "{message}");
         assert!(!ran.get());
     }
@@ -431,9 +437,10 @@ mod tests {
     #[test]
     fn the_lock_is_released_when_the_body_fails() {
         let dir = tempfile::tempdir().unwrap();
-        let out: Result<Option<()>> = run_exclusive_in(dir.path(), Pass::Interactive, false, || {
-            anyhow::bail!("the pass broke")
-        });
+        let out: Result<Option<()>> =
+            run_exclusive_in(dir.path(), Pass::Interactive, false, || {
+                anyhow::bail!("the pass broke")
+            });
         assert!(out.is_err());
         drop(held(dir.path()));
     }
@@ -456,7 +463,10 @@ mod tests {
         let holder = Holder::parse("pid=12\nnonsense\nversion=\n");
         assert_eq!(holder.pid, Some(12));
         assert_eq!(holder.version, None);
-        assert_eq!(Holder::default().describe(), "holder details not written yet");
+        assert_eq!(
+            Holder::default().describe(),
+            "holder details not written yet"
+        );
         assert_eq!(holder.describe(), "pid 12");
     }
 

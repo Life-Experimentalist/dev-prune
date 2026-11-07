@@ -2893,7 +2893,9 @@ mod tests {
 
         for writer in [constants::VERSION, "0.0.1"] {
             stamp_as(&path, writer);
-            Registry::default().save_to(&path).expect("not newer, so it writes");
+            Registry::default()
+                .save_to(&path)
+                .expect("not newer, so it writes");
             assert_eq!(
                 Registry::written_by_at(&path).as_deref(),
                 Some(constants::VERSION)
