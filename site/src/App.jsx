@@ -2337,7 +2337,8 @@ Notes you should rely on, not work around:
                     </td>
                     <td>
                       Drop every registered path whose directory no longer
-                      exists, in one pass
+                      exists, in one pass. The registry also drops one itself
+                      after 30 days of absence
                     </td>
                   </tr>
                   <tr>
@@ -2718,7 +2719,10 @@ Notes you should rely on, not work around:
                   never does it, a repository holding an{" "}
                   <code>ignore.devprune.json</code> is never registered, and
                   being registered still only means being considered — not
-                  pruned.
+                  pruned. A repository you moved is re-pointed, history
+                  included, when discovery finds it by its root commit, and a
+                  registry entry missing for 30 days is dropped, but never while
+                  its drive or share is absent.
                 </p>
                 <p className="muted">
                   Off switches: <code>auto_daemon</code>,{" "}

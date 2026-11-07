@@ -69,3 +69,113 @@ fn apply_window_policy(cmd: &mut Command) {
 
 #[cfg(not(windows))]
 fn apply_window_policy(_cmd: &mut Command) {}
+
+/// Run `cmd` to completion and capture its output, killing it if it outlives `deadline`.
+///
+/// For the read-only questions put to `git`. A `git` that blocks on a stalled network
+/// drive or a locked index never exits, and `Command::output` waits for it forever; on
+/// Windows the scheduled task's `IgnoreNew` policy then skips every later run behind the
+/// hung one. This is a ceiling on one stalled child, not a limit on how long a scan may
+/// take: a scan that keeps making progress is made of many calls that each finish.
+///
+/// The pipe readers are left to finish on their own after a kill rather than joined. A
+/// grandchild that inherited the pipe keeps it open past the kill, and joining would
+/// bring the hang back one step later. Expiry is reported as `ErrorKind::TimedOut`.
+pub fn output_within(
+    mut cmd: Command,
+    deadline: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut pipe) = pipe {
+                let _ = pipe.read_to_end(&mut buf);
+            }
+            let _ = tx.send(buf);
+        });
+        rx
+    }
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+
+    let start = Instant::now();
+    // Short naps at first, because a healthy `git rev-parse` is done in a few
+    // milliseconds and a fixed 100 ms poll would multiply a 188-repository scan's wall
+    // time by the poll interval.
+    let mut nap = Duration::from_millis(1);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if start.elapsed() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("did not finish within {}s", deadline.as_secs()),
+            ));
+        }
+        std::thread::sleep(nap);
+        nap = (nap * 2).min(Duration::from_millis(50));
+    };
+
+    Ok(std::process::Output {
+        status,
+        stdout: stdout.recv().unwrap_or_default(),
+        stderr: stderr.recv().unwrap_or_default(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A child that would run for half a minute if nobody stopped it.
+    fn sleeper() -> Command {
+        #[cfg(windows)]
+        {
+            let mut cmd = command("powershell");
+            cmd.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"]);
+            cmd
+        }
+        #[cfg(not(windows))]
+        {
+            let mut cmd = command("sleep");
+            cmd.arg("30");
+            cmd
+        }
+    }
+
+    #[test]
+    fn a_child_that_outlives_the_deadline_is_killed_and_reported() {
+        let started = Instant::now();
+        let err = output_within(sleeper(), Duration::from_millis(300)).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "the stalled child must be cut off, not waited for"
+        );
+    }
+
+    #[test]
+    fn a_child_that_finishes_in_time_returns_its_output() {
+        let mut cmd = command("git");
+        cmd.arg("--version");
+        let out = output_within(cmd, Duration::from_secs(60)).unwrap();
+        assert!(out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).starts_with("git version"));
+    }
+}

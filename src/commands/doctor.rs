@@ -279,11 +279,10 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
             Repair::Scheduler => ("Scheduler", "run `devp daemon install` yourself"),
             Repair::WindowlessTwin => ("Scheduler binary", "run `devp update --install` yourself"),
             Repair::UnlinkMissing => {
-                if let Ok(mut reg) = Registry::load() {
-                    let healed = reg.heal_dead_and_moved_repositories();
-                    if healed > 0 {
-                        let _ = reg.save();
-                    }
+                if let Ok(mut reg) = Registry::load()
+                    && reg.heal(chrono::Utc::now()).dirty
+                {
+                    let _ = reg.save();
                 }
                 match crate::commands::link::run_unlink_missing() {
                     Ok(()) => repaired += 1,

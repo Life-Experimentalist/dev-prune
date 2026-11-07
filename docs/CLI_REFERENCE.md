@@ -143,7 +143,7 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
 ### 3. `devp unlink [PATH]`
 - **Description**: Removes a repository from the `dev-prune` registry. Does **not** delete any workspace files on disk.
 - **Flags**:
-  - `--missing` — remove every registered path whose directory no longer exists, instead of one named repository. Clones that were deleted, drives that were reformatted and workspaces that were moved all leave entries behind; [`devp doctor`](#12-devp-doctor-path---fix) counts them in a single warning and sends you here rather than printing one `devp unlink` line per dead path. Conflicts with `PATH`.
+  - `--missing` — remove every registered path whose directory no longer exists, instead of one named repository. Clones that were deleted, drives that were reformatted and workspaces that were moved all leave entries behind; [`devp doctor`](#12-devp-doctor-path---fix) counts them in a single warning and sends you here rather than printing one `devp unlink` line per dead path. Conflicts with `PATH`. Left alone, an entry missing for 30 days is also dropped automatically by `devp run`, `devp status` and `devp doctor --fix`, but never while its drive or share is absent; this flag is the way to clear them now.
 - **Examples**:
   ```bash
   devp unlink
@@ -654,7 +654,7 @@ Also takes `--except <MANAGERS>` with `all`, and a comma-separated list as the t
     | :--- | :---: | :--- |
     | `require_confirmation` | `true` | Whether a prune pass asks before deleting |
     | `allow_manifest_rewrite` | `false` | Whether verification may *repair* a lockfile that has drifted from its manifest, instead of refusing. Off, every adapter verifies read-only; on, each runs its writing form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`, `go mod tidy`, …) |
-    | `command_timeout_secs` | `600` | Ceiling on any one package-manager command dev-prune runs — the lockfile check before a delete, and the reinstall `devp restore` performs. Nothing is compiled under it: the opt-in build adapters run no command at all during a prune. The one exception is a restore whose install builds a native module |
+    | `command_timeout_secs` | `600` | Ceiling on any one package-manager command dev-prune runs — the lockfile check before a delete, and the reinstall `devp restore` performs. Nothing is compiled under it: the opt-in build adapters run no command at all during a prune. The one exception is a restore whose install builds a native module. The limit is per command, not per run, and scans have no overall limit: only a single `git` call that stops answering is cut off, after 120 seconds, and that repository is skipped for the pass |
 
     **Build trees — off by default** — Everything here comes back by recompiling rather than downloading, which is minutes rather than seconds. That is the whole reason each one is a switch.
 
@@ -1065,8 +1065,8 @@ which fits the additive contract: consumers already handle the key being absent.
 | `ignored` | The repository sets `"ignore": true`, or has an `ignore.devprune.json`. |
 | `no_bloat` | Nothing to delete. |
 | `disabled` | The registry entry is disabled. |
-| `path_missing` | The registered repository path no longer exists on disk. If the repository was moved rather than deleted, `devp link` at its new location adopts this entry and the row goes away; `devp unlink --missing` clears the ones that are genuinely gone. |
-| `not_a_repo` | The registered path still exists on disk but no longer holds a `.git` — the clone was deleted and recreated by hand, or a worktree `git worktree prune` removed. Informational, never counted in `summary.errors`: `devp unlink <path>` drops the entry. (`--missing` would not — the directory is still there.) |
+| `path_missing` | The registered repository path no longer exists on disk. If the repository was moved rather than deleted, `devp link` at its new location adopts this entry and the row goes away, and the scheduled pass does the same for a repository it finds anywhere with a matching root commit; `devp unlink --missing` clears the ones that are genuinely gone, and the registry drops one itself after 30 days of absence while its drive or share is present. |
+| `not_a_repo` | The registered path still exists on disk but no longer holds a `.git` — the clone was deleted and recreated by hand, or a worktree `git worktree prune` removed. Informational, never counted in `summary.errors`: `devp unlink <path>` drops the entry. (`--missing` would not — the directory is still there.) Left alone, the registry drops it after 30 days. |
 | `lockfile_error` | The lockfile could not be verified, so nothing was deleted. |
 | `activity_check_error` | The idle check itself failed, so idleness could not be proven and nothing was deleted. Counts as an error. |
 | `delete_error` | Deletion was attempted and failed. |

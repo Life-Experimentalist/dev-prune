@@ -54,9 +54,12 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     let mut registry = Registry::load()?;
 
     // Auto-heal moved repositories (e.g. moved to Archive) and purge dead ephemeral AI worktrees.
-    let healed = registry.heal_dead_and_moved_repositories();
-    if healed > 0 {
+    let healed = registry.heal(chrono::Utc::now());
+    if healed.dirty {
         let _ = registry.save();
+    }
+    if !json_output {
+        crate::commands::run::report_expired_entries(&healed.expired);
     }
 
     // Before anything is reported: the repository the user is standing in may be one

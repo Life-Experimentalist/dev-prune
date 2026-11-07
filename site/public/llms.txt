@@ -183,7 +183,8 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   than only at prune time; `devp link` still registers one, because naming a single
   repository is not a bulk scan
 - `devp link [PATH]` / `devp unlink [PATH]` — register or unregister one repository;
-  `devp unlink --missing` drops every entry whose directory no longer exists
+  `devp unlink --missing` drops every entry whose directory no longer exists at once
+  (the registry also drops one itself after 30 days of absence)
 - `devp undo` — revert the most recent `init` or `link`
 - `devp run [PATH]` — prune every registered repository, or one target. Both forms
   list what would go, with sizes and the total, and ask before deleting; `-y` answers,
@@ -761,7 +762,9 @@ machine installs nothing until its first-run walkthrough is accepted.
 lockfile check before a delete, and the reinstall `devp restore` performs. Nothing is
 compiled under it: the opt-in build adapters run no command at all during a prune,
 because a build tree needs no lockfile proof. The single exception is a restore whose
-install builds a native module.
+install builds a native module. The limit is per command, not per run, and scans have no
+overall limit: only a single `git` call that stops answering is cut off, after 120
+seconds, and that repository is skipped for the pass.
 
 `auto_discover` lets the scheduled background pass — `devp run --daemon`,
 the one the OS scheduler starts — look for unregistered repositories by itself, using the
@@ -771,7 +774,12 @@ does, and `devp config set auto_discover false` turns it off. It widens what is
 is idle past `idle_days`, only where a lockfile proves every candidate directory can be
 rebuilt, and only after the seven safety invariants pass, so the worst a wrong guess
 costs is an extra row in `devp status`. A repository holding an `ignore.devprune.json` is
-not registered at all.
+not registered at all. A repository that was moved is not registered twice: when discovery
+finds one whose root commit matches a registered path that no longer exists, that entry is
+re-pointed to the new path with its history. Separately, every `devp run`, `devp status`
+and `devp doctor --fix` drops a registry entry (never anything on disk) that has been
+missing, or has stopped being a git checkout, for 30 days, and only while its drive or
+share is present, so an unplugged drive never loses entries.
 
 `auto_hooks_chain` is off because `core.hooksPath` is one slot, global to the machine,
 and often already held by husky, pre-commit or lefthook. On, dev-prune installs in
