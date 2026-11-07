@@ -592,6 +592,21 @@ pub const VOLUME_PICK_STAMP_SUFFIX: &str = ".stamp";
 /// may no longer be the unused ones.
 pub const VOLUME_PICK_WINDOW_SECS: u64 = 600;
 
+/// The run lock in the config directory. One per device: every command that prunes or
+/// rewrites the registry for a whole pass holds it, so two copies of devp (or the
+/// scheduler, a git hook and a person) cannot work on the same repositories at once.
+pub const RUN_LOCK_FILENAME: &str = "run.lock";
+
+/// Keys of the three `key=value` lines the lock holder writes into the lock file, so a
+/// second devp can say who it is waiting on.
+pub const RUN_LOCK_KEY_PID: &str = "pid";
+pub const RUN_LOCK_KEY_VERSION: &str = "version";
+pub const RUN_LOCK_KEY_SINCE: &str = "since";
+
+/// Top-level `registry.json` key recording the devp version that last saved the file.
+/// A devp older than that version refuses to save over it.
+pub const REGISTRY_WRITER_KEY: &str = "written_by";
+
 /// File in the config directory recording the first-run answer to "may dev-prune set
 /// itself up?" — `granted` or `declined`. Its absence means the question has never been
 /// asked, or that `devp uninstall` put it back that way. Separate from the version
