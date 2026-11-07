@@ -195,7 +195,7 @@ partly cleared and the freed bytes land in "Caches emptied" in `devp stats` and 
 history`. A cache that will not clear is a line in the output, not a failed pass. The step
 runs inside the pass, so it sits behind the same gates as the prune, and `devp run
 --dry-run` lists what it would empty and clears nothing. While the setting is off, nothing
-is measured. See [the reference](CLI_REFERENCE.md#a-size-limit-for-the-harmless-caches)
+is measured. See [the reference](CLI_REFERENCE.md#7-devp-caches---volume-volume---json--devp-caches-clear-manager)
 for the reasoning and the JSON key.
 
 ### Turning it off
