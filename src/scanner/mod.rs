@@ -39,6 +39,12 @@ pub fn is_git_repo(path: &Path) -> bool {
 pub fn scan_for_repos(root: &Path) -> Result<Vec<PathBuf>> {
     let mut repos = Vec::new();
 
+    // A WSL share is another environment's disk: walking it starts the distribution and
+    // reads it through a translation layer. `devp init` and `devp link` say why.
+    if crate::volume::is_wsl_unc(root) {
+        return Ok(repos);
+    }
+
     let walker = WalkDir::new(root)
         .follow_links(false)
         .max_depth(MAX_SCAN_DEPTH)
@@ -137,6 +143,17 @@ mod tests {
 
         let repos = scan_for_repos(tmp.path()).unwrap();
         assert_eq!(repos.len(), 1);
+    }
+
+    #[test]
+    fn a_scan_of_a_wsl_share_finds_nothing_and_does_not_walk_it() {
+        // Neither path exists here; an empty answer, not an error, is the whole point.
+        for root in [r"\\wsl$\Ubuntu\home\me", r"\\wsl.localhost\Debian\srv"] {
+            assert!(
+                scan_for_repos(Path::new(root)).unwrap().is_empty(),
+                "{root}"
+            );
+        }
     }
 
     #[test]

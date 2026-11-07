@@ -54,6 +54,12 @@ pub fn run(paths: &[String], dry_run: bool, auto: bool) -> Result<()> {
         None => paths
             .iter()
             .map(|path_str| {
+                // Before `canonicalize`, which would start the distribution. A skip, not
+                // an error: each environment gets its own devp.
+                if crate::volume::is_wsl_unc(Path::new(path_str)) {
+                    output::print_info(&format!("{path_str}: {}", constants::WSL_SKIP_NOTE));
+                    return Ok((PathBuf::from(path_str), Vec::new()));
+                }
                 let path = Path::new(path_str)
                     .canonicalize()
                     .with_context(|| format!("Path not found: {path_str}"))?;

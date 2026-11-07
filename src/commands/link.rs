@@ -18,6 +18,14 @@ use crate::scanner;
 /// repository whose `.devprune.json` sets `disable_hooks` is left unregistered — that
 /// flag exists precisely to keep the hook out of a specific workspace.
 pub fn run_link(path_str: &str, quiet: bool) -> Result<()> {
+    // Checked on the text, before `canonicalize` touches the share and starts the
+    // distribution. A skip, not an error: the hook must never fail a commit over it.
+    if crate::volume::is_wsl_unc(Path::new(path_str)) {
+        if !quiet {
+            output::print_info(&format!("{path_str}: {}", constants::WSL_SKIP_NOTE));
+        }
+        return Ok(());
+    }
     let path = Path::new(path_str)
         .canonicalize()
         .with_context(|| format!("Path not found: {path_str}"))?;
@@ -179,6 +187,10 @@ pub(crate) fn adopt_repo_at(registry: &mut Registry, start: &Path) -> Option<Pat
     }
 
     if is_nested_linked_worktree(&path) {
+        return None;
+    }
+
+    if crate::volume::is_wsl_unc(&path) {
         return None;
     }
 

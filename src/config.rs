@@ -569,7 +569,7 @@ enum PathState {
 ///
 /// What decides whether "the path is gone" can be believed: when this root itself is
 /// missing, the volume is unplugged or unmounted and nothing under it has been deleted.
-fn volume_root(path: &Path) -> PathBuf {
+pub(crate) fn volume_root(path: &Path) -> PathBuf {
     let user = std::env::var(constants::USER_ENV_VAR)
         .or_else(|_| std::env::var(constants::LOGNAME_ENV_VAR))
         .ok()
@@ -649,7 +649,8 @@ struct RootStatus {
 
 impl RootStatus {
     fn read(root: &Path, view: &dyn VolumeView) -> Self {
-        if !root.exists() {
+        // A WSL share is never asked anything: a stat on it starts the distribution.
+        if crate::volume::is_wsl_unc(root) || !root.exists() {
             return Self {
                 present: false,
                 identity: None,
@@ -761,7 +762,9 @@ fn find_inactive(entries: &[VolumeEntry], view: &dyn VolumeView) -> InactiveRepo
         let drive = crate::volume::display_root(root);
         members
             .iter()
-            .filter(|(_, recorded)| status.leaves_inactive(recorded.as_deref()))
+            .filter(|(path, recorded)| {
+                crate::volume::is_wsl_unc(path) || status.leaves_inactive(recorded.as_deref())
+            })
             .map(|(path, _)| (path.clone(), drive.clone()))
             .collect::<Vec<_>>()
     });
@@ -794,7 +797,11 @@ impl Liveness {
                 let states: Vec<(PathBuf, PathState)> = members
                     .iter()
                     .map(|(path, recorded)| {
-                        let state = if status.leaves_inactive(recorded.as_deref()) {
+                        // An entry under a WSL share stays in the registry but is never
+                        // classified: it is another environment's disk, not a deleted one.
+                        let state = if crate::volume::is_wsl_unc(path)
+                            || status.leaves_inactive(recorded.as_deref())
+                        {
                             PathState::Inactive
                         } else {
                             classify_path(path)
@@ -1896,6 +1903,11 @@ impl Registry {
     /// Every entry is created here, so this is the one place the volume is recorded at
     /// registration. A drive with no identity leaves both fields empty.
     pub fn add_repo_with(&mut self, path: PathBuf, view: &dyn VolumeView) -> bool {
+        // Another environment's disk: each environment gets its own devp. Asked before
+        // `canonical_key`, whose `canonicalize` would start the distribution.
+        if crate::volume::is_wsl_unc(&path) {
+            return false;
+        }
         // The registry is keyed by path, so `./foo`, `foo/`, and the absolute form
         // would otherwise register as three separate repositories.
         let path = canonical_key(&path);
@@ -4377,6 +4389,42 @@ mod tests {
         assert!(reg.repositories.contains_key(&old));
         assert!(!reg.repositories.contains_key(&canonical_key(&new)));
         assert_eq!(reg.repositories[&old].volume_id.as_deref(), Some(VOL_A));
+    }
+
+    #[test]
+    fn a_registered_path_inside_wsl_stays_inactive_and_is_never_clocked_or_dropped() {
+        // Pure text: the path is never touched, so this holds on every platform.
+        let wsl = PathBuf::from(r"\\wsl$\Ubuntu\home\me\proj");
+        let mut entry = RepoEntry::new();
+        entry.volume_id = Some("linux:abc:/".to_string());
+        let mut reg = Registry::default();
+        reg.repositories.insert(wsl.clone(), entry);
+
+        // A month later, which is long past the missing-path grace period.
+        let report = reg.heal_with(
+            Utc::now() + chrono::Duration::days(30),
+            &FakeVolumes::default(),
+        );
+
+        assert!(report.inactive.contains(&wsl), "{:?}", report.inactive);
+        assert!(report.expired.is_empty(), "never dropped");
+        let kept = reg.repositories.get(&wsl).expect("stays in registry.json");
+        assert!(
+            kept.missing_since.is_none(),
+            "never given a missing-path clock"
+        );
+        assert!(
+            reg.inactive_repos_with(&FakeVolumes::default())
+                .contains(&wsl)
+        );
+    }
+
+    #[test]
+    fn a_repository_inside_wsl_is_not_registered() {
+        let mut reg = Registry::default();
+        assert!(!reg.add_repo(PathBuf::from(r"\\wsl$\Ubuntu\home\me\proj")));
+        assert!(!reg.add_repo(PathBuf::from(r"\\wsl.localhost\Debian\srv\app")));
+        assert!(reg.repositories.is_empty());
     }
 
     #[test]

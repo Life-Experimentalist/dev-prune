@@ -1060,3 +1060,15 @@ pub const USER_ENV_VAR: &str = "USER";
 
 /// The fallback for [`USER_ENV_VAR`] in sessions that only set `LOGNAME`.
 pub const LOGNAME_ENV_VAR: &str = "LOGNAME";
+
+/// The UNC server names under which Windows exposes a WSL distribution's files
+/// (`\wsl$\Ubuntu\...`, and `\wsl.localhost\Ubuntu\...` on newer builds).
+///
+/// A Windows `devp` treats these as another machine's disk: it never registers, scans or
+/// prunes under them, because walking a distribution through the 9P bridge is slow, wakes
+/// the distribution, and sees Linux permissions and symlinks through a translation layer.
+/// Compared case-insensitively.
+pub const WSL_UNC_HOSTS: &[&str] = &["wsl$", "wsl.localhost"];
+
+/// The one line printed for anything under [`WSL_UNC_HOSTS`].
+pub const WSL_SKIP_NOTE: &str = "inside WSL, install devp in the distribution";

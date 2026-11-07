@@ -112,6 +112,26 @@ pub fn display_root(root: &Path) -> String {
     }
 }
 
+/// Whether `path` is on a WSL distribution's share (`\\wsl$\...`, `\\wsl.localhost\...`,
+/// or either in the `\\?\UNC\` spelling that `canonicalize` produces).
+///
+/// Pure text, so it answers the same on every OS and never touches the share: asking a
+/// stopped distribution anything would start it.
+pub fn is_wsl_unc(path: &Path) -> bool {
+    let text = path.to_string_lossy().replace('/', "\\");
+    let rest = text
+        .strip_prefix(r"\\?\UNC\")
+        .or_else(|| text.strip_prefix(r"\\.\UNC\"))
+        .or_else(|| text.strip_prefix(r"\\"));
+    let Some(rest) = rest else {
+        return false;
+    };
+    let host = rest.split('\\').next().unwrap_or("");
+    crate::constants::WSL_UNC_HOSTS
+        .iter()
+        .any(|h| host.eq_ignore_ascii_case(h))
+}
+
 #[derive(Clone)]
 struct VolumeInfo {
     identity: String,
@@ -809,6 +829,31 @@ not a mount line
         );
         let top = mount_at(&mounts, Path::new("/mnt/usb")).unwrap();
         assert_eq!(top.source, "/dev/sdc1");
+    }
+
+    #[test]
+    fn only_the_two_wsl_unc_hosts_count_as_inside_wsl() {
+        for yes in [
+            r"\\wsl$\Ubuntu\home\me\proj",
+            r"\\WSL$\Ubuntu",
+            r"\\wsl.localhost\Ubuntu\home\me",
+            r"\\?\UNC\wsl$\Ubuntu\home\me",
+            r"\\?\UNC\wsl.localhost\Debian\srv",
+            "//wsl$/Ubuntu/home/me",
+        ] {
+            assert!(is_wsl_unc(Path::new(yes)), "{yes}");
+        }
+        // Ordinary mapped drives, other SMB shares and local paths behave as before.
+        for no in [
+            r"C:\Users\me\wsl$",
+            r"\\server\share\wsl$",
+            r"\\wslserver\share",
+            r"\\?\C:\work\proj",
+            r"Z:\proj",
+            "/home/me/proj",
+        ] {
+            assert!(!is_wsl_unc(Path::new(no)), "{no}");
+        }
     }
 
     #[test]
