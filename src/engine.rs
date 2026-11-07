@@ -97,6 +97,13 @@ pub enum PruneStatus {
     /// repository, and reporting it as a failure made every scheduled pass over such
     /// a repo exit non-zero forever while `--dry-run` over the same repo exited 0.
     SkippedNestedRepo(String),
+    /// The repository's drive is not the one it was registered on, or is no longer
+    /// connected, or the path is inside WSL. Carries the plain line to show.
+    ///
+    /// A skip, never an error: the drive may simply have been unplugged, nothing was
+    /// touched, and failing the pass for it would turn every scheduled run red until
+    /// somebody plugs the disk back in. See [`drive_skip`].
+    SkippedDrive(String),
 }
 
 impl std::fmt::Display for PruneStatus {
@@ -134,6 +141,7 @@ impl std::fmt::Display for PruneStatus {
             PruneStatus::ConfigError(e) => write!(f, "Unreadable .devprune.json: {e}"),
             PruneStatus::SkippedDeclaration(e) => write!(f, "Skipped (declaration): {e}"),
             PruneStatus::SkippedNestedRepo(e) => write!(f, "Skipped (nested repository): {e}"),
+            PruneStatus::SkippedDrive(e) => write!(f, "{e}"),
         }
     }
 }
@@ -285,6 +293,13 @@ pub struct PruneOptions {
     /// A floor on top of everything else, never a bypass — see
     /// [`PruneOptions::idle_threshold_for`].
     pub adapter_idle_days: BTreeMap<String, u64>,
+    /// The volume identity the registry recorded for this repository, if any.
+    ///
+    /// Set per repository by the caller that holds the registry entry. When present,
+    /// [`prune_repo_with_volumes`] asks the real volume for its identity just before
+    /// touching anything, and skips the repository if it no longer matches. `None` (an
+    /// entry with no recorded volume, or a path that is not registered) checks nothing.
+    pub expected_volume: Option<String>,
 }
 
 impl Default for PruneOptions {
@@ -301,6 +316,7 @@ impl Default for PruneOptions {
             command_timeout_secs: crate::constants::DEFAULT_COMMAND_TIMEOUT_SECS,
             build_idle_days: crate::constants::DEFAULT_BUILD_IDLE_DAYS,
             adapter_idle_days: BTreeMap::new(),
+            expected_volume: None,
         }
     }
 }
@@ -447,11 +463,71 @@ pub fn prune_repo_selected(
 /// This is the single implementation; [`prune_repo`] and [`prune_repo_selected`] are
 /// thin wrappers for the two common shapes.
 pub fn prune_repo_with(repo_path: &Path, opts: &PruneOptions) -> Vec<PruneResult> {
+    prune_repo_with_volumes(repo_path, opts, &SystemVolumes)
+}
+
+/// Why `repo_path` must not be touched right now because of the drive it is on, as the
+/// plain line to show, or `None` to go on.
+///
+/// Two reasons. A path on a WSL share is another environment's disk. And a repository
+/// registered on a known volume (`recorded`) is only touched if the volume at its root
+/// answers with that same identity right now: an unplugged disk, a swapped one, or a
+/// root that no longer reads as anything all skip. When in doubt, skip.
+///
+/// This is the only place that decides it, so a prune, a restore and a hand-picked
+/// `devp run <path>` cannot disagree. Cheap on purpose: one identity lookup per
+/// repository, and the macOS lookup is cached by device and creation time, so it never
+/// spawns `diskutil` per repository.
+pub fn drive_skip(
+    repo_path: &Path,
+    recorded: Option<&str>,
+    view: &dyn VolumeView,
+) -> Option<String> {
+    if crate::volume::is_wsl_unc(repo_path) {
+        return Some(format!(
+            "{}: {}",
+            crate::output::clean_path(repo_path),
+            constants::WSL_SKIP_NOTE
+        ));
+    }
+    let wanted = recorded?;
+    let root = crate::config::volume_root(repo_path);
+    if view.identity_at(&root).as_deref() == Some(wanted) {
+        return None;
+    }
+    Some(format!(
+        "drive for {} changed or is no longer connected, skipped",
+        crate::output::clean_path(repo_path)
+    ))
+}
+
+/// [`prune_repo_with`] reading volumes from `view`.
+///
+/// The drive check comes before anything on disk is looked at, so a repository on a
+/// swapped drive reports the drive and not a misleading "path missing".
+pub fn prune_repo_with_volumes(
+    repo_path: &Path,
+    opts: &PruneOptions,
+    view: &dyn VolumeView,
+) -> Vec<PruneResult> {
     let idle_days = opts.idle_days;
     let dry_run = opts.dry_run;
     let force = opts.force;
     let only = opts.only_dirs.as_deref();
     let mut results = Vec::new();
+
+    if let Some(line) = drive_skip(repo_path, opts.expected_volume.as_deref(), view) {
+        results.push(PruneResult {
+            repo_path: repo_path.to_path_buf(),
+            adapter_name: "-".to_string(),
+            bloat_dir: "-".to_string(),
+            size_freed: 0,
+            shared_bytes: 0,
+            runtime: None,
+            status: PruneStatus::SkippedDrive(line),
+        });
+        return results;
+    }
 
     // A registered path that is gone gets a visible line, not silence. Returning empty
     // results made the repository vanish from the run report entirely, which reads as
@@ -1215,7 +1291,7 @@ pub fn prune_all_with_volumes(
     // Sorted, because `repositories` is a HashMap: without this the output of two
     // identical runs lists the same repositories in a different order, which makes the
     // summary hard to read and the JSON document impossible to diff.
-    let mut repos: Vec<(PathBuf, u64, bool)> = registry
+    let mut repos: Vec<(PathBuf, u64, bool, Option<String>)> = registry
         .repositories
         .iter()
         .filter(|(path, _)| !inactive.contains(path))
@@ -1223,12 +1299,17 @@ pub fn prune_all_with_volumes(
             let idle_days = entry
                 .override_idle_days
                 .unwrap_or(registry.settings.idle_days);
-            (path.clone(), idle_days, entry.enabled)
+            (
+                path.clone(),
+                idle_days,
+                entry.enabled,
+                entry.volume_id.clone(),
+            )
         })
         .collect();
     repos.sort_by(|a, b| a.0.cmp(&b.0));
 
-    for (path, idle_days, enabled) in repos {
+    for (path, idle_days, enabled, volume_id) in repos {
         if !enabled {
             all_results.push(PruneResult {
                 repo_path: path.clone(),
@@ -1242,12 +1323,16 @@ pub fn prune_all_with_volumes(
             continue;
         }
 
-        let results = prune_repo_with(
+        // Asked again here, per repository, because the pass can be long and a disk can
+        // be swapped after the inactive check above.
+        let results = prune_repo_with_volumes(
             &path,
             &PruneOptions {
                 idle_days,
+                expected_volume: volume_id,
                 ..opts.clone()
             },
+            view,
         );
 
         let path_freed: u64 = results
@@ -2352,6 +2437,167 @@ mod tests {
         );
         assert!(results.is_empty(), "inactive: {results:?}");
         assert!(repo.join("vendor").exists(), "nothing was deleted");
+    }
+
+    /// Answers `before` for the first `swap_after` identity lookups and `after` for every
+    /// one after that: a drive pulled out and another put in while a pass is running.
+    struct SwappedMidPass {
+        before: &'static str,
+        after: Option<&'static str>,
+        swap_after: usize,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl SwappedMidPass {
+        fn new(before: &'static str, after: Option<&'static str>, swap_after: usize) -> Self {
+            Self {
+                before,
+                after,
+                swap_after,
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+        fn lookups(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl VolumeView for SwappedMidPass {
+        fn identity_at(&self, _root: &Path) -> Option<String> {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if n < self.swap_after {
+                Some(self.before.to_string())
+            } else {
+                self.after.map(str::to_string)
+            }
+        }
+        fn label_at(&self, _root: &Path) -> Option<String> {
+            None
+        }
+        fn mounted(&self) -> Vec<(PathBuf, String)> {
+            Vec::new()
+        }
+    }
+
+    const SWAP_ID: &str = "win:AAAA-0001:NTFS";
+
+    /// A registry holding one repository that has something to prune, registered on `SWAP_ID`.
+    fn registry_with_one_prunable_repo(tmp: &TempDir) -> (Registry, PathBuf) {
+        let repo = tmp.path().join("repo");
+        create_git_repo_with_commit(&repo);
+        create_go_project(&repo);
+        let mut registry = Registry::default();
+        registry.add_repo_with(repo.clone(), &OneDrive(SWAP_ID));
+        (registry, repo)
+    }
+
+    #[test]
+    fn a_drive_swapped_after_the_pass_started_is_skipped_and_nothing_is_written() {
+        for after in [Some("win:BBBB-0002:NTFS"), None] {
+            let tmp = TempDir::new().unwrap();
+            let (mut registry, repo) = registry_with_one_prunable_repo(&tmp);
+
+            // How many lookups the start of a pass makes, so the swap lands after them and
+            // before the repository is touched.
+            let probe = SwappedMidPass::new(SWAP_ID, Some(SWAP_ID), usize::MAX);
+            let _ = registry.inactive_repos_with(&probe);
+            let view = SwappedMidPass::new(SWAP_ID, after, probe.lookups());
+
+            let results =
+                prune_all_with_volumes(&mut registry, &PruneOptions::new(0, false, true), &view);
+
+            assert_eq!(results.len(), 1, "{results:?}");
+            let PruneStatus::SkippedDrive(line) = &results[0].status else {
+                panic!("expected a drive skip, got {:?}", results[0].status);
+            };
+            assert_eq!(
+                line,
+                &format!(
+                    "drive for {} changed or is no longer connected, skipped",
+                    crate::output::clean_path(&repo)
+                )
+            );
+            assert!(repo.join("vendor").exists(), "nothing may be deleted");
+            let entry = registry
+                .repositories
+                .get(&crate::config::canonical_key(&repo))
+                .unwrap();
+            assert!(entry.last_pruned_at.is_none(), "no registry write");
+            assert_eq!(registry.total_freed_bytes, 0);
+        }
+    }
+
+    #[test]
+    fn a_repository_on_the_drive_it_was_registered_on_is_pruned_as_before() {
+        let tmp = TempDir::new().unwrap();
+        let (mut registry, repo) = registry_with_one_prunable_repo(&tmp);
+
+        let results = prune_all_with_volumes(
+            &mut registry,
+            &PruneOptions::new(0, false, true),
+            &OneDrive(SWAP_ID),
+        );
+
+        assert!(
+            results
+                .iter()
+                .any(|r| matches!(r.status, PruneStatus::Pruned)),
+            "{results:?}"
+        );
+        assert!(!repo.join("vendor").exists());
+    }
+
+    #[test]
+    fn an_entry_with_no_recorded_drive_is_never_asked_about_one() {
+        let tmp = TempDir::new().unwrap();
+        let (_registry, repo) = registry_with_one_prunable_repo(&tmp);
+
+        // A view that answers nothing at all: a recorded drive would be skipped here.
+        let view = SwappedMidPass::new(SWAP_ID, None, 0);
+        let results = prune_repo_with_volumes(
+            &repo,
+            &PruneOptions {
+                expected_volume: None,
+                ..PruneOptions::new(0, false, true)
+            },
+            &view,
+        );
+
+        assert!(
+            results
+                .iter()
+                .any(|r| matches!(r.status, PruneStatus::Pruned)),
+            "{results:?}"
+        );
+        assert_eq!(
+            view.lookups(),
+            0,
+            "no identity lookup without a recorded id"
+        );
+    }
+
+    #[test]
+    fn a_path_inside_wsl_is_skipped_without_touching_the_disk() {
+        let wsl = Path::new(r"\\wsl$\Ubuntu\home\me\proj");
+        let results = prune_repo_with_volumes(
+            wsl,
+            &PruneOptions::new(0, false, true),
+            &SwappedMidPass::new(SWAP_ID, Some(SWAP_ID), usize::MAX),
+        );
+        assert_eq!(results.len(), 1);
+        let PruneStatus::SkippedDrive(line) = &results[0].status else {
+            panic!("expected a skip, got {:?}", results[0].status);
+        };
+        assert!(line.contains(constants::WSL_SKIP_NOTE), "{line}");
+        assert!(
+            drive_skip(
+                Path::new(r"\\wsl.localhost\Debian\x"),
+                None,
+                &OneDrive(SWAP_ID)
+            )
+            .is_some()
+        );
+        assert!(drive_skip(Path::new(r"\\server\share\x"), None, &OneDrive(SWAP_ID)).is_none());
     }
 
     #[test]

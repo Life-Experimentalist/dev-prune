@@ -16,6 +16,11 @@ use crate::output;
 
 /// Run the `restore` command.
 pub fn run(path_str: &str) -> Result<()> {
+    // Before `canonicalize`, which would start the distribution.
+    if crate::volume::is_wsl_unc(Path::new(path_str)) {
+        output::print_warning(&format!("{path_str}: {}", crate::constants::WSL_SKIP_NOTE));
+        return Ok(());
+    }
     let path = Path::new(path_str)
         .canonicalize()
         .with_context(|| format!("Path not found: {path_str}"))?;
@@ -30,12 +35,26 @@ pub fn run(path_str: &str) -> Result<()> {
     // a repository pruned at a deeper setting has to be restored at that same setting,
     // and a reinstall is the longest command this tool runs — the raised
     // `command_timeout_secs` was almost certainly raised *for* it.
-    let (global_depth, timeout_secs) = crate::config::Registry::load()
+    let registry = crate::config::Registry::load().ok();
+    let (global_depth, timeout_secs) = registry
+        .as_ref()
         .map(|r| (r.settings.scan_depth, r.settings.command_timeout_secs))
         .unwrap_or((
             crate::constants::DEFAULT_SCAN_DEPTH,
             crate::constants::DEFAULT_COMMAND_TIMEOUT_SECS,
         ));
+
+    // A reinstall writes into the directory, so the drive is asked just before, as the
+    // prune does. A path that is not registered has no recorded drive and is unchanged.
+    let recorded = registry
+        .as_ref()
+        .and_then(|r| r.repositories.get(&path))
+        .and_then(|e| e.volume_id.as_deref());
+    if let Some(line) = engine::drive_skip(&path, recorded, &crate::volume::SystemVolumes) {
+        output::print_warning(&line);
+        return Ok(());
+    }
+
     let timeout = crate::adapters::command_timeout(timeout_secs);
     let results = engine::restore_project_to_depth(&path, global_depth, timeout)?;
 
@@ -164,6 +183,18 @@ pub fn run_last_run() -> Result<()> {
                     dir.adapter, dir.bloat_dir
                 ));
             }
+            continue;
+        }
+
+        // The registry-time check above reads the state from when this command started;
+        // this one asks the drive itself, just before it is written to. A skip, not a
+        // failure: nothing was touched and the drive may simply be back next time.
+        let recorded = registry
+            .repositories
+            .get(repo_path)
+            .and_then(|e| e.volume_id.as_deref());
+        if let Some(line) = engine::drive_skip(repo_path, recorded, &crate::volume::SystemVolumes) {
+            output::print_warning(&format!("  {line}"));
             continue;
         }
 

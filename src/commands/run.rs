@@ -130,14 +130,18 @@ fn print_ignore_idle_notice() {
 /// `devp run <PATH>` — one workspace, no registry, no selector.
 fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) -> Result<()> {
     let raw = std::path::Path::new(target_str);
-    let path = if raw.exists() {
+    // A WSL share is answered for by the engine's drive check without being touched:
+    // `exists` or `is_git_repo` here would start the distribution, and a stopped one
+    // would turn a skip into a "not a Git repository" error.
+    let in_wsl = crate::volume::is_wsl_unc(raw);
+    let path = if !in_wsl && raw.exists() {
         raw.canonicalize().unwrap_or_else(|_| raw.to_path_buf())
     } else {
         raw.to_path_buf()
     };
 
     let clean = output::clean_path(&path);
-    if !crate::scanner::is_git_repo(&path) {
+    if !in_wsl && !crate::scanner::is_git_repo(&path) {
         // Returning Ok here made `devp run <path>` exit 0 on a path it refused to
         // touch, which is invisible to any script or CI step checking the status.
         anyhow::bail!("{clean} is not a Git repository — dev-prune only prunes Git repos.");
@@ -169,6 +173,13 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
         command_timeout_secs: resolve_command_timeout(registry.as_ref()),
         build_idle_days: resolve_build_idle_days(registry.as_ref()),
         adapter_idle_days: resolve_adapter_idle_days(registry.as_ref()),
+        // Only a registered repository has a recorded drive; a path nobody registered
+        // is checked against nothing, as before.
+        expected_volume: registry.as_ref().and_then(|r| {
+            r.repositories
+                .get(&crate::config::canonical_key(&path))
+                .and_then(|e| e.volume_id.clone())
+        }),
     };
 
     if !args.json {
@@ -350,6 +361,7 @@ fn run_targeted(args: &RunArgs<'_>, filter: &AdapterFilter, target_str: &str) ->
             PruneStatus::SkippedNestedRepo(e) => {
                 output::print_warning(&format!("{clean} → {}", e.trim()));
             }
+            PruneStatus::SkippedDrive(e) => output::print_warning(e.trim()),
             _ => {}
         }
     }
@@ -713,6 +725,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         command_timeout_secs: resolve_command_timeout(Some(&registry)),
         build_idle_days: resolve_build_idle_days(Some(&registry)),
         adapter_idle_days: resolve_adapter_idle_days(Some(&registry)),
+        expected_volume: None, // set per repository by the registry pass
     };
 
     if !args.json {
@@ -766,7 +779,8 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             // kept every scheduled pass red.
             PruneStatus::SkippedSymlink(_)
             | PruneStatus::SkippedDeclaration(_)
-            | PruneStatus::SkippedNestedRepo(_) => left_alone.push(result),
+            | PruneStatus::SkippedNestedRepo(_)
+            | PruneStatus::SkippedDrive(_) => left_alone.push(result),
             // Same reasoning: a deleted clone stays deleted, and failing on it would
             // keep every scheduled pass red until the entry is unlinked.
             PruneStatus::PathMissing => missing.push(result),
@@ -1036,6 +1050,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                 command_timeout_secs: analysis.command_timeout_secs,
                 build_idle_days: analysis.build_idle_days,
                 adapter_idle_days: analysis.adapter_idle_days.clone(),
+                // Checked here as well as at analysis: the selector can sit open while a
+                // disk is swapped, and this is the call that deletes.
+                expected_volume: registry
+                    .repositories
+                    .get(repo_path)
+                    .and_then(|e| e.volume_id.clone()),
             },
         );
         for result in single_results {
@@ -1134,6 +1154,9 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                 // in `--json` only for repositories that also had a candidate.
                 // `--explain`, `status` and `doctor` are where the window is named.
                 PruneStatus::SkippedAdapterWindow(_) => continue,
+                // The drive was swapped after the analysis. Not an error: nothing was
+                // touched, and the line already names the repository.
+                PruneStatus::SkippedDrive(e) if !args.json => output::print_warning(e.trim()),
                 _ => {}
             }
             all_results.push(result);
@@ -1416,7 +1439,10 @@ fn list_paths(results: &[&PruneResult]) {
 /// failing on either would turn every scheduled pass over such a repo red forever.
 fn report_left_alone(left_alone: &[PruneResult]) {
     for result in left_alone {
-        if let PruneStatus::SkippedSymlink(e)
+        // The drive line already leads with the repository, so it is printed as it is.
+        if let PruneStatus::SkippedDrive(e) = &result.status {
+            output::print_warning(e.trim());
+        } else if let PruneStatus::SkippedSymlink(e)
         | PruneStatus::SkippedDeclaration(e)
         | PruneStatus::SkippedNestedRepo(e) = &result.status
         {
@@ -1745,6 +1771,7 @@ fn run_explain(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
                 command_timeout_secs: resolve_command_timeout(registry.as_ref()),
                 build_idle_days: resolve_build_idle_days(registry.as_ref()),
                 adapter_idle_days: resolve_adapter_idle_days(registry.as_ref()),
+                expected_volume: None, // a dry-run explanation deletes nothing
             },
         );
         let refs: Vec<&PruneResult> = results.iter().collect();
@@ -1773,6 +1800,7 @@ fn run_explain(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         command_timeout_secs: resolve_command_timeout(Some(&registry)),
         build_idle_days: resolve_build_idle_days(Some(&registry)),
         adapter_idle_days: resolve_adapter_idle_days(Some(&registry)),
+        expected_volume: None, // set per repository by the registry pass
     };
     let results = engine::prune_all_with(&mut registry, &analysis);
 

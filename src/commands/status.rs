@@ -243,11 +243,23 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                     command_timeout_secs: registry.settings.command_timeout_secs,
                     build_idle_days: registry.settings.build_idle_days,
                     adapter_idle_days: registry.settings.adapter_idle_days.clone(),
+                    expected_volume: None,
                 };
 
                 for path in &candidates {
                     let recorded_before = pruned_dirs.len();
-                    let results = engine::prune_repo_with(path, &opts);
+                    // This deletes, so the drive is checked against what the registry
+                    // recorded, just before the repository is touched.
+                    let results = engine::prune_repo_with(
+                        path,
+                        &engine::PruneOptions {
+                            expected_volume: registry
+                                .repositories
+                                .get(path)
+                                .and_then(|e| e.volume_id.clone()),
+                            ..opts.clone()
+                        },
+                    );
                     for result in results {
                         match &result.status {
                             PruneStatus::Pruned => {
@@ -314,6 +326,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                                     e.trim(),
                                 ));
                             }
+                            PruneStatus::SkippedDrive(e) => output::print_warning(e.trim()),
                             _ => {}
                         }
                     }
