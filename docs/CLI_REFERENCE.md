@@ -1656,7 +1656,7 @@ purpose: one is about the project, the other only about this disk.
       "path": "~/.cargo/bin/dev-prune",
       "canonical_path": "~/.cargo/bin/dev-prune",
       "channel": "cargo",
-      "version": "1.23.0",
+      "version": "1.24.0",
       "on_path": true,
       "path_position": 3,
       "roles": ["shell"],

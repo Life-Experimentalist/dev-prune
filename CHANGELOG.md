@@ -89,7 +89,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`devp doctor` warns when several versions of devp are installed.** It lists each copy
   with its path and version, says which one the scheduled task runs and which one the git
   hook shims call, and prints the way to remove the extras without running it. The same
-  version in several places is only an information line.
+  version in several places is only an information line. It now points at `devp installs`.
+
+- **`devp installs` lists every devp on the machine.** It shows each copy with its version,
+  how it was installed (cargo, npm, pip, Homebrew, WinGet, Scoop, the install script and so on),
+  where it sits on PATH or that it is on no PATH, and which one a new shell, the scheduler and
+  the git hooks run. A closing sentence says when they disagree. Add `--json` for scripts.
+  Copies reached through a symlink are listed once. A devp copied by hand into a folder that
+  is on no PATH and in none of the usual places cannot be found, and the output says so.
+
+- **`devp installs clean` removes the extra copies, one confirmed step at a time.** It keeps
+  the highest version (or the one you name with `--keep <path>`), shows the exact command for
+  every other copy, and asks y/N before running it. Each copy is removed with its own
+  manager (`cargo uninstall`, `brew uninstall`, `npm uninstall -g`, `pip uninstall`, `winget
+  uninstall` and the rest), never by deleting files. A copy of unknown origin is described and
+  left alone. If the scheduler or git hooks pointed at a removed copy they are moved to the one
+  you kept, or you are told the single command to run. `--dry-run` prints the plan and runs
+  nothing; it never needs administrator rights.
 
 ### Changed
 
