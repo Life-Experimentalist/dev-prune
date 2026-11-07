@@ -749,9 +749,56 @@ pub fn run(json_output: bool, volume: Option<&str>) -> Result<()> {
     let volume = volume.map(resolve_volume).transpose()?;
 
     let reg = registered();
-    let mut reports = collect(!json_output, reg.as_ref());
-    apply_caps(&mut reports, &caps());
-    let deps = reg.as_ref().map(|r| dependents(r, !json_output));
+
+    // Three things that do not need each other's answers, started together. Finding and
+    // sizing the caches waits on child processes and then on the disk; counting
+    // dependents walks the registered repositories; asking the container engines is a
+    // wait on `docker system df`. Run one after another they added up to the report's
+    // whole runtime, and the engine query was pure waiting. Only the sizing keeps the
+    // terminal while it works: the other two are started behind it and shown when it
+    // is done, with whatever progress they have made by then.
+    //
+    // Skipped under `--volume` for the engines: an engine reports its own disk from
+    // inside a VM image that has no path on this filesystem, so there is no honest drive
+    // to file it under and quietly filing it under this one would be a fabricated number.
+    // It is asked at all, rather than left to `devp caches containers`, because the
+    // mistake this report exists to prevent is someone clearing 6 GB of npm cache while a
+    // stopped Docker daemon holds 40 GB they were never told about.
+    let spinner = !json_output;
+    let dep_tracker = reg.as_ref().map(dependents_tracker);
+    let dep_job = || {
+        reg.as_ref()
+            .zip(dep_tracker.as_ref())
+            .map(|(r, t)| count_all_dependents(r, t))
+    };
+    let engine_job = || crate::commands::containers::collect(None);
+    let (mut reports, deps, engines) = std::thread::scope(|scope| {
+        let dep_started = if reg.is_some() {
+            crate::parallel::start(scope, "devp-dependents", &dep_job)
+        } else {
+            None
+        };
+        let engine_started = if volume.is_none() {
+            crate::parallel::start(scope, "devp-containers", &engine_job)
+        } else {
+            None
+        };
+
+        let mut reports = collect(spinner, reg.as_ref());
+        apply_caps(&mut reports, &caps());
+
+        let deps = dep_tracker.as_ref().and_then(|t| {
+            dependents_progress(t).run(spinner, || crate::parallel::finish(dep_started, dep_job))
+        });
+        let engines = if volume.is_some() {
+            Vec::new()
+        } else {
+            container_summary(spinner, || {
+                crate::parallel::finish(engine_started, engine_job)
+            })
+        };
+        (reports, deps, engines)
+    });
     apply_dependents(&mut reports, deps.as_ref());
 
     // Narrowed last, after every verdict is decided, so each one stays a statement about
@@ -761,20 +808,6 @@ pub fn run(json_output: bool, volume: Option<&str>) -> Result<()> {
     if let Some(root) = &volume {
         reports = on_volume(reports, root);
     }
-
-    // Asked here rather than left to `devp caches containers`, because the mistake this
-    // report exists to prevent is someone clearing 6 GB of npm cache while a stopped
-    // Docker daemon holds 40 GB they were never told about. It costs one `system df` per
-    // installed engine and nothing at all on a machine with none.
-    //
-    // Skipped under `--volume`: an engine reports its own disk from inside a VM image
-    // that has no path on this filesystem, so there is no honest drive to file it under
-    // and quietly filing it under this one would be a fabricated number.
-    let engines = if volume.is_some() {
-        Vec::new()
-    } else {
-        container_summary(!json_output)
-    };
 
     if json_output {
         return json::emit(&json::caches_document(
@@ -921,13 +954,25 @@ fn volume_totals(reports: &[CacheReport]) -> Vec<(String, u64)> {
 }
 
 /// The container engines on this machine, behind the report's own spinner.
-fn container_summary(spinner: bool) -> Vec<crate::commands::containers::EngineReport> {
-    let pb = spinner.then(|| output::create_spinner("Asking the container engines..."));
-    let engines = crate::commands::containers::collect(None);
-    if let Some(pb) = pb {
-        pb.finish_and_clear();
-    }
-    engines
+fn container_summary(
+    spinner: bool,
+    ask: impl FnOnce() -> Vec<crate::commands::containers::EngineReport>,
+) -> Vec<crate::commands::containers::EngineReport> {
+    // One step with no inside to count, but a line that shows the seconds passing and
+    // says so after a while is what tells a slow `system df` from a frozen terminal.
+    let tracker = output::LiveTracker::new(vec![(
+        "container engines".to_string(),
+        "docker, podman".to_string(),
+    )]);
+    tracker.begin(0);
+    let progress = output::LiveProgress {
+        title: "Asking the container engines",
+        verb: "asking",
+        tracker: &tracker,
+        files_of: None,
+        refresh: None,
+    };
+    progress.run(spinner, ask)
 }
 
 /// The user's `cache_max_gb`, or an empty map when the registry cannot be read.
@@ -1025,8 +1070,77 @@ struct Dependents {
 /// something here to count against" — see [`registered`] for why the absence of one is
 /// not the same as a count of zero.
 fn dependents(reg: &Registered, spinner: bool) -> Dependents {
-    let pb = spinner.then(|| output::create_spinner("Checking which caches are still in use..."));
+    let tracker = dependents_tracker(reg);
+    dependents_progress(&tracker).run(spinner, || count_all_dependents(reg, &tracker))
+}
 
+/// One line of progress per registered repository.
+fn dependents_tracker(reg: &Registered) -> output::LiveTracker {
+    output::LiveTracker::new(
+        reg.paths
+            .iter()
+            .map(|p| (repo_label(p), output::clean_path(p)))
+            .collect(),
+    )
+}
+
+fn dependents_progress(tracker: &output::LiveTracker) -> output::LiveProgress<'_> {
+    output::LiveProgress {
+        title: "Checking which caches are still in use",
+        verb: "checking",
+        tracker,
+        files_of: None,
+        refresh: None,
+    }
+}
+
+/// [`count_dependents`] on the thread count the repository walks scale to.
+fn count_all_dependents(reg: &Registered, tracker: &output::LiveTracker) -> Dependents {
+    count_dependents(
+        reg,
+        crate::parallel::walk_worker_count(reg.paths.len()),
+        tracker,
+    )
+}
+
+/// The folder name of a repository, for the progress line.
+fn repo_label(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || output::clean_path(path),
+        |n| n.to_string_lossy().into_owned(),
+    )
+}
+
+/// The managers detected in one repository.
+///
+/// Uses the repository's own `scan_depth` where it sets one, read exactly as a prune pass
+/// reads it: a monorepo that had to raise its depth to be pruned properly has to be
+/// walked to that same depth here, or its projects are invisible and the managers behind
+/// them are undercounted.
+fn managers_in(path: &Path, default_depth: usize) -> HashSet<&'static str> {
+    let depth = crate::workspace::clamp_depth(
+        crate::config::PerRepoConfig::load_with_diagnostics(path)
+            .ok()
+            .flatten()
+            .and_then(|c| c.scan_depth)
+            .unwrap_or(default_depth),
+    );
+    let mut here: HashSet<&'static str> = HashSet::new();
+    for project in crate::workspace::discover_all_to_depth(path, depth) {
+        for adapter in &project.adapters {
+            here.insert(adapter.name());
+        }
+    }
+    here
+}
+
+/// [`dependents`] on `workers` threads, marking each repository on `tracker` as it goes.
+///
+/// A couple of hundred repositories are a couple of hundred independent walks, and run one
+/// after another they were the slowest step of the report. The counting is done afterwards,
+/// in registry order, from what each walk found, so the answer cannot depend on which
+/// thread finished first.
+fn count_dependents(reg: &Registered, workers: usize, tracker: &output::LiveTracker) -> Dependents {
     // Seeded at zero for every cache an adapter is named after, so a manager nothing uses
     // is a counted zero rather than a missing key. The twelve that are absent — `pip`,
     // `conda`, `nuget`, `conan`, `ccache`, `sccache`, `hex`, `playwright`, `puppeteer`,
@@ -1042,33 +1156,18 @@ fn dependents(reg: &Registered, spinner: bool) -> Dependents {
         .map(|m| (m, 0))
         .collect();
 
-    for path in &reg.paths {
-        // The repository's own `scan_depth` where it sets one, read exactly as a prune
-        // pass reads it: a monorepo that had to raise its depth to be pruned properly has
-        // to be walked to that same depth here, or its projects are invisible and the
-        // managers behind them are undercounted.
-        let depth = crate::workspace::clamp_depth(
-            crate::config::PerRepoConfig::load_with_diagnostics(path)
-                .ok()
-                .flatten()
-                .and_then(|c| c.scan_depth)
-                .unwrap_or(reg.scan_depth),
-        );
-        let mut here: HashSet<&'static str> = HashSet::new();
-        for project in crate::workspace::discover_all_to_depth(path, depth) {
-            for adapter in &project.adapters {
-                here.insert(adapter.name());
-            }
-        }
+    let found = crate::parallel::map_ordered(&reg.paths, workers, |i, path| {
+        tracker.begin(i);
+        let here = managers_in(path, reg.scan_depth);
+        tracker.end(i);
+        here
+    });
+    for here in &found {
         for (manager, count) in by_manager.iter_mut() {
             if here.contains(manager) {
                 *count += 1;
             }
         }
-    }
-
-    if let Some(pb) = pb {
-        pb.finish_and_clear();
     }
 
     Dependents {
@@ -1105,14 +1204,20 @@ fn manager_totals(reports: &[CacheReport]) -> BTreeMap<&'static str, (u64, usize
 
 /// Find and size every cache on this machine, largest first.
 fn collect(spinner: bool, reg: Option<&Registered>) -> Vec<CacheReport> {
-    let pb = spinner.then(|| output::create_spinner("Measuring package manager caches..."));
     let from = query_dir();
 
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut reports = Vec::new();
 
-    for probe in PROBES {
-        let Some(path) = locate(probe, &from) else {
+    // Two phases, because they cost different things. Asking a manager where its cache is
+    // starts a program, and a few of them take seconds; sizing is a disk walk. Run
+    // together they would hold a thread for a query while the disk sat idle, and the other
+    // way round. Locating comes first and in full so that the sizing pool knows every path
+    // before it starts.
+    let located = locate_all(spinner, &from);
+
+    for (probe, path) in PROBES.iter().zip(located) {
+        let Some(path) = path else {
             continue;
         };
         // Canonical, because two probes can land on the same directory — `GOCACHE` and
@@ -1128,7 +1233,7 @@ fn collect(spinner: bool, reg: Option<&Registered>) -> Vec<CacheReport> {
         reports.push(CacheReport {
             manager: probe.manager,
             kind: probe.kind,
-            bytes: adapters::dir_size(&path),
+            bytes: 0,
             path,
             clear_command: probe.clear_command.to_string(),
             clear: probe.clear,
@@ -1146,15 +1251,96 @@ fn collect(spinner: bool, reg: Option<&Registered>) -> Vec<CacheReport> {
         if !seen.insert(store.canonicalize().unwrap_or_else(|_| store.clone())) {
             continue;
         }
-        reports.push(volume_store_report(store));
+        reports.push(volume_store_report(store, 0));
     }
 
-    if let Some(pb) = pb {
-        pb.finish_and_clear();
+    let sizes = measure_all(spinner, &reports);
+    for (report, bytes) in reports.iter_mut().zip(sizes) {
+        report.bytes = bytes;
     }
 
     reports.sort_by_key(|r| std::cmp::Reverse(r.bytes));
     reports
+}
+
+/// [`locate`] for every probe, a few at a time, in probe order.
+///
+/// The cap is about the managers being asked, not the cores: each answer is a child
+/// process, and a dozen of them starting at once is slower than six on a laptop that is
+/// also being asked to walk a disk.
+fn locate_all(spinner: bool, from: &Path) -> Vec<Option<PathBuf>> {
+    let tracker = output::LiveTracker::new(
+        PROBES
+            .iter()
+            .map(|p| {
+                let asked = p.query.map_or_else(
+                    || "usual locations".to_string(),
+                    |(program, args)| format!("{program} {}", args.join(" ")),
+                );
+                (format!("{} {}", p.manager, p.kind), asked)
+            })
+            .collect(),
+    );
+    let progress = output::LiveProgress {
+        title: "Finding package manager caches",
+        verb: "asking",
+        tracker: &tracker,
+        files_of: None,
+        refresh: None,
+    };
+    let workers = crate::parallel::clamp_workers(constants::CACHE_QUERY_CONCURRENCY, PROBES.len());
+    progress.run(spinner, || {
+        crate::parallel::map_ordered(PROBES, workers, |i, probe| {
+            tracker.begin(i);
+            let found = locate(probe, from);
+            tracker.end(i);
+            found
+        })
+    })
+}
+
+/// The size of every report's directory, in report order, on one shared pool.
+fn measure_all(spinner: bool, reports: &[CacheReport]) -> Vec<u64> {
+    if reports.is_empty() {
+        return Vec::new();
+    }
+    let paths: Vec<PathBuf> = reports.iter().map(|r| r.path.clone()).collect();
+    let tracker = output::LiveTracker::new(
+        reports
+            .iter()
+            .map(|r| {
+                (
+                    format!("{} {}", r.manager, r.kind),
+                    output::clean_path(&r.path),
+                )
+            })
+            .collect(),
+    );
+    let watch = adapters::SizeWatch::new(paths.len());
+    // The pool reports a finished path through the watch, not through the tracker, so the
+    // line moves the tracker along from there each time it redraws.
+    let sync = || {
+        for i in 0..tracker.len() {
+            if watch.is_done(i) {
+                tracker.end(i);
+            }
+        }
+    };
+    for i in 0..tracker.len() {
+        tracker.begin(i);
+    }
+    let files_of = |i: usize| watch.files(i);
+    let progress = output::LiveProgress {
+        title: "Measuring package manager caches",
+        verb: "measuring",
+        tracker: &tracker,
+        files_of: Some(&files_of),
+        refresh: Some(&sync),
+    };
+    let helpers = crate::parallel::walk_worker_count(usize::MAX).saturating_sub(1);
+    progress.run(spinner, || {
+        adapters::dir_sizes(&paths, Some(&watch), helpers)
+    })
 }
 
 /// Why a second pnpm store on one machine is not a duplicate.
@@ -1166,12 +1352,12 @@ const PNPM_VOLUME_NOTE: &str = "one store per filesystem, because a hardlink int
 /// The printed command and the arguments dev-prune runs are built from the same path, in
 /// one place, because the whole point of printing a command is that it is the one being
 /// run.
-fn volume_store_report(store: PathBuf) -> CacheReport {
+fn volume_store_report(store: PathBuf, bytes: u64) -> CacheReport {
     let named = output::clean_path(&store);
     CacheReport {
         manager: "pnpm",
         kind: "store",
-        bytes: adapters::dir_size(&store),
+        bytes,
         clear_command: format!("pnpm store prune --store-dir {}", shell_arg(&named)),
         extra_args: vec!["--store-dir".to_string(), named],
         path: store,
@@ -1823,6 +2009,44 @@ impl ClearOutcome {
     pub fn freed(&self) -> u64 {
         self.before.saturating_sub(self.after)
     }
+
+    /// The command failed, yet the directory is smaller than it was.
+    ///
+    /// A manager can free part of a cache and then die on a locked file or hit its
+    /// timeout. Reporting that as "not cleared" hides space that is already back, and
+    /// reporting it as "cleared" hides the failure, so it is a third thing.
+    pub fn partial(&self) -> bool {
+        self.problem.is_some() && self.freed() > 0
+    }
+}
+
+/// The word beside one row of the clear result.
+fn clear_status(o: &ClearOutcome) -> &'static str {
+    match (&o.problem, o.partial()) {
+        (None, _) => "cleared",
+        (Some(_), true) => "partly cleared",
+        (Some(_), false) => "not cleared",
+    }
+}
+
+/// The closing line of a clear: green only when nothing failed.
+///
+/// A "Freed 1.2 GiB." in green under a row that says the command failed reads as success
+/// and sends the reader away. When anything failed, the bytes are still reported, in the
+/// same line as the failure.
+fn clear_summary(outcomes: &[ClearOutcome]) -> (bool, String) {
+    let freed = output::format_bytes(outcomes.iter().map(ClearOutcome::freed).sum());
+    let failed = outcomes.iter().filter(|o| o.problem.is_some()).count();
+    if failed == 0 {
+        return (true, format!("Freed {freed}."));
+    }
+    (
+        false,
+        format!(
+            "Freed {freed}, but {failed} {} did not clear completely.",
+            output::plural(failed, "cache", "caches")
+        ),
+    )
 }
 
 /// Run `dev-prune caches clear <target>`.
@@ -2148,6 +2372,15 @@ fn clear_one(report: &CacheReport) -> ClearOutcome {
         // of a silently emptied Maven repository.
         Clear::Manual { why } => Some(why.to_string()),
     };
+    measured_outcome(report, problem)
+}
+
+/// What the directory holds now, set beside what the command said happened.
+///
+/// Split from the command itself so the case that matters, a command that failed after
+/// freeing something, can be tested without a program that is guaranteed to exist and
+/// fail on every platform.
+fn measured_outcome(report: &CacheReport, problem: Option<String>) -> ClearOutcome {
     ClearOutcome {
         manager: report.manager,
         kind: report.kind,
@@ -2312,11 +2545,7 @@ fn print_clear_result(outcomes: &[ClearOutcome]) {
             "  {:<30} {:>10}  {}",
             label,
             output::format_bytes(o.freed()),
-            if o.problem.is_some() {
-                "not cleared"
-            } else {
-                "cleared"
-            }
+            clear_status(o)
         );
         if let Some(why) = &o.problem {
             println!("  {:<30} {:>10}  {why}", "", "");
@@ -2324,8 +2553,10 @@ fn print_clear_result(outcomes: &[ClearOutcome]) {
     }
 
     println!();
-    let freed: u64 = outcomes.iter().map(ClearOutcome::freed).sum();
-    output::print_success(&format!("Freed {}.", output::format_bytes(freed)));
+    match clear_summary(outcomes) {
+        (true, line) => output::print_success(&line),
+        (false, line) => output::print_warning(&line),
+    }
 
     for (manager, command) in REINSTALL_HINTS {
         if outcomes
@@ -3117,7 +3348,7 @@ mod tests {
         let store = dir.path().join(".pnpm-store");
         std::fs::create_dir_all(&store).unwrap();
 
-        let report = volume_store_report(store.clone());
+        let report = volume_store_report(store.clone(), 0);
         let named = output::clean_path(&store);
         assert_eq!(
             report.extra_args,
@@ -3237,5 +3468,149 @@ mod tests {
             );
         }
         assert!(!is_cache_manager("dev-prune-no-such-manager"));
+    }
+
+    /// Several repositories of different kinds, so the managers found differ per repo.
+    fn sample_repositories(root: &Path) -> Registered {
+        let mut paths = Vec::new();
+        for n in 0..9 {
+            let repo = root.join(format!("repo{n}"));
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            match n % 3 {
+                0 => {
+                    std::fs::write(
+                        repo.join("Cargo.toml"),
+                        "[package]\nname = \"a\"\nversion = \"0.1.0\"\n",
+                    )
+                    .unwrap();
+                    std::fs::write(repo.join("Cargo.lock"), "").unwrap();
+                    std::fs::create_dir_all(repo.join("target")).unwrap();
+                }
+                1 => {
+                    std::fs::write(repo.join("package.json"), "{}").unwrap();
+                    std::fs::write(repo.join("package-lock.json"), "{}").unwrap();
+                    std::fs::create_dir_all(repo.join("node_modules")).unwrap();
+                }
+                _ => {}
+            }
+            paths.push(repo);
+        }
+        Registered {
+            paths,
+            scan_depth: 2,
+        }
+    }
+
+    fn count_with(reg: &Registered, workers: usize) -> Dependents {
+        let tracker = output::LiveTracker::new(
+            reg.paths
+                .iter()
+                .map(|p| (repo_label(p), output::clean_path(p)))
+                .collect(),
+        );
+        count_dependents(reg, workers, &tracker)
+    }
+
+    #[test]
+    fn counting_repositories_on_many_threads_gives_the_sequential_answer() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = sample_repositories(dir.path());
+
+        let one = count_with(&reg, 1);
+        let many = count_with(&reg, 6);
+
+        assert_eq!(one.repositories, many.repositories);
+        assert_eq!(one.by_manager, many.by_manager);
+        // Guards the comparison itself: two empty maps would also be equal.
+        assert!(
+            one.by_manager.values().any(|n| *n > 0),
+            "the sample repositories were not detected: {:?}",
+            one.by_manager
+        );
+    }
+
+    #[test]
+    fn a_clear_that_fails_after_freeing_bytes_is_partly_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        let victim = cache.join("victim.bin");
+        std::fs::write(&victim, vec![0u8; 4096]).unwrap();
+        std::fs::write(cache.join("kept.bin"), vec![0u8; 4096]).unwrap();
+        let mut report = row("npm", "cache", 0);
+        report.path = cache.clone();
+        report.bytes = adapters::dir_size(&cache);
+
+        // What a manager that dies half-way leaves behind: some of the cache gone and a
+        // failure to report.
+        std::fs::remove_file(&victim).unwrap();
+        let outcome = measured_outcome(&report, Some("`npm` failed (exit code 3)".to_string()));
+
+        assert_eq!(outcome.freed(), 4096);
+        assert!(outcome.partial());
+        assert_eq!(clear_status(&outcome), "partly cleared");
+
+        let (ok, line) = clear_summary(&[outcome]);
+        assert!(!ok, "a failure must not be summarised as a success");
+        assert!(line.contains("did not clear completely"), "{line}");
+    }
+
+    #[test]
+    fn a_clear_that_frees_nothing_and_fails_is_not_cleared() {
+        let outcome = ClearOutcome {
+            manager: "npm",
+            kind: "cache",
+            path: PathBuf::from("/cache/npm"),
+            before: 100,
+            after: 100,
+            problem: Some("`npm` is not on PATH".to_string()),
+        };
+        assert!(!outcome.partial());
+        assert_eq!(clear_status(&outcome), "not cleared");
+        assert!(!clear_summary(&[outcome]).0);
+    }
+
+    #[test]
+    fn a_clean_clear_is_cleared_and_summarised_as_a_success() {
+        let outcome = ClearOutcome {
+            manager: "npm",
+            kind: "cache",
+            path: PathBuf::from("/cache/npm"),
+            before: 100,
+            after: 0,
+            problem: None,
+        };
+        assert!(!outcome.partial());
+        assert_eq!(clear_status(&outcome), "cleared");
+        let (ok, line) = clear_summary(&[outcome]);
+        assert!(ok);
+        assert!(line.starts_with("Freed "), "{line}");
+    }
+
+    #[test]
+    fn the_clear_json_marks_a_partly_cleared_cache() {
+        let outcomes = [
+            ClearOutcome {
+                manager: "npm",
+                kind: "cache",
+                path: PathBuf::from("/cache/npm"),
+                before: 100,
+                after: 40,
+                problem: Some("exit code 3".to_string()),
+            },
+            ClearOutcome {
+                manager: "uv",
+                kind: "cache",
+                path: PathBuf::from("/cache/uv"),
+                before: 50,
+                after: 0,
+                problem: None,
+            },
+        ];
+        let doc = crate::json::caches_clear_document(&outcomes, &[]);
+        assert_eq!(doc["caches"][0]["partial"], true);
+        assert_eq!(doc["caches"][0]["cleared"], false);
+        assert_eq!(doc["caches"][1]["partial"], false);
+        assert_eq!(doc["summary"]["failed"], 1);
     }
 }

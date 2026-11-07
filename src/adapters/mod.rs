@@ -56,7 +56,8 @@ pub mod zig;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use anyhow::{Context as _, Result};
 use walkdir::WalkDir;
@@ -650,18 +651,278 @@ fn newest_lockfile_owner(
 }
 
 /// Calculate the total size of a directory recursively (in bytes).
+///
+/// Files only; symlinks are neither followed nor counted; a missing path is `0`; an
+/// entry that cannot be read is skipped. Large trees are walked by several threads, see
+/// [`dir_sizes`].
 pub fn dir_size(path: &Path) -> u64 {
-    if !path.exists() {
-        return 0;
+    let helpers = crate::parallel::worker_count(usize::MAX).saturating_sub(1);
+    dir_sizes(&[path.to_path_buf()], None, helpers)[0]
+}
+
+/// Live counters for a [`dir_sizes`] pass, readable from another thread while it runs.
+///
+/// Sizing a 160 GiB build cache takes a minute or more, and a progress line that cannot
+/// show anything moving is indistinguishable from a hang. These are the numbers that let
+/// it show the file count climbing and which of the paths are still being walked.
+pub struct SizeWatch {
+    files: Vec<AtomicU64>,
+    done: Vec<AtomicBool>,
+}
+
+impl SizeWatch {
+    /// Counters for `paths` paths, all at zero and none finished.
+    pub fn new(paths: usize) -> Self {
+        Self {
+            files: (0..paths).map(|_| AtomicU64::default()).collect(),
+            done: (0..paths).map(|_| AtomicBool::default()).collect(),
+        }
     }
-    WalkDir::new(path)
-        .follow_links(false)
+
+    /// Files seen so far under path `i`.
+    pub fn files(&self, i: usize) -> u64 {
+        self.files[i].load(AtomicOrdering::Relaxed)
+    }
+
+    /// Whether path `i` has been walked to the end.
+    pub fn is_done(&self, i: usize) -> bool {
+        self.done[i].load(AtomicOrdering::Acquire)
+    }
+
+    /// Files seen so far under every path.
+    pub fn total_files(&self) -> u64 {
+        self.files
+            .iter()
+            .map(|f| f.load(AtomicOrdering::Relaxed))
+            .sum()
+    }
+}
+
+/// Helper threads currently running for any [`dir_sizes`] call in this process.
+///
+/// `devp status` sizes repositories on several threads, and each of those sizes a
+/// dependency tree. Letting every walk start its own full set of helpers would put
+/// hundreds of threads on one disk; sharing one budget keeps the whole process at the
+/// ceiling the rest of the scan already uses.
+static SIZE_HELPERS_RUNNING: AtomicUsize = AtomicUsize::new(0);
+
+/// A claim on the process-wide helper budget, returned when the helper thread ends.
+struct HelperSlot;
+
+impl HelperSlot {
+    fn acquire(limit: usize) -> Option<Self> {
+        SIZE_HELPERS_RUNNING
+            .fetch_update(AtomicOrdering::SeqCst, AtomicOrdering::SeqCst, |n| {
+                (n < limit).then_some(n + 1)
+            })
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for HelperSlot {
+    fn drop(&mut self) {
+        SIZE_HELPERS_RUNNING.fetch_sub(1, AtomicOrdering::SeqCst);
+    }
+}
+
+/// Directories waiting and walks unfinished, shared by every worker of one pass.
+struct SizeQueue {
+    /// `(index into the caller's paths, directory)`. Workers pop and push here, so a
+    /// single giant subtree is spread over all of them instead of pinning one.
+    stack: Vec<(usize, PathBuf)>,
+    /// Directories on the stack or being read, over every path. Zero means done.
+    outstanding: usize,
+    /// The same count per path, so each can be reported finished on its own.
+    pending: Vec<usize>,
+}
+
+struct SizePool<'a> {
+    queue: Mutex<SizeQueue>,
+    wake: Condvar,
+    bytes: Vec<AtomicU64>,
+    watch: Option<&'a SizeWatch>,
+    helper_limit: usize,
+}
+
+impl SizePool<'_> {
+    fn lock(&self) -> MutexGuard<'_, SizeQueue> {
+        // A poisoned lock means another worker panicked, which the scope re-raises;
+        // carrying on here only lets this worker reach the end of its loop.
+        self.queue.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Backlog of waiting directories at which another helper thread is worth starting.
+///
+/// A project's `node_modules` is thousands of directories and a `.venv` is dozens; a
+/// stray empty folder is one. Starting threads for the last kind costs more than the
+/// walk, so the walk begins on the calling thread alone and recruits help only once
+/// there is demonstrably more work queued than one thread is clearing.
+const SIZE_HELPER_BACKLOG: usize = 8;
+
+/// How many files are counted before the live counter is updated mid-directory, so one
+/// flat directory of a million files still shows movement.
+const SIZE_FLUSH_EVERY: u64 = 2048;
+
+/// Sizes of several paths, in the order given, on one shared pool of threads.
+///
+/// Same measurement as [`dir_size`] for each path. They share a pool rather than taking
+/// turns because the cost is lopsided: one cache of a hundred and sixty gibibytes beside
+/// a dozen of a few megabytes. A thread per path would leave all but one idle behind the
+/// big one, and one path after another would make the small ones wait for it. Work is
+/// split by directory, not by top-level folder, so a tree that is one deep subtree
+/// still spreads across the threads.
+///
+/// `watch`, when given, must have been made for `paths.len()` paths. `helper_limit` caps
+/// the helper threads beside the calling one, for every walk in the process together;
+/// callers choose it because the right count depends on what else is walking (see
+/// [`crate::constants::CACHE_WALK_MAX_THREADS`]).
+pub fn dir_sizes(paths: &[PathBuf], watch: Option<&SizeWatch>, helper_limit: usize) -> Vec<u64> {
+    let n = paths.len();
+    let mut queue = SizeQueue {
+        stack: Vec::new(),
+        outstanding: 0,
+        pending: vec![0; n],
+    };
+    let mut direct = vec![0u64; n];
+    for (i, path) in paths.iter().enumerate() {
+        // `metadata` follows a link at the root, like the walk it replaced did, so a cache
+        // directory that is itself a link to another drive is still sized.
+        match std::fs::metadata(path) {
+            Ok(m) if m.is_dir() => {
+                queue.stack.push((i, path.clone()));
+                queue.outstanding += 1;
+                queue.pending[i] = 1;
+                continue;
+            }
+            Ok(m) if m.is_file() => {
+                direct[i] = m.len();
+                if let Some(w) = watch {
+                    w.files[i].fetch_add(1, AtomicOrdering::Relaxed);
+                }
+            }
+            _ => {}
+        }
+        if let Some(w) = watch {
+            w.done[i].store(true, AtomicOrdering::Release);
+        }
+    }
+
+    let pool = SizePool {
+        queue: Mutex::new(queue),
+        wake: Condvar::new(),
+        bytes: (0..n).map(|_| AtomicU64::default()).collect(),
+        watch,
+        helper_limit,
+    };
+    if pool.lock().outstanding > 0 {
+        std::thread::scope(|scope| size_worker(&pool, scope));
+    }
+
+    direct
         .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.metadata().ok())
-        .filter(|meta| meta.is_file())
-        .map(|meta| meta.len())
-        .sum()
+        .zip(&pool.bytes)
+        .map(|(d, b)| d + b.load(AtomicOrdering::Relaxed))
+        .collect()
+}
+
+fn size_worker<'scope, 'env>(
+    pool: &'env SizePool<'env>,
+    scope: &'scope std::thread::Scope<'scope, 'env>,
+) {
+    loop {
+        let (root, dir) = {
+            let mut q = pool.lock();
+            loop {
+                if let Some(job) = q.stack.pop() {
+                    break job;
+                }
+                if q.outstanding == 0 {
+                    return;
+                }
+                q = pool.wake.wait(q).unwrap_or_else(PoisonError::into_inner);
+            }
+        };
+
+        let (children, bytes) = scan_one_dir(&dir, root, pool.watch);
+        pool.bytes[root].fetch_add(bytes, AtomicOrdering::Relaxed);
+
+        let backlog = {
+            let mut q = pool.lock();
+            let added = children.len();
+            q.pending[root] = q.pending[root] + added - 1;
+            q.outstanding = q.outstanding + added - 1;
+            q.stack.extend(children);
+            if q.pending[root] == 0
+                && let Some(w) = pool.watch
+            {
+                w.done[root].store(true, AtomicOrdering::Release);
+            }
+            if q.outstanding == 0 {
+                pool.wake.notify_all();
+            } else {
+                for _ in 0..added.min(pool.helper_limit + 1) {
+                    pool.wake.notify_one();
+                }
+            }
+            q.stack.len()
+        };
+
+        if backlog >= SIZE_HELPER_BACKLOG
+            && let Some(slot) = HelperSlot::acquire(pool.helper_limit)
+        {
+            // A refused thread drops the closure, and with it the slot. The walk goes on
+            // with the workers it has: in the worst case, this one.
+            let _ = std::thread::Builder::new()
+                .name("devp-size".to_string())
+                .spawn_scoped(scope, move || {
+                    let _slot = slot;
+                    size_worker(pool, scope);
+                });
+        }
+    }
+}
+
+/// One directory's own files, and its subdirectories to be walked next.
+fn scan_one_dir(
+    dir: &Path,
+    root: usize,
+    watch: Option<&SizeWatch>,
+) -> (Vec<(usize, PathBuf)>, u64) {
+    let mut children = Vec::new();
+    let mut bytes = 0u64;
+    let mut unflushed = 0u64;
+    let flush = |count: u64| {
+        if let Some(w) = watch {
+            w.files[root].fetch_add(count, AtomicOrdering::Relaxed);
+        }
+    };
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return (children, bytes);
+    };
+    for entry in entries.flatten() {
+        // `DirEntry::file_type` does not follow links, so a symlinked directory is
+        // neither descended into nor counted, exactly as before.
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_dir() {
+            children.push((root, entry.path()));
+        } else if kind.is_file() {
+            if let Ok(meta) = entry.metadata() {
+                bytes += meta.len();
+            }
+            unflushed += 1;
+            if unflushed >= SIZE_FLUSH_EVERY {
+                flush(unflushed);
+                unflushed = 0;
+            }
+        }
+    }
+    flush(unflushed);
+    (children, bytes)
 }
 
 /// A directory's size split by what deleting it would actually free.
@@ -927,6 +1188,15 @@ fn spawn_capture(
     })
 }
 
+/// How a failed command's status reads in an error: `exit code 1`, or a plain statement
+/// when the process was ended by a signal and has no code to print.
+fn exit_status_text(code: Option<i32>) -> String {
+    code.map_or_else(
+        || "ended without an exit code".to_string(),
+        |c| format!("exit code {c}"),
+    )
+}
+
 /// Helper: run a command with a configurable timeout.
 pub fn run_command_with_timeout(
     program: &str,
@@ -939,10 +1209,10 @@ pub fn run_command_with_timeout(
         Ok(())
     } else {
         anyhow::bail!(
-            "{} {} failed (exit code {:?}):\n{}",
+            "{} {} failed ({}):\n{}",
             program,
             args.join(" "),
-            out.status.code(),
+            exit_status_text(out.status.code()),
             crate::output::condense_tool_output(
                 &out.stderr,
                 crate::constants::TOOL_OUTPUT_MAX_LINES
@@ -1001,10 +1271,10 @@ pub fn capture_command_with_timeout(
         Ok(out.stdout)
     } else {
         anyhow::bail!(
-            "{} {} failed (exit code {:?}):\n{}",
+            "{} {} failed ({}):\n{}",
             program,
             args.join(" "),
-            out.status.code(),
+            exit_status_text(out.status.code()),
             crate::output::condense_tool_output(
                 &out.stderr,
                 crate::constants::TOOL_OUTPUT_MAX_LINES
@@ -1540,6 +1810,13 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    fn a_failed_commands_exit_code_reads_as_a_number() {
+        // The Debug form of the code, `Some(1)`, is what used to reach the terminal.
+        assert_eq!(exit_status_text(Some(1)), "exit code 1");
+        assert!(!exit_status_text(None).contains("Some"));
+    }
+
+    #[test]
     fn every_adapter_is_grouped_exactly_once() {
         // The picker is built from ADAPTER_GROUPS, not from the registry, so an adapter
         // missing here is an adapter nobody can switch off from the configurator.
@@ -1693,6 +1970,103 @@ mod tests {
     #[test]
     fn test_dir_size_nonexistent() {
         assert_eq!(dir_size(Path::new("/nonexistent/path")), 0);
+    }
+
+    /// The walk this module used before sizing was parallel, kept as the oracle.
+    fn sequential_size(path: &Path) -> u64 {
+        if !path.exists() {
+            return 0;
+        }
+        WalkDir::new(path)
+            .follow_links(false)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.metadata().ok())
+            .filter(|meta| meta.is_file())
+            .map(|meta| meta.len())
+            .sum()
+    }
+
+    /// A tree with an empty directory, a deep chain, a wide level and files of every
+    /// size, deep enough and wide enough that helper threads are recruited.
+    fn build_tree(root: &Path) {
+        fs::create_dir_all(root.join("empty")).unwrap();
+        let mut deep = root.join("deep");
+        for level in 0..12 {
+            deep = deep.join(format!("d{level}"));
+            fs::create_dir_all(&deep).unwrap();
+            fs::write(deep.join("f.bin"), vec![1u8; 100 + level]).unwrap();
+        }
+        for shard in 0..40 {
+            let dir = root.join("wide").join(format!("{shard:02}"));
+            fs::create_dir_all(&dir).unwrap();
+            for file in 0..5 {
+                fs::write(dir.join(format!("{file}.dat")), vec![2u8; shard * 7 + file]).unwrap();
+            }
+        }
+        fs::write(root.join("top.txt"), "hello").unwrap();
+    }
+
+    #[test]
+    fn parallel_dir_size_equals_the_sequential_walk() {
+        let tmp = TempDir::new().unwrap();
+        build_tree(tmp.path());
+        let expected = sequential_size(tmp.path());
+        assert!(expected > 0);
+        assert_eq!(dir_size(tmp.path()), expected);
+        assert_eq!(dir_size(&tmp.path().join("empty")), 0);
+    }
+
+    #[test]
+    fn a_file_is_sized_as_itself_and_a_missing_path_as_zero() {
+        let tmp = TempDir::new().unwrap();
+        let file = tmp.path().join("one.txt");
+        fs::write(&file, "12345").unwrap();
+        assert_eq!(dir_size(&file), 5);
+        assert_eq!(dir_size(&tmp.path().join("missing")), 0);
+    }
+
+    #[test]
+    fn sizing_several_paths_at_once_keeps_each_answer_in_its_slot() {
+        let tmp = TempDir::new().unwrap();
+        let big = tmp.path().join("big");
+        let small = tmp.path().join("small");
+        let none = tmp.path().join("none");
+        build_tree(&big);
+        fs::create_dir_all(&small).unwrap();
+        fs::write(small.join("a"), "abc").unwrap();
+
+        let paths = vec![small.clone(), none.clone(), big.clone()];
+        let watch = SizeWatch::new(paths.len());
+        let sizes = dir_sizes(&paths, Some(&watch), 3);
+        assert_eq!(sizes, vec![3, 0, sequential_size(&big)]);
+        assert!((0..3).all(|i| watch.is_done(i)));
+        assert_eq!(watch.files(0), 1);
+        assert_eq!(watch.files(2), 12 + 200 + 1);
+        assert_eq!(watch.total_files(), 1 + 213);
+    }
+
+    #[test]
+    fn a_symlink_is_not_followed_or_counted() {
+        let tmp = TempDir::new().unwrap();
+        let real = tmp.path().join("real");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("f"), vec![0u8; 50]).unwrap();
+        let tree = tmp.path().join("tree");
+        fs::create_dir_all(&tree).unwrap();
+        fs::write(tree.join("own"), vec![0u8; 7]).unwrap();
+
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&real, tree.join("link")).is_ok();
+        // Creating a symlink on Windows needs a privilege most accounts do not hold, so a
+        // refusal skips the link rather than failing the test.
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_dir(&real, tree.join("link")).is_ok();
+        if !linked {
+            eprintln!("symlinks cannot be created here; checking the plain tree only");
+        }
+        assert_eq!(dir_size(&tree), 7);
+        assert_eq!(dir_size(&tree), sequential_size(&tree));
     }
 
     #[test]

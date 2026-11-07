@@ -306,6 +306,21 @@ pub const STATUS_SCAN_MAX_THREADS: usize = 32;
 /// that point the extra threads only take turns.
 pub const STATUS_SCAN_THREADS_PER_CORE: usize = 2;
 
+/// Ceiling on the default thread count of the `devp caches` walks (sizing the caches and
+/// counting the repositories behind them).
+///
+/// Measured on a 16-core Windows machine with 98 worktrees registered: 4 and 8 threads
+/// both counted dependents in 23 s, 16 took 29 s and 32 took 29 to 42 s, with kernel time
+/// rising from 137 s to 208 s. Those walks are mostly metadata calls that the file system
+/// and any filter driver serialise, so extra threads queue behind each other instead of
+/// overlapping. Six sits on the plateau, and leaves room for the other walk that now runs
+/// beside it. An explicit [`STATUS_SCAN_THREADS_ENV`] still goes up to
+/// [`STATUS_SCAN_MAX_THREADS`].
+pub const CACHE_WALK_MAX_THREADS: usize = 6;
+
+/// Floor of that default, so a two-core machine still overlaps the waits it has.
+pub const CACHE_WALK_MIN_THREADS: usize = 4;
+
 /// Overrides the computed status-scan thread count. Clamped to
 /// [`STATUS_SCAN_MAX_THREADS`]; `1` forces a sequential scan.
 pub const STATUS_SCAN_THREADS_ENV: &str = "DEV_PRUNE_SCAN_THREADS";
@@ -695,6 +710,29 @@ pub const PNPM_VOLUME_STORE_DIR: &str = ".pnpm-store";
 /// has not answered in five seconds is a broken installation, and the report is better
 /// off falling back to the conventional path than waiting ten minutes for it.
 pub const CACHE_QUERY_TIMEOUT_SECS: u64 = 5;
+
+/// How many "where is your cache?" queries run at once.
+///
+/// Each one is a child process, and on Windows the package-manager shims are `.cmd` files
+/// that start a whole interpreter: half a second to a second and a half apiece. Serial,
+/// they were most of the wait on a machine with all of npm, pnpm, yarn and go installed.
+/// The cap is well under the thread ceiling because the cost here is process start-up,
+/// where more than a handful at once only makes each one slower.
+pub const CACHE_QUERY_CONCURRENCY: usize = 6;
+
+/// Seconds one item may take before the progress line says it is still working.
+///
+/// A multi-gigabyte cache with millions of files really does take a minute. Silence for
+/// that long reads as a hang, and a hang is when people press Ctrl-C or kill the window.
+pub const SLOW_ITEM_HINT_SECS: u64 = 10;
+
+/// How often the live progress line is redrawn, in milliseconds.
+pub const PROGRESS_POLL_MILLIS: u64 = 100;
+
+/// Longest path, in characters, shown on the live progress line before the middle is
+/// elided. Long enough to tell `go-build` from `pkg\mod`, short enough for an 80-column
+/// terminal beside a spinner, a counter and the elapsed time.
+pub const PROGRESS_PATH_MAX_CHARS: usize = 44;
 
 /// Timeout for asking a container engine how much disk it is using.
 ///

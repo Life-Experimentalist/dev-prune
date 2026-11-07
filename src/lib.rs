@@ -15,6 +15,7 @@ pub mod history;
 pub mod i18n;
 pub mod json;
 pub mod output;
+pub mod parallel;
 pub mod pathenv;
 pub mod receipt;
 pub mod scanner;
