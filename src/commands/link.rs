@@ -375,9 +375,7 @@ pub fn run_unlink_missing() -> Result<()> {
 
     if scan.gone.is_empty() {
         if scan.inactive.is_empty() {
-            output::print_success(
-                "Every registered repository still exists — nothing to remove.",
-            );
+            output::print_success("Every registered repository still exists — nothing to remove.");
         } else {
             output::print_info("Nothing else to remove.");
         }

@@ -351,7 +351,7 @@ fn is_git_ignored(
     )
     .map_err(|why| {
         format!(
-            "`{label}` is declared prunable, but `git check-ignore` {why} — refusing to \
+            "`{label}` is declared prunable, but `git check-ignore` {why}; refusing to \
              delete without knowing whether Git ignores it."
         )
     })?;
@@ -380,12 +380,13 @@ fn first_tracked_file(
     ceiling: Duration,
     stalled: &Cell<bool>,
 ) -> Result<Option<String>, String> {
-    let output = ask_git(repo_path, &["ls-files", "--", label], ceiling, stalled).map_err(|why| {
-        format!(
-            "`{label}` is declared prunable, but `git ls-files` {why} — \
+    let output =
+        ask_git(repo_path, &["ls-files", "--", label], ceiling, stalled).map_err(|why| {
+            format!(
+                "`{label}` is declared prunable, but `git ls-files` {why}; \
              refusing to delete without knowing whether it holds tracked files."
-        )
-    })?;
+            )
+        })?;
     if !output.status.success() {
         return Err(format!(
             "`{label}` is declared prunable, but `git ls-files` failed — refusing to \
