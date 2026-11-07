@@ -293,6 +293,7 @@ fn repo_value(registry: &Registry, entry: &RepoStatusEntry) -> Value {
 pub fn status_document(
     registry: &Registry,
     repos: &[RepoStatusEntry],
+    inactive: &crate::config::InactiveRepos,
     daemon: &str,
     hooks: &str,
     top: Option<usize>,
@@ -322,6 +323,9 @@ pub fn status_document(
         "settings": settings_value(&registry.settings),
         "totals": {
             "repositories": registry.repo_count(),
+            // Registered but on a drive that is not connected: counted in
+            // `repositories`, absent from the array below and from every other total.
+            "inactive_repositories": inactive.len(),
             "candidates": candidates,
             "reclaimable_bytes": reclaimable,
             "historical_bytes_freed": registry.total_freed_bytes,
@@ -337,6 +341,12 @@ pub fn status_document(
             })),
         },
         "repositories": listed.iter().map(|r| repo_value(registry, r)).collect::<Vec<_>>(),
+        "inactive": inactive.by_drive().into_iter().flat_map(|(drive, paths)| {
+            paths.into_iter().map(move |path| json!({
+                "path": clean_path(&path),
+                "drive": drive.clone(),
+            }))
+        }).collect::<Vec<_>>(),
     });
 
     // Absent rather than null when the whole list is present, the same rule `message`

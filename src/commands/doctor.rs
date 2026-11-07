@@ -1207,6 +1207,21 @@ fn check_registry_health(f: &mut Findings, registry: Option<&Registry>) {
     }
 
     let entries = engine::get_full_status(registry);
+    // A note, never a warning: an unplugged backup drive is an ordinary state and
+    // `devp doctor` exits 0 for it. Nothing to fix either, since the entries return to
+    // normal when the drive does.
+    let inactive = registry.inactive_repos();
+    if !inactive.is_empty() {
+        f.note(
+            "Inactive",
+            &format!(
+                "{} {} on {} not connected, left out of every pass until it is",
+                inactive.len(),
+                output::plural(inactive.len(), "repository", "repositories"),
+                inactive.drives_phrase()
+            ),
+        );
+    }
     let count = |want: &SkipReason| {
         entries
             .iter()
@@ -1969,7 +1984,13 @@ fn root_cause(e: &anyhow::Error) -> String {
 fn heal_repo_configs() -> Result<usize> {
     let registry = Registry::load()?;
     let mut healed = 0usize;
+    let inactive = registry.inactive_repos();
     for repo in registry.repositories.keys() {
+        // This writes into the repository. On a reused drive letter the path exists but
+        // belongs to another volume, so existence alone is not permission to touch it.
+        if inactive.contains(repo) {
+            continue;
+        }
         // Only ever the personal file. `project.devprune.json` is committed, and renaming
         // a tracked file aside to write a default over it would turn a syntax error into
         // an unexplained working-tree change on somebody else's branch; `devp doctor`

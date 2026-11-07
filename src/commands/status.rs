@@ -60,6 +60,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     }
     if !json_output {
         crate::commands::run::report_expired_entries(&healed.expired);
+        crate::commands::run::report_repointed(&healed.repointed);
     }
 
     // Before anything is reported: the repository the user is standing in may be one
@@ -91,10 +92,14 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
         Ok(HookState::Absent) | Err(_) => "Inactive".to_string(),
     };
 
+    // Asked afresh rather than taken from the heal above: this is what decides what the
+    // scan leaves alone, and a drive can come or go between the two.
+    let inactive = registry.inactive_repos();
+
     if json_output {
         let repos = engine::get_full_status(&registry);
         return crate::json::emit(&crate::json::status_document(
-            &registry, &repos, &daemon_st, &hook_st, top,
+            &registry, &repos, &inactive, &daemon_st, &hook_st, top,
         ));
     }
 
@@ -148,6 +153,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
         ));
     }
     println!();
+    crate::commands::run::print_inactive_groups(&inactive);
 
     // Nothing registered is the first-run state, not an error — but an empty dashboard
     // with no explanation reads as "the tool is broken", so say how to fill it instead.
@@ -166,7 +172,10 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     // should produce one document and nothing else, and a progress bar in a log capture
     // is noise a script has to learn to ignore.
     let scan_bar = (!json_output).then(|| {
-        output::create_progress_bar("Scanning repositories", registry.repositories.len() as u64)
+        output::create_progress_bar(
+            "Scanning repositories",
+            registry.repositories.len().saturating_sub(inactive.len()) as u64,
+        )
     });
     let scanned = scan_with_progress(&registry, scan_bar.as_ref());
     // Over every repository, before `--top` trims the list, for the same reason the
@@ -374,9 +383,11 @@ fn run_drift(json_output: bool) -> Result<()> {
     let pb = (!json_output)
         .then(|| output::create_spinner("Comparing environments against lockfiles..."));
 
+    let inactive = registry.inactive_repos();
     let mut findings: Vec<ProjectDrift> = Vec::new();
     for path in registry.repositories.keys() {
-        if !path.exists() {
+        // A path on a reused drive letter exists, but it is another volume's folder.
+        if inactive.contains(path) || !path.exists() {
             continue;
         }
         let depth = workspace::resolve_depth(path, registry.settings.scan_depth);

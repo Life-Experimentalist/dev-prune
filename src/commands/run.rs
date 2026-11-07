@@ -559,6 +559,26 @@ pub(crate) fn report_inactive_skipped(inactive: &crate::config::InactiveRepos) {
     ));
 }
 
+/// The status view's inactive groups: one per drive, each naming its repositories.
+///
+/// Kept apart from the live table so a repository on an unplugged drive is never read
+/// as having nothing to reclaim.
+pub(crate) fn print_inactive_groups(inactive: &crate::config::InactiveRepos) {
+    for (drive, paths) in inactive.by_drive() {
+        output::print_info(&format!(
+            "Inactive (drive {drive} not connected): {} {}",
+            paths.len(),
+            output::plural(paths.len(), "repository", "repositories")
+        ));
+        for path in &paths {
+            println!("    {}", output::clean_path(path));
+        }
+    }
+    if !inactive.is_empty() {
+        println!();
+    }
+}
+
 /// `devp run` — the full pass over every registered repository.
 fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if !args.json {
