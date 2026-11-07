@@ -149,10 +149,12 @@ pub struct RepoEntry {
     #[serde(default)]
     pub total_freed_bytes: u64,
     /// Volume identity of the drive this repository was registered on, e.g.
-    /// `win:1A2B-3C4D:NTFS`. Recorded by passes on Windows only; absent otherwise and
-    /// absent from the file when `None`, so a registry written before it existed loads
-    /// unchanged. Decides whether a drive letter is still the same volume, and finds a
-    /// drive that came back under another letter.
+    /// `win:1A2B-3C4D:NTFS`, `linux:<uuid>:<root>` or `mac:<uuid>`. Absent for a drive
+    /// with no identity (a filesystem without a UUID, a network share) and for the Unix
+    /// system root, and absent from the file when `None`, so a registry written before it
+    /// existed loads unchanged. Decides whether a path is still the same volume, finds a
+    /// drive that came back at another place, and is asked again just before each
+    /// repository is pruned or restored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume_id: Option<String>,
     /// The volume label at the time `volume_id` was recorded. Display only.

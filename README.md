@@ -887,6 +887,7 @@ decisions actually arrive in. Every key, with its full description and range, is
 | `scan_depth` | `6` | Levels below a repository root that discovery descends |
 | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, by name — as if that ecosystem were not installed |
 | `adapter_idle_days` | *(none)* | Per-adapter idle floors, as `cargo=90,npm=30` — each raises only its own window |
+| `auto_follow_drives` | `true` | Whether a drive that comes back at another place (a new letter, a new mount point) is recognised by its identity and its registry entries re-pointed with their history. Off, they stay inactive. A path that now belongs to a different volume is never pruned either way |
 
 **Before anything is deleted** — what stands between a candidate and a deletion.
 

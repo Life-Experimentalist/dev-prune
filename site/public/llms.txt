@@ -186,9 +186,11 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   `devp unlink --missing` drops every entry whose directory no longer exists at once
   (the registry also drops one itself after 30 days of absence). An entry on a drive that
   is not connected is inactive, not missing: `--missing` leaves it, every pass skips it,
-  and it returns on its own with the drive. On Windows a drive that comes back under
-  another letter is recognised by its volume identity and its entries are re-pointed with
-  their history; macOS and Linux have no volume identity and rely on stable mount points
+  and it returns on its own with the drive. A drive that comes back under another letter
+  or mount point is recognised by its volume identity (Windows serial, Linux filesystem
+  UUID, macOS volume UUID) and its entries are re-pointed with their history, unless
+  `auto_follow_drives` is off; a filesystem with no UUID and a network share have no
+  identity and are not followed
 - `devp undo` — revert the most recent `init` or `link`
 - `devp run [PATH]` — prune every registered repository, or one target. Both forms
   list what would go, with sizes and the total, and ask before deleting; `-y` answers,
@@ -737,7 +739,7 @@ Presentation only; turning it off changes nothing about what is scanned or delet
 
 **What gets pruned** — the size and age of what a pass considers at all:
 `idle_days` (15), `min_size_mb` (0), `scan_depth` (6), `disabled_adapters` (none),
-`adapter_idle_days` (none).
+`adapter_idle_days` (none), `auto_follow_drives` (true).
 
 **Before anything is deleted** — the checks between a candidate and a deletion:
 `require_confirmation` (true), `allow_manifest_rewrite` (false),
@@ -788,6 +790,15 @@ re-pointed to the new path with its history. Separately, every `devp run`, `devp
 and `devp doctor --fix` drops a registry entry (never anything on disk) that has been
 missing, or has stopped being a git checkout, for 30 days, and only while its drive or
 share is present, so an unplugged drive never loses entries.
+
+`auto_follow_drives` (on by default) lets a drive that returns at another letter or mount
+point be recognised by its volume identity and its registry entries re-pointed with their
+history. Off, they stay inactive. Either way, just before a repository is pruned or
+restored the drive is asked again, and if it is not the recorded one the repository is
+skipped with `drive for <repository> changed or is no longer connected, skipped`: not an
+error, exit code unchanged, status `skipped_drive` in `--json`. A Windows devp never
+registers, scans or prunes a path under `\\wsl$` or `\\wsl.localhost` (install devp inside
+the distribution); each environment gets its own devp and there is no remote mode.
 
 `auto_hooks_chain` is off because `core.hooksPath` is one slot, global to the machine,
 and often already held by husky, pre-commit or lefthook. On, dev-prune installs in

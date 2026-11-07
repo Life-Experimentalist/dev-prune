@@ -188,25 +188,73 @@ skipped and on which drives. They are never dropped (no clock runs, and an old
 `missing_since` is cleared), so a drive left in a drawer for a year still has its entries
 and history when it comes back, and they return to normal on their own.
 
-On Windows the registry also records each repository's volume identity (the volume serial
-number and file system, with the label for display) in `registry.json` as `volume_id` and
-`volume_label`, filled in the first time a pass sees the repository. That does two things.
-A drive that returns under a different letter is found by its identity, each of its
-inactive entries is checked against the repository on the new letter (same root commit),
-and the ones that match are re-pointed with their history, idle override and enabled flag
-intact; nothing is re-pointed on a guess, and two connected volumes with the same identity
-(a cloned drive) are never chosen between. And a letter that now belongs to a different
-volume than the one an entry was registered on is treated as inactive instead of as the
-same place, so a prune pass never reaches another drive's directories by path. Entries
-registered before this was recorded have no identity, and are inactive only while their
-drive letter is absent.
+The registry also records each repository's volume identity, with the label for display,
+in `registry.json` as `volume_id` and `volume_label`, filled in the first time a pass sees
+the repository. The identity is the volume serial number and file system on Windows
+(`win:1A2B-3C4D:NTFS`), the filesystem UUID plus the part of the filesystem that is
+mounted on Linux (`linux:<uuid>:<root>`, read from `/proc/self/mountinfo` and matched to
+`/dev/disk/by-uuid`), and the volume UUID on macOS (`mac:<uuid>`, read with `diskutil
+info -plist`, cached for 30 seconds per volume so a pass over many repositories asks once
+per volume). The system volume (`/` on Linux and macOS) is never stamped, because it is
+not a drive that comes and goes.
 
-macOS and Linux have no volume identity: dev-prune assumes the mount points it sees stay
-put, and an unmounted mount point makes its repositories inactive in the same way. An
-external disk that comes back mounted somewhere else is not followed there: its old
-entries stay inactive (a path on an unmounted disk is never adopted as "moved", because
-the disk may return), and linking the repository at its new location registers a fresh
-entry. `devp unlink <old path>` removes the old one on purpose.
+That does two things. A drive that returns at a different place (another letter, another
+mount point) is found by its identity, each of its inactive entries is checked against
+the repository at the new place (same root commit), and the ones that match are
+re-pointed with their history, idle override and enabled flag intact; nothing is
+re-pointed on a guess, and two connected volumes with the same identity (a cloned drive)
+are never chosen between. On Linux and macOS the places looked at are the usual mount
+points: `/media/<user>/<label>`, `/run/media/<user>/<label>`, `/mnt` and `/media` on
+Linux, `/Volumes` on macOS. And a path that now belongs to a different volume than the
+one an entry was registered on is treated as inactive instead of as the same place, so a
+prune pass never reaches another drive's directories by path. Entries registered before
+this was recorded have no identity, and are inactive only while their drive is absent.
+
+A filesystem with no UUID (tmpfs, most network mounts, some FAT or exFAT volumes) and a
+network share have no identity. They are not followed: their entries go inactive when the
+mount is gone, as before, and a disk that comes back mounted somewhere else is not found
+(its old entries stay inactive, because a path on an unmounted disk is never adopted as
+"moved"). Linking the repository at its new location registers a fresh entry, and `devp
+unlink <old path>` removes the old one on purpose.
+
+`devp config set auto_follow_drives false` turns the following off. It is on by default.
+With it off, an inactive entry is never re-pointed to another place, whatever the drive
+identity says; the safety side is unchanged, so a path that now belongs to a different
+volume is still inactive and is still never pruned.
+
+#### Checked again before each repository
+
+The identity check above happens at the start of a pass. A pass can run long, and a disk
+can be unplugged or swapped after it. So just before dev-prune prunes a repository, and
+just before `devp restore` writes into one, it asks the volume at the repository's root
+for its identity again. If it is the one on record, it goes ahead. If it is different,
+absent or unreadable, it skips that repository, touches nothing, and prints `drive for
+<repository> changed or is no longer connected, skipped`. A skip is not an error and does
+not change the exit code; in `--json` the repository's result has the status
+`skipped_drive` and the same line in `message`. A repository with no recorded identity,
+and a path you name with `devp run <path>` that is not registered, are checked as before
+(no drive question is asked).
+
+### Where dev-prune should run
+
+devp touches what the machine it runs on sees as local, and nothing else. Run it on the
+machine that holds the repositories; each environment gets its own devp and there is no
+remote mode.
+
+- **WSL.** Install the Linux build inside the distribution (the Linux binaries are
+  static musl builds). A Windows devp never registers, scans or prunes a path under
+  `\\wsl$\` or `\\wsl.localhost\`: it skips it with `inside WSL, install devp in the
+  distribution`, counted as skipped and not as an error. An entry already registered
+  under those prefixes stays in `registry.json`, is shown as inactive and is never
+  dropped.
+- **Docker.** A bind mount is an ordinary path on the host, so devp on the host sees it.
+  Named volumes and the inside of a container are out of scope.
+- **SSH hosts, virtual machines and cloud instances.** Install devp there. It does not
+  reach into another machine from outside.
+- **A cloud block volume that is detached and attached again** and mounted by UUID is
+  recognised as the same drive on Linux, like any other disk that returns.
+
+Ordinary mapped drives and SMB shares are not treated specially by this rule.
 
 ### The optional cache size limit
 

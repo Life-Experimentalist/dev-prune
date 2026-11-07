@@ -305,8 +305,8 @@ The fields worth reading first:
 | Path | Use it for |
 | :--- | :--- |
 | `summary.errors` (run) | "did anything go wrong" — the whole answer, in one integer (counts `lockfile_error`, `activity_check_error`, `delete_error` and `config_error`) |
-| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_adapter_window`, `skipped_symlink`, `skipped_declaration`, `skipped_nested_repo`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `not_a_repo`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
-| `results[].message` | the failure detail — present on the four error statuses, on `skipped_symlink`, where it names the link, on `skipped_declaration`, where it says why the declaration was refused, and on `skipped_nested_repo`, where it names the git repository found inside the directory |
+| `results[].status` | `pruned`, `skipped_dry_run`, `skipped_active`, `skipped_adapter_window`, `skipped_symlink`, `skipped_declaration`, `skipped_nested_repo`, `skipped_drive`, `ignored`, `no_bloat`, `disabled`, `path_missing`, `not_a_repo`, `lockfile_error`, `activity_check_error`, `delete_error`, `config_error` |
+| `results[].message` | the failure detail — present on the four error statuses, on `skipped_symlink`, where it names the link, on `skipped_declaration`, where it says why the declaration was refused, on `skipped_nested_repo`, where it names the git repository found inside the directory, and on `skipped_drive`, where it says the repository's drive changed or is not connected (a skip, not an error) |
 | `results[].fix_command` | present only on `lockfile_error`, and only when the fix is one mechanical command you may run unattended |
 | `repositories[].state` (status) | `candidate`, `active`, `ignored`, `no_bloat`, `path_missing`, `config_error` |
 | `repositories[].error` | the parse failure — present only on `config_error` |
@@ -448,6 +448,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | `scan_depth` | `6` | How many directory levels below a repository root discovery descends; `config set` accepts `1`–`32` |
 | `disabled_adapters` | *(none)* | Adapters to leave alone entirely, comma-separated by name. A disabled adapter is not detected, not counted, not pruned — as if that ecosystem were not installed. `-` clears the list |
 | `adapter_idle_days` | *(none)* | Per-adapter idle windows, as `cargo=90,npm=30`. A floor, never a bypass: `max(idle_days, build_idle_days, this)`. `-` clears it |
+| `auto_follow_drives` | `true` | Whether a drive that returns at another place (new letter or mount point) is recognised by its volume identity and its entries re-pointed with their history. Off, they stay inactive. A path that now belongs to a different volume is never pruned either way |
 
 **Before anything is deleted**
 
@@ -639,11 +640,18 @@ path with its history. Separately, every `devp run`, `devp status` and `devp doc
 drops a registry entry (never anything on disk) that has been missing, or has stopped being
 a git checkout, for 30 days, and only while its drive or share is present, so an unplugged
 drive never loses entries. A repository on a drive that is not connected is **inactive**:
-left out of every pass, never dropped, back to normal when the drive returns. On Windows the
-registry records each repository's volume identity (`volume_id`), so a drive that returns
-under another letter is recognised and its entries are re-pointed with their history, and a
-letter now held by a different volume is inactive, never treated as the same place. macOS
-and Linux have no such identity and rely on stable mount points.
+left out of every pass, never dropped, back to normal when the drive returns. The
+registry records each repository's volume identity (`volume_id`: serial and file system on
+Windows, filesystem UUID on Linux, volume UUID on macOS), so a drive that returns under
+another letter or mount point is recognised and its entries are re-pointed with their
+history (`auto_follow_drives`, on by default, turns that off), and a path now held by a
+different volume is inactive, never treated as the same place. A filesystem with no UUID
+and a network share have no identity: they go inactive when unmounted and are not
+followed. Just before each repository is pruned or restored the drive is asked again, and
+a mismatch skips that repository with `drive for <repository> changed or is no longer
+connected, skipped` (status `skipped_drive` in `--json`, not an error, exit code
+unchanged). A Windows devp never registers, scans or prunes a path under `\\wsl$` or
+`\\wsl.localhost`: install devp inside the distribution instead.
 
 > Git supports exactly one global `core.hooksPath`, and while it is set Git stops
 > looking in any repository's own `.git/hooks`. dev-prune restores that itself: it writes

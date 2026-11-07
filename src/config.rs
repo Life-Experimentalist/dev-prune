@@ -515,15 +515,16 @@ pub struct RepoEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub missing_since: Option<DateTime<Utc>>,
     /// Which volume this repository's drive was when it was last seen healthy, for
-    /// example `win:1A2B-3C4D:NTFS` (see [`crate::volume`]).
+    /// example `win:1A2B-3C4D:NTFS`, `linux:<uuid>:<root>` or `mac:<uuid>` (see
+    /// [`crate::volume`]).
     ///
-    /// A drive letter says nothing about the disk behind it: a removable drive can come
-    /// back as another letter, and a letter can be handed to a different disk. With the
-    /// volume recorded, an entry whose letter now belongs to another disk is inactive
-    /// rather than healthy, and one whose drive returned under a new letter is
-    /// re-pointed. Absent for entries on drives with no identity (network shares, other
-    /// platforms) and for registries written before this field existed; older binaries
-    /// ignore it.
+    /// A drive letter or mount point says nothing about the disk behind it: a removable
+    /// drive can come back at another place, and the place can be handed to a different
+    /// disk. With the volume recorded, an entry whose place now belongs to another disk is
+    /// inactive rather than healthy, and one whose drive returned elsewhere is
+    /// re-pointed. Absent for entries on drives with no identity (network shares, a
+    /// filesystem without a UUID), for the Unix system root, and for registries written
+    /// before this field existed; older binaries ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub volume_id: Option<String>,
     /// The volume's label when `volume_id` was recorded. Shown to people, never matched on.

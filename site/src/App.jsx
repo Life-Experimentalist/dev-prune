@@ -2725,7 +2725,11 @@ Notes you should rely on, not work around:
                   pruned. A repository you moved is re-pointed, history
                   included, when discovery finds it by its root commit, and a
                   registry entry missing for 30 days is dropped, but never while
-                  its drive or share is absent.
+                  its drive or share is absent. A drive that returns under
+                  another letter or mount point is recognised by its volume
+                  identity and its entries are re-pointed with their history
+                  (<code>auto_follow_drives</code> turns that off), and the
+                  drive is checked again just before each repository is pruned.
                 </p>
                 <p className="muted">
                   Off switches: <code>auto_daemon</code>,{" "}
