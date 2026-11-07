@@ -927,3 +927,14 @@ pub const GRAPHIFY_OUTPUT_DIR: &str = "graphify-out";
 /// (`UA_DIR` in its own `persistence/index.ts`). Same reasoning as
 /// [`GRAPHIFY_OUTPUT_DIR`]: rebuilding it costs LLM calls, so it is reported, not pruned.
 pub const UNDERSTAND_ANYTHING_DIR: &str = ".understand-anything";
+
+/// A repository's scan counts as slow after this many seconds, and the status bar then
+/// says what is happening instead of leaving a bare path on screen.
+pub const SCAN_SLOW_REPO_SECS: u64 = 10;
+
+/// Longest repository path shown on the status progress line, in characters. The bar
+/// itself takes about 45 columns, so this keeps the line inside an 80-column terminal.
+pub const SCAN_BAR_PATH_CHARS: usize = 28;
+
+/// Appended to the progress line for a repository that is taking a long time.
+pub const SCAN_SLOW_HINT: &str = "large repo, read-only scan";

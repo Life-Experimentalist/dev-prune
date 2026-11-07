@@ -49,11 +49,15 @@ fn project_files(dir: &Path) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
+        // Extension first, `is_file` (a stat per entry) only for the few that match. The
+        // other order cost one stat for every file in the directory, per project
+        // directory visited: 21k stats for a dataset folder, ~35 ms each time it was
+        // probed under a parallel scan.
         .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .and_then(|e| e.to_str())
-                    .is_some_and(|e| PROJECT_EXTENSIONS.contains(&e))
+            p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| PROJECT_EXTENSIONS.contains(&e))
+                && p.is_file()
         })
         .collect();
     found.sort();
@@ -193,6 +197,51 @@ impl PackageManager for DotnetBuild {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// `project_files` as it was before the extension check moved ahead of `is_file`.
+    fn project_files_stat_first(dir: &Path) -> Vec<PathBuf> {
+        let mut found: Vec<PathBuf> = fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && p.extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| PROJECT_EXTENSIONS.contains(&e))
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn extension_first_filter_finds_what_the_stat_first_one_did() {
+        let dir = tempdir().unwrap();
+        for name in [
+            "App.csproj",
+            "Lib.fsproj",
+            "Old.vbproj",
+            "Sol.sln",
+            "notes.txt",
+            "csproj",
+            "App.CSPROJ",
+            "App.csproj.bak",
+        ] {
+            fs::write(dir.path().join(name), "x").unwrap();
+        }
+        // A directory wearing a project extension is not a project file.
+        fs::create_dir(dir.path().join("Fake.csproj")).unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        for n in 0..50 {
+            fs::write(dir.path().join(format!("data{n}.csv")), "x").unwrap();
+        }
+        assert_eq!(
+            project_files(dir.path()),
+            project_files_stat_first(dir.path())
+        );
+        assert!(!project_files(dir.path()).is_empty());
+    }
 
     /// A project directory holding `App.csproj`.
     fn project(dir: &Path) -> PathBuf {

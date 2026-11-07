@@ -12,6 +12,7 @@ use anyhow::Result;
 use crate::adapters::DriftReport;
 use crate::commands::hook::HookState;
 use crate::config::Registry;
+use crate::constants;
 use crate::engine::{self, PruneStatus};
 use crate::i18n;
 use crate::output;
@@ -164,11 +165,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     let scan_bar = (!json_output).then(|| {
         output::create_progress_bar("Scanning repositories", registry.repositories.len() as u64)
     });
-    let scanned = engine::get_full_status_reporting(&registry, &|done, _total| {
-        if let Some(pb) = &scan_bar {
-            pb.set_position(done as u64);
-        }
-    });
+    let scanned = scan_with_progress(&registry, scan_bar.as_ref());
     // Over every repository, before `--top` trims the list, for the same reason the
     // totals above are: `--top 5` must not make the machine look cheaper to undo than
     // it is.
@@ -520,6 +517,73 @@ fn format_duration(secs: u64) -> String {
     }
 }
 
+/// The repository scan, with `bar` (when there is one) naming the repository that has
+/// been in flight longest.
+///
+/// A bare `41/80` gives no hint why it stopped moving. With several workers running,
+/// the oldest unfinished repository is the one the user is actually waiting for, so
+/// that is the one named; a ticker thread refreshes the line because a slow repository
+/// produces no event of its own to hang an update on.
+fn scan_with_progress(
+    registry: &Registry,
+    bar: Option<&indicatif::ProgressBar>,
+) -> Vec<engine::RepoStatusEntry> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    let Some(pb) = bar else {
+        return engine::get_full_status(registry);
+    };
+    let in_flight: Mutex<Vec<(std::path::PathBuf, Instant)>> = Mutex::new(Vec::new());
+    let lock = || in_flight.lock().unwrap_or_else(|e| e.into_inner());
+    let finished = AtomicBool::new(false);
+
+    std::thread::scope(|scope| {
+        let ticker = scope.spawn(|| {
+            while !finished.load(Ordering::Relaxed) {
+                let oldest = lock().iter().min_by_key(|(_, at)| *at).cloned();
+                if let Some((path, at)) = oldest {
+                    pb.set_message(scan_message(&path, at.elapsed()));
+                }
+                std::thread::park_timeout(Duration::from_millis(250));
+            }
+        });
+        let scanned = engine::get_full_status_reporting(registry, &|step| match step {
+            engine::ScanStep::Started(path) => lock().push((path.to_path_buf(), Instant::now())),
+            engine::ScanStep::Finished { path, done, .. } => {
+                lock().retain(|(p, _)| p != path);
+                pb.set_position(done as u64);
+            }
+        });
+        finished.store(true, Ordering::Relaxed);
+        ticker.thread().unpark();
+        scanned
+    })
+}
+
+/// The progress line for a repository that has been scanning for `age`: its path
+/// shortened to the tail (the part that tells repositories apart), plus a plain hint
+/// once it is clearly a large one.
+fn scan_message(path: &std::path::Path, age: std::time::Duration) -> String {
+    let full = output::clean_path(path);
+    let count = full.chars().count();
+    let shown = if count > constants::SCAN_BAR_PATH_CHARS {
+        let tail: String = full
+            .chars()
+            .skip(count - constants::SCAN_BAR_PATH_CHARS)
+            .collect();
+        format!("...{tail}")
+    } else {
+        full
+    };
+    if age.as_secs() >= constants::SCAN_SLOW_REPO_SECS {
+        format!("Scanning {shown} ({})", constants::SCAN_SLOW_HINT)
+    } else {
+        format!("Scanning {shown}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,5 +595,35 @@ mod tests {
         assert_eq!(format_duration(3600), "1h");
         assert_eq!(format_duration(90), "90s");
         assert_eq!(format_duration(0), "0s");
+    }
+
+    #[test]
+    fn a_short_path_is_shown_whole_and_without_a_hint() {
+        let msg = scan_message(
+            std::path::Path::new("repo"),
+            std::time::Duration::from_secs(1),
+        );
+        assert_eq!(msg, "Scanning repo");
+    }
+
+    #[test]
+    fn a_long_path_keeps_its_tail() {
+        let long = "a".repeat(80) + "/my-project";
+        let msg = scan_message(
+            std::path::Path::new(&long),
+            std::time::Duration::from_secs(1),
+        );
+        assert!(msg.starts_with("Scanning ..."));
+        assert!(msg.ends_with("my-project"));
+        assert!(msg.chars().count() < 50);
+    }
+
+    #[test]
+    fn a_slow_repository_gets_the_read_only_hint() {
+        let msg = scan_message(
+            std::path::Path::new("repo"),
+            std::time::Duration::from_secs(11),
+        );
+        assert!(msg.contains("read-only"));
     }
 }
