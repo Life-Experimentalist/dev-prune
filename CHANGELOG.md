@@ -22,9 +22,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dead registry entries clean themselves up.** A path that stays missing for 30 days is
   dropped from `registry.json`, and so is a linked worktree that `git worktree prune`
-  orphaned. Nothing on disk is touched, and an entry on an unplugged drive or an unmounted
-  share is never dropped, because that drive is only away. `devp unlink --missing` still
-  clears them at once.
+  orphaned. Nothing on disk is touched. `devp unlink --missing` still clears them at once.
+
+- **Repositories on a drive that is not connected are inactive, never lost.** Unplug an
+  external disk or lose a network share and its repositories show up in one "not
+  connected" group in `devp status`, `devp doctor` and `devp run`, instead of as deleted
+  paths. They are skipped by every pass, never dropped (no clock runs, so a drive left in a
+  drawer for a year still has its history when it comes back), and return to normal on
+  their own. `devp unlink --missing` now leaves them alone and tells you how to remove one
+  on purpose (`devp unlink <path>`).
+
+- **On Windows, a drive that comes back under a different letter is followed.** dev-prune
+  now records each repository's volume identity (serial number and file system) in
+  `registry.json`. Plug a USB disk back in as `F:` instead of `E:` and the next pass finds
+  it by that identity, checks each repository by its first commit, and re-points the
+  entries with their history and settings. A letter that now belongs to a different drive
+  makes the entries inactive, so a prune pass can never reach another drive's folders by
+  path, and two connected drives with the same identity (a cloned disk) are never guessed
+  between. macOS and Linux have no letters to track: an unmounted mount point makes its
+  repositories inactive the same way, and a disk that returns somewhere else is not followed.
+
+- **An optional size limit for caches that are safe to lose.** Off by default. After
+  `devp config set cache_auto_trim true`, the scheduled pass and a confirmed `devp run`
+  empty the Go build cache or the ccache cache with its own command (`go clean -cache`,
+  `ccache --clear`) once it is past `cache_limit_gib` (20 by default, per cache). Nothing
+  else is ever touched: not the Go module cache, not download caches, not anything dev-prune
+  would have to delete as a folder. `devp caches` marks any cache over the limit even with
+  trimming off, and `devp doctor` mentions it as a note that never changes the exit code.
+  The setup wizard asks, defaulting to no. `devp run --dry-run` lists what it would empty.
 
 ### Changed
 
@@ -39,7 +64,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the first, cold-cache run).
 
 - **A hung `git` can no longer wedge a scheduled pass.** Read-only Git calls now give up
-  after two minutes, skip that repository, and say which one. There is still no overall
+  after two minutes, skip that repository, and say which one. The same ceiling now covers
+  the declared-directory check, hook install and the trust prompt, and a call that gave no
+  answer is never read as "not ignored". There is still no overall
   time limit on a scan: a long scan that keeps making progress is never cut off.
   `command_timeout_secs` is, and always was, the limit for each package-manager command.
 
@@ -54,6 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### For contributors
 
+- New `src/volume.rs` (Windows volume identity, behind a `VolumeView` seam so tests can
+  inject fake drives) and `Registry::heal_with`. `RepoEntry` gains optional `volume_id` and
+  `volume_label`; `PathState` gains `Inactive`. `windows-sys` gains the
+  `Win32_System_Diagnostics_Debug` feature; no new crate.
 - New `src/parallel.rs` holds the shared work-stealing helper used by the cache sizing and
   the dependents lookup. `DEV_PRUNE_SCAN_THREADS` still overrides the thread count.
 - `Registry::heal` replaces the old heal pass; `heal_dead_and_moved_repositories` stays as a
