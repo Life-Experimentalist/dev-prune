@@ -938,3 +938,30 @@ pub const SCAN_BAR_PATH_CHARS: usize = 28;
 
 /// Appended to the progress line for a repository that is taking a long time.
 pub const SCAN_SLOW_HINT: &str = "large repo, read-only scan";
+
+/// How long one read-only `git` call may run before it is killed, in seconds.
+///
+/// Protection against a stalled child, not a scan timeout: a `git` blocked on a hung
+/// network drive or a locked index never exits, and with it the whole pass (and, on
+/// Windows, every later scheduled run, which `IgnoreNew` skips while one is running).
+/// A scan of any length is made of many calls that each finish in milliseconds, so a
+/// generous ceiling on one call never cuts off a scan that is making progress.
+pub const GIT_STALL_CEILING_SECS: u64 = 120;
+
+/// How long a registry entry must have been missing, in days, before the registry drops it.
+///
+/// An unplugged drive and a deleted clone look the same from the path alone, so the
+/// first sight of a missing path only starts a clock. Thirty days is long enough that a
+/// laptop left in a drawer, or a project parked over a holiday, never loses its history.
+pub const MISSING_ENTRY_GRACE_DAYS: i64 = 30;
+
+/// The most threads used to check whether registered paths still exist.
+///
+/// One per volume, because a stat on an unreachable share can block for many seconds and
+/// should not hold up paths on a healthy drive.
+pub const EXISTENCE_CHECK_MAX_THREADS: usize = 8;
+
+/// Directories under which each child is its own mount on Unix (`/mnt/usb`, `/media/disk`,
+/// `/Volumes/Backup`). A registered path below one belongs to that mount, so an unplugged
+/// disk is recognised as an absent volume and not as a deleted directory.
+pub const UNIX_MOUNT_PARENTS: &[&str] = &["mnt", "media", "Volumes"];

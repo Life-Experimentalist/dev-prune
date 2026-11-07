@@ -469,6 +469,14 @@ pub struct RepoEntry {
     /// and re-registering the repository is what fills it in.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<String>,
+    /// When the registry first saw this path missing or orphaned (its `.git` gone, or a
+    /// linked worktree whose git directory was pruned).
+    ///
+    /// The start of the grace period after which the entry is dropped from the registry.
+    /// Cleared when the path comes back. Absent from registries written before this
+    /// field existed, and older binaries ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing_since: Option<DateTime<Utc>>,
 }
 
 impl RepoEntry {
@@ -481,8 +489,217 @@ impl RepoEntry {
             enabled: true,
             total_freed_bytes: 0,
             identity: None,
+            missing_since: None,
         }
     }
+}
+
+/// What a registered path looks like on disk right now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathState {
+    /// The path does not exist (deleted, moved, or on a drive that is not there).
+    Missing,
+    /// The path exists but is no longer a working git checkout.
+    Orphan,
+    Healthy,
+}
+
+/// The drive, share or mount a path lives on.
+///
+/// What decides whether "the path is gone" can be believed: when this root itself is
+/// missing, the volume is unplugged or unmounted and nothing under it has been deleted.
+fn volume_root(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut root = PathBuf::new();
+    let mut names: Vec<String> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => root.push(component.as_os_str()),
+            Component::Normal(name) => names.push(name.to_string_lossy().into_owned()),
+            Component::CurDir | Component::ParentDir => {}
+        }
+    }
+    if !cfg!(windows) {
+        let mount_depth = if names
+            .first()
+            .is_some_and(|n| constants::UNIX_MOUNT_PARENTS.contains(&n.as_str()))
+        {
+            2
+        } else if names.len() >= 2 && names[0] == "run" && names[1] == "media" {
+            // /run/media/<user>/<label>
+            4
+        } else {
+            0
+        };
+        for name in names.iter().take(mount_depth) {
+            root.push(name);
+        }
+    }
+    if root.as_os_str().is_empty() {
+        root.push(".");
+    }
+    root
+}
+
+/// Classify one path. A path that cannot be read for a reason other than "not there"
+/// counts as healthy: when unsure, the registry keeps the entry.
+fn classify_path(path: &Path) -> PathState {
+    if !path.exists() {
+        return PathState::Missing;
+    }
+    let dot_git = path.join(".git");
+    match fs::metadata(&dot_git) {
+        Ok(meta) if meta.is_dir() => PathState::Healthy,
+        Ok(_) => match crate::commands::link::linked_gitdir(path) {
+            // The main repository's own drive being unplugged also hides this target,
+            // and that must not read as "worktree pruned".
+            Some(target) if !target.exists() && volume_root(&target).exists() => PathState::Orphan,
+            _ => PathState::Healthy,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => PathState::Orphan,
+        Err(_) => PathState::Healthy,
+    }
+}
+
+/// Existence of every registered path, computed once.
+struct Liveness {
+    states: HashMap<PathBuf, PathState>,
+    present_volumes: HashSet<PathBuf>,
+}
+
+impl Liveness {
+    /// Check `paths`, one worker per volume.
+    ///
+    /// A stat on an unreachable network path can block for many seconds; grouped by
+    /// volume, that wait stalls only that volume's paths and not the healthy drives
+    /// beside it. A volume whose root is absent is not walked at all.
+    fn scan(paths: &[PathBuf]) -> Self {
+        let mut grouped: BTreeMap<PathBuf, Vec<&PathBuf>> = BTreeMap::new();
+        for path in paths {
+            grouped.entry(volume_root(path)).or_default().push(path);
+        }
+        let groups: Vec<(PathBuf, Vec<&PathBuf>)> = grouped.into_iter().collect();
+
+        fn check_group(group: &(PathBuf, Vec<&PathBuf>)) -> (bool, Vec<(PathBuf, PathState)>) {
+            let (root, members) = group;
+            if !root.exists() {
+                let gone = members
+                    .iter()
+                    .map(|p| ((*p).clone(), PathState::Missing))
+                    .collect();
+                return (false, gone);
+            }
+            let states = members
+                .iter()
+                .map(|p| ((*p).clone(), classify_path(p)))
+                .collect();
+            (true, states)
+        }
+
+        let mut done: HashMap<PathBuf, (bool, Vec<(PathBuf, PathState)>)> = HashMap::new();
+        let workers = groups.len().min(constants::EXISTENCE_CHECK_MAX_THREADS);
+        if workers > 1 {
+            let mut buckets: Vec<Vec<&(PathBuf, Vec<&PathBuf>)>> = vec![Vec::new(); workers];
+            for (i, group) in groups.iter().enumerate() {
+                buckets[i % workers].push(group);
+            }
+            std::thread::scope(|scope| {
+                let mut handles = Vec::new();
+                for bucket in &buckets {
+                    let spawned = std::thread::Builder::new().spawn_scoped(scope, move || {
+                        bucket
+                            .iter()
+                            .map(|g| (g.0.clone(), check_group(g)))
+                            .collect::<Vec<_>>()
+                    });
+                    // A refused spawn is not an error: those groups are picked up by
+                    // the serial pass below.
+                    if let Ok(handle) = spawned {
+                        handles.push(handle);
+                    }
+                }
+                for handle in handles {
+                    if let Ok(results) = handle.join() {
+                        done.extend(results);
+                    }
+                }
+            });
+        }
+        // Serial path: one volume, a refused spawn, or a worker that panicked.
+        for group in &groups {
+            if !done.contains_key(&group.0) {
+                done.insert(group.0.clone(), check_group(group));
+            }
+        }
+
+        let mut states = HashMap::new();
+        let mut present_volumes = HashSet::new();
+        for (root, (present, group_states)) in done {
+            if present {
+                present_volumes.insert(root);
+            }
+            states.extend(group_states);
+        }
+        Self {
+            states,
+            present_volumes,
+        }
+    }
+
+    fn state(&self, path: &Path) -> PathState {
+        self.states.get(path).copied().unwrap_or(PathState::Healthy)
+    }
+
+    fn volume_present(&self, path: &Path) -> bool {
+        self.present_volumes.contains(&volume_root(path))
+    }
+}
+
+/// Whether a missing path really was deleted, as opposed to being unreachable.
+///
+/// The volume must be present, and the path must answer "not found" rather than
+/// "permission denied". On Unix an existing but empty parent is the mount point of a
+/// disk that is not mounted, so it is not believed either; a parent that is gone as
+/// well, on a present volume, is believed.
+fn absence_is_trustworthy(path: &Path, liveness: &Liveness) -> bool {
+    if !liveness.volume_present(path) {
+        return false;
+    }
+    let confirmed_gone = matches!(
+        fs::symlink_metadata(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    );
+    if !confirmed_gone {
+        return false;
+    }
+    match path.parent() {
+        Some(parent) if parent.exists() => {
+            cfg!(windows) || fs::read_dir(parent).is_ok_and(|mut entries| entries.next().is_some())
+        }
+        _ => true,
+    }
+}
+
+/// What one pass of [`Registry::heal`] did to the registry.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct HealReport {
+    /// Entries merged, re-pointed or dropped as ephemeral worktrees.
+    pub healed: usize,
+    /// Entries dropped because they stayed missing past the grace period.
+    pub expired: Vec<PathBuf>,
+    /// Whether anything in the registry changed and so needs saving. Wider than
+    /// `healed`: starting or clearing a missing-since clock changes the file too.
+    pub dirty: bool,
+}
+
+/// What registering a batch of discovered repositories did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct DiscoveryOutcome {
+    /// Repositories registered as new entries.
+    pub added: usize,
+    /// Registered paths that were re-pointed to a newly found location, as
+    /// `(old path, new path)`.
+    pub moved: Vec<(PathBuf, PathBuf)>,
 }
 
 impl Default for RepoEntry {
@@ -1494,6 +1711,81 @@ impl Registry {
         true
     }
 
+    /// Register repositories the scheduled pass discovered, re-pointing a registered
+    /// entry instead of adding a second one when a found repository is that entry's
+    /// repository at a new path.
+    ///
+    /// "Is the same repository" means the root commit matches a registered path that no
+    /// longer exists, never a shared name. Reading it costs a git spawn per new
+    /// repository, so nothing is spawned unless some missing entry carries an identity
+    /// to match against: a healthy registry pays for the existence check and no more.
+    /// When unsure, the repository is registered as new and nothing is merged: a found
+    /// repository whose root commit another found repository or a live entry also has is
+    /// a clone, and linked worktrees (whose `.git` is a file) share their main
+    /// repository's root commit without being it.
+    pub fn register_discovered(&mut self, found: Vec<PathBuf>) -> DiscoveryOutcome {
+        let mut outcome = DiscoveryOutcome::default();
+        let mut fresh: Vec<PathBuf> = Vec::new();
+        for repo in found {
+            let key = canonical_key(&repo);
+            if self.add_repo(repo) {
+                fresh.push(key);
+            }
+        }
+        outcome.added = fresh.len();
+        if fresh.is_empty() {
+            return outcome;
+        }
+
+        let carriers: Vec<PathBuf> = self
+            .repositories
+            .iter()
+            .filter(|(p, e)| e.identity.is_some() && !fresh.contains(p))
+            .map(|(p, _)| p.clone())
+            .collect();
+        if carriers.is_empty() {
+            return outcome;
+        }
+        let liveness = Liveness::scan(&carriers);
+        if !carriers
+            .iter()
+            .any(|p| liveness.state(p) == PathState::Missing)
+        {
+            return outcome;
+        }
+        let live_identities: HashSet<&str> = carriers
+            .iter()
+            .filter(|p| liveness.state(p) != PathState::Missing)
+            .filter_map(|p| self.repositories.get(p).and_then(|e| e.identity.as_deref()))
+            .collect();
+
+        fresh.sort();
+        let identities: Vec<(PathBuf, String)> = fresh
+            .into_iter()
+            .filter(|p| p.join(".git").is_dir())
+            .filter_map(|p| {
+                let id = crate::scanner::git::repo_identity(&p)?;
+                Some((p, id))
+            })
+            .collect();
+        let claimed: Vec<(PathBuf, String)> = identities
+            .iter()
+            .filter(|(_, id)| {
+                !live_identities.contains(id.as_str())
+                    && identities.iter().filter(|(_, other)| other == id).count() == 1
+            })
+            .cloned()
+            .collect();
+
+        for (path, id) in claimed {
+            if let Adoption::Moved(old) = self.adopt_moved_entry(&path, Some(id)) {
+                outcome.added -= 1;
+                outcome.moved.push((old, path));
+            }
+        }
+        outcome
+    }
+
     /// Record `identity` against a registered repository, and hand it the history of the
     /// entry it moved away from.
     ///
@@ -1582,24 +1874,56 @@ impl Registry {
 
     /// Drops registry entries for deleted ephemeral AI worktrees, and re-points or
     /// merges entries whose repository moved on disk (an `Archive/` sweep being the
-    /// usual culprit), carrying the pruning history across. Returns how many entries
-    /// changed.
+    /// usual culprit), carrying the pruning history across.
     ///
     /// A missing path is only ever merged or re-pointed on evidence: a matching root
     /// commit identity, or an identity-less entry found again by name under an
     /// `Archive` directory beside where it used to live. Anything weaker risks welding
     /// two unrelated projects together, because a repository on an unplugged drive
     /// also fails `exists()`, and it comes back.
-    pub fn heal_dead_and_moved_repositories(&mut self) -> usize {
-        let dead_keys: Vec<PathBuf> = self
-            .repositories
-            .keys()
-            .filter(|p| !p.exists())
+    ///
+    /// Entries that match nothing are not dropped on sight. The first pass that finds
+    /// one missing (or an orphan: a directory whose `.git` is gone, or a linked worktree
+    /// whose git directory `git worktree prune` removed) stamps `missing_since`; a later
+    /// pass drops it only once [`constants::MISSING_ENTRY_GRACE_DAYS`] have gone by, its
+    /// volume is present, and the path is verifiably absent rather than unreadable. The
+    /// stamp is cleared if the path comes back. Only `registry.json` is ever changed.
+    ///
+    /// Existence is read once up front, volume by volume, instead of once per entry per
+    /// dead entry.
+    pub fn heal(&mut self, now: DateTime<Utc>) -> HealReport {
+        let mut report = HealReport::default();
+        let mut keys: Vec<PathBuf> = self.repositories.keys().cloned().collect();
+        if keys.is_empty() {
+            return report;
+        }
+        keys.sort();
+        let liveness = Liveness::scan(&keys);
+
+        let mut live: HashSet<PathBuf> = keys
+            .iter()
+            .filter(|p| liveness.state(p) != PathState::Missing)
+            .cloned()
+            .collect();
+        let dead_keys: Vec<PathBuf> = keys
+            .iter()
+            .filter(|p| liveness.state(p) == PathState::Missing)
             .cloned()
             .collect();
 
-        if dead_keys.is_empty() {
-            return 0;
+        // Orphans start or continue their clock; a healthy path forgets one.
+        for path in &keys {
+            match liveness.state(path) {
+                PathState::Orphan => self.note_absence(path, now, &liveness, &mut report),
+                PathState::Healthy => {
+                    if let Some(entry) = self.repositories.get_mut(path)
+                        && entry.missing_since.take().is_some()
+                    {
+                        report.dirty = true;
+                    }
+                }
+                PathState::Missing => {}
+            }
         }
 
         let mut changes = 0;
@@ -1622,7 +1946,7 @@ impl Registry {
             // 2. Check if another live registered repository already claims the same identity or basename.
             let mut matched_live_key: Option<PathBuf> = None;
             for (live_path, live_entry) in &self.repositories {
-                if !live_path.exists() || *live_path == dead_path {
+                if !live.contains(live_path) || *live_path == dead_path {
                     continue;
                 }
                 // Check identity match
@@ -1721,18 +2045,60 @@ impl Registry {
                 if updated_entry.identity.is_none() {
                     updated_entry.identity = crate::scanner::git::repo_identity(&new_path);
                 }
+                updated_entry.missing_since = None;
                 self.repositories.remove(&dead_path);
                 // `last_added_repos` is the batch `devp undo` unlinks. A healed entry
                 // was never added by the user's last link, so it must not become
                 // undoable: an undo after a silent heal would unlink the repository
                 // instead of reverting what the user actually did.
                 self.last_added_repos.retain(|p| p != &dead_path);
+                live.insert(canonical_new.clone());
                 self.repositories.insert(canonical_new, updated_entry);
                 changes += 1;
+            } else {
+                self.note_absence(&dead_path, now, &liveness, &mut report);
             }
         }
 
-        changes
+        report.healed = changes;
+        report.dirty |= changes > 0 || !report.expired.is_empty();
+        report
+    }
+
+    /// [`Registry::heal`] stamped with the current time, returning only the count of
+    /// entries merged, re-pointed or dropped as ephemeral worktrees.
+    pub fn heal_dead_and_moved_repositories(&mut self) -> usize {
+        self.heal(Utc::now()).healed
+    }
+
+    /// Start, or act on, the clock for a path that is missing or orphaned and matched
+    /// nothing to merge into.
+    fn note_absence(
+        &mut self,
+        path: &Path,
+        now: DateTime<Utc>,
+        liveness: &Liveness,
+        report: &mut HealReport,
+    ) {
+        let Some(entry) = self.repositories.get_mut(path) else {
+            return;
+        };
+        let Some(since) = entry.missing_since else {
+            entry.missing_since = Some(now);
+            report.dirty = true;
+            return;
+        };
+        let waited = now.signed_duration_since(since);
+        if waited < chrono::Duration::days(constants::MISSING_ENTRY_GRACE_DAYS) {
+            return;
+        }
+        if liveness.state(path) == PathState::Missing && !absence_is_trustworthy(path, liveness) {
+            return;
+        }
+        self.repositories.remove(path);
+        self.last_added_repos.retain(|p| p != path);
+        report.expired.push(path.to_path_buf());
+        report.dirty = true;
     }
 
     /// Removes a repository from the registry. Returns `true` if it was present.
@@ -2998,5 +3364,355 @@ mod tests {
         assert_eq!(healed, 0);
         assert!(reg.repositories.contains_key(&dead_path));
         assert!(reg.repositories.contains_key(&stranger));
+    }
+
+    // ---- self-healing: moved anywhere, missing past a grace period, orphans ----
+
+    /// Run git in `dir` without the developer's own configuration: their global
+    /// `core.hooksPath` would otherwise register the fixture in the real registry.
+    fn git_ok(dir: &Path, args: &[&str]) {
+        let never = std::env::temp_dir().join("devp-no-such-gitconfig");
+        let mut cmd = crate::scanner::git::git_in(dir);
+        cmd.env("GIT_CONFIG_GLOBAL", &never)
+            .env("GIT_CONFIG_SYSTEM", &never)
+            .args(args);
+        let out = cmd.output().unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// A real repository with one commit. `seed` goes into the file so two fixtures
+    /// made in the same second still get different root commits.
+    fn real_repo(path: &Path, seed: &str) {
+        fs::create_dir_all(path).unwrap();
+        git_ok(path, &["init"]);
+        fs::write(path.join("file.txt"), seed).unwrap();
+        git_ok(path, &["add", "."]);
+        git_ok(
+            path,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-m",
+                seed,
+            ],
+        );
+    }
+
+    /// `n` distinct paths on volumes that do not exist on this machine.
+    fn absent_volume_paths(n: usize) -> Vec<PathBuf> {
+        if cfg!(windows) {
+            ('D'..='Z')
+                .rev()
+                .filter(|c| !Path::new(&format!("{c}:\\")).exists())
+                .take(n)
+                .map(|c| PathBuf::from(format!("{c}:\\devp-gone\\proj")))
+                .collect()
+        } else {
+            (0..n)
+                .map(|i| PathBuf::from(format!("/mnt/devp-absent-volume-{i}/proj")))
+                .collect()
+        }
+    }
+
+    /// A registry path that does not exist, under a parent that does and is not empty.
+    fn deleted_path(tmp: &TempDir) -> PathBuf {
+        fs::write(tmp.path().join("keep.txt"), "x").unwrap();
+        tmp.path().join("deleted-project")
+    }
+
+    #[test]
+    fn a_repo_moved_to_an_arbitrary_directory_is_repointed_with_its_history() {
+        let tmp = TempDir::new().unwrap();
+        let old = tmp.path().join("work/proj");
+        real_repo(&old, "moved-repo");
+        let identity = crate::scanner::git::repo_identity(&old).expect("fixture has a commit");
+
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.identity = Some(identity);
+        entry.total_freed_bytes = 777;
+        entry.override_idle_days = Some(5);
+        entry.last_pruned_at = Some(Utc::now());
+        entry.enabled = false;
+        let old_key = canonical_key(&old);
+        reg.repositories.insert(old_key.clone(), entry);
+
+        let new = tmp.path().join("somewhere/entirely/else/renamed");
+        fs::create_dir_all(new.parent().unwrap()).unwrap();
+        fs::rename(&old, &new).unwrap();
+
+        let outcome = reg.register_discovered(vec![new.clone()]);
+
+        assert_eq!(outcome.added, 0, "a moved repository is not a new one");
+        assert_eq!(outcome.moved, vec![(old_key.clone(), canonical_key(&new))]);
+        assert_eq!(reg.repositories.len(), 1);
+        assert!(!reg.repositories.contains_key(&old_key));
+        let carried = &reg.repositories[&canonical_key(&new)];
+        assert_eq!(carried.total_freed_bytes, 777);
+        assert_eq!(carried.override_idle_days, Some(5));
+        assert!(carried.last_pruned_at.is_some());
+        assert!(!carried.enabled);
+    }
+
+    #[test]
+    fn a_same_named_repo_with_a_different_identity_is_not_merged() {
+        let tmp = TempDir::new().unwrap();
+        let stranger = tmp.path().join("b/api");
+        real_repo(&stranger, "the-stranger");
+
+        let dead = tmp.path().join("a/api"); // never created
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.identity = Some("0123456789abcdef0123456789abcdef01234567".into());
+        entry.total_freed_bytes = 99;
+        reg.repositories.insert(dead.clone(), entry);
+
+        let outcome = reg.register_discovered(vec![stranger.clone()]);
+
+        assert_eq!(outcome.added, 1);
+        assert!(outcome.moved.is_empty());
+        assert_eq!(reg.repositories.len(), 2);
+        assert_eq!(reg.repositories[&dead].total_freed_bytes, 99);
+        assert_eq!(
+            reg.repositories[&canonical_key(&stranger)].total_freed_bytes,
+            0
+        );
+    }
+
+    #[test]
+    fn a_dead_entry_is_not_handed_to_one_of_two_clones() {
+        // Two copies of one root commit is a clone, not a move; picking one would be a
+        // coin toss, so both register as new and the dead entry waits for the grace period.
+        let tmp = TempDir::new().unwrap();
+        let origin = tmp.path().join("origin");
+        real_repo(&origin, "cloned-repo");
+        let identity = crate::scanner::git::repo_identity(&origin).unwrap();
+        let (c1, c2) = (tmp.path().join("c1"), tmp.path().join("c2"));
+        for clone in [&c1, &c2] {
+            git_ok(
+                tmp.path(),
+                &[
+                    "clone",
+                    "-q",
+                    origin.to_str().unwrap(),
+                    clone.to_str().unwrap(),
+                ],
+            );
+        }
+
+        let gone = tmp.path().join("gone/proj");
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.identity = Some(identity);
+        reg.repositories.insert(gone.clone(), entry);
+
+        let outcome = reg.register_discovered(vec![c1, c2]);
+
+        assert_eq!(outcome.added, 2);
+        assert!(outcome.moved.is_empty());
+        assert!(reg.repositories.contains_key(&gone));
+    }
+
+    #[test]
+    fn nothing_is_spawned_for_discovery_when_no_missing_entry_has_an_identity() {
+        // A registry whose dead entries carry no identity has nothing to match, so the
+        // found repository registers as new and no identity is recorded on it.
+        let tmp = TempDir::new().unwrap();
+        let found = tmp.path().join("found");
+        real_repo(&found, "no-spawn");
+        let mut reg = Registry::default();
+        reg.repositories
+            .insert(tmp.path().join("gone"), RepoEntry::new());
+
+        let outcome = reg.register_discovered(vec![found.clone()]);
+
+        assert_eq!(outcome.added, 1);
+        assert!(
+            reg.repositories[&canonical_key(&found)].identity.is_none(),
+            "no git was asked for the identity"
+        );
+    }
+
+    #[test]
+    fn an_entry_missing_for_less_than_the_grace_period_survives() {
+        let tmp = TempDir::new().unwrap();
+        let gone = deleted_path(&tmp);
+        let mut reg = Registry::default();
+        reg.repositories.insert(gone.clone(), RepoEntry::new());
+
+        let t0 = Utc::now();
+        let first = reg.heal(t0);
+        assert_eq!(first.healed, 0);
+        assert!(first.dirty, "starting the clock changes the registry file");
+        assert_eq!(reg.repositories[&gone].missing_since, Some(t0));
+
+        let later = reg.heal(t0 + chrono::Duration::days(constants::MISSING_ENTRY_GRACE_DAYS - 1));
+        assert!(later.expired.is_empty());
+        assert!(!later.dirty);
+        assert!(reg.repositories.contains_key(&gone));
+    }
+
+    #[test]
+    fn an_entry_missing_past_the_grace_period_on_a_present_volume_is_dropped() {
+        let tmp = TempDir::new().unwrap();
+        let gone = deleted_path(&tmp);
+        let mut reg = Registry::default();
+        reg.repositories.insert(gone.clone(), RepoEntry::new());
+        reg.last_added_repos.push(gone.clone());
+
+        let t0 = Utc::now();
+        reg.heal(t0);
+        let report = reg.heal(t0 + chrono::Duration::days(constants::MISSING_ENTRY_GRACE_DAYS));
+
+        assert_eq!(report.expired, vec![gone.clone()]);
+        assert!(report.dirty);
+        assert!(!reg.repositories.contains_key(&gone));
+        assert!(!reg.last_added_repos.contains(&gone));
+    }
+
+    #[test]
+    fn an_entry_on_an_absent_volume_is_never_dropped() {
+        let path = absent_volume_paths(1).remove(0);
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        // Missing for a year: far past any grace period.
+        entry.missing_since = Some(Utc::now() - chrono::Duration::days(365));
+        reg.repositories.insert(path.clone(), entry);
+
+        let report = reg.heal(Utc::now());
+
+        assert!(report.expired.is_empty());
+        assert!(
+            reg.repositories.contains_key(&path),
+            "an unplugged drive keeps its entries"
+        );
+    }
+
+    #[test]
+    fn a_returning_path_clears_the_missing_clock() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("back");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let mut reg = Registry::default();
+        let mut entry = RepoEntry::new();
+        entry.missing_since = Some(Utc::now() - chrono::Duration::days(3));
+        reg.repositories.insert(repo.clone(), entry);
+
+        let report = reg.heal(Utc::now());
+
+        assert!(report.dirty);
+        assert_eq!(reg.repositories[&repo].missing_since, None);
+    }
+
+    #[test]
+    fn an_orphaned_worktree_is_dropped_only_after_the_grace_period() {
+        let tmp = TempDir::new().unwrap();
+        let main = tmp.path().join("main");
+        real_repo(&main, "orphan-main");
+        let wt = tmp.path().join("wt");
+        git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "side"],
+        );
+        // What `git worktree prune` does to a worktree whose directory is not where git
+        // left it (an unplugged drive, a moved folder): it deletes the private git
+        // directory. The folder then comes back, carrying a `.git` pointer to nothing.
+        let away = tmp.path().join("wt-away");
+        fs::rename(&wt, &away).unwrap();
+        git_ok(&main, &["worktree", "prune"]);
+        fs::rename(&away, &wt).unwrap();
+
+        let mut reg = Registry::default();
+        let key = canonical_key(&wt);
+        reg.repositories.insert(key.clone(), RepoEntry::new());
+
+        let t0 = Utc::now();
+        let first = reg.heal(t0);
+        assert!(first.expired.is_empty());
+        assert_eq!(reg.repositories[&key].missing_since, Some(t0));
+
+        let early = reg.heal(t0 + chrono::Duration::days(10));
+        assert!(early.expired.is_empty());
+        assert!(reg.repositories.contains_key(&key));
+
+        let late = reg.heal(t0 + chrono::Duration::days(constants::MISSING_ENTRY_GRACE_DAYS + 1));
+        assert_eq!(late.expired, vec![key.clone()]);
+        assert!(!reg.repositories.contains_key(&key));
+        assert!(wt.exists(), "the registry is all that is ever changed");
+    }
+
+    #[test]
+    fn a_healthy_linked_worktree_is_not_an_orphan() {
+        let tmp = TempDir::new().unwrap();
+        let main = tmp.path().join("main");
+        real_repo(&main, "healthy-main");
+        let wt = tmp.path().join("wt");
+        git_ok(
+            &main,
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "side"],
+        );
+        assert_eq!(classify_path(&wt), PathState::Healthy);
+        assert_eq!(classify_path(&main), PathState::Healthy);
+        assert_eq!(classify_path(tmp.path()), PathState::Orphan);
+    }
+
+    #[test]
+    fn registry_entries_from_before_the_missing_clock_still_load() {
+        let old = r#"{"added_at":"2026-01-01T00:00:00Z","last_pruned_at":null,
+            "override_idle_days":null,"enabled":true}"#;
+        let entry: RepoEntry = serde_json::from_str(old).unwrap();
+        assert_eq!(entry.missing_since, None);
+        let written = serde_json::to_string(&entry).unwrap();
+        assert!(
+            !written.contains("missing_since"),
+            "an unset clock must not appear in the file: {written}"
+        );
+    }
+
+    #[test]
+    fn existence_checks_across_volumes_agree_with_a_serial_check() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(repo.join(".git")).unwrap();
+        let mut paths = absent_volume_paths(3);
+        paths.push(repo.clone());
+        paths.push(tmp.path().join("deleted"));
+
+        let liveness = Liveness::scan(&paths);
+
+        for path in &paths {
+            assert_eq!(liveness.state(path), classify_path(path), "{path:?}");
+        }
+        assert_eq!(liveness.state(&repo), PathState::Healthy);
+        assert!(liveness.volume_present(&repo));
+        assert!(!liveness.volume_present(&paths[0]));
+    }
+
+    #[test]
+    fn a_volume_root_is_the_drive_or_the_mount() {
+        if cfg!(windows) {
+            assert_eq!(volume_root(Path::new(r"C:\a\b")), PathBuf::from(r"C:\"));
+            assert_eq!(
+                volume_root(Path::new(r"\\?\V:\Code\x")),
+                PathBuf::from(r"\\?\V:\")
+            );
+        } else {
+            assert_eq!(
+                volume_root(Path::new("/mnt/usb/a/b")),
+                PathBuf::from("/mnt/usb")
+            );
+            assert_eq!(
+                volume_root(Path::new("/run/media/me/disk/a")),
+                PathBuf::from("/run/media/me/disk")
+            );
+            assert_eq!(volume_root(Path::new("/home/me/a")), PathBuf::from("/"));
+        }
     }
 }

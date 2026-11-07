@@ -281,6 +281,21 @@ fn is_under_ephemeral_ancestor(path: &Path, root: Option<&Path>) -> bool {
         })
 }
 
+/// Where a linked worktree's `.git` pointer file says its private git directory is, or
+/// `None` when `.git` is not a readable pointer file.
+///
+/// Not checked for existence: the registry's orphan check asks exactly whether this
+/// target is still there after `git worktree prune`.
+pub(crate) fn linked_gitdir(worktree: &Path) -> Option<PathBuf> {
+    let contents = std::fs::read_to_string(worktree.join(".git")).ok()?;
+    let gitdir = contents
+        .lines()
+        .find_map(|line| line.strip_prefix(constants::GITDIR_PREFIX))?;
+    // git writes the gitdir relative when the worktree was created with a relative
+    // path; it resolves against the worktree directory, so this must too.
+    Some(worktree.join(gitdir.trim()))
+}
+
 /// Is `path` a linked Git worktree sitting *inside* its own main working tree?
 ///
 /// A linked worktree's `.git` is a file, not a directory, and its one meaningful line
@@ -297,22 +312,12 @@ fn is_under_ephemeral_ancestor(path: &Path, root: Option<&Path>) -> bool {
 /// [`is_ephemeral_location`] resolves doubt that way: refusing to register a real
 /// workspace is the worse error.
 fn is_nested_linked_worktree(path: &Path) -> bool {
-    let dot_git = path.join(".git");
-    if !dot_git.is_file() {
+    if !path.join(".git").is_file() {
         return false;
     }
-    let Ok(contents) = std::fs::read_to_string(&dot_git) else {
+    let Some(gitdir) = linked_gitdir(path) else {
         return false;
     };
-    let Some(gitdir) = contents
-        .lines()
-        .find_map(|line| line.strip_prefix(constants::GITDIR_PREFIX))
-    else {
-        return false;
-    };
-    // git writes the gitdir relative when the worktree was created with a relative
-    // path; it resolves against the worktree directory, so this must too.
-    let gitdir = path.join(gitdir.trim());
     let Ok(gitdir) = gitdir.canonicalize() else {
         return false;
     };

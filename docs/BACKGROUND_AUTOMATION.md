@@ -112,7 +112,7 @@ repository can arrive on a machine is caught by one of the three.
 | Copied, `robocopy`'d or `rsync`'d from another machine; restored from a backup | Discovery |
 | Landed by Dropbox, OneDrive, Syncthing or another sync client | Discovery |
 | Appeared when you mounted a second disk or plugged in an external drive | Discovery, if a root reaches it — see below |
-| Moved or renamed on disk | Discovery finds it at the new path; `devp unlink --missing` clears the stale row at the old one |
+| Moved or renamed on disk, to any directory | Discovery finds it at the new path, recognises it by its root commit, and re-points the old row to it, history included. Without a matching root commit the old row stays until the [registry tidy-up](#what-the-scheduled-pass-registers) drops it |
 | You ran `devp init`, `devp init --auto` or `devp link` | You did |
 
 The hooks are the fast path, and they cover exactly one thing: repositories **Git itself
@@ -162,6 +162,23 @@ registered still only means being *considered* — a discovered repository is pr
 once it is idle past `idle_days`, only where a lockfile proves every directory can be
 rebuilt, and only after the [safety invariants](SAFETY_INVARIANTS.md) pass, so the worst a
 wrong guess can do is add a row to `devp status`.
+
+A repository you moved is not registered a second time. When discovery finds a repository
+whose root commit matches a registered path that no longer exists, it re-points that
+entry to the new path, keeping its prune history, freed-bytes total, idle override and
+enabled flag, and says so in one line. The root commit is read only for repositories that
+are new to the registry, and only when some missing entry has one on record, so a healthy
+registry pays nothing. A shared name is never enough, and when two found repositories
+share a root commit (a clone) or a live entry already has it, nothing is merged.
+
+Every `devp run`, `devp status` and `devp doctor --fix` also tidies the registry itself,
+without touching anything on disk. The first pass that sees a registered path missing
+(or a directory whose `.git` is gone, or a linked worktree whose git directory
+`git worktree prune` removed) records the date in `registry.json`. The entry is dropped
+once it has stayed that way for 30 days, and only if its drive or share is present and the
+path answers "not found" rather than "unreachable": an unplugged external drive or an
+unmounted share never loses an entry. If the path comes back the clock is cleared. One
+line names what was dropped. `devp unlink --missing` still clears them at once.
 
 ### Turning it off
 

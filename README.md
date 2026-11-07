@@ -894,7 +894,7 @@ decisions actually arrive in. Every key, with its full description and range, is
 | :--- | :---: | :--- |
 | `require_confirmation` | `true` | Whether a pass asks before deleting |
 | `allow_manifest_rewrite` | `false` | Whether verification may *repair* a drifted lockfile instead of refusing |
-| `command_timeout_secs` | `600` | Ceiling on one package manager command; nothing compiles under it |
+| `command_timeout_secs` | `600` | Ceiling on one package manager command, per command and not per run; nothing compiles under it. Scans have no overall limit |
 
 **Build trees — off by default**, because everything here comes back by recompiling
 rather than downloading. That is the whole reason each one is a switch.

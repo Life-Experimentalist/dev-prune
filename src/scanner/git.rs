@@ -77,6 +77,33 @@ pub fn git_in(repo_path: &Path) -> Command {
     cmd
 }
 
+fn stall_ceiling() -> Duration {
+    Duration::from_secs(crate::constants::GIT_STALL_CEILING_SECS)
+}
+
+/// Run a read-only git question against `repo_path`, killing it if it stalls.
+///
+/// The error names the repository and says what happens next, because it surfaces in
+/// the pass report as that repository's reason for being skipped: the rest of the pass
+/// carries on, and a repository whose activity could not be read is never offered as a
+/// prune candidate.
+fn git_output(repo_path: &Path, args: &[&str], ceiling: Duration) -> Result<std::process::Output> {
+    let mut cmd = git_in(repo_path);
+    cmd.args(args);
+    crate::spawn::output_within(cmd, ceiling).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::TimedOut {
+            anyhow::anyhow!(
+                "git did not answer for `{}` within {}s (a stalled drive or a locked index?), \
+                 so this repository is skipped for this pass.",
+                repo_path.display(),
+                ceiling.as_secs()
+            )
+        } else {
+            anyhow::Error::new(e).context(format!("Failed to execute git {}", args.join(" ")))
+        }
+    })
+}
+
 /// A repository's root commit — the one identifier that survives being moved.
 ///
 /// The registry is keyed by path, so a workspace that is moved or renamed looks like a
@@ -89,10 +116,12 @@ pub fn git_in(repo_path: &Path) -> Command {
 /// is nothing to identify an empty repository by, and a guess would be worse than the
 /// dead entry it replaced.
 pub fn repo_identity(repo_path: &Path) -> Option<String> {
-    let output = git_in(repo_path)
-        .args(["rev-list", "--max-parents=0", "HEAD"])
-        .output()
-        .ok()?;
+    let output = git_output(
+        repo_path,
+        &["rev-list", "--max-parents=0", "HEAD"],
+        stall_ceiling(),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -112,16 +141,16 @@ pub fn repo_identity(repo_path: &Path) -> Option<String> {
 /// same answer as "there is no history": the first is an error, the second makes an
 /// empty repo eligible. A `rev-parse` probe tells the two apart.
 pub fn get_last_commit_time(repo_path: &Path) -> Result<Option<SystemTime>> {
-    let output = git_in(repo_path)
-        .args(["log", "-1", "--format=%ct"])
-        .output()
-        .context("Failed to execute git log")?;
+    get_last_commit_time_within(repo_path, stall_ceiling())
+}
+
+/// [`get_last_commit_time`] with an explicit ceiling per call, so a test can prove the
+/// cut-off without waiting out the real one.
+fn get_last_commit_time_within(repo_path: &Path, ceiling: Duration) -> Result<Option<SystemTime>> {
+    let output = git_output(repo_path, &["log", "-1", "--format=%ct"], ceiling)?;
 
     if !output.status.success() {
-        let probe = git_in(repo_path)
-            .args(["rev-parse", "--git-dir"])
-            .output()
-            .context("Failed to execute git rev-parse")?;
+        let probe = git_output(repo_path, &["rev-parse", "--git-dir"], ceiling)?;
         if probe.status.success() {
             return Ok(None);
         }
@@ -278,6 +307,22 @@ mod tests {
             ])
             .output()
             .unwrap();
+    }
+
+    /// A zero ceiling expires before git has even started, which stands in for a git
+    /// blocked on a dead network drive: the call must come back with an error that names
+    /// the repository, and must not read as "no activity" (which would look idle).
+    #[test]
+    fn a_stalled_git_call_returns_a_named_error_instead_of_hanging() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("slow-repo");
+        create_git_repo_with_commit(&repo);
+
+        let err = get_last_commit_time_within(&repo, Duration::ZERO).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("did not answer"), "got: {message}");
+        assert!(message.contains("slow-repo"), "got: {message}");
+        assert!(message.contains("skipped"), "got: {message}");
     }
 
     #[test]

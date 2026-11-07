@@ -446,7 +446,7 @@ form (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`,
 | :--- | :---: | :--- |
 | `require_confirmation` | `true` | Whether a prune pass asks before deleting |
 | `allow_manifest_rewrite` | `false` | Whether a pass may run the *writing* sync form that repairs a drifted or missing lockfile |
-| `command_timeout_secs` | `600` | Ceiling on any one package-manager command dev-prune runs: the lockfile check before a delete, and the reinstall `devp restore` performs. Nothing is compiled under it — the opt-in build adapters run no command at all during a prune — except a restore whose install builds a native module |
+| `command_timeout_secs` | `600` | Ceiling on any one package-manager command dev-prune runs: the lockfile check before a delete, and the reinstall `devp restore` performs. Nothing is compiled under it — the opt-in build adapters run no command at all during a prune — except a restore whose install builds a native module. The limit is per command, not per run, and scans have no overall limit: only a single `git` call that stops answering is cut off, after 120 seconds, and that repository is skipped for the pass |
 
 **Build trees — every one off by default**
 
@@ -622,6 +622,12 @@ deleted: a newly registered repository is pruned only once it is idle past `idle
 only where a lockfile proves every candidate directory can be rebuilt, and only after the
 same safety invariants pass — so the worst a wrong guess costs is an extra row in
 `devp status`. A repository holding an `ignore.devprune.json` is not registered at all.
+A repository that was moved is not registered twice: when discovery finds one whose root
+commit matches a registered path that no longer exists, that entry is re-pointed to the new
+path with its history. Separately, every `devp run`, `devp status` and `devp doctor --fix`
+drops a registry entry (never anything on disk) that has been missing, or has stopped being
+a git checkout, for 30 days, and only while its drive or share is present, so an unplugged
+drive never loses entries.
 
 > Git supports exactly one global `core.hooksPath`, and while it is set Git stops
 > looking in any repository's own `.git/hooks`. dev-prune restores that itself: it writes
@@ -723,8 +729,8 @@ specific symptom the report named.
 | A project in the repository is never listed | It sits deeper than `scan_depth` (6 levels) | `devp config set scan_depth N`, or set `"scan_depth"` in that repository's `.devprune.json` |
 | A small bloat directory is never offered | It is under `min_size_mb` | `devp run --min-size 0` for one pass, or `devp config set min_size_mb 0` |
 | A repository is not in `devp status` at all | It was never registered, or it holds an `ignore.devprune.json`, which a bulk scan declines to register | `devp link .` in it, `devp init <parent dir>`, or `devp init --auto` to work the roots out. `devp link` registers an opted-out repository too; deleting the file is the other way |
-| **No longer a git repository** | The directory is still on disk but its `.git` is gone — the clone was recreated by hand, or `git worktree prune` removed a worktree | `devp unlink <path>` drops the entry (`--missing` will not — it only clears paths that are gone), or `git init <path>` makes it a repository again if the directory is worth keeping tracked. Reported, never an error: the pass still exits `0` |
-| **Path Missing** | The directory was moved or deleted | If moved: `devp link <new path>` alone — the matching root commit adopts the old entry, history and all, and the dead row goes. If deleted: `devp unlink <old path>`, or `devp unlink --missing` for a registry full of them |
+| **No longer a git repository** | The directory is still on disk but its `.git` is gone — the clone was recreated by hand, or `git worktree prune` removed a worktree | `devp unlink <path>` drops the entry (`--missing` will not — it only clears paths that are gone), or `git init <path>` makes it a repository again if the directory is worth keeping tracked. The registry drops it itself after 30 days. Reported, never an error: the pass still exits `0` |
+| **Path Missing** | The directory was moved or deleted | If moved: `devp link <new path>` alone — the matching root commit adopts the old entry, history and all, and the dead row goes (the scheduled pass does the same for a repository it discovers). If deleted: `devp unlink <old path>`, or `devp unlink --missing` for a registry full of them; left alone, the entry is dropped after 30 days while its drive or share is present |
 | Lockfile verification fails | The lockfile has drifted from the manifest, and verification is read-only so it refuses rather than repairing | Run the exact command dev-prune printed (it is the writing form for that ecosystem), in that project. Or `devp config set allow_manifest_rewrite true` to let dev-prune run it during the pass. Never delete the lockfile |
 | "holds package(s) that the lockfile does not record" | Something was installed without recording it — `npm install --no-save`, a bare `pip install` into a pinned venv, an ad-hoc `uv pip install` | `devp status --drift` lists every such environment with the exact record command (`npm install <pkg>`, `uv add <package>`, `pip freeze > requirements.txt`). Run it, or uninstall the extras. Never delete the directory manually |
 | "holds dev-prune, which requirements.txt does not account for" | The tool was `pip install`ed inside that project's own virtualenv, so it is an unrecorded package in the very environment it would prune | Move it out — `pip uninstall dev-prune`, then `uv tool install dev-prune` — or record it deliberately with `pip freeze > requirements.txt`. Either one makes the environment prunable. The refusal is the ordinary unrecorded-package one; only the suggested repair differs |

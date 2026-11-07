@@ -510,6 +510,27 @@ fn resolve_manifest_rewrite(registry: Option<&Registry>) -> bool {
         .unwrap_or(constants::DEFAULT_ALLOW_MANIFEST_REWRITE)
 }
 
+/// One plain line when the registry dropped entries that stayed missing past the grace
+/// period. Said every time it happens, because a registry row vanishing unannounced reads
+/// as data loss; the line also says nothing on disk was touched.
+pub(crate) fn report_expired_entries(expired: &[std::path::PathBuf]) {
+    if expired.is_empty() {
+        return;
+    }
+    output::print_info(&format!(
+        "Dropped {} registry {} gone or no longer a git checkout for over {} days \
+         (nothing on disk was touched): {}.",
+        expired.len(),
+        output::plural(expired.len(), "entry", "entries"),
+        constants::MISSING_ENTRY_GRACE_DAYS,
+        expired
+            .iter()
+            .map(output::clean_path)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+}
+
 /// `devp run` — the full pass over every registered repository.
 fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     if !args.json {
@@ -523,9 +544,12 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     let mut registry = Registry::load()?;
 
     // Auto-heal moved repositories (e.g. moved to Archive) and purge dead ephemeral AI worktrees.
-    let healed = registry.heal_dead_and_moved_repositories();
-    if healed > 0 {
+    let healed = registry.heal(chrono::Utc::now());
+    if healed.dirty {
         let _ = registry.save();
+    }
+    if !args.json {
+        report_expired_entries(&healed.expired);
     }
 
     // A repository `git init` created fires no Git hook and so never registered itself.
@@ -561,18 +585,24 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     // also what keeps a test suite from ever scanning the machine running it.
     if args.daemon && registry.settings.auto_discover && !setup::no_auto_setup_requested() {
         let found = crate::discovery::discover(&registry)?;
-        let added = found
-            .found
-            .into_iter()
-            .filter(|repo| registry.add_repo(repo.clone()))
-            .count();
-        if added > 0 {
+        let registered = registry.register_discovered(found.found);
+        let added = registered.added;
+        if added > 0 || !registered.moved.is_empty() {
             registry.save()?;
             if !args.json {
-                output::print_info(&format!(
-                    "Discovered and registered {added} new {}.",
-                    output::plural(added, "repository", "repositories")
-                ));
+                if added > 0 {
+                    output::print_info(&format!(
+                        "Discovered and registered {added} new {}.",
+                        output::plural(added, "repository", "repositories")
+                    ));
+                }
+                for (old, new) in &registered.moved {
+                    output::print_info(&format!(
+                        "Found {} at its new location {}; its history was carried over.",
+                        output::clean_path(old),
+                        output::clean_path(new)
+                    ));
+                }
             }
         }
     }
