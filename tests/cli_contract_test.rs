@@ -2260,3 +2260,130 @@ fn scores_and_a_pass_number_are_a_usage_error() {
         .unwrap();
     assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
 }
+
+#[test]
+fn installs_json_is_one_document_with_the_running_binary_in_it() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).args(["installs", "--json"]).output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    let doc = parse_json(&out);
+    assert_eq!(doc["schema"], 1);
+    assert_eq!(doc["command"], "installs");
+    let installs = doc["installs"].as_array().expect("installs is an array");
+    assert!(
+        installs.iter().any(|i| i["roles"]
+            .as_array()
+            .is_some_and(|r| r.iter().any(|x| x == "running"))),
+        "the binary answering the command is always listed: {doc}"
+    );
+    for install in installs {
+        for key in [
+            "path",
+            "canonical_path",
+            "channel",
+            "version",
+            "on_path",
+            "path_position",
+            "roles",
+            "launcher_only",
+        ] {
+            assert!(install.get(key).is_some(), "missing {key}: {install}");
+        }
+    }
+    // The windowless scheduler launcher is listed but is not a second copy of devp.
+    let copies = installs
+        .iter()
+        .filter(|i| i["launcher_only"] == false)
+        .count();
+    assert_eq!(doc["summary"]["count"], copies);
+    // The honest limit travels with the data, not only with the help text.
+    assert!(
+        doc["note"].as_str().unwrap().contains("cannot be found"),
+        "{doc}"
+    );
+}
+
+#[test]
+fn installs_table_states_the_limit_of_the_search() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).arg("installs").output().unwrap();
+    assert!(out.status.success(), "{}", combined(&out));
+    let text = stdout_of(&out);
+    assert!(text.contains("Copies of devp on this machine"), "{text}");
+    assert!(text.contains("cannot be found"), "{text}");
+}
+
+#[test]
+fn installs_is_in_the_front_page_and_its_own_help_states_the_limit() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let front = devp(&config).arg("--help").output().unwrap();
+    assert!(
+        stdout_of(&front).contains("installs"),
+        "{}",
+        stdout_of(&front)
+    );
+
+    let help = devp(&config).args(["installs", "--help"]).output().unwrap();
+    assert!(help.status.success(), "{}", combined(&help));
+    let text = stdout_of(&help);
+    assert!(text.contains("cannot be found"), "{text}");
+    assert!(text.contains("clean"), "{text}");
+
+    let clean = devp(&config)
+        .args(["installs", "clean", "--help"])
+        .output()
+        .unwrap();
+    let text = stdout_of(&clean);
+    assert!(text.contains("--keep"), "{text}");
+    assert!(text.contains("cargo uninstall dev-prune"), "{text}");
+}
+
+#[test]
+fn installs_clean_without_a_terminal_or_yes_refuses_before_doing_anything() {
+    // Stdin is not a terminal under `.output()`. The refusal comes before discovery, so
+    // this never even looks at the machine's installs, let alone removes one.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config).args(["installs", "clean"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+    assert!(combined(&out).contains("--yes"), "{}", combined(&out));
+}
+
+#[test]
+fn installs_clean_has_no_json_form() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+
+    let out = devp(&config)
+        .args(["installs", "clean", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+}
+
+#[test]
+fn installs_clean_keep_must_name_a_listed_copy() {
+    // `--dry-run` as well, so that even a regression in the check cannot run a manager.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let nowhere = tmp.path().join("no-such-devp");
+
+    let out = devp(&config)
+        .args(["installs", "clean", "--dry-run", "--keep"])
+        .arg(&nowhere)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", combined(&out));
+    assert!(
+        combined(&out).contains("devp installs"),
+        "{}",
+        combined(&out)
+    );
+}

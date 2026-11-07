@@ -36,6 +36,7 @@ use crate::config::{PerRepoConfig, Prunable, Registry};
 use crate::constants;
 use crate::daemon;
 use crate::engine::{self, BYTES_PER_MIB, SkipReason};
+use crate::installs::{self, Install, same_binary, same_dir};
 use crate::output;
 use crate::scanner::{self, git};
 use crate::setup;
@@ -687,87 +688,17 @@ fn check_install_channel(f: &mut Findings) {
 /// comes first the user types `devp` and silently gets the old release, with every
 /// symptom pointing at dev-prune rather than at which copy answered.
 ///
-/// So the copies are named. Nothing is deleted: which of them the user wants is a
-/// question only they can answer, and the manager that installed one is the only thing
-/// that should remove it.
+/// So the copies are named. Nothing is deleted here: the search lives in
+/// [`installs::discover`], shared with `devp installs`, which lists every copy and
+/// removes the extras through the manager that installed each one.
 fn check_other_copies(f: &mut Findings) {
-    let mine = std::env::current_exe().ok();
-    let managed_dir = setup::managed_exe_path()
-        .ok()
-        .and_then(|p| p.parent().map(Path::to_path_buf));
-
-    let search = copy_search_dirs(
-        &std::env::var("PATH").unwrap_or_default(),
-        dirs::home_dir().as_deref(),
-    );
-    let copies = binaries_in(&search, managed_dir.as_deref());
-
-    let mut installs: Vec<Install> = Vec::new();
-    // The running binary states its version without a spawn. It anchors the list, so a
-    // machine with a single devp reports nothing and one with two is compared against it.
-    if let (Some(path), Some(version)) = (mine.as_deref(), setup::parse_version(constants::VERSION))
-    {
-        installs.push(Install {
-            path: path.to_path_buf(),
-            version,
-            channel: Channel::detect(),
-            running: true,
-        });
-    }
-
-    // `binaries_in` leaves the managed directory out because `check_binary` reports it,
-    // but a managed copy that is not the one running is exactly what the scheduler and the
-    // hook shims call while the user types a different one.
-    let is_running_dir = |path: &Path| {
-        mine.as_deref()
-            .and_then(Path::parent)
-            .zip(path.parent())
-            .is_some_and(|(a, b)| same_dir(a, b))
-    };
-    let managed = setup::managed_exe_path()
-        .ok()
-        .filter(|p| p.is_file() && !is_running_dir(p));
-
-    // Asking each copy its own version, rather than comparing bytes: two channels can
-    // hold byte-identical files of the same release, and a differing byte is just as
-    // likely to be a different target triple as a different version. The question here
-    // is only ever "would running this give me a different dev-prune".
-    //
-    // One install per directory: `dev-prune.exe` and `devp.exe` side by side are one
-    // install under two names, and the running binary's own directory is already listed.
-    for path in managed
-        .iter()
-        .chain(copies.iter().filter(|p| !is_running_dir(p)))
-    {
-        // A file under this name that cannot state a version is left alone: it is
-        // far more likely to be something else entirely — a shell wrapper, a
-        // package-manager proxy that refuses to run under another name — than a
-        // dev-prune, and naming it would send the user to delete an unrelated file.
-        let Some(version) = setup::binary_version(path) else {
-            continue;
-        };
-        if installs.iter().any(|i| {
-            i.path
-                .parent()
-                .zip(path.parent())
-                .is_some_and(|(a, b)| same_dir(a, b))
-        }) {
-            continue;
-        }
-        installs.push(Install {
-            path: path.clone(),
-            version,
-            channel: Channel::detect_at(path, managed_dir.as_deref()),
-            running: false,
-        });
-    }
-
+    let found = installs::discover_machine();
     apply_install_report(
         f,
         summarize_installs(
-            &installs,
-            crate::daemon::registered_exe_path().as_deref(),
-            hook::registered_exe_path().as_deref(),
+            &found.installs,
+            found.scheduler.as_deref(),
+            found.hook.as_deref(),
         ),
     );
 }
@@ -800,15 +731,6 @@ fn newer_registry_line(found: &str, this: &str) -> Option<String> {
     })
 }
 
-/// One devp found on the machine, as far as the "Other copies" check can tell.
-struct Install {
-    path: PathBuf,
-    version: (u64, u64, u64),
-    channel: Channel,
-    /// The binary answering this `devp doctor`.
-    running: bool,
-}
-
 /// What the install list says. Split from the printing so the wording and the counting can
 /// be tested against a list a test made up, without a machine full of package managers.
 #[derive(Debug, PartialEq, Eq)]
@@ -826,24 +748,15 @@ fn version_text((major, minor, patch): (u64, u64, u64)) -> String {
     format!("v{major}.{minor}.{patch}")
 }
 
-/// Which install a path the scheduler or the hooks call belongs to, by directory: the
-/// scheduler may run the windowless twin, which sits beside an install without being one.
+/// Which install a path the scheduler or the hooks call belongs to: the same file, or the
+/// install beside it, because the scheduler may run the windowless twin.
 fn describe_target(target: Option<&Path>, installs: &[Install]) -> String {
     let Some(target) = target else {
         return "could not be read".to_string();
     };
-    let owner = installs.iter().find(|i| {
-        i.path
-            .parent()
-            .zip(target.parent())
-            .is_some_and(|(a, b)| same_dir(a, b))
-    });
-    match owner {
-        Some(i) => format!(
-            "{} ({})",
-            output::clean_path(target),
-            version_text(i.version)
-        ),
+    let version = installs::owner_of(installs, target).and_then(|i| installs[i].version);
+    match version {
+        Some(version) => format!("{} ({})", output::clean_path(target), version_text(version)),
         None => output::clean_path(target),
     }
 }
@@ -853,45 +766,54 @@ fn summarize_installs(
     scheduler: Option<&Path>,
     hook: Option<&Path>,
 ) -> InstallReport {
-    if installs.len() < 2 {
+    // A file that cannot state a version is far more likely to be something else entirely
+    // (a shell wrapper, a package-manager proxy that refuses to run under another name)
+    // than a dev-prune, so it takes no part in the comparison. `devp installs` still
+    // lists it, as "version unknown".
+    let known: Vec<(&Install, installs::Version)> = installs
+        .iter()
+        .filter_map(|i| i.version.map(|v| (i, v)))
+        .collect();
+    if known.len() < 2 {
         return InstallReport::Single;
     }
-    let mut versions: Vec<(u64, u64, u64)> = installs.iter().map(|i| i.version).collect();
+    let mut versions: Vec<installs::Version> = known.iter().map(|(_, v)| *v).collect();
     versions.sort_unstable();
     versions.dedup();
 
     if versions.len() == 1 {
-        let places: Vec<String> = installs
+        let places: Vec<String> = known
             .iter()
-            .map(|i| output::clean_path(&i.path))
+            .map(|(i, _)| output::clean_path(&i.path))
             .collect();
         return InstallReport::SameVersion(format!(
-            "{} places, all {}: {}",
-            installs.len(),
+            "{} places, all {}: {}. `devp installs` lists them.",
+            known.len(),
             version_text(versions[0]),
             places.join("; ")
         ));
     }
 
-    let listed: Vec<String> = installs
+    let listed: Vec<String> = known
         .iter()
-        .map(|i| {
-            if i.running {
+        .map(|(i, version)| {
+            if i.roles.running {
                 format!(
                     "{} ({}, running now)",
                     output::clean_path(&i.path),
-                    version_text(i.version)
+                    version_text(*version)
                 )
             } else {
-                stale_copy_line(&i.path, i.version, i.channel)
+                stale_copy_line(&i.path, *version, i.channel)
             }
         })
         .collect();
     InstallReport::Mixed(format!(
         "{} different releases installed: {}. The scheduled task runs {}; the git hook \
-         shims call {}. Keep one and remove the others through whatever installed them \
-         (the commands above); devp never deletes a binary itself. Two releases sharing \
-         one registry is how a newer one's data gets rewritten by an older one.",
+         shims call {}. Keep one and remove the others: `devp installs` lists every copy \
+         and `devp installs clean` removes the extras one confirmed step at a time, \
+         through whatever installed each. Two releases sharing one registry is how a \
+         newer one's data gets rewritten by an older one.",
         versions.len(),
         listed.join("; "),
         describe_target(scheduler, installs),
@@ -938,103 +860,6 @@ fn stale_copy_line(path: &Path, version: (u64, u64, u64), channel: Channel) -> S
         "{} (v{major}.{minor}.{patch}, {remedy})",
         output::clean_path(path)
     )
-}
-
-/// Every directory that could hold a `dev-prune` this machine might run: `PATH`, plus
-/// the fixed per-channel directories from [`crate::channel::install_dirs`] — the same
-/// list `devp uninstall` sweeps, so doctor can never report a copy that uninstall then
-/// fails to find.
-///
-/// The channel directories are searched even when they are not on `PATH`, because that
-/// is the case that matters most — a copy nobody can see is also a copy nobody
-/// upgrades, and it becomes the one that runs the day the user adds the directory to
-/// `PATH` or a script calls it by absolute path.
-///
-/// Lexical and non-existent entries included; [`binaries_in`] does the filtering. Split
-/// from it so the directory list can be tested without a home directory full of package
-/// managers.
-fn copy_search_dirs(path_var: &str, home: Option<&Path>) -> Vec<PathBuf> {
-    let sep = if cfg!(windows) { ';' } else { ':' };
-    let mut dirs: Vec<PathBuf> = path_var
-        .split(sep)
-        .filter(|p| !p.is_empty())
-        .map(PathBuf::from)
-        .collect();
-
-    dirs.extend(crate::channel::install_dirs(home));
-    dirs
-}
-
-/// The `dev-prune` and `devp` files that actually exist in `dirs`, minus everything in
-/// `skip_dir`.
-///
-/// `skip_dir` is the managed `bin` directory, whose contents — the canonical binary, its
-/// alias and the windowless twin — are already reported one by one by
-/// [`check_binary`] and [`check_scheduler_target`]. Listing them again as "other copies"
-/// would report a healthy install as having three stale binaries.
-fn binaries_in(dirs: &[PathBuf], skip_dir: Option<&Path>) -> Vec<PathBuf> {
-    let names: [&str; 2] = if cfg!(windows) {
-        ["dev-prune.exe", "devp.exe"]
-    } else {
-        ["dev-prune", "devp"]
-    };
-    let mut found: Vec<PathBuf> = Vec::new();
-    for dir in dirs {
-        if skip_dir.is_some_and(|skip| same_dir(dir, skip)) {
-            continue;
-        }
-        for name in names {
-            let candidate = dir.join(name);
-            // `PATH` routinely lists the same directory twice, spelled differently, and
-            // on Windows `dev-prune.exe` and `devp.exe` are usually hard links to one
-            // file — so a copy would otherwise be reported once per name and per
-            // spelling.
-            if candidate.is_file()
-                && !found.iter().any(|seen| {
-                    seen == &candidate
-                        || (seen.parent() == candidate.parent() && same_binary(seen, &candidate))
-                })
-            {
-                found.push(candidate);
-            }
-        }
-    }
-    found
-}
-
-/// Whether a PATH entry names the directory the binary lives in.
-///
-/// Windows paths are case-insensitive but `Path` equality is not, and PATH entries
-/// routinely carry a trailing backslash the installer never wrote. Either mismatch made
-/// doctor report a perfectly good install as "not on PATH" — as a problem, so `devp
-/// doctor` exited 1 on a healthy machine.
-fn same_dir(entry: &Path, dir: &Path) -> bool {
-    if entry == dir {
-        return true;
-    }
-    cfg!(windows) && {
-        let norm = |p: &Path| {
-            p.to_string_lossy()
-                .trim_end_matches(['\\', '/'])
-                .to_lowercase()
-        };
-        norm(entry) == norm(dir)
-    }
-}
-
-/// Whether two files hold the same bytes.
-///
-/// Doctor runs at human speed, so when the cheap size test cannot rule the pair
-/// different this reads both files outright — a stale twin left by a failed upgrade can
-/// share a size with its replacement, and "same version" is the whole question here.
-fn same_binary(a: &Path, b: &Path) -> bool {
-    let (Ok(ma), Ok(mb)) = (std::fs::metadata(a), std::fs::metadata(b)) else {
-        return false;
-    };
-    if ma.len() != mb.len() {
-        return false;
-    }
-    matches!((std::fs::read(a), std::fs::read(b)), (Ok(ba), Ok(bb)) if ba == bb)
 }
 
 /// Read the config directory and validate every stored setting.
@@ -2243,9 +2068,15 @@ mod tests {
     fn install(path: &str, version: (u64, u64, u64), channel: Channel, running: bool) -> Install {
         Install {
             path: PathBuf::from(path),
-            version,
+            canonical: PathBuf::from(path),
             channel,
-            running,
+            version: Some(version),
+            path_position: None,
+            roles: installs::Roles {
+                running,
+                ..installs::Roles::default()
+            },
+            windowless_only: false,
         }
     }
 
@@ -2280,7 +2111,24 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("git hook shims call"), "{text}");
-        assert!(text.contains("never deletes a binary"), "{text}");
+        assert!(
+            text.contains("`devp installs`") && text.contains("`devp installs clean`"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_copy_that_states_no_version_takes_no_part_in_the_comparison() {
+        let mut unknown = install("/odd/bin/devp", (0, 0, 0), Channel::Unknown, false);
+        unknown.version = None;
+        let installs = [
+            install("/a/bin/devp", (1, 24, 0), Channel::Cargo, true),
+            unknown,
+        ];
+        assert_eq!(
+            summarize_installs(&installs, None, None),
+            InstallReport::Single
+        );
     }
 
     #[test]
@@ -2570,119 +2418,5 @@ mod tests {
 
         f.problem("PATH", "missing");
         assert!(verdict(&f, "fine", None).is_err());
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn a_path_entry_matches_regardless_of_case_and_trailing_separator() {
-        // Both differences are ones Windows itself ignores, and either used to turn
-        // into a "not on PATH" problem — a healthy install failing `devp doctor`.
-        let dir = Path::new(r"C:\Users\Someone\AppData\Roaming\dev-prune\bin");
-        assert!(same_dir(
-            Path::new(r"c:\users\someone\appdata\roaming\dev-prune\bin\"),
-            dir
-        ));
-        assert!(!same_dir(Path::new(r"C:\Windows"), dir));
-    }
-
-    #[test]
-    #[cfg(not(windows))]
-    fn a_path_entry_on_unix_is_matched_exactly() {
-        assert!(same_dir(
-            Path::new("/usr/local/bin"),
-            Path::new("/usr/local/bin")
-        ));
-        assert!(!same_dir(
-            Path::new("/USR/local/bin"),
-            Path::new("/usr/local/bin")
-        ));
-    }
-
-    #[test]
-    fn a_stale_twin_is_told_apart_from_a_current_one() {
-        let dir = TempDir::new().unwrap();
-        let a = dir.path().join("dev-prune");
-        let b = dir.path().join("devp");
-        std::fs::write(&a, b"version two").unwrap();
-        std::fs::write(&b, b"version two").unwrap();
-        assert!(same_binary(&a, &b));
-
-        // Same length, different bytes — the case a size-only test waves through.
-        std::fs::write(&b, b"version one").unwrap();
-        assert!(!same_binary(&a, &b));
-
-        std::fs::write(&b, b"short").unwrap();
-        assert!(!same_binary(&a, &b));
-        assert!(!same_binary(&a, &dir.path().join("missing")));
-    }
-
-    #[test]
-    fn the_channel_directories_are_searched_even_when_they_are_not_on_path() {
-        // The whole point of this check: a copy nobody can see is a copy nobody
-        // upgrades, and it becomes the one that runs the day PATH changes.
-        let home = Path::new(if cfg!(windows) {
-            "C:\\home\\u"
-        } else {
-            "/home/u"
-        });
-        let dirs = copy_search_dirs("", Some(home));
-        let joined = dirs
-            .iter()
-            .map(|d| d.to_string_lossy().to_lowercase())
-            .collect::<Vec<_>>()
-            .join("|");
-        for marker in ["cargo", "uv", "pipx"] {
-            assert!(
-                joined.contains(marker),
-                "{marker} directory missing from {joined}"
-            );
-        }
-    }
-
-    #[test]
-    fn path_entries_are_searched_and_empty_ones_dropped() {
-        let sep = if cfg!(windows) { ";" } else { ":" };
-        let a = if cfg!(windows) { "C:\\a" } else { "/a" };
-        let b = if cfg!(windows) { "C:\\b" } else { "/b" };
-        let dirs = copy_search_dirs(&format!("{a}{sep}{sep}{b}"), None);
-        assert_eq!(dirs, vec![PathBuf::from(a), PathBuf::from(b)]);
-    }
-
-    #[test]
-    fn the_managed_directory_is_never_reported_as_another_copy() {
-        // Its three files are each reported by name elsewhere; listing them here would
-        // tell a healthy install it has stale binaries.
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let managed = tmp.path().join("bin");
-        std::fs::create_dir_all(&managed).expect("create");
-        let name = if cfg!(windows) {
-            "dev-prune.exe"
-        } else {
-            "dev-prune"
-        };
-        std::fs::write(managed.join(name), b"binary").expect("write");
-
-        assert!(binaries_in(std::slice::from_ref(&managed), Some(&managed)).is_empty());
-        assert_eq!(binaries_in(std::slice::from_ref(&managed), None).len(), 1);
-    }
-
-    #[test]
-    fn one_binary_under_both_names_is_reported_once() {
-        // `dev-prune` and `devp` in the same directory are the same binary — on Windows
-        // usually literally the same file — so a single install must not read as two.
-        let tmp = tempfile::tempdir().expect("temp dir");
-        let dir = tmp.path().to_path_buf();
-        let (a, b) = if cfg!(windows) {
-            ("dev-prune.exe", "devp.exe")
-        } else {
-            ("dev-prune", "devp")
-        };
-        std::fs::write(dir.join(a), b"same bytes").expect("write");
-        std::fs::write(dir.join(b), b"same bytes").expect("write");
-        assert_eq!(binaries_in(std::slice::from_ref(&dir), None).len(), 1);
-
-        // A genuinely different binary under the second name is a second copy.
-        std::fs::write(dir.join(b), b"a different build").expect("write");
-        assert_eq!(binaries_in(&[dir], None).len(), 2);
     }
 }

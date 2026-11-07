@@ -2629,6 +2629,31 @@ Notes you should rely on, not work around:
                   </tr>
                   <tr>
                     <td className="td-name">
+                      <code>devp installs [--json]</code>
+                    </td>
+                    <td>
+                      Every copy of devp on this machine, on PATH or not: its
+                      version, how it was installed, and which copy a new shell,
+                      the scheduler and the git hooks run. Read-only. It searches
+                      PATH and each channel&apos;s install folder; a copy placed
+                      by hand in any other folder that is not on PATH cannot be
+                      found
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
+                      <code>devp installs clean [--keep]</code>
+                    </td>
+                    <td>
+                      Keeps one copy and removes the rest, one confirmed step at
+                      a time, through each channel&apos;s own uninstall command.
+                      Never deletes a manager&apos;s binary by hand, never needs
+                      admin; <code>--dry-run</code> prints the plan and runs none
+                      of it
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="td-name">
                       <code>devp uninstall [--deep]</code>
                     </td>
                     <td>
@@ -3366,7 +3391,12 @@ Notes you should rely on, not work around:
                 Each device keeps one <code>devp</code>, taking a lock so two
                 passes never overlap, and a <code>registry.json</code> written
                 by a newer one is never overwritten by an older one. Doctor also
-                prints, but never runs, the command to remove the extras. It
+                prints, but never runs, the command to remove the extras;{" "}
+                <code>devp installs</code> lists every copy, and{" "}
+                <code>devp installs clean</code> removes the extras one
+                confirmed step at a time through each manager&apos;s own
+                uninstall (a copy placed by hand in a folder that is on no PATH
+                and in none of the folders it searches cannot be found). It
                 adds an <em>Install receipt</em> line for a copy
                 one of the install scripts wrote, naming its version, which
                 script wrote it and when. The one-liner asks about a copy it

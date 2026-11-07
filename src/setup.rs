@@ -274,8 +274,19 @@ fn refresh_managed_twin_if_stale(current: &std::path::Path, managed: &std::path:
 }
 
 /// The `major.minor.patch` a binary reports for itself, if it can.
+///
+/// Asked under a ceiling and with auto-setup off: this runs against copies the user did
+/// not choose to run (every devp `devp installs` finds), and a copy that stalls, or that
+/// would register its own scheduler on first run, must not do either on the strength of
+/// being asked its version.
 pub(crate) fn binary_version(exe: &std::path::Path) -> Option<(u64, u64, u64)> {
-    let output = crate::spawn::command(exe).arg("--version").output().ok()?;
+    let mut cmd = crate::spawn::command(exe);
+    cmd.arg("--version").env(constants::ENV_NO_AUTO_SETUP, "1");
+    let output = crate::spawn::output_within(
+        cmd,
+        std::time::Duration::from_secs(constants::VERSION_QUERY_CEILING_SECS),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }

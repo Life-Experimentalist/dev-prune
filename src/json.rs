@@ -935,6 +935,59 @@ pub fn trust_document(report: &crate::commands::trust::TrustReport) -> Value {
     })
 }
 
+/// `devp installs --json`: every devp found on the machine and who runs it.
+///
+/// `version` is null for a copy that could not state one, never a placeholder string, and
+/// `roles` lists only the roles that hold. `launcher_only` marks the windowless
+/// `devpw.exe` found alone in a folder: it is the scheduler's launcher, is never asked for
+/// a version, and is not a command anyone types. `note` is the fixed statement of what the
+/// search cannot find, so a consumer does not have to read "no other copy" as a guarantee.
+pub fn installs_document(found: &crate::installs::Discovery) -> Value {
+    let installs: Vec<Value> = found
+        .installs
+        .iter()
+        .map(|i| {
+            let mut roles: Vec<&str> = Vec::new();
+            if i.roles.shell {
+                roles.push("shell");
+            }
+            if i.roles.scheduler {
+                roles.push("scheduler");
+            }
+            if i.roles.hook {
+                roles.push("hook");
+            }
+            if i.roles.running {
+                roles.push("running");
+            }
+            json!({
+                "path": clean_path(&i.path),
+                "canonical_path": clean_path(&i.canonical),
+                "channel": i.channel.badge(),
+                "version": i.version.map(|(a, b, c)| format!("{a}.{b}.{c}")),
+                "on_path": i.on_path(),
+                "path_position": i.path_position,
+                "roles": roles,
+                "launcher_only": i.windowless_only,
+            })
+        })
+        .collect();
+
+    json!({
+        "schema": SCHEMA_VERSION,
+        "version": constants::VERSION,
+        "command": "installs",
+        "installs": installs,
+        "scheduler_target": found.scheduler.as_deref().map(clean_path),
+        "hook_target": found.hook.as_deref().map(clean_path),
+        "summary": {
+            "count": found.installs.iter().filter(|i| !i.windowless_only).count(),
+            "consistent": crate::commands::installs::verdict(found).is_none(),
+        },
+        "note": constants::INSTALLS_SEARCH_LIMIT_NOTE,
+    })
+}
+
 /// The document emitted by `devp status --drift --json`.
 ///
 /// A separate document from plain `status` because it answers a different question:

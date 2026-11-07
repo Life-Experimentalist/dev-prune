@@ -1087,3 +1087,31 @@ pub const WSL_UNC_HOSTS: &[&str] = &["wsl$", "wsl.localhost"];
 
 /// The one line printed for anything under [`WSL_UNC_HOSTS`].
 pub const WSL_SKIP_NOTE: &str = "inside WSL, install devp in the distribution";
+
+/// How long, in seconds, one copy of devp is given to answer `--version` while `devp
+/// installs` and `devp doctor` look for other installs.
+///
+/// A copy that hangs (an antivirus scan holding the file, a half-written binary) must not
+/// stall a read-only listing; it is shown with its version unknown instead.
+pub const VERSION_QUERY_CEILING_SECS: u64 = 10;
+
+/// How long, in seconds, a package manager is given to uninstall devp during `devp
+/// installs clean`.
+///
+/// Much longer than a version query: `cargo uninstall` and `brew uninstall` can legitimately
+/// take a while on a slow disk. The ceiling only exists so a manager waiting on a prompt
+/// nobody can answer ends the step instead of the whole cleanup.
+pub const MANAGER_UNINSTALL_CEILING_SECS: u64 = 300;
+
+/// The two names every install of devp carries.
+pub const BIN_NAME_LONG: &str = "dev-prune";
+pub const BIN_NAME_SHORT: &str = "devp";
+
+/// What `devp installs` can and cannot find, said wherever the command is described.
+///
+/// The search is a fixed list of places, not a scan of the disk, so a copy somebody put
+/// in an unlisted folder that is also on no PATH is invisible. Saying so is part of the
+/// feature: "no other copies" would otherwise read as a guarantee.
+pub const INSTALLS_SEARCH_LIMIT_NOTE: &str = "devp looks in every PATH folder and in the folders \
+     the install script, cargo, Homebrew, Scoop, WinGet, npm, pnpm, yarn, bun, pip, pipx and \
+     uv use. A copy placed by hand in any other folder that is not on PATH cannot be found.";
