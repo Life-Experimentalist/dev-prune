@@ -32,15 +32,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their own. `devp unlink --missing` now leaves them alone and tells you how to remove one
   on purpose (`devp unlink <path>`).
 
-- **On Windows, a drive that comes back under a different letter is followed.** dev-prune
-  now records each repository's volume identity (serial number and file system) in
-  `registry.json`. Plug a USB disk back in as `F:` instead of `E:` and the next pass finds
-  it by that identity, checks each repository by its first commit, and re-points the
-  entries with their history and settings. A letter that now belongs to a different drive
-  makes the entries inactive, so a prune pass can never reach another drive's folders by
-  path, and two connected drives with the same identity (a cloned disk) are never guessed
-  between. macOS and Linux have no letters to track: an unmounted mount point makes its
-  repositories inactive the same way, and a disk that returns somewhere else is not followed.
+- **A drive that comes back somewhere else is followed, on Windows, macOS and Linux.**
+  dev-prune records each repository's volume identity in `registry.json`: the volume
+  serial number and file system on Windows, the file system UUID on Linux (read from
+  `/proc/self/mountinfo` and `/dev/disk/by-uuid`, so two btrfs subvolumes of one disk stay
+  distinct), and the volume UUID on macOS (from `diskutil`). Plug a USB disk back in as
+  `F:` instead of `E:`, or mount it at `/media/you/Backup1` instead of `/media/you/Backup`,
+  and the next pass finds it by that identity, checks each repository by its first commit,
+  and re-points the entries with their history and settings. A path that now belongs to a
+  different drive makes the entries inactive, so a prune pass can never reach another
+  drive's folders by path, and two connected drives with the same identity (a cloned disk)
+  are never guessed between. A file system with no UUID (some network mounts, tmpfs) is
+  not followed and simply goes inactive while it is away.
+
+- **Turn the drive following off with `devp config set auto_follow_drives false`.** On by
+  default. With it off, nothing is ever re-pointed to another drive; the safety behaviour
+  stays on, so a path whose drive changed is still inactive and never pruned.
+
+- **Every prune checks its drive again first.** Right before a repository is touched,
+  dev-prune re-reads the identity of its drive. If the disk was swapped or unplugged after
+  the pass began, that repository is skipped with "drive for <path> changed or is no longer
+  connected, skipped", nothing is written, and the exit code is unchanged. In `--json` the
+  repository appears with status `skipped_drive`.
+
+- **Repositories inside WSL are not touched from Windows.** A Windows `devp` that reaches
+  into `\wsl$` or `\wsl.localhost` treats it as a network path with no drive identity, so
+  those paths are skipped with a line saying to install devp inside the distribution. The docs now have a "where to run devp" section covering WSL, containers,
+  SSH hosts and cloud volumes: run `devp` on the machine that holds the repositories.
 
 - **An optional size limit for caches that are safe to lose.** Off by default. After
   `devp config set cache_auto_trim true`, the scheduled pass and a confirmed `devp run`
