@@ -184,7 +184,11 @@ Debian, Ubuntu, Fedora, RHEL, Arch, NixOS and Alpine.
   repository is not a bulk scan
 - `devp link [PATH]` / `devp unlink [PATH]` — register or unregister one repository;
   `devp unlink --missing` drops every entry whose directory no longer exists at once
-  (the registry also drops one itself after 30 days of absence)
+  (the registry also drops one itself after 30 days of absence). An entry on a drive that
+  is not connected is inactive, not missing: `--missing` leaves it, every pass skips it,
+  and it returns on its own with the drive. On Windows a drive that comes back under
+  another letter is recognised by its volume identity and its entries are re-pointed with
+  their history; macOS and Linux have no volume identity and rely on stable mount points
 - `devp undo` — revert the most recent `init` or `link`
 - `devp run [PATH]` — prune every registered repository, or one target. Both forms
   list what would go, with sizes and the total, and ask before deleting; `-y` answers,
