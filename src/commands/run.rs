@@ -13,6 +13,7 @@ use std::io::{self, IsTerminal, Write};
 use std::path::Path;
 
 use crate::adapters;
+use crate::commands::caches;
 use crate::config::Registry;
 use crate::constants;
 use crate::engine::{self, AdapterFilter, PruneOptions, PruneResult, PruneStatus};
@@ -755,12 +756,16 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         } else {
             Vec::new()
         };
+        let trim = cache_trim_step(args, &registry);
         if args.json {
             let mut doc = json::run_document(
                 &[candidates, blocked, left_alone, missing, orphaned].concat(),
                 true,
             );
             json::attach_recommendations(&mut doc, &recommendations);
+            if let Some(t) = &trim {
+                json::attach_cache_trim(&mut doc, t);
+            }
             json::emit(&doc)?;
             return Ok(());
         }
@@ -775,6 +780,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             // reads "nothing found" precisely because the adapter that would find it
             // is off.
             report_recommendations(&recommendations);
+            report_cache_trim(trim.as_ref());
             return Ok(());
         }
         if !candidates.is_empty() {
@@ -796,20 +802,29 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         report_missing(&missing);
         report_orphaned(&orphaned);
         report_recommendations(&recommendations);
+        report_cache_trim(trim.as_ref());
         return Ok(());
     }
 
     if candidates.is_empty() {
+        // Nothing was pruned and the registry is already saved, so the cache step has no
+        // ordering to respect here.
+        let trim = cache_trim_step(args, &registry);
         if args.json {
-            json::emit(&json::run_document(
+            let mut doc = json::run_document(
                 &[blocked.clone(), left_alone, missing, orphaned].concat(),
                 false,
-            ))?;
+            );
+            if let Some(t) = &trim {
+                json::attach_cache_trim(&mut doc, t);
+            }
+            json::emit(&doc)?;
             return fail_if_blocked(&blocked);
         }
         if blocked.is_empty() && left_alone.is_empty() && missing.is_empty() && orphaned.is_empty()
         {
             output::print_info(i18n::t("run.nothing"));
+            report_cache_trim(trim.as_ref());
             crate::commands::update::maybe_auto_update(&registry);
             return Ok(());
         }
@@ -818,6 +833,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         report_left_alone(&left_alone);
         report_missing(&missing);
         report_orphaned(&orphaned);
+        report_cache_trim(trim.as_ref());
         crate::commands::update::maybe_auto_update(&registry);
         return fail_if_blocked(&blocked);
     }
@@ -1087,8 +1103,22 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
     // only machine-readable record of what this pass deleted.
     let saved = registry.save();
 
+    // After the save, never before it: crediting the freed bytes loads the registry from
+    // disk, adds to it and saves, so a copy saved after that would erase the credit. It
+    // is also after every deletion the pass made, so a pass that failed half-way has
+    // already recorded what it did before any cache is touched.
+    let trim = if saved.is_ok() {
+        cache_trim_step(args, &registry)
+    } else {
+        None
+    };
+
     if args.json {
-        json::emit(&json::run_document(&all_results, false))?;
+        let mut doc = json::run_document(&all_results, false);
+        if let Some(t) = &trim {
+            json::attach_cache_trim(&mut doc, t);
+        }
+        json::emit(&doc)?;
         saved?;
         // The document already carries `summary.errors`; a non-zero exit keeps the
         // shell contract identical in both output modes.
@@ -1107,6 +1137,7 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
             ("count", &pruned_count.to_string()),
         ],
     ));
+    report_cache_trim(trim.as_ref());
 
     // After the pass, never before it: an upgrade mid-run would swap the binary out
     // from under the work the user actually asked for. Running it before the error bail
@@ -1502,6 +1533,29 @@ fn report_recommendations(recommendations: &[(String, usize)]) {
 ///
 /// A pass that skipped a repository the user asked it to handle has not succeeded, and a
 /// scheduled or scripted run has to be able to see that.
+/// The cache size limit step that closes a whole-registry pass, or `None` when
+/// `cache_auto_trim` is off (in which case nothing is measured).
+///
+/// It runs in the scheduled pass and in `devp run`. A dry run only previews it. So does a
+/// manual run nobody has confirmed: `--yes`, `--json`, the scheduled pass or
+/// `require_confirmation false` are the ways this tool already treats a run as pre-approved,
+/// and the prompt a person answers names repositories, not caches. A cache that will not
+/// clear is a line in the result and never an error here, so it cannot fail the pass.
+fn cache_trim_step(args: &RunArgs<'_>, registry: &Registry) -> Option<caches::TrimResult> {
+    let approved = args.json || args.yes || args.daemon || !registry.settings.require_confirmation;
+    caches::trim_caches(
+        args.dry_run || !approved,
+        !args.dry_run && !approved,
+        !args.json,
+    )
+}
+
+fn report_cache_trim(trim: Option<&caches::TrimResult>) {
+    if let Some(t) = trim {
+        caches::print_trim(t);
+    }
+}
+
 fn fail_if_blocked(blocked: &[PruneResult]) -> Result<()> {
     if blocked.is_empty() {
         return Ok(());

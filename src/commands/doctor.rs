@@ -215,6 +215,7 @@ fn check_installation(fix: bool) -> Result<()> {
     check_package_managers(&mut f, registry.as_ref());
     check_registry_health(&mut f, registry.as_ref());
     check_release_state(&mut f, registry.as_ref());
+    check_cache_limit(&mut f, registry.as_ref());
 
     if fix && !f.fixes.is_empty() {
         return apply_repairs(&f, registry.as_ref());
@@ -1280,6 +1281,32 @@ fn check_registry_health(f: &mut Findings, registry: Option<&Registry>) {
             );
             f.fixable_problem(Repair::RepoConfigs);
         }
+    }
+}
+
+/// Say so when a cache the size limit applies to is past it. A note, never a warning:
+/// a big build cache is not breakage, and the exit code stays what it was.
+fn check_cache_limit(f: &mut Findings, registry: Option<&Registry>) {
+    let Some(registry) = registry else { return };
+    let limit = registry.settings.cache_limit_gib;
+    let over = crate::commands::caches::over_limit_trimmable(limit);
+    if over.is_empty() {
+        return;
+    }
+    f.section("Cache size limit");
+    let advice = if registry.settings.cache_auto_trim {
+        "the scheduled pass empties it"
+    } else {
+        "`devp config set cache_auto_trim true` lets the scheduled pass empty it"
+    };
+    for (manager, kind, bytes) in over {
+        f.note(
+            &format!("{manager} {kind}"),
+            &format!(
+                "{} is over your {limit} GiB limit; {advice}",
+                output::format_bytes(bytes)
+            ),
+        );
     }
 }
 

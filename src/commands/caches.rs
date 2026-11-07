@@ -1236,6 +1236,24 @@ fn trim_step(
     Some(result)
 }
 
+/// The allow-listed caches that are past `limit_gib` right now, measured read-only, for
+/// `devp doctor` to mention.
+///
+/// Only the allow-list is measured, not every cache: doctor is a quick check and the
+/// caches `devp caches` covers are a longer walk than anyone expects from it. The trim
+/// setting does not matter here, because the size is true either way.
+pub fn over_limit_trimmable(limit_gib: u64) -> Vec<(&'static str, &'static str, u64)> {
+    let probes: Vec<&'static Probe> = PROBES
+        .iter()
+        .filter(|p| TRIM_ALLOWED.contains(&(p.manager, p.kind)))
+        .collect();
+    collect_from(true, None, &probes)
+        .into_iter()
+        .filter(|r| past_limit(r.bytes, limit_gib))
+        .map(|r| (r.manager, r.kind, r.bytes))
+        .collect()
+}
+
 /// Print the trim step the way `devp caches clear` prints a clear.
 pub fn print_trim(result: &TrimResult) {
     println!();
