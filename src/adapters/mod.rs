@@ -711,8 +711,9 @@ struct HelperSlot;
 
 impl HelperSlot {
     fn acquire(limit: usize) -> Option<Self> {
+        // `try_update` was stabilized in 1.95, and the MSRV is now 1.99.
         SIZE_HELPERS_RUNNING
-            .fetch_update(AtomicOrdering::SeqCst, AtomicOrdering::SeqCst, |n| {
+            .try_update(AtomicOrdering::SeqCst, AtomicOrdering::SeqCst, |n| {
                 (n < limit).then_some(n + 1)
             })
             .ok()

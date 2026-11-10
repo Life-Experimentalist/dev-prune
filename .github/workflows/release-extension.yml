@@ -86,11 +86,11 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           node-version: 24
 
@@ -126,7 +126,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: npx --yes @vscode/vsce@4.1.0 package --out "dev-prune-vscode-${VERSION}.vsix"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           name: vscode-extension
           path: editors/vscode/*.vsix
@@ -214,14 +214,14 @@ jobs:
     # one with nothing left to publish.
     if: ${{ vars.VSIX_PUBLISH == 'true' && !contains(github.event.inputs.tag || github.ref_name, '-rc') }}
     steps:
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           node-version: 24
 
       # The artifact the release job uploaded, not a fresh build: a second packaging of
       # the same commit would put a `.vsix` on the marketplaces that no attestation
       # covers, and the one on the release page would no longer be the one people run.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v8 # pinned to v8 release; review via Dependabot when Actions team releases new version # pinned to v8 release; review via Dependabot when Actions team releases new version
         with:
           name: vscode-extension
           path: dist

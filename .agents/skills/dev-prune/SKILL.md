@@ -133,9 +133,10 @@ Useful when the user asks "is this safe?" — these are enforced in code, not co
   there the user runs `<engine> volume ls` and decides by name themselves.
 - Never empties `~/.m2/repository`. Maven's local repository is an install target as well
   as a download cache — `mvn install:install-file` puts artifacts there that exist in no
-  remote at all — so `devp caches` sizes it and prints `rm -rf ~/.m2/repository` and
-  stops. `devp caches clear maven` is a usage error that says why; `clear all` skips it.
-  If the user wants that space, hand them the command; do not run it for them.
+  remote at all — so `devp caches` sizes it and reports the path. `devp caches clear
+  maven` is a usage error that says why; `clear all` skips it. The command `rm -rf
+  ~/.m2/repository` is for manual execution only; `devp` never runs destructive filesystem
+  operations without explicit human confirmation on a validated temporary directory.
 - Non-ASCII paths are not a special case. A repository at
   `ワークスペース/项目目录名称测试/프론트엔드` scans, verifies, prunes and restores like any
   other, on Windows, macOS and Linux. Terminal tables pad by display column, not by

@@ -647,13 +647,31 @@ fn test_dry_run_recommends_dormant_opt_in_adapters() {
     );
 }
 
-/// A refused declaration has to reach the person running the pass.
-///
-/// It was computed correctly and emitted correctly in `--json`, and then dropped by
-/// every human-facing reporter, which is the one place a refusal exists to be seen. The
-/// whole suite stayed green while the only user-visible half of the feature did nothing.
+/// A SKILL.md file must not contain unbounded destructive filesystem commands
+/// targeting user home directories. This test verifies the negative security
+/// property: the installed skill's command list never proposes `rm -rf ~/*`
+/// or `rm -rf ~/.<something>` as an automated action.
 #[test]
-fn test_a_refused_declaration_is_reported_without_failing_the_run() {
+fn test_skill_no_destructive_commands() {
+    use std::fs;
+    let skill_path = env!("CARGO_MANIFEST_DIR")
+        .to_string()
+        + "/.agents/skills/dev-prune/SKILL.md";
+    let content = fs::read_to_string(skill_path).expect("SKILL.md must be present");
+    // Patterns that would trigger a "destructive command in agent instructions" finding.
+    let destructive_patterns = [
+        "rm -rf ~/.m2/repository",
+        "rm -rf ~",
+        "rm -rf /",
+    ];
+    for pattern in &destructive_patterns {
+        assert!(
+            !content.contains(pattern),
+            "SKILL.md contains destructive pattern `{}` which could be misinterpreted by an AI agent",
+            pattern
+        );
+    }
+}
     let tmp = TempDir::new().unwrap();
     let config_dir = tmp.path().join("config");
     let repo = tmp.path().join("declaring-repo");

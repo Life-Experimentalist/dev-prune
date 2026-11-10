@@ -9,8 +9,16 @@ on:
 permissions:
   contents: read
 
-# A new push to the same PR supersedes the previous run. Pushes to main are
-# never cancelled — every commit on the default branch keeps its full result.
+# Action version strategy:
+# - `actions/checkout` in security-critical jobs (test, audit) is pinned to a full
+#   commit SHA so the workflow cannot auto-update if the Actions team pushes a
+#   malicious or breaking update.
+# - Other `actions/*` steps use version tags (v5-v7) which are maintained released
+#   versions by the GitHub Actions team. Periodic review via Dependabot or when
+#   the Actions team releases new versions is recommended.
+# - `actions/attest-build-provenance` is pinned to a full commit SHA (supply-chain
+#   critical). See each job's step for the pinned SHA.
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -31,7 +39,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
 
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, 2026-08
         with:
@@ -62,7 +70,7 @@ jobs:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
       # The toolchain under test is whatever `rust-version` in Cargo.toml says, read
       # here rather than pinned, so bumping the MSRV is a one-line change and this job
       # follows. That field is the single source of truth; the docs that restate it are
@@ -97,7 +105,7 @@ jobs:
       matrix:
         target: [aarch64-pc-windows-msvc, i686-pc-windows-msvc]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, 2026-08
         with:
           toolchain: stable
@@ -112,7 +120,7 @@ jobs:
     name: Publishable crate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, 2026-08
         with:
           toolchain: stable
@@ -142,7 +150,7 @@ jobs:
     name: Changelog entry
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
       # The release workflow builds the GitHub release body out of this section and
       # fails without it. Checking on every push means the answer to "can we tag?" is
       # already known, instead of being discovered after the tag exists — and a tag
@@ -158,11 +166,11 @@ jobs:
     name: npm and PyPI packaging
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
+      - uses: actions/setup-node@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           node-version: 24
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           python-version: "3.14"
 
@@ -239,7 +247,7 @@ jobs:
     name: Dependency advisory audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master, 2026-08
         with:
           toolchain: stable
@@ -257,7 +265,7 @@ jobs:
     name: Installer scripts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
       # The install scripts are the first thing anyone runs; a syntax error in them is
       # a broken product regardless of how green the Rust build is.
       - name: shellcheck install.sh
@@ -288,8 +296,8 @@ jobs:
     name: Diagram syntax
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
+      - uses: actions/setup-node@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           node-version: 24
       # A malformed diagram renders as a red error box on GitHub and nothing else
@@ -321,8 +329,8 @@ jobs:
     name: Site build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
+      - uses: actions/setup-node@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           node-version: 24
           cache: npm

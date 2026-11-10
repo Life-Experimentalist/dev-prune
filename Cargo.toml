@@ -27,7 +27,7 @@ categories = [
     "filesystem",
     "caching",
 ]
-rust-version = "1.88"
+rust-version = "1.99"
 default-run = "dev-prune"
 
 # An allowlist, not an exclude list, and deliberately so.
@@ -248,3 +248,4 @@ lto = true
 codegen-units = 1
 strip = true
 opt-level = 3
+

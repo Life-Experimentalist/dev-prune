@@ -25,9 +25,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           node-version: 24
           cache: npm
@@ -58,11 +58,11 @@ jobs:
           # The placeholder must have been substituted, not shipped verbatim.
           ! grep -q '<!--app-html-->' site/dist/index.html
 
-      - uses: actions/configure-pages@v6
+      - uses: actions/configure-pages@v6 # pinned to v6 release; review via Dependabot when Actions team releases new version
 
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@v5 # pinned to v5 release; review via Dependabot when Actions team releases new version
         with:
           path: site/dist
 
       - id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v5 # pinned to v5 release; review via Dependabot when Actions team releases new version

@@ -138,7 +138,7 @@ jobs:
       # Explicitly the tag. On a `workflow_dispatch` run the default checkout is the
       # branch the workflow was launched from, so without this the job would build
       # `main` and ship it under the tag's name.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -344,7 +344,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
 
       - uses: actions/download-artifact@v8
         with:
@@ -391,7 +391,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -618,11 +618,11 @@ jobs:
       # attestation tying the tarball to this workflow, this commit and this tag.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -726,7 +726,7 @@ jobs:
       # PyPI side names this workflow file and this environment, so both are fixed.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
 
@@ -791,7 +791,7 @@ jobs:
       # workflow file and this environment, so all three are fixed.
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           # Check out the tag being released, not the default branch. A dispatch run
           # would otherwise publish whatever is on `main` under the tag's name.
@@ -851,7 +851,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
         with:
           # `main`, not the tag: a tag checkout is detached and has nowhere to push.
           ref: main
@@ -905,7 +905,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7 # pinned to v7 release; review via Dependabot when Actions team releases new version
 
       # Rendered here rather than taken from the `packaging` job's commit: the two jobs
       # run in parallel, and a submission that depends on a push having landed is a race
