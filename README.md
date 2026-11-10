@@ -59,6 +59,10 @@ install --frozen-lockfile`, `uv sync`, and so on). `devp restore .` does the sam
 one project. The clip shows `node_modules` coming back from the lockfile; Rust `target/`
 directories are not reinstalled, cargo rebuilds them on your next build.
 
+<img src="assets/restore.gif" alt="devp history --pass 1 listing the node_modules a prune pass deleted, Test-Path reporting False, devp restore --last-run -y reinstalling it, then Test-Path reporting True and the directory holding its packages again" width="820" />
+
+<sub>`devp history --pass 1`, then `devp restore --last-run`: `node_modules` comes back from the lockfile. The real binary, in a throwaway clone; the long npm wait is cut. [How it was recorded](scripts/demo/README.md).</sub>
+
 This is why the verification comes first. A directory only gets deleted if the restore
 command for it has just been proven to work, so a restore that cannot succeed is a prune
 that never happened. `devp history --pass N` lists what each pass removed if you want to
