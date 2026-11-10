@@ -50,6 +50,20 @@ mental note about which ones are safe.
 > just verified, read-only, that its lockfile can rebuild it. There is no flag to skip
 > that check. `--ignore-idle` lifts the idle-day wait and *nothing else*.
 
+### And it puts everything back
+
+The second half of the clip above is the part that makes deleting safe to try. After a
+pass, `devp restore --last-run` rebuilds exactly the directories that pass removed, in
+every repository it touched, using each project's own package manager (`npm ci`, `pnpm
+install --frozen-lockfile`, `uv sync`, and so on). `devp restore .` does the same for
+one project. The clip shows `node_modules` coming back from the lockfile; Rust `target/`
+directories are not reinstalled, cargo rebuilds them on your next build.
+
+This is why the verification comes first. A directory only gets deleted if the restore
+command for it has just been proven to work, so a restore that cannot succeed is a prune
+that never happened. `devp history --pass N` lists what each pass removed if you want to
+see before you restore. The full reference is in [`devp restore`](docs/CLI_REFERENCE.md#9-devp-restore-path---last-run).
+
 ---
 
 ## Contents
