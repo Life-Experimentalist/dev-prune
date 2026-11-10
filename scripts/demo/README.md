@@ -8,6 +8,7 @@ this directory. Nothing is mocked: every line on screen is output `devp` printed
 |---|---|---|
 | [`demo.tape`](demo.tape) | `devp run` deleting a 13 GiB Rust `target/` and an npm `node_modules`, then `devp restore --last-run` | a sandbox clone, never your registry |
 | [`refusal.tape`](refusal.tape) | `devp run -y` refusing a project whose lockfile is out of sync: frees 0 B and `node_modules` stays | a second sandbox repository with its own registry; nothing is deleted, so retakes need no re-prep |
+| [`restore.tape`](restore.tape) | the way back on its own: `devp history --pass 1` listing what a pass deleted, then `devp restore --last-run -y` and `node_modules` populated again | the same sandbox clone, npm only (prepare it without `-TargetFrom`); the pass that deletes runs before the camera shows anything |
 | [`routine.tape`](routine.tape) | `devp history` and `devp stats` from a machine that has run the scheduler for weeks | the recording machine's real registry, read-only |
 | [`common.tape`](common.tape) | the window, font and colours both tapes share | n/a |
 
@@ -71,7 +72,7 @@ already small (about 550 KB and 420 KB) and are published as they come.
 
 | From `out/` | To | Used by |
 |---|---|---|
-| `demo.gif`, `routine.gif`, `refusal.gif` | [`assets/`](../../assets/) | the root README |
+| `demo.gif`, `routine.gif`, `refusal.gif`, `restore.gif` | [`assets/`](../../assets/) | the root README |
 | `demo.webm`, `demo.mp4`, and a `demo-poster.jpg` frame | `site/public/assets/demo/` | the landing page |
 
 The poster is the dry-run summary frame, taken from the MP4:
