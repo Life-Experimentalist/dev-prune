@@ -711,12 +711,24 @@ struct HelperSlot;
 
 impl HelperSlot {
     fn acquire(limit: usize) -> Option<Self> {
-        SIZE_HELPERS_RUNNING
-            .fetch_update(AtomicOrdering::SeqCst, AtomicOrdering::SeqCst, |n| {
-                (n < limit).then_some(n + 1)
-            })
-            .ok()
-            .map(|_| Self)
+        // A hand-written compare-exchange loop rather than `fetch_update`: newer stable
+        // toolchains deprecate that method in favour of `try_update`, which is not
+        // available at our MSRV, and CI runs clippy with `-D warnings`.
+        let mut current = SIZE_HELPERS_RUNNING.load(AtomicOrdering::SeqCst);
+        loop {
+            if current >= limit {
+                return None;
+            }
+            match SIZE_HELPERS_RUNNING.compare_exchange_weak(
+                current,
+                current + 1,
+                AtomicOrdering::SeqCst,
+                AtomicOrdering::SeqCst,
+            ) {
+                Ok(_) => return Some(Self),
+                Err(seen) => current = seen,
+            }
+        }
     }
 }
 
