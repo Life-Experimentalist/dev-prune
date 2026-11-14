@@ -88,11 +88,43 @@ pub fn run(args: RunArgs<'_>) -> Result<()> {
         crate::lock::Pass::Interactive
     };
     crate::lock::run_exclusive(pass, args.json, || {
+        // Inside the lock so the stamp is read by the one process allowed to write the
+        // file, and before either pass can delete a directory. A dry run deletes nothing
+        // and a newer registry is still readable, so only a real pass is refused.
+        if !args.dry_run {
+            refuse_newer_registry()?;
+        }
         if let Some(target_str) = args.target_path {
             return run_targeted(&args, &filter, target_str);
         }
         run_registry(&args, &filter)
     })
+}
+
+/// Refuse a pass that would delete directories when `registry.json` was last written by
+/// a newer devp.
+///
+/// `Registry::save_to` already refuses to overwrite such a file, but a pass saves only
+/// after it has deleted: the per-repository saves are silent, so the refusal first shows
+/// at the final save, when the directories are gone and nothing records them. Checking
+/// here keeps an old copy left on a scheduler or hook from pruning at all, which is what
+/// the 1.24.0 release note promises. `devp status` is the model for the read-only side:
+/// it reads such a registry and carries on.
+pub(crate) fn refuse_newer_registry() -> Result<()> {
+    let Ok(path) = Registry::registry_path() else {
+        return Ok(());
+    };
+    if let Some(found) = Registry::written_by_at(&path)
+        && crate::commands::update::compare_versions(&found, constants::VERSION)
+            == Some(std::cmp::Ordering::Greater)
+    {
+        return Err(crate::config::NewerRegistryError {
+            found,
+            this: constants::VERSION.to_string(),
+        }
+        .into());
+    }
+    Ok(())
 }
 
 /// What `--ignore-idle` does and, more usefully, what it does not.
