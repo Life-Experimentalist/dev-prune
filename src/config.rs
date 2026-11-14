@@ -2587,12 +2587,13 @@ impl Registry {
         match self.repositories.get_mut(&new_key) {
             Some(existing) => {
                 // The new location was registered on its own before the drive came
-                // back: everything the old path had earned moves onto that entry, the
-                // same way a moved repository's history does.
+                // back: the history the old path had earned moves onto that entry, the
+                // same way a moved repository's history does. Its settings do not: the
+                // user set `enabled` and the idle override on this entry after the drive
+                // returned, and letting the stale entry overwrite them would make a repo
+                // they disabled prunable again.
                 existing.added_at = existing.added_at.min(moved.added_at);
                 existing.last_pruned_at = existing.last_pruned_at.max(moved.last_pruned_at);
-                existing.override_idle_days = moved.override_idle_days;
-                existing.enabled = moved.enabled;
                 existing.total_freed_bytes =
                     existing.total_freed_bytes.max(moved.total_freed_bytes);
                 existing.identity = existing.identity.take().or(moved.identity);
@@ -5011,9 +5012,40 @@ mod tests {
         assert_eq!(reg.repositories.len(), 1);
         let merged = &reg.repositories[&new_key];
         assert_eq!(merged.total_freed_bytes, 4242);
-        assert_eq!(merged.override_idle_days, Some(9));
-        assert!(!merged.enabled);
         assert!(merged.last_pruned_at.is_some());
+    }
+
+    #[test]
+    fn a_repoint_onto_a_registered_place_keeps_that_entrys_own_settings() {
+        let tmp = TempDir::new().unwrap();
+        let old = absent_volume_paths(1).remove(0);
+        let new = tmp.path().join(below_root(&old));
+        real_repo(&new, "disabled-twice");
+        let new_key = canonical_key(&new);
+
+        // The stale entry is enabled with its own override; the user has since linked the
+        // new path, disabled it and set a different override.
+        let mut stale = entry_with_history(&new, VOL_A);
+        stale.enabled = true;
+        stale.override_idle_days = Some(9);
+        let mut reg = Registry::default();
+        reg.repositories.insert(old.clone(), stale);
+        let mut chosen = RepoEntry::new();
+        chosen.volume_id = Some(VOL_A.into());
+        chosen.enabled = false;
+        chosen.override_idle_days = Some(3);
+        reg.repositories.insert(new_key.clone(), chosen);
+
+        let view = FakeVolumes::default()
+            .drive_of(tmp.path(), Some(VOL_A))
+            .mount(tmp.path(), VOL_A);
+        let report = reg.heal_with(Utc::now(), &view);
+
+        assert_eq!(report.repointed.len(), 1);
+        let merged = &reg.repositories[&new_key];
+        assert!(!merged.enabled);
+        assert_eq!(merged.override_idle_days, Some(3));
+        assert_eq!(merged.total_freed_bytes, 4242);
     }
 
     #[test]
