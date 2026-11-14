@@ -192,7 +192,10 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   leaves it stuck. If another pass holds it, a scheduled run (`--daemon`) and a hook
   registration print one info line naming the holder (pid, devp version, since when) and exit
   `0`. An interactive `devp run` prints the same facts and exits `1`: wait for the other pass to
-  finish, then run it again. Read-only commands never take or wait for the lock. See
+  finish, then run it again. `devp config set`, `config recommended`, `link`, `unlink`, `undo`,
+  `init` and `caches clear` take the lock the same way, because they rewrite `registry.json` or
+  empty a cache that a running pass also touches. Read-only commands never take or wait for the
+  lock. See
   [One devp per device](BACKGROUND_AUTOMATION.md#one-devp-per-device).
 - **Flags**:
 
