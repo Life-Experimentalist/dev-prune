@@ -579,7 +579,11 @@ if [ "$NO_PATH" != "1" ]; then
     # the rc file of the user's own login shell exists; the loop below then edits it.
     # Windows is handled through the User PATH further down.
     if [ "$OS" != "windows" ]; then
-        case "${SHELL##*/}" in
+        # SHELL is unset in some containers and cron-like environments, and `set -u`
+        # would abort here after both binaries are already installed.
+        _login_shell="${SHELL:-}"
+        _login_shell="${_login_shell##*/}"
+        case "$_login_shell" in
             zsh) _login_rc="$HOME/.zshrc" ;;
             bash)
                 if [ "$OS" = "darwin" ]; then _login_rc="$HOME/.bash_profile"; else _login_rc="$HOME/.bashrc"; fi
@@ -590,7 +594,7 @@ if [ "$NO_PATH" != "1" ]; then
         if [ -n "$_login_rc" ] && [ ! -f "$_login_rc" ]; then
             : > "$_login_rc" 2>/dev/null || true
         fi
-        if [ "${SHELL##*/}" = "fish" ] && [ ! -f "$HOME/.config/fish/config.fish" ]; then
+        if [ "$_login_shell" = "fish" ] && [ ! -f "$HOME/.config/fish/config.fish" ]; then
             mkdir -p "$HOME/.config/fish" 2>/dev/null &&
                 : > "$HOME/.config/fish/config.fish" 2>/dev/null || true
         fi

@@ -245,7 +245,7 @@ it back, and it is safe to delete.
 
 Two things sit around this rule without changing it. Atomic writes stop a torn file but
 not a lost update, so whole passes also hold the run lock (`run.lock` in the config
-directory, released by the OS when the process ends); a second pass waits or skips rather
+directory, released by the OS when the process ends); a second pass skips or stops rather
 than racing. And every save stamps the registry with the devp version that wrote it
 (`written_by`); a devp older than the stamp refuses to save, so an old install cannot
 rewrite a newer one's data. Neither has a bypass flag. See

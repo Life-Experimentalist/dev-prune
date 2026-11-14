@@ -199,11 +199,14 @@ pub fn plan(installs: &[Install], keep: usize) -> Plan {
                  that tool."
             )),
             channel => match channel.uninstall_argv() {
-                Some(argv) if channel != installs[keep].channel => StepKind::Manager(argv),
+                Some(argv) if !shares_manager_with_another_copy(installs, idx) => {
+                    StepKind::Manager(argv)
+                }
                 Some(argv) => StepKind::ByHand(format!(
-                    "The copy you keep was installed through {} as well, and `{}` could not \
-                     be aimed at only one of them. Remove this one by hand if you want it \
-                     gone.",
+                    "Another copy on this machine was installed through {} as well, and `{}` \
+                     could not be aimed at only one of them, so it might remove the copy that \
+                     stays or the one running this command. Remove this one by hand if you \
+                     want it gone.",
                     channel.label(),
                     argv.join(" ")
                 )),
@@ -213,6 +216,19 @@ pub fn plan(installs: &[Install], keep: usize) -> Plan {
         steps.push(Step { install: idx, kind });
     }
     Plan { keep, steps, notes }
+}
+
+/// Whether any other copy devp lists came from the same package manager.
+///
+/// A manager's uninstall command takes whichever of its copies it finds first, not the one
+/// the plan named. With a second copy from that manager present, the kept copy, the running
+/// one, or a copy the plan skips could be the one that goes while the step reports another.
+/// The windowless launcher is left out: it travels with its pair and is no separate copy.
+fn shares_manager_with_another_copy(installs: &[Install], idx: usize) -> bool {
+    installs
+        .iter()
+        .enumerate()
+        .any(|(other, i)| other != idx && !i.windowless_only && i.channel == installs[idx].channel)
 }
 
 fn same_folder(a: &Install, b: &Install) -> bool {
@@ -769,6 +785,41 @@ mod tests {
         ];
         let plan = plan(&installs, 0);
         assert!(matches!(plan.steps[0].kind, StepKind::ByHand(_)));
+    }
+
+    #[test]
+    fn a_manager_shared_with_the_running_or_another_listed_copy_is_never_run() {
+        // Kept is cargo, the running copy is npm A, and a third copy is npm B: `npm
+        // uninstall -g` could take A, the running binary, while reporting B.
+        let mut installs = vec![
+            install("/kept/devp", Channel::Cargo, Some((1, 24, 0))),
+            install("/npm-a/devp", Channel::Npm, Some((1, 23, 0))),
+            install("/npm-b/devp", Channel::Npm, Some((1, 22, 0))),
+        ];
+        installs[1].roles.running = true;
+        let with_running = plan(&installs, 0);
+        assert_eq!(with_running.steps.len(), 1);
+        assert_eq!(with_running.steps[0].install, 2);
+        assert!(matches!(with_running.steps[0].kind, StepKind::ByHand(_)));
+
+        // Two copies from one manager, neither kept nor running: same answer for both.
+        let found = found(vec![
+            install("/kept/devp", Channel::Cargo, Some((1, 24, 0))),
+            install("/npm-a/devp", Channel::Npm, Some((1, 23, 0))),
+            install("/npm-b/devp", Channel::Npm, Some((1, 22, 0))),
+        ]);
+        let plan = plan(&found.installs, 0);
+        assert_eq!(plan.steps.len(), 2);
+        assert!(
+            plan.steps
+                .iter()
+                .all(|s| matches!(s.kind, StepKind::ByHand(_)))
+        );
+
+        // Nothing is run for them, even when the host says yes to everything.
+        let mut host = yes_host();
+        execute(&found, &plan, false, &mut host);
+        assert!(host.ran.is_empty());
     }
 
     #[test]
