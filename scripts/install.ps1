@@ -386,14 +386,16 @@ if (Test-Path -LiteralPath $exePath) {
     }
 }
 
-# Whether a *new* terminal would find this install, which is the only question that
+# Whether a *new* terminal would run this install, which is the only question that
 # matters here: the current session's $env:PATH may only contain $binDir because an
-# earlier run of this script put it there for the session. -NoPath means the user is
+# earlier run of this script put it there for the session. First, not merely present:
+# an older devp under cargo's bin folder ahead of this directory would be the copy every new
+# terminal ran while this script said "Nothing to do". -NoPath means the user is
 # managing PATH themselves, so it stops being this script's question.
 $persistedPath = ''
 try { $persistedPath = [Environment]::GetEnvironmentVariable('Path', 'User') } catch {}
 if ($null -eq $persistedPath) { $persistedPath = '' }
-$pathConfigured = $noPath -or (Test-OnPath $persistedPath $binDir)
+$pathConfigured = $noPath -or (Test-FirstOnPath $persistedPath $binDir)
 
 # Put this directory in front for the rest of this session, before any ending is chosen.
 # Every ending below reports which copy `dev-prune` resolves to, and the three that
