@@ -2626,6 +2626,13 @@ pub fn run_clear(
         }
     }
 
+    // After the confirmation, so a prompt left open does not hold off the scheduled pass,
+    // and before the first deletion, so a busy lock means nothing was cleared rather than
+    // caches gone and their credit lost. Held to the end for `record_cache_clear`, which
+    // loads and saves the registry. The trim inside a pass calls the same function with
+    // the pass's own lock already held, so the lock is not taken in there.
+    let _run_lock = crate::lock::acquire_interactive()?;
+
     let outcomes: Vec<ClearOutcome> = reports.iter().map(clear_one).collect();
     // Before either output path, so both credit it. Everything above this line has
     // already returned — a dry run never reaches here, and neither does a
