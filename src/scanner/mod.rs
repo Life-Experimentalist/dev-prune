@@ -58,15 +58,11 @@ pub fn scan_for_repos(root: &Path) -> Result<Vec<PathBuf>> {
             // Skip hidden dot-directories (e.g. .cache, .gemini, .claude, .cargo) and the
             // same bloat folders `workspace` skips inside a repository — a repo nested in
             // one of those is a dependency's repo, not the user's.
-            if name.starts_with('.')
+            !(name.starts_with('.')
                 || matches!(
                     name.as_ref(),
                     "node_modules" | "venv" | "target" | "vendor" | "bower_components" | "AppData"
-                )
-            {
-                return false;
-            }
-            true
+                ))
         });
 
     for entry in walker {
