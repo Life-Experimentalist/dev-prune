@@ -2514,7 +2514,9 @@ mod tests {
                 line,
                 &format!(
                     "drive for {} changed or is no longer connected, skipped",
-                    crate::output::clean_path(&repo)
+                    // The registry stores the canonical form; on Windows runners the temp
+                    // dir is an 8.3 short path that canonicalizes to the long one.
+                    crate::output::clean_path(repo.canonicalize().unwrap())
                 )
             );
             assert!(repo.join("vendor").exists(), "nothing may be deleted");
