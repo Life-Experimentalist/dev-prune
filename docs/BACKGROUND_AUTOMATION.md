@@ -270,8 +270,11 @@ turning into two passes fighting over the same repositories:
   file left behind by a crash blocks nothing. While it is held, the scheduled pass and the
   git hook skip with one line naming the holder (pid, devp version, start time) and exit
   `0`. An interactive `devp run`, `devp restore` or `devp unlink --missing` prints the
-  same facts and exits `1`, so a script does not mistake "did nothing" for "done". Read-only
-  commands (`status`, `stats`, `caches`, `doctor`, `list`) never take it and never wait for it.
+  same facts and exits `1`, so a script does not mistake "did nothing" for "done". So do the
+  commands that write `registry.json` or empty a cache while a pass could be rewriting it
+  (`config set`, `config recommended`, `link`, `unlink`, `undo`, `init`, `caches clear`).
+  Read-only commands (`status`, `stats`, `caches`, `doctor`, `list`) never take it and never
+  wait for it.
 - **A registry writer stamp.** Every save records the devp version that wrote it in a
   top-level `written_by` field. A devp that finds a newer version in that field will not
   write: the command stops with `registry.json was written by devp X, this is Y; update

@@ -22,6 +22,14 @@ pub fn run(paths: &[String], dry_run: bool, auto: bool) -> Result<()> {
     output::print_banner();
     output::print_header("dev-prune init");
 
+    // Held until `init` returns: the registry is loaded here and saved after a scan that
+    // can take minutes, and again after the release check. A dry run saves nothing, so it
+    // is a read and never waits for a pass.
+    let _run_lock = if dry_run {
+        None
+    } else {
+        crate::lock::acquire_interactive()?
+    };
     let mut registry = Registry::load()?;
     let mut total_found = 0;
     let mut skipped_throwaway = 0;

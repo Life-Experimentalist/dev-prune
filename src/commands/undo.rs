@@ -12,6 +12,8 @@ use crate::config::Registry;
 use crate::output;
 
 pub fn run() -> Result<()> {
+    // Before the load: a running pass would save its own copy over the unregistering.
+    let _run_lock = crate::lock::acquire_interactive()?;
     let mut registry = Registry::load()?;
 
     if registry.last_added_repos.is_empty() {

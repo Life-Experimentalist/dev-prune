@@ -1371,6 +1371,9 @@ pub fn run_get(key: &str) -> Result<()> {
 
 /// Set a config value.
 pub fn run_set(key: &str, value: &str) -> Result<()> {
+    // Taken before the load: a pass holds its own copy of the registry and saves it back
+    // after every repository, so a change made while one runs is overwritten by it.
+    let _run_lock = crate::lock::acquire_interactive()?;
     let mut registry = Registry::load()?;
     let setting = find_setting(key)?;
     (setting.set)(&mut registry.settings, value)?;
@@ -1851,6 +1854,8 @@ fn print_recommendation_summary(settings: &Settings) {
 /// the screen that puts the decision in front of somebody — so a machine configured
 /// this way still gets the walkthrough it is owed.
 pub fn run_recommended(with_cautious: bool) -> Result<()> {
+    // Before the load, for the reason given in `run_set`.
+    let _run_lock = crate::lock::acquire_interactive()?;
     let mut registry = Registry::load()?;
     let width = key_column_width();
 
@@ -2416,6 +2421,11 @@ pub fn run_path_config(path_str: &str, force_update: bool, team: bool) -> Result
         output::print_info(&format!(
             "{clean} is not yet registered with dev-prune. Registering now..."
         ));
+        // Only registering writes the registry; showing or creating the config file does
+        // not, so those keep working while a pass runs. Reloaded under the lock because
+        // the copy above may predate a pass that finished in between.
+        let _run_lock = crate::lock::acquire_interactive()?;
+        registry = Registry::load()?;
         registry.add_repo(path.clone());
         registry.save()?;
     }

@@ -19,6 +19,10 @@ use crate::scanner;
 /// flag exists precisely to keep the hook out of a specific workspace.
 pub fn run_link(path_str: &str, quiet: bool) -> Result<()> {
     if !quiet {
+        // A person linking by hand has no scheduler to step aside for, so a running pass
+        // is an error they can act on. Taken here rather than in `link_path`, which the
+        // quiet branch below already calls with the lock held.
+        let _run_lock = crate::lock::acquire_interactive()?;
         return link_path(path_str, quiet);
     }
     // The hook-triggered registration rewrites the registry unattended, so it steps aside
@@ -458,6 +462,9 @@ pub fn run_unlink(path_str: &str) -> Result<()> {
         .canonicalize()
         .unwrap_or_else(|_| Path::new(path_str).to_path_buf());
 
+    // Before the load: a pass saves its own copy of the registry after every repository,
+    // which would bring back the entry removed here.
+    let _run_lock = crate::lock::acquire_interactive()?;
     let mut registry = Registry::load()?;
 
     if registry.remove_repo(&path) {

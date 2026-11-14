@@ -76,8 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A scheduled pass or a hook that finds another one running prints one line naming it (pid,
   version, start time) and exits 0; an interactive `devp run`, `devp restore` or
   `devp unlink --missing` names the holder and exits 1, so a script does not mistake
-  "did nothing" for "done". Status, caches, doctor and the other read-only commands never
-  wait. The lock is released by the operating system if devp dies, so it never goes stale.
+  "did nothing" for "done". The commands that change `registry.json` or empty a cache
+  (`config set`, `link`, `unlink`, `undo`, `init`, `caches clear`) do the same. Status,
+  `devp caches`, doctor and the other read-only commands never wait. The lock is released by the operating system if devp dies, so it never goes stale.
 
 - **An older devp refuses to overwrite a registry written by a newer one.** `registry.json`
   records the version that last wrote it. If you still have an old copy on a scheduler or

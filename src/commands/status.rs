@@ -216,6 +216,14 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
                 // Taken only now, after the user has confirmed: browsing the dashboard
                 // is a read and must work while a pass runs. Held to the end of this arm.
                 let _run_lock = crate::lock::acquire_interactive()?;
+                // The dashboard can sit open for minutes, and a pass that finished in the
+                // meantime recorded its `last_prune`, totals and new entries in the file.
+                // Saving the snapshot taken before the view opened would write all of that
+                // out of existence, so everything below works on what the file holds now.
+                // Checked first because this arm deletes before it saves, the same order
+                // `devp run` refuses on.
+                crate::commands::run::refuse_newer_registry()?;
+                registry = Registry::load()?;
                 output::print_header(i18n::t("status.header.pruning"));
 
                 let mut total_freed: u64 = 0;

@@ -246,3 +246,256 @@ fn an_older_registry_is_updated_and_stamped_by_a_mutating_command() {
         Some(env!("CARGO_PKG_VERSION"))
     );
 }
+
+fn git(path: &Path) -> Command {
+    // Neither the developer's global config nor its `core.hooksPath` may be read: the
+    // global hook would register this fixture in the real registry on its first commit.
+    let mut cmd = dev_prune::scanner::git::git_in(path);
+    cmd.env("GIT_CONFIG_GLOBAL", path.join("no-such-gitconfig"))
+        .env("GIT_CONFIG_SYSTEM", path.join("no-such-gitconfig"));
+    cmd
+}
+
+/// A committed repository holding a venv project, which is the one ecosystem whose
+/// lockfile check is pure file inspection, so a pass really deletes `api/.venv`.
+fn repo_with_venv(root: &Path) -> PathBuf {
+    let repo = root.join("repo");
+    fs::create_dir_all(repo.join("api/.venv/lib")).unwrap();
+    fs::write(repo.join("api/requirements.txt"), "requests==2.32.3\n").unwrap();
+    fs::write(repo.join("api/.venv/pyvenv.cfg"), "home = /usr\n").unwrap();
+    fs::write(repo.join("api/.venv/lib/site.py"), vec![b'x'; 4096]).unwrap();
+    git(&repo).args(["init"]).output().unwrap();
+    git(&repo).args(["add", "."]).output().unwrap();
+    git(&repo)
+        .args([
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            "initial",
+        ])
+        .output()
+        .unwrap();
+    repo
+}
+
+/// Links `repo`, then rewrites only the writer stamp, so the registry keeps the
+/// repository a registry pass has to find.
+fn link_then_stamp_as(config_dir: &Path, repo: &Path, writer: &str) {
+    let out = devp(config_dir)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "link failed:\n{}", text(&out));
+    let path = registry_file(config_dir);
+    let mut doc: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    doc.as_object_mut()
+        .unwrap()
+        .insert("written_by".into(), writer.into());
+    fs::write(&path, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+}
+
+#[test]
+fn a_run_older_than_the_registry_refuses_before_pruning() {
+    for targeted in [true, false] {
+        let tmp = TempDir::new().unwrap();
+        let config = tmp.path().join("config");
+        let repo = repo_with_venv(tmp.path());
+        link_then_stamp_as(&config, &repo, "999.0.0");
+        let before = fs::read_to_string(registry_file(&config)).unwrap();
+
+        let mut cmd = devp(&config);
+        cmd.args(["--ignore-idle", "run", "--yes", "--only", "venv"]);
+        if targeted {
+            cmd.arg(&repo);
+        }
+        let out = cmd.output().unwrap();
+
+        let shown = text(&out);
+        assert_eq!(out.status.code(), Some(1), "targeted={targeted}: {shown}");
+        assert!(
+            shown.contains("registry.json was written by devp 999.0.0, this is"),
+            "{shown}"
+        );
+        assert!(
+            repo.join("api/.venv").exists(),
+            "targeted={targeted}: the directory was deleted before the refusal"
+        );
+        assert_eq!(
+            fs::read_to_string(registry_file(&config)).unwrap(),
+            before,
+            "targeted={targeted}: the newer registry was rewritten"
+        );
+    }
+}
+
+#[test]
+fn a_run_that_is_not_older_than_the_registry_still_prunes() {
+    // The control for the test above: the same fixture and command, stamped as an older
+    // writer, deletes the directory, so the refusal there is the guard and nothing else.
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = repo_with_venv(tmp.path());
+    link_then_stamp_as(&config, &repo, "0.0.1");
+
+    let out = devp(&config)
+        .args(["--ignore-idle", "run", "--yes", "--only", "venv"])
+        .arg(&repo)
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert!(!repo.join("api/.venv").exists(), "nothing was deleted");
+}
+
+#[test]
+fn a_dry_run_reads_a_newer_registry_and_deletes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = repo_with_venv(tmp.path());
+    link_then_stamp_as(&config, &repo, "999.0.0");
+
+    let out = devp(&config)
+        .args(["--ignore-idle", "run", "--dry-run", "--only", "venv"])
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert!(repo.join("api/.venv").exists());
+}
+
+/// The refusal an interactive writer gives while a pass holds the lock: exit 1, the
+/// holder named, and a registry that is byte for byte what it was.
+fn assert_refused_by_the_lock(out: &Output, config_dir: &Path, registry_before: Option<&str>) {
+    let shown = text(out);
+    assert_eq!(out.status.code(), Some(1), "{shown}");
+    assert!(shown.contains("already running a pass"), "{shown}");
+    assert!(
+        shown.contains(&format!("pid {}", std::process::id())),
+        "the holder is named: {shown}"
+    );
+    assert_eq!(
+        fs::read_to_string(registry_file(config_dir))
+            .ok()
+            .as_deref(),
+        registry_before,
+        "the registry changed although the lock was held"
+    );
+}
+
+#[test]
+fn config_writers_fail_cleanly_while_the_lock_is_held() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = repo_with_venv(tmp.path());
+    let _held = hold(&config);
+
+    for args in [
+        vec!["config", "set", "min_size_mb", "7"],
+        vec!["config", "recommended"],
+        // Not registered yet, so showing its config would have to register it.
+        vec!["config", "project", repo.to_str().unwrap()],
+    ] {
+        let out = devp(&config).args(&args).output().unwrap();
+        assert_refused_by_the_lock(&out, &config, None);
+    }
+}
+
+#[test]
+fn config_project_on_a_registered_repository_does_not_wait_for_a_pass() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = repo_with_venv(tmp.path());
+    let linked = devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(linked.status.success(), "{}", text(&linked));
+    let _held = hold(&config);
+
+    let out = devp(&config)
+        .args(["config", "project", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+}
+
+#[test]
+fn link_and_init_fail_cleanly_while_the_lock_is_held() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = repo_with_venv(tmp.path());
+    let _held = hold(&config);
+
+    let link = devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_refused_by_the_lock(&link, &config, None);
+
+    let init = devp(&config)
+        .args(["init", tmp.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_refused_by_the_lock(&init, &config, None);
+
+    // A dry run writes nothing, so it is a read.
+    let dry = devp(&config)
+        .args(["--dry-run", "init", tmp.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(dry.status.code(), Some(0), "{}", text(&dry));
+}
+
+#[test]
+fn unlink_and_undo_fail_cleanly_while_the_lock_is_held() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = repo_with_venv(tmp.path());
+    let linked = devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(linked.status.success(), "{}", text(&linked));
+    let before = fs::read_to_string(registry_file(&config)).unwrap();
+    let _held = hold(&config);
+
+    let unlink = devp(&config)
+        .args(["unlink", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_refused_by_the_lock(&unlink, &config, Some(&before));
+
+    // The link above left a last-added entry for `undo` to revert.
+    let undo = devp(&config).arg("undo").output().unwrap();
+    assert_refused_by_the_lock(&undo, &config, Some(&before));
+}
+
+#[test]
+fn clearing_a_cache_fails_cleanly_while_the_lock_is_held_and_clears_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    // `CARGO_HOME` points the cargo probe at this fixture, so a regression can only ever
+    // delete files made here and never a cache on the machine running the test.
+    let cargo_home = tmp.path().join("cargo-home");
+    let crate_file = cargo_home.join("registry/cache/index.crates.io-test/x-1.0.0.crate");
+    fs::create_dir_all(crate_file.parent().unwrap()).unwrap();
+    fs::write(&crate_file, vec![b'x'; 4096]).unwrap();
+    let _held = hold(&config);
+
+    let out = devp(&config)
+        .env("CARGO_HOME", &cargo_home)
+        .args(["--yes", "caches", "clear", "cargo"])
+        .output()
+        .unwrap();
+
+    assert_refused_by_the_lock(&out, &config, None);
+    assert!(
+        crate_file.exists(),
+        "the cache was cleared before the refusal"
+    );
+}
