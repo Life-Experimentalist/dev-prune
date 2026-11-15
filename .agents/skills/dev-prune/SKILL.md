@@ -238,9 +238,10 @@ One devp per device. Every pass (`run`, `restore`, `unlink --missing`, hook regi
 takes an OS advisory lock, `run.lock` in the config directory, released when the process
 ends. While another pass holds it, a scheduled `run --daemon` or a hook registration skips
 with one info line naming the holder (pid, version, since) and exits `0`; an interactive
-`run`, `restore`, `unlink`, `link`, `undo`, `init`, `config set` or `caches clear` prints the
-same facts and exits `1`, so wait for the other pass and run it again. Read-only commands
-never wait. `registry.json` carries a
+`run`, `restore`, `unlink`, `link`, `undo`, `init`, `config set`, the `config` wizard,
+`doctor --fix` or `caches clear` prints the same facts and exits `1`, so wait for the other
+pass and run it again. Read-only commands never wait, and `status` and `update` skip their own
+bookkeeping write and exit `0`. `registry.json` carries a
 `written_by` field with the devp version that last wrote it; a devp older than that refuses to
 write and exits `1` with "registry.json was written by devp X, this is Y; update this install
 or remove it, see devp doctor". `devp doctor` lists every devp install: several distinct

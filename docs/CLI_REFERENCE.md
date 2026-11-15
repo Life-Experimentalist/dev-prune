@@ -193,9 +193,11 @@ prints the short version, `devp help <command>` is equivalent to `--help`.
   registration print one info line naming the holder (pid, devp version, since when) and exit
   `0`. An interactive `devp run` prints the same facts and exits `1`: wait for the other pass to
   finish, then run it again. `devp config set`, `config recommended`, `link`, `unlink`, `undo`,
-  `init` and `caches clear` take the lock the same way, because they rewrite `registry.json` or
-  empty a cache that a running pass also touches. Read-only commands never take or wait for the
-  lock. See
+  `init`, `doctor --fix`, the `devp config` wizard (when it saves) and `caches clear` take the
+  lock the same way, because they rewrite `registry.json` or empty a cache that a running pass
+  also touches. `devp status` and `devp update` only skip their own bookkeeping (healing moved
+  repositories, the release-check stamp) and still exit `0`. Read-only commands never take or
+  wait for the lock. See
   [One devp per device](BACKGROUND_AUTOMATION.md#one-devp-per-device).
 - **Flags**:
 
