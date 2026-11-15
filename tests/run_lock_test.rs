@@ -500,6 +500,29 @@ fn clearing_a_cache_fails_cleanly_while_the_lock_is_held_and_clears_nothing() {
     );
 }
 
+#[test]
+fn doctor_fix_fails_cleanly_while_the_lock_is_held_and_a_plain_doctor_does_not() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = repo_with_venv(tmp.path());
+    let linked = devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(linked.status.success(), "{}", text(&linked));
+    // A registered repository that no longer exists is what gives `--fix` a registry
+    // write to make.
+    fs::remove_dir_all(&repo).unwrap();
+    let before = fs::read_to_string(registry_file(&config)).unwrap();
+    let _held = hold(&config);
+
+    let report = devp(&config).arg("doctor").output().unwrap();
+    assert_eq!(report.status.code(), Some(0), "{}", text(&report));
+
+    let fix = devp(&config).args(["doctor", "--fix"]).output().unwrap();
+    assert_refused_by_the_lock(&fix, &config, Some(&before));
+}
+
 /// A `docker` that answers `system df` with one reclaimable row and logs every call, so a
 /// test can see which commands reached the engine. It goes first on `PATH`, so the real
 /// one is never asked anything.

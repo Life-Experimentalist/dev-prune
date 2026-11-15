@@ -282,12 +282,11 @@ fn apply_repairs(f: &Findings, registry: Option<&Registry>) -> Result<()> {
             Repair::Scheduler => ("Scheduler", "run `devp daemon install` yourself"),
             Repair::WindowlessTwin => ("Scheduler binary", "run `devp update --install` yourself"),
             Repair::UnlinkMissing => {
-                if let Ok(mut reg) = Registry::load()
-                    && reg.heal(chrono::Utc::now()).dirty
-                {
-                    let _ = reg.save();
-                }
-                match crate::commands::link::run_unlink_missing() {
+                // The guard is dropped inside `stamp_missing_entries` before the unlink
+                // below, which takes the lock itself and would otherwise find it held by
+                // this very process.
+                let stamped = stamp_missing_entries();
+                match stamped.and_then(|()| crate::commands::link::run_unlink_missing()) {
                     Ok(()) => repaired += 1,
                     Err(e) => {
                         failed_line("Registry", &format!("{e:#}"));
@@ -1996,6 +1995,23 @@ fn describe_overrides(cfg: &PerRepoConfig) -> String {
 /// parse the registry at <path>" — which the report has already said.
 fn root_cause(e: &anyhow::Error) -> String {
     e.chain().last().map(|c| c.to_string()).unwrap_or_default()
+}
+
+/// Stamp the registry entries whose directory has gone missing, the first half of the
+/// `unlink --missing` repair.
+///
+/// Under the run lock because this saves the registry, and loaded after taking it so a
+/// pass that finished in between is not written out of existence. A busy lock is an
+/// error: the repair did not happen and the report says so. A registry that cannot be
+/// saved is not, as before, because the unlink that follows reports that itself.
+fn stamp_missing_entries() -> Result<()> {
+    let _run_lock = crate::lock::acquire_interactive()?;
+    if let Ok(mut reg) = Registry::load()
+        && reg.heal(chrono::Utc::now()).dirty
+    {
+        let _ = reg.save();
+    }
+    Ok(())
 }
 
 /// Replace every registered repository's unreadable `.devprune.json` with a default.
