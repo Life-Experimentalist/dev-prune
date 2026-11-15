@@ -499,3 +499,58 @@ fn clearing_a_cache_fails_cleanly_while_the_lock_is_held_and_clears_nothing() {
         "the cache was cleared before the refusal"
     );
 }
+
+/// A `docker` that answers `system df` with one reclaimable row and logs every call, so a
+/// test can see which commands reached the engine. It goes first on `PATH`, so the real
+/// one is never asked anything.
+fn fake_docker(dir: &Path) -> PathBuf {
+    let bin = dir.join("fake-bin");
+    fs::create_dir_all(&bin).unwrap();
+    let row =
+        r#"{"Type":"Images","TotalCount":"1","Active":"0","RawSize":4096,"RawReclaimable":4096}"#;
+    #[cfg(windows)]
+    fs::write(
+        bin.join("docker.cmd"),
+        format!("@echo off\r\necho %* >> \"%~dp0calls.log\"\r\necho {row}\r\n"),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let script = bin.join("docker");
+        fs::write(
+            &script,
+            format!("#!/bin/sh\necho \"$@\" >> \"$(dirname \"$0\")/calls.log\"\necho '{row}'\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    bin
+}
+
+#[test]
+fn clearing_containers_fails_cleanly_while_the_lock_is_held_and_prunes_nothing() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let bin = fake_docker(tmp.path());
+    let path = std::env::join_paths(std::iter::once(bin.clone()).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))
+    .unwrap();
+    let _held = hold(&config);
+
+    let out = devp(&config)
+        .env("PATH", path)
+        .env_remove("DOCKER_HOST")
+        .env_remove("CONTAINER_HOST")
+        .args(["--yes", "caches", "clear", "docker"])
+        .output()
+        .unwrap();
+
+    assert_refused_by_the_lock(&out, &config, None);
+    let calls = fs::read_to_string(bin.join("calls.log")).unwrap_or_default();
+    assert!(
+        !calls.contains("prune"),
+        "the engine was told to prune before the refusal:\n{calls}"
+    );
+}

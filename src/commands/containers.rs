@@ -886,6 +886,13 @@ pub fn run_clear(
         return Ok(());
     }
 
+    // After the confirmation, so a prompt left open does not hold off the scheduled pass,
+    // and before the first step, so a busy lock means nothing was pruned rather than
+    // images gone and their credit lost. Held to the end for `record_container_clear`,
+    // which loads and saves the registry. `caches clear` returns into this function before
+    // it takes its own lock, so the two never nest.
+    let _run_lock = crate::lock::acquire_interactive()?;
+
     let mut steps: Vec<StepOutcome> = engine.reclaim.iter().map(|s| run_step(engine, s)).collect();
 
     // After the reclaim steps on purpose: `container prune` is what turns a stopped
