@@ -70,7 +70,7 @@ pub fn run(offline: bool, install: bool, channels: bool, yes: bool) -> Result<()
                     "Could not check the latest release ({e:#}). The upgrade commands below still apply."
                 )),
             }
-            let _ = reg.save();
+            save_release_check(reg);
         } else {
             output::print_info(
                 "The release check is off (`devp config set update_check true` re-enables it).",
@@ -299,7 +299,7 @@ fn run_install() -> Result<()> {
     // fatal here (unlike `devp update`): running an installer blind would "upgrade" to
     // the version already installed.
     let latest = refresh_latest(&mut registry)?;
-    let _ = registry.save();
+    save_release_check(&registry);
     if compare_versions(constants::VERSION, &latest) != Some(Ordering::Less) {
         output::print_success(&format!(
             "v{} is already the latest release — nothing to install.",
@@ -1136,6 +1136,31 @@ fn refresh_latest(registry: &mut Registry) -> Result<String> {
     let latest = result?;
     registry.latest_known_version = Some(latest.clone());
     Ok(latest)
+}
+
+/// Record the outcome of a release check on the registry file.
+///
+/// Not a plain `registry.save()`: `registry` was loaded before the request went out, which
+/// can take the whole timeout, and a pass that finished in that time has since saved its
+/// prune history. Saving the old copy over it would erase that. So the lock is taken, the
+/// file is read again, and only the three fields the check produced are carried over.
+///
+/// A busy lock skips the write instead of failing the command. The check is a cache, the
+/// answer is already on screen, and the next check asks again; failing `devp status` or
+/// `devp update` because a pass is running would cost the user what they came for in order
+/// to protect a timestamp. Not for callers that already hold the lock (`devp init`, the
+/// pass), which save their own registry directly: taking it twice in one process is refused.
+pub(crate) fn save_release_check(checked: &Registry) {
+    let Ok(_run_lock) = crate::lock::acquire_interactive() else {
+        return;
+    };
+    let Ok(mut fresh) = Registry::load() else {
+        return;
+    };
+    fresh.last_update_check = checked.last_update_check;
+    fresh.last_update_check_failed = checked.last_update_check_failed;
+    fresh.latest_known_version = checked.latest_known_version.clone();
+    let _ = fresh.save();
 }
 
 /// Say whether the installed build is behind, current, or ahead of the latest release.

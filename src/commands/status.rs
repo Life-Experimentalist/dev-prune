@@ -32,6 +32,31 @@ pub struct ProjectDrift {
     pub report: DriftReport,
 }
 
+/// Persist what `status` found while loading: entries that went missing, and the
+/// repository the caller is standing in.
+///
+/// The lock is taken only now, once there is something to write, so a `status` with
+/// nothing to change never touches it. The registry is read again under it and both steps
+/// are repeated on that copy: the one `run` holds predates the lock, and saving it would
+/// overwrite a pass that finished in between. Both steps are derived from the disk and
+/// the working directory, so repeating them gives the same answer.
+///
+/// A busy lock skips the write. `status` is how someone finds out a pass is running, so
+/// refusing to answer until it ends would defeat it, and nothing is lost: the next
+/// `status` finds the same entries and the next hook registers the repository. The
+/// result of the heal is an ignored save, as it always was; only an adoption that could
+/// not be saved is an error, because the command said it had registered something.
+fn save_heal_and_adoption(adopted: bool) -> Result<()> {
+    let Ok(_run_lock) = crate::lock::acquire_interactive() else {
+        return Ok(());
+    };
+    let mut fresh = Registry::load()?;
+    fresh.heal(chrono::Utc::now());
+    crate::commands::link::adopt_enclosing_repo(&mut fresh);
+    let saved = fresh.save();
+    if adopted { saved } else { Ok(()) }
+}
+
 /// Run the `status` command.
 ///
 /// `json` replaces the dashboard with one machine-readable document — no banner, no
@@ -55,9 +80,6 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
 
     // Auto-heal moved repositories (e.g. moved to Archive) and purge dead ephemeral AI worktrees.
     let healed = registry.heal(chrono::Utc::now());
-    if healed.dirty {
-        let _ = registry.save();
-    }
     if !json_output {
         crate::commands::run::report_expired_entries(&healed.expired);
         crate::commands::run::report_repointed(&healed.repointed);
@@ -69,10 +91,10 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     // rather than showing a dashboard that is missing the one repository being asked
     // about. See `link::adopt_enclosing_repo` for the guards.
     let adopted = crate::commands::link::adopt_enclosing_repo(&mut registry);
-    if adopted.is_some() {
+    if healed.dirty || adopted.is_some() {
         // A registry a newer devp wrote is read as it stands: the adoption is shown for
         // this run and not persisted, and the status report is the point of the command.
-        if let Err(e) = registry.save()
+        if let Err(e) = save_heal_and_adoption(adopted.is_some())
             && e.downcast_ref::<crate::config::NewerRegistryError>()
                 .is_none()
         {
@@ -120,7 +142,7 @@ pub fn run(top: Option<usize>, drift: bool, json_output: bool) -> Result<()> {
     // Only on the human path: JSON output is a contract, and a version notice printed
     // into it would corrupt the document.
     if crate::commands::update::notify_if_outdated(&mut registry) {
-        let _ = registry.save();
+        crate::commands::update::save_release_check(&registry);
     }
 
     let reg_path = Registry::registry_path()

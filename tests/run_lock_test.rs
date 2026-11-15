@@ -523,6 +523,68 @@ fn doctor_fix_fails_cleanly_while_the_lock_is_held_and_a_plain_doctor_does_not()
     assert_refused_by_the_lock(&fix, &config, Some(&before));
 }
 
+#[test]
+fn the_release_check_skips_its_bookkeeping_while_the_lock_is_held() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let _held = hold(&config);
+
+    // `update` has no registry change of its own to refuse over: it answers the question
+    // and leaves the "checked just now" stamp for the next run, which costs one more check.
+    let out = devp(&config).arg("update").output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert!(
+        !registry_file(&config).exists(),
+        "the stamp was written although a pass held the lock"
+    );
+
+    drop(_held);
+    let out = devp(&config).arg("update").output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    let saved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(registry_file(&config)).unwrap()).unwrap();
+    assert!(
+        saved["last_update_check"].is_string(),
+        "an unlocked check records when it ran: {saved}"
+    );
+}
+
+#[test]
+fn status_answers_while_the_lock_is_held_but_leaves_its_bookkeeping_for_later() {
+    let tmp = TempDir::new().unwrap();
+    let config = tmp.path().join("config");
+    let repo = repo_with_venv(tmp.path());
+    let linked = devp(&config)
+        .args(["link", repo.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(linked.status.success(), "{}", text(&linked));
+    // A vanished repository is what gives `status` something to save: the heal starts its
+    // missing-since clock.
+    fs::remove_dir_all(&repo).unwrap();
+    let before = fs::read_to_string(registry_file(&config)).unwrap();
+
+    let held = hold(&config);
+    for args in [vec!["status", "--json"], vec!["status"]] {
+        let out = devp(&config).args(&args).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {}", text(&out));
+        assert_eq!(
+            fs::read_to_string(registry_file(&config)).unwrap(),
+            before,
+            "{args:?}: status saved a registry while a pass held the lock"
+        );
+    }
+    drop(held);
+
+    let out = devp(&config).args(["status", "--json"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out));
+    assert_ne!(
+        fs::read_to_string(registry_file(&config)).unwrap(),
+        before,
+        "with the lock free, status records what it healed"
+    );
+}
+
 /// A `docker` that answers `system df` with one reclaimable row and logs every call, so a
 /// test can see which commands reached the engine. It goes first on `PATH`, so the real
 /// one is never asked anything.
