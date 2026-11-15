@@ -1284,6 +1284,10 @@ pub fn setting_count() -> usize {
 /// out of existence, so only the keys the user actually changed are carried over,
 /// onto whatever the file holds now.
 fn save_settings_edits<'a>(edits: impl Iterator<Item = (&'a str, &'a str)>) -> Result<()> {
+    // Taken here and not when the wizard opens: it can sit open for minutes, and holding
+    // the lock that long would turn every scheduled pass in the meantime into a skip. The
+    // load comes after it, so what is saved is what the file holds at this moment.
+    let _run_lock = crate::lock::acquire_interactive()?;
     let mut fresh = Registry::load()?;
     for (key, value) in edits {
         (find_setting(key)?.set)(&mut fresh.settings, value)?;
