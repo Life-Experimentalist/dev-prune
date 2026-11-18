@@ -7,7 +7,7 @@ Six of the seven are **refusals** that run *before* the delete: when invariant 1
 ---
 
 <p align="center">
-  <img src="../assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="800" />
+  <img src="../assets/github-readme-banner.png" alt="dev-prune — space back, nothing you can't rebuild" width="800" />
 </p>
 
 ---

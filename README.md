@@ -1,10 +1,10 @@
 <div align="center">
 
-<img src="assets/github-readme-banner.png" alt="dev-prune — gigabytes back, nothing you can't rebuild" width="820" />
+<img src="assets/github-readme-banner.png" alt="dev-prune — space back, nothing you can't rebuild" width="820" />
 
 # `dev-prune`
 
-### Gigabytes back. Nothing you can't rebuild.
+### Space back. Nothing you can't rebuild.
 
 **Reclaim the disk space your idle repositories are sitting on — without ever deleting
 something a lockfile cannot put back.**

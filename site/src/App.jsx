@@ -1371,7 +1371,7 @@ Notes you should rely on, not work around:
                 analytics
               </div>
               <h1 className="hero-title">
-                Gigabytes back.
+                Space back.
                 <br />
                 <span className="gradient-text">
                   Nothing you can&rsquo;t rebuild.

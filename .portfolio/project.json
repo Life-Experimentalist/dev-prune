@@ -1,7 +1,7 @@
 {
 	"$schema": "https://vkrishna04.me/schemas/project-manifest.schema.json",
 	"manifestVersion": 2,
-	"tagline": "Gigabytes back. Nothing you can't rebuild.",
+	"tagline": "Space back. Nothing you can't rebuild.",
 	"summary": "A Rust CLI that reclaims the disk space idle repositories are holding in node_modules, .venv, target and vendor directories. It deletes one only after verifying read-only that the project's lockfile can rebuild it, and the same binary restores what it removed.",
 	"status": "active",
 	"icon": "SiRust",
