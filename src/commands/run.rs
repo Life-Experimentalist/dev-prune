@@ -807,6 +807,15 @@ fn run_registry(args: &RunArgs<'_>, filter: &AdapterFilter) -> Result<()> {
         }
         match result.status {
             PruneStatus::SkippedDryRun => candidates.push(result),
+            // Git's own "not a git repository" from the activity check is the same standing
+            // state as `NotARepo` below: a clone deleted and recreated by hand. Counting it
+            // as blocked turned the scheduled pass red every night until someone ran
+            // `devp unlink`, which nobody does because nobody watches that pass.
+            PruneStatus::ActivityCheckError(ref e)
+                if ActivityFailure::classify(e) == ActivityFailure::NotARepository =>
+            {
+                orphaned.push(result)
+            }
             PruneStatus::ConfigError(_)
             | PruneStatus::LockfileError(_)
             | PruneStatus::ActivityCheckError(_)

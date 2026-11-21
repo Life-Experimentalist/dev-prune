@@ -2146,12 +2146,16 @@ fn print_report(reports: &[CacheReport], deps: Option<&Dependents>, volume: Opti
             );
         }
         if r.over_limit {
-            println!(
-                "  {:<30} {:>10}  {}",
-                "",
-                "",
-                over_limit_note(r, trim_on, limit)
-            );
+            // The note names what the setting says; it must not promise a trim the
+            // scheduler's own binary is too old to perform.
+            let note = match crate::commands::doctor::scheduler_binary_behind() {
+                Some(held) if trim_on && trim_eligible(r) => format!(
+                    "over your {limit} GiB cache limit; the scheduler runs {held}, not this \
+                     release, so it may not trim. `devp update --install` brings it forward"
+                ),
+                _ => over_limit_note(r, trim_on, limit),
+            };
+            println!("  {:<30} {:>10}  {}", "", "", note);
         }
         if let Some(n) = r.dependents
             && counted.insert(r.manager)

@@ -1296,6 +1296,26 @@ fn check_registry_health(f: &mut Findings, registry: Option<&Registry>) {
     }
 }
 
+/// What the scheduler's `devpw.exe` is, when it is not this release: `v1.23.1`, or
+/// `a build with no stamp`. `None` when it matches, when it is absent, or when the
+/// scheduler does not run it.
+pub(crate) fn scheduler_binary_behind() -> Option<String> {
+    let registered = crate::daemon::registered_exe_path()?;
+    if !registered
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.eq_ignore_ascii_case(constants::WINDOWS_WINDOWLESS_BIN))
+    {
+        return None;
+    }
+    let bytes = std::fs::read(&registered).ok()?;
+    match crate::commands::trust::version_from_stamp(&bytes) {
+        Some(v) if v == constants::VERSION => None,
+        Some(v) => Some(format!("v{v}")),
+        None => Some("a build with no stamp".to_string()),
+    }
+}
+
 /// Say so when a cache the size limit applies to is past it. A note, never a warning:
 /// a big build cache is not breakage, and the exit code stays what it was.
 fn check_cache_limit(f: &mut Findings, registry: Option<&Registry>) {
@@ -1306,10 +1326,19 @@ fn check_cache_limit(f: &mut Findings, registry: Option<&Registry>) {
         return;
     }
     f.section("Cache size limit");
-    let advice = if registry.settings.cache_auto_trim {
-        "the scheduled pass empties it"
+    // "The scheduled pass empties it" is only true when the file the scheduler runs knows
+    // how. A scheduler left on a release from before the trim existed said exactly this
+    // sentence while a Go build cache grew to 238 GiB, because the note described the
+    // setting and never looked at what would act on it.
+    let advice = if let Some(held) = scheduler_binary_behind() {
+        format!(
+            "cache_auto_trim is on, but the scheduler runs {held}, not this release, so it \
+             may not trim. `devp update --install` brings it forward"
+        )
+    } else if registry.settings.cache_auto_trim {
+        "the scheduled pass empties it".to_string()
     } else {
-        "`devp config set cache_auto_trim true` lets the scheduled pass empty it"
+        "`devp config set cache_auto_trim true` lets the scheduled pass empty it".to_string()
     };
     for (manager, kind, bytes) in over {
         f.note(
